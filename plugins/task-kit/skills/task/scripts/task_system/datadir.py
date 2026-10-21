@@ -1,6 +1,6 @@
 """The plugin's bootstrap data directory: ``<data root>/<marketplace>/task-kit``.
 
-Machine-scoped state (the dashboard's runtime root, the working-session index and locks) lives under it.
+Machine-scoped state (the dashboard's runtime root and the working-session lock files) lives under it.
 The resolver reads the directory from the venv this process runs in, so it works only under the
 bootstrap-provisioned venv; anything else is an error, never a guess.
 """

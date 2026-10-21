@@ -137,7 +137,7 @@ We never prevent an action because of an unverifiable state, so only the first k
 
 **Dismiss** (task details, on an unverified record). User ruling: "The human dismissing is contribution of information." So the dismissal is an authoritative fact, not a local view setting. It is recorded in git, in this machine's own session file (`dismissed:` with the target's host, session id and `registered_at`, plus `dismissed_at`; the file's host says who), and published like a registration, so no machine ever edits another machine's file. Every reader hides the dismissed record at once. The owning machine drops it at its next write even if its process looks alive; a session that is in fact still working registers again at its next `/task work` (a new `registered_at`) and shows again. This machine drops its dismissal entry once the target record is gone.
 
-In the background (one pass per minute) the server reconciles this machine's session files -- records on closed, archived or missing tasks, records some machine dismissed, and dismissal entries whose target is gone -- and publishes this machine's pending session files, bounded and logged to `publish.log` in the data directory. It never pushes a file that is not this machine's own.
+In the background (one pass per minute) the server reconciles this machine's session files -- records on closed, archived or missing tasks, records some machine dismissed, and dismissal entries whose target is gone -- and publishes this machine's pending session files, bounded, reporting each outcome in the server's own log (the data directory keeps only lock files, never session state). It never pushes a file that is not this machine's own.
 
 ## Launcher exit codes
 

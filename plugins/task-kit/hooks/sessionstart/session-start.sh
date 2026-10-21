@@ -6,15 +6,26 @@
 # process). The hook input arrives on stdin; the `source` field selects the work.
 # A `fork` or any other source does nothing.
 #
-# FAST PATH. With no registration to update this script exits 0 before starting
-# Python: resume needs the index file for the input's session id, clear needs any
-# index file. The index lives in the plugin data directory, which this script
-# resolves with the same rule as bootstrap_guard.data_dir:
-#   ${CLAUDE_BOOTSTRAP_DATA_ROOT:-$HOME/.claude/plugins/data}/plugins-kit/task-kit
+# FAST PATH. The registrations live only in git: the project's
+# <project>/dev/tasks/.sessions/*.yaml and <project>/tmp/.sessions/*.yaml (the
+# project is $CLAUDE_PROJECT_DIR, else the hook input's "cwd"). With no
+# registration to update this script exits 0 before starting Python:
+#   resume: some session file mentions the input's session id;
+#   clear:  some session file holds a record (a "session_id:" line).
+# The file name of THIS machine's file (machine.py: host name lowercased, "-wsl"
+# under WSL, the sessions.host override) cannot be derived in sh exactly, so both
+# checks look at every machine's file. That is correct but broader than needed:
+# on clear, a project where only ANOTHER machine holds a registration starts
+# Python once and finds nothing to do. A session that registered tasks in a
+# different project than this one is not seen (the entry has the same scope).
 #
-# Never fails the session: every path exits 0. The Python entry
-# (scripts/task_session_start.py) logs its own errors; this script appends the
-# entry's stderr to the same log.
+# Never fails the session: every path exits 0. The hook is async, so nothing it
+# prints reaches anyone; failures go to <data dir>/sessions/session-start-hook.log
+# (the one file this script writes there, only on a failure; the data directory
+# is ${CLAUDE_BOOTSTRAP_DATA_ROOT:-$HOME/.claude/plugins/data}/plugins-kit/task-kit,
+# the rule bootstrap_guard.data_dir uses). The Python entry
+# (scripts/task_session_start.py) logs its own errors; this script appends any
+# stderr of the entry to the same log.
 #
 # Keep this script portable sh (bash 3.2, zsh and dash): no bash-only variables,
 # arrays or tests.
@@ -35,22 +46,31 @@ _INPUT=$(cat 2>/dev/null) || _INPUT=
 _FLAT=$(printf '%s' "$_INPUT" | tr -d '\n\r')
 _SOURCE=$(printf '%s' "$_FLAT" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 _SESSION=$(printf '%s' "$_FLAT" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+_CWD=$(printf '%s' "$_FLAT" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | sed 's|\\\\|/|g')
 
 _DATA_ROOT="${CLAUDE_BOOTSTRAP_DATA_ROOT:-${HOME:-}/.claude/plugins/data}"
 _DATA_DIR="$_DATA_ROOT/plugins-kit/task-kit"
-_INDEX_DIR="$_DATA_DIR/sessions/index"
+_PROJECT="${CLAUDE_PROJECT_DIR:-$_CWD}"
+[ -n "$_PROJECT" ] && [ -d "$_PROJECT" ] || exit 0
 
 case "$_SOURCE" in
     resume)
         case "$_SESSION" in
             ""|*[!A-Za-z0-9_-]*|[!A-Za-z0-9]*) exit 0 ;;
         esac
-        [ -f "$_INDEX_DIR/$_SESSION.json" ] || exit 0
+        _FOUND=
+        for _F in "$_PROJECT"/dev/tasks/.sessions/*.yaml "$_PROJECT"/tmp/.sessions/*.yaml; do
+            if [ -f "$_F" ] && grep -q -F -- "$_SESSION" "$_F" 2>/dev/null; then
+                _FOUND=1
+                break
+            fi
+        done
+        [ -n "$_FOUND" ] || exit 0
         ;;
     clear)
         _FOUND=
-        for _F in "$_INDEX_DIR"/*.json; do
-            if [ -f "$_F" ]; then
+        for _F in "$_PROJECT"/dev/tasks/.sessions/*.yaml "$_PROJECT"/tmp/.sessions/*.yaml; do
+            if [ -f "$_F" ] && grep -q 'session_id:' "$_F" 2>/dev/null; then
                 _FOUND=1
                 break
             fi
@@ -65,6 +85,7 @@ esac
 _LOG="$_DATA_DIR/sessions/session-start-hook.log"
 
 _log() {
+    mkdir -p "$_DATA_DIR/sessions" 2>/dev/null
     printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" "$1" >>"$_LOG" 2>/dev/null
     return 0
 }
@@ -107,8 +128,12 @@ if [ ! -f "$_ENTRY" ]; then
     exit 0
 fi
 
-printf '%s' "$_INPUT" | "$_TASK_PY" "$_ENTRY" >/dev/null 2>>"$_LOG"
+# stderr is captured, not redirected into the log, so a quiet run creates no file.
+_ERR=$(printf '%s' "$_INPUT" | "$_TASK_PY" "$_ENTRY" 2>&1 >/dev/null)
 _STATUS=$?
+if [ -n "$_ERR" ]; then
+    _log "$_ERR"
+fi
 if [ "$_STATUS" -ne 0 ]; then
     _log "session-start.sh: $_ENTRY exited $_STATUS"
 fi

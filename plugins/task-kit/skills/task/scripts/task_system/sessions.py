@@ -11,12 +11,15 @@ its old file), refuses to write a file named with its host id that carries anoth
 reads such a file as another machine's. Publication (commit, fetch, push) is ``session_publish``'s; this
 module never runs git and never touches the network.
 
-Local state lives in the data directory, ``<data dir>/sessions/``: ``index/<session id>.json`` (the
-physical roots and stubs a session holds, plus the process stamp it was last recorded under; a HINT, the
-root files are the truth) and ``locks/``. Writers take the per-session locks (by id), then the per-root
-lock, and never nest otherwise. The index is written as a conservative superset BEFORE the root files and
-shrunk AFTER them, so an interruption at any phase leaves an index that names every record, and every
-operation is idempotent.
+The data directory holds NO session state. ``<data dir>/sessions/locks/`` keeps information-free OS lock
+files and nothing else: a registration, a session id, a root or a stub is never written there (distributed
+truth, principle 1: git is the single source of truth). Every operation finds its work by scanning the task
+roots of the project it is given (:func:`task_roots`) for this machine's own file, matching the session id
+(refresh) or the process stamp (clear re-key, register). A session that registered tasks in another project
+than the one scanned is not seen from here. Writers take the per-session locks (by id), then the per-root
+lock, and never nest otherwise. Each root file is replaced in one atomic write and every operation is
+idempotent and rediscovers its work from the files, so an interruption leaves each root either wholly old or
+wholly new, and the same operation, re-run, completes the rest.
 
 States of a record, as seen by a reader: ``running`` / ``not running`` (this machine's file, decided by
 the exact process stamp) and ``unverified`` (another machine's file).
@@ -31,7 +34,6 @@ import contextlib
 import dataclasses
 import datetime
 import hashlib
-import json
 import os
 import re
 from dataclasses import dataclass
@@ -86,7 +88,7 @@ class InvalidOwnFileError(SessionsError):
 
 
 class _FormatError(ValueError):
-    """A session file or index that does not follow the format."""
+    """A session file that does not follow the format."""
 
 
 # -- records -----------------------------------------------------------------------------------------------
@@ -286,14 +288,6 @@ def _check_session_id(session_id: str) -> str:
 def _sessions_dir(data_dir: Path | None) -> Path:
     base = datadir.resolve_data_dir() if data_dir is None else Path(data_dir)
     return base / LOCAL_DIRNAME
-
-
-def _index_dir(local: Path) -> Path:
-    return local / "index"
-
-
-def _index_path(local: Path, session_id: str) -> Path:
-    return _index_dir(local) / f"{_check_session_id(session_id)}.json"
 
 
 def _session_lock(local: Path, session_id: str) -> oslock.FileLock:
@@ -720,65 +714,7 @@ def _decorated(edit: _RootEdit, pairs: Iterable[tuple[Path, Record]], notes: lis
             for path, r in pairs]
 
 
-# -- the local index ---------------------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _Index:
-    stamp: Stamp | None
-    roots: dict  # physical root path -> sorted stubs
-
-
-def _read_index(local: Path, session_id: str, notes: list[str] | None = None) -> _Index | None:
-    path = _index_path(local, session_id)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        raise SessionsError(f"cannot read the session index {path}: {exc}") from exc
-    try:
-        data = json.loads(text)
-        roots = data["roots"]
-        if not isinstance(roots, dict) or not all(
-                isinstance(k, str) and isinstance(v, list) and all(isinstance(s, str) for s in v)
-                for k, v in roots.items()):
-            raise ValueError("roots must map paths to lists of stubs")
-        raw_stamp = data.get("stamp")
-        stamp = Stamp.from_dict(raw_stamp) if raw_stamp is not None else None
-    except (ValueError, KeyError, TypeError, AttributeError, procstamp.StampError) as exc:
-        if notes is not None:
-            notes.append(f"the session index {path.name} is unreadable ({exc}); it is rebuilt from the root files")
-        return None
-    return _Index(stamp, {k: sorted(set(v)) for k, v in roots.items()})
-
-
-def _write_index(local: Path, session_id: str, index: _Index) -> None:
-    path = _index_path(local, session_id)
-    roots = {root: sorted(set(stubs)) for root, stubs in sorted(index.roots.items()) if stubs}
-    if not roots:
-        path.unlink(missing_ok=True)
-        return
-    document = {"_schema_version": SCHEMA_VERSION, "stamp": None if index.stamp is None else index.stamp.to_dict(),
-                "roots": roots}
-    _atomic_write(path, json.dumps(document, indent=2, sort_keys=False) + "\n")
-
-
-def _index_ids(local: Path) -> list[str]:
-    directory = _index_dir(local)
-    if not directory.is_dir():
-        return []
-    return sorted(p.stem for p in directory.glob("*.json") if _SESSION_ID_SAFE.match(p.stem))
-
-
-def has_index(session_id: str, *, data_dir: Path | None = None) -> bool:
-    """Whether this machine holds any registration for ``session_id`` (the hook's cheap test for resume)."""
-    return _index_path(_sessions_dir(data_dir), session_id).is_file()
-
-
-def has_any_index(*, data_dir: Path | None = None) -> bool:
-    """Whether this machine holds any registration at all (the hook's cheap test for clear)."""
-    return bool(_index_ids(_sessions_dir(data_dir)))
+# -- finding a session's registrations in the files ----------------------------------------------------------
 
 
 def _own_session_records(root: Path, machine: Machine, session_id: str) -> list[Record]:
@@ -786,71 +722,10 @@ def _own_session_records(root: Path, machine: Machine, session_id: str) -> list[
             if r.session_id == session_id]
 
 
-def _prune_index(local: Path, machine: Machine, session_id: str, notes: list[str]) -> None:
-    """Shrink the session's index to the (root, stub) pairs the root files still hold (caller holds the session lock)."""
-    index = _read_index(local, session_id, notes)
-    if index is None:  # missing: nothing to shrink; unreadable: the next writer rebuilds it from the root files
-        return
-    kept: dict = {}
-    for root_path, stubs in index.roots.items():
-        root = Path(root_path)
-        held = {r.task for r in _own_session_records(root, machine, session_id)} if root.is_dir() else set()
-        live = [stub for stub in stubs if stub in held]
-        if live:
-            kept[root_path] = live
-    if kept != index.roots:
-        _checkpoint("index_shrink")
-        _write_index(local, session_id, _Index(index.stamp, kept))
-
-
-def _indexed_ids(local: Path, root: Path, stub: str) -> set[str]:
-    """Session ids whose local index names ``stub`` under ``root``.
-
-    An operation interrupted after its root write leaves such an entry with no record behind it; a rerun finds
-    no record to lead it there, so the entries are found through the index and pruned (the index is a hint).
-    """
-    found = set()
-    for sid in _index_ids(local):
-        index = _read_index(local, sid)
-        if index is not None and stub in index.roots.get(str(root), ()):
-            found.add(sid)
-    return found
-
-
-def _sweep_ids(roots: Iterable[Path], machine: Machine, protect: Iterable[str] = ()) -> set[str]:
-    """Session ids whose records on closed, archived or absent tasks the next write in these roots would drop.
-
-    Read before the locks are taken, so the dropped records' session indexes can be locked and shrunk too.
-    """
-    protected = set(protect)
-    ids: set[str] = set()
-    for root in roots:
-        if not Path(root).is_dir():
-            continue
-        states: dict[str, str] = {}
-        for item in _scan_root(root):
-            if not _owns(item, machine):
-                continue
-            for record in item.data.records:
-                if record.task in protected:
-                    continue
-                if states.setdefault(record.task, _task_state(root, record.task)) in _DROPPED_TASK_STATES:
-                    ids.add(record.session_id)
-    return ids
-
-
-def _verified_holdings(local: Path, machine: Machine, session_id: str) -> list[tuple[Path, str]]:
-    index = _read_index(local, session_id)
-    if index is None:
-        return []
-    out = []
-    for root_path, stubs in sorted(index.roots.items()):
-        root = Path(root_path)
-        if not root.is_dir():
-            continue
-        held = {r.task for r in _own_session_records(root, machine, session_id)}
-        out.extend((root, stub) for stub in stubs if stub in held)
-    return out
+def _own_session_holdings(project_root: Path, machine: Machine, session_id: str) -> list[tuple[Path, str]]:
+    """The ``(physical root, stub)`` pairs the project's root files hold for ``session_id`` on this machine."""
+    return [(root, record.task) for root in task_roots(project_root)
+            for record in _own_session_records(root, machine, session_id)]
 
 
 # -- operations --------------------------------------------------------------------------------------------
@@ -906,19 +781,12 @@ def register(identity: harness.Identity, machine: Machine, project_root: Path, r
     prior = [r for item in _scan_root(root) if _owns(item, machine) for r in item.data.records if r.task == stub]
     lineage = {r.session_id for r in prior if r.session_id != session_id
                and procstamp.same_process(r.stamp, identity.stamp)}
-    ids = {session_id} | lineage | _indexed_ids(local, root, stub) | _sweep_ids((root,), machine, protect=(stub,))
+    ids = {session_id} | lineage
 
     taken_over: list[Record] = []
     kept: list[KeptRecord] = []
     others: list[Record] = []
     with _locked(local, ids):
-        index = _read_index(local, session_id, notes)
-        roots = {} if index is None else {k: list(v) for k, v in index.roots.items()}
-        roots.setdefault(str(root), [])
-        if stub not in roots[str(root)]:
-            roots[str(root)].append(stub)
-        _write_index(local, session_id, _Index(identity.stamp, roots))
-        _checkpoint("index_superset")
         with _locked(local, (), (root,)):
             edit = _RootEdit(root, machine)
             notes.extend(edit.notes)
@@ -952,12 +820,11 @@ def register(identity: harness.Identity, machine: Machine, project_root: Path, r
             others.extend(dataclasses.replace(r, task_state=edit.task_state(r.task))
                           for r in edit.foreign if r.task == stub)
             dropped = _decorated(edit, edit.sweep(protect=(stub,)), notes)
+            _checkpoint("before_write")
             changed = edit.commit()
             _checkpoint("root_written")
-        for pruned_id in sorted(ids):
-            _prune_index(local, machine, pruned_id, notes)
-        _checkpoint("index_pruned")
-        also_holds = tuple(s for r, s in _verified_holdings(local, machine, session_id) if (r, s) != (root, stub))
+        also_holds = tuple(s for r, s in _own_session_holdings(project_root, machine, session_id)
+                           if (r, s) != (root, stub))
     final = _decorated(edit, [(placed, record)], notes)[0]
     return RegisterResult(final, action, root, tuple(taken_over), tuple(kept), tuple(others), also_holds,
                           tuple(dropped), changed, tuple(notes))
@@ -967,7 +834,7 @@ def release(identity: harness.Identity | None, machine: Machine, project_root: P
             all_local: bool = False, data_dir: Path | None = None) -> ReleaseResult:
     """Remove this machine's registrations of ``ref``: the caller's (its session id or process stamp), or with
     ``all_local`` every one this machine holds for the task (the human's explicit cleanup; no identity needed).
-    The root file is written first, then the session indexes shrink.
+    Everything is read from, and written to, the root's file.
     """
     if identity is None and not all_local:
         raise SessionsError("releasing the caller's registration needs the caller's session identity "
@@ -983,8 +850,7 @@ def release(identity: harness.Identity | None, machine: Machine, project_root: P
 
     prior = [r for item in _scan_root(root) if _owns(item, machine) for r in item.data.records
              if r.task == stub and matches(r)]
-    ids = ({r.session_id for r in prior} | ({identity.session_id} if identity is not None else set())
-           | _indexed_ids(local, root, stub) | _sweep_ids((root,), machine))
+    ids = {r.session_id for r in prior} | ({identity.session_id} if identity is not None else set())
     with _locked(local, ids):
         with _locked(local, (), (root,)):
             edit = _RootEdit(root, machine)
@@ -995,21 +861,21 @@ def release(identity: harness.Identity | None, machine: Machine, project_root: P
                     edit.remove(path, record)
                     removed.append((path, record))
             dropped = edit.sweep()
+            _checkpoint("before_write")
             changed = edit.commit()
             decorated = _decorated(edit, removed, notes)
             dropped = _decorated(edit, dropped, notes)
             _checkpoint("root_written")
-        for session_id in sorted(ids):
-            _prune_index(local, machine, session_id, notes)
-        _checkpoint("index_shrunk")
     return ReleaseResult(root, tuple(decorated), tuple(dropped), changed, tuple(notes))
 
 
 def refresh(identity: harness.Identity, machine: Machine, transcript_path: str | None = None, *,
-            data_dir: Path | None = None) -> RefreshResult:
+            project_root: Path, data_dir: Path | None = None) -> RefreshResult:
     """A resumed session (same id, new process): give every record of this machine carrying the session id the
-    new process stamp and transcript path. Writes nothing when this machine holds no such record or nothing
-    differs. ``transcript_path`` is home-relative (see :func:`to_home_relative`); None keeps the recorded one.
+    new process stamp and transcript path. The records are found in the ``project_root``'s task roots (a
+    registration made in another project is not seen from here). Writes nothing when this machine holds no
+    such record or nothing differs. ``transcript_path`` is home-relative (see :func:`to_home_relative`); None
+    keeps the recorded one.
     """
     session_id = _check_session_id(identity.session_id)
     local = _sessions_dir(data_dir)
@@ -1017,21 +883,12 @@ def refresh(identity: harness.Identity, machine: Machine, transcript_path: str |
     refreshed: list[Record] = []
     dropped: list[Record] = []
     changed: list[Path] = []
-    if not has_index(session_id, data_dir=data_dir):
+    roots = [root for root in task_roots(project_root) if _own_session_records(root, machine, session_id)]
+    if not roots:
         return RefreshResult((), (), (), ())
     now = utc_now()
-    peek = _read_index(local, session_id)
-    swept = set() if peek is None else _sweep_ids([Path(r) for r in peek.roots], machine)
-    with _locked(local, {session_id} | swept):
-        index = _read_index(local, session_id, notes)
-        if index is None:
-            return RefreshResult((), (), (), tuple(notes))
-        _write_index(local, session_id, _Index(identity.stamp, index.roots))
-        _checkpoint("index_stamp")
-        for root_path in sorted(index.roots):
-            root = Path(root_path)
-            if not root.is_dir():
-                continue
+    with _locked(local, {session_id}):
+        for root in roots:
             with _locked(local, (), (root,)):
                 edit = _RootEdit(root, machine)
                 notes.extend(edit.notes)
@@ -1047,78 +904,63 @@ def refresh(identity: harness.Identity, machine: Machine, transcript_path: str |
                     edit.replace(path, record, new)
                     touched.append((path, new))
                 dropped.extend(_decorated(edit, edit.sweep(), notes))
+                _checkpoint("before_write")
                 changed.extend(edit.commit())
                 refreshed.extend(_decorated(edit, touched, notes))
                 _checkpoint("root_written")
-        for pruned_id in sorted({session_id} | swept):
-            _prune_index(local, machine, pruned_id, notes)
     return RefreshResult(tuple(refreshed), tuple(dropped), tuple(changed), tuple(notes))
 
 
 def rekey_after_clear(identity: harness.Identity, machine: Machine, transcript_path: str | None = None, *,
-                      data_dir: Path | None = None) -> RekeyResult:
+                      project_root: Path, data_dir: Path | None = None) -> RekeyResult:
     """After ``/clear`` (new session id, same process): move EVERY registration of the calling process to the
-    new session id, with its index entry, in one idempotent operation.
+    new session id, in one idempotent operation.
 
-    Previous ids are the index entries recorded under the caller's process stamp. Phases: the new id's index
-    becomes the union of theirs (the superset); each root's matching records are rewritten under that root's
-    lock; the previous ids' index files are deleted. A run interrupted after any phase completes when re-run.
-    ``transcript_path`` (the post-clear transcript, home-relative) is recorded when given.
+    The registrations are this machine's records, in the ``project_root``'s task roots, whose process stamp is
+    the caller's and whose session id is not the new one (a registration made in another project is not seen
+    from here). Each root's matching records are rewritten under that root's lock, one atomic file write per
+    root. A run interrupted between roots leaves the rest still carrying the process stamp, so the same
+    operation, re-run, finds and completes them. ``transcript_path`` (the post-clear transcript, home-relative)
+    is recorded when given.
     """
     new_id = _check_session_id(identity.session_id)
     local = _sessions_dir(data_dir)
     notes: list[str] = []
-    previous = [sid for sid in _index_ids(local) if sid != new_id
-                and (index := _read_index(local, sid, notes)) is not None and index.stamp is not None
-                and procstamp.same_process(index.stamp, identity.stamp)]
+
+    def moves(record: Record) -> bool:
+        return record.session_id != new_id and procstamp.same_process(record.stamp, identity.stamp)
+
+    found: list[tuple[Path, set[str]]] = []
+    for root in task_roots(project_root):
+        ids = {r.session_id for item in _scan_root(root) if _owns(item, machine) for r in item.data.records
+               if moves(r)}
+        if ids:
+            found.append((root, ids))
+    previous = sorted({sid for _root, ids in found for sid in ids})
     if not previous:
         return RekeyResult((), (), (), (), tuple(notes))
     now = utc_now()
     rekeyed: list[Record] = []
     dropped: list[Record] = []
     changed: list[Path] = []
-    peeked_roots: set[str] = set()
-    for sid in [*previous, new_id]:
-        peek = _read_index(local, sid)
-        if peek is not None:
-            peeked_roots.update(peek.roots)
-    swept = _sweep_ids([Path(r) for r in peeked_roots], machine) - {new_id}
-    with _locked(local, {*previous, new_id, *swept}):
-        union: dict = {}
-        for sid in [*previous, new_id]:
-            index = _read_index(local, sid, notes)
-            if index is None:
-                continue
-            for root_path, stubs in index.roots.items():
-                union.setdefault(root_path, set()).update(stubs)
-        previous = [sid for sid in previous if _index_path(local, sid).exists()]
-        _write_index(local, new_id, _Index(identity.stamp, {k: sorted(v) for k, v in union.items()}))
-        _checkpoint("index_superset")
-        for number, root_path in enumerate(sorted(union)):
-            root = Path(root_path)
-            if not root.is_dir():
-                continue
+    with _locked(local, {*previous, new_id}):
+        for number, (root, _ids) in enumerate(found):
             with _locked(local, (), (root,)):
                 edit = _RootEdit(root, machine)
                 notes.extend(edit.notes)
                 touched = []
                 for path, record in edit.own_records():
-                    if record.session_id in previous or (record.session_id != new_id and
-                                                         procstamp.same_process(record.stamp, identity.stamp)):
+                    if moves(record):
                         new = dataclasses.replace(record, session_id=new_id, stamp=identity.stamp, recorded_at=now,
                                                   transcript_path=transcript_path or record.transcript_path)
                         edit.replace(path, record, new)
                         touched.append((path, new))
                 _merge_duplicates(edit)
                 dropped.extend(_decorated(edit, edit.sweep(), notes))
+                _checkpoint(f"before_write:{number}")
                 changed.extend(edit.commit())
                 rekeyed.extend(_decorated(edit, [(p, r) for p, r in touched if r in edit.files[p]], notes))
                 _checkpoint(f"root_written:{number}")
-        for sid in previous:
-            _index_path(local, sid).unlink(missing_ok=True)
-        _checkpoint("old_index_removed")
-        for pruned_id in sorted({new_id} | swept):
-            _prune_index(local, machine, pruned_id, notes)
     return RekeyResult(tuple(previous), tuple(rekeyed), tuple(dropped), tuple(changed), tuple(notes))
 
 

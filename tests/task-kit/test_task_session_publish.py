@@ -435,17 +435,18 @@ def test_pending_lists_uncommitted_and_unpublished_files_and_is_read_only(mine, 
     assert sp.pending(tmp_path, HOST) == ()  # not a work tree
 
 
-def test_every_outcome_including_failures_is_logged(mine, tmp_path, data_dir):
+def test_every_outcome_including_failures_is_returned_and_nothing_is_logged(mine, tmp_path, data_dir):
+    """Failures reach the caller as the returned result; the data directory keeps no record of outcomes (only the
+    information-free repository lock file may appear there). Revert: write a log line again -> the file check is red."""
     own_record(mine)
     break_remote(mine, tmp_path)
-    publish(mine, data_dir)
-    publish(tmp_path / "nowhere", data_dir)
+    failed = publish(mine, data_dir)
+    refused = publish(tmp_path / "nowhere", data_dir)
 
-    lines = (data_dir / "sessions" / "publish.log").read_text(encoding="utf-8").splitlines()
-
-    assert len(lines) == 2
-    assert f"host={HOST}" in lines[0] and "status=fetch-failed" in lines[0] and "fetch failed" in lines[0]
-    assert "status=refused" in lines[1]
+    assert failed.status == sp.FETCH_FAILED and "fetch failed" in failed.message
+    assert refused.status == sp.REFUSED
+    written = [p for p in data_dir.rglob("*") if p.is_file()]
+    assert all(p.suffix == ".lock" and p.parent.name == "locks" for p in written), written
 
 
 def test_a_busy_repository_lock_reports_not_committed(mine, data_dir):

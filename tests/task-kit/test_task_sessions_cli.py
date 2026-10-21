@@ -96,7 +96,7 @@ def test_work_registers_the_session_and_publishes_the_record(alpha):
     assert record["process"]["pid"] == harness.pid
     assert rig.remote_text(f".sessions/{HOST}.yaml") == rig.session_file().read_text(encoding="utf-8")
     assert git(rig.tasks, "status", "--porcelain").stdout == ""
-    assert (rig.data_dir / "sessions" / "index" / f"{SID_A}.json").is_file()
+    assert rig.local_files() == [], "the registration lives in git alone; the data directory holds locks only"
 
 
 def test_work_stdout_and_exit_code_are_what_they_were_without_registration(alpha):
@@ -173,7 +173,7 @@ def test_a_non_publishable_durable_root_reports_the_refusal_and_work_still_works
     [line] = session_lines(result)
     assert line.startswith("session: not registered: git ignores .sessions/ in ")
     assert not (rig.tasks / ".sessions").exists()
-    assert not (rig.data_dir / "sessions" / "index").exists()
+    assert rig.local_files() == []
 
 
 def test_a_durable_root_without_an_upstream_is_refused_the_same_way(alpha):
@@ -358,7 +358,7 @@ def test_release_at_hand_off_removes_the_registration_and_publishes(alpha):
                              "(1 registration: session aaaaaaaa); published\n")
     assert rig.records() == []
     assert yaml.safe_load(rig.remote_text(f".sessions/{HOST}.yaml"))["sessions"] == []
-    assert not (rig.data_dir / "sessions" / "index" / f"{SID_A}.json").exists()
+    assert rig.local_files() == []
 
 
 def test_release_removes_only_the_callers_registration(alpha):
@@ -557,7 +557,7 @@ def test_sessions_root_flag_works_before_and_after_the_subcommand(alpha, tmp_pat
 
 
 def test_the_read_verbs_leave_every_byte_alone(alpha):
-    """Revert: have list_command call session_publish.publish -> publish.log and the lock files appear (red)."""
+    """Revert: have list_command call session_publish.publish -> the repository lock file appears (red)."""
     rig = alpha
     write_foreign(rig)
     live, gone = rig.harness(SID_A), rig.harness(SID_B)

@@ -178,8 +178,8 @@ class SessionsMaintainer:
 
     One pass per ``interval_s``. Reconciling drops this machine's records on closed, archived or absent tasks and
     those a human dismissed, and its dismissal entries whose target is gone; it never drops a record because its
-    process is not running. A pass publishes at most once per repository (``session_publish.publish`` is bounded and
-    logs its outcome to ``publish.log``).
+    process is not running. A pass publishes at most once per repository (``session_publish.publish`` is bounded; the
+    pass reports each outcome through ``log``).
     """
 
     def __init__(self, reader: SessionsReader, roots: Callable[[], Iterable[SessionRoot]], *,

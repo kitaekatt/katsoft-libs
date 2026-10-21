@@ -78,10 +78,10 @@ class World:
         return sessions.release(ident, machine, self.project, ref, data_dir=self.data, **kw)
 
     def refresh(self, ident, path=None, machine=HOST):
-        return sessions.refresh(ident, machine, path, data_dir=self.data)
+        return sessions.refresh(ident, machine, path, project_root=self.project, data_dir=self.data)
 
     def rekey(self, ident, path=None, machine=HOST):
-        return sessions.rekey_after_clear(ident, machine, path, data_dir=self.data)
+        return sessions.rekey_after_clear(ident, machine, path, project_root=self.project, data_dir=self.data)
 
     def records(self, machine=HOST, root: Path | None = None):
         return sessions.read_root(root or self.root, machine).records
@@ -92,13 +92,13 @@ class World:
     def state(self, task: str, session_id: str, machine=HOST) -> str:
         return next(r.state for r in self.records(machine) if (r.task, r.session_id) == (task, session_id))
 
-    def index(self, session_id: str) -> dict | None:
-        path = self.data / "sessions" / "index" / f"{session_id}.json"
-        if not path.exists():
-            return None
-        import json
-
-        return json.loads(path.read_text(encoding="utf-8"))
+    def local_files(self) -> list[str]:
+        """Every file under ``<data>/sessions/`` that is not an information-free lock file: there must be none."""
+        directory = self.data / "sessions"
+        if not directory.is_dir():
+            return []
+        return sorted(p.relative_to(directory).as_posix() for p in directory.rglob("*")
+                      if p.is_file() and not (p.parent.name == "locks" and p.suffix == ".lock"))
 
     def close(self) -> None:
         for proc in self.procs:
@@ -338,8 +338,7 @@ def test_the_same_process_under_a_new_session_id_refreshes_in_place_and_rekeys(w
     result = world.register(world.ident("sess-new", proc), "alpha")
     assert result.action == sessions.ACTION_REFRESHED and result.others == () and result.kept_not_running == ()
     assert world.keys() == [("alpha", "sess-new")]
-    assert world.index("sess-old") is None  # the old id no longer claims it
-    assert world.index("sess-new")["roots"] == {str(world.root): ["alpha"]}
+    assert world.local_files() == []
 
 
 def test_a_running_session_is_kept_and_both_show(world):
@@ -386,7 +385,7 @@ def test_a_second_task_leaves_the_first_registered_and_is_reported(world):
     second = world.register(ident, "beta")
     assert first.also_holds == () and second.also_holds == ("alpha",)
     assert world.keys() == [("alpha", "sess-one"), ("beta", "sess-one")]
-    assert world.index("sess-one")["roots"] == {str(world.root): ["alpha", "beta"]}
+    assert world.local_files() == []
 
 
 def test_a_tmp_task_registers_under_the_tmp_root(world):
@@ -447,7 +446,7 @@ def test_records_on_closed_archived_or_absent_tasks_are_shown_then_dropped_at_th
     result = world.register(other, "epsilon")
     assert sorted(r.task for r in result.dropped) == ["alpha", "beta", "gamma"]
     assert world.keys() == [("epsilon", "sess-two")]
-    assert world.index("sess-one") is None  # the dropped records left no index claim behind
+    assert world.local_files() == []
 
 
 def test_other_machines_records_on_closed_tasks_are_not_dropped(world):
@@ -482,7 +481,7 @@ def test_release_by_session_id_removes_only_that_session_on_that_task(world):
     result = world.release(one, "alpha")
     assert [r.session_id for r in result.removed] == ["sess-one"]
     assert world.keys() == [("alpha", "sess-two"), ("beta", "sess-one")]
-    assert world.index("sess-one")["roots"] == {str(world.root): ["beta"]}
+    assert world.local_files() == []
 
 
 def test_release_by_process_stamp_removes_the_record_of_a_session_id_that_changed(world):
@@ -491,7 +490,6 @@ def test_release_by_process_stamp_removes_the_record_of_a_session_id_that_change
     world.register(world.ident("sess-old", proc), "alpha")
     result = world.release(world.ident("sess-new", proc), "alpha")
     assert [r.session_id for r in result.removed] == ["sess-old"] and world.records() == ()
-    assert world.index("sess-old") is None
 
 
 def test_release_leaves_a_process_that_is_not_the_callers_alone(world):
@@ -509,8 +507,7 @@ def test_release_all_local_removes_every_local_record_of_the_task_and_needs_no_i
     result = world.release(None, "alpha", all_local=True)
     assert sorted(r.session_id for r in result.removed) == ["sess-dead", "sess-live"]
     assert world.keys() == [("beta", "sess-other-task")]
-    assert world.index("sess-dead") is None and world.index("sess-live") is None
-    assert world.index("sess-other-task") is not None
+    assert world.local_files() == []
 
 
 def test_releasing_the_callers_registration_needs_an_identity(world):
@@ -559,7 +556,7 @@ def test_refresh_gives_every_record_of_the_session_the_resumed_process_and_trans
             assert record.transcript_path == "~/.claude/projects/-p/sess-one.jsonl"
         else:
             assert record.session_id == "sess-two"
-    assert world.index("sess-one")["stamp"] == resumed.stamp.to_dict()
+    assert world.local_files() == []
 
 
 def test_refresh_writes_nothing_when_the_session_holds_no_record(world):
@@ -568,7 +565,7 @@ def test_refresh_writes_nothing_when_the_session_holds_no_record(world):
     result = world.refresh(world.ident("sess-stranger"))
     assert result.refreshed == () and result.changed_files == ()
     assert world.file().read_bytes() == before
-    assert world.index("sess-stranger") is None
+    assert world.local_files() == []
 
 
 def test_refresh_with_nothing_different_writes_nothing(world):
@@ -595,15 +592,12 @@ def test_two_registered_tasks_across_clear_exit_and_resume(world):
     before_clear = world.ident("sess-before", first_process)
     world.register(before_clear, "alpha")
     world.register(before_clear, "beta")
-    assert world.index("sess-before")["roots"] == {str(world.root): ["alpha", "beta"]}
 
     # /clear: a new session id, the same process
     after_clear = world.ident("sess-after", first_process)
     result = world.rekey(after_clear, "~/.claude/projects/-p/sess-after.jsonl")
     assert result.previous_ids == ("sess-before",)
     assert world.keys() == [("alpha", "sess-after"), ("beta", "sess-after")]
-    assert world.index("sess-before") is None
-    assert world.index("sess-after")["roots"] == {str(world.root): ["alpha", "beta"]}
     assert all(r.state == sessions.STATE_RUNNING for r in world.records())
 
     # exit: the harness process ends; both registrations stay
@@ -619,7 +613,7 @@ def test_two_registered_tasks_across_clear_exit_and_resume(world):
     # hand-off of one task releases only that one
     world.release(resumed, "alpha")
     assert world.keys() == [("beta", "sess-after")]
-    assert world.index("sess-after")["roots"] == {str(world.root): ["beta"]}
+    assert world.local_files() == []
 
 
 def test_rekey_moves_every_registration_in_every_root(world):
@@ -645,7 +639,7 @@ def test_rekey_with_no_registration_of_the_process_writes_nothing(world):
     before = world.file().read_bytes()
     result = world.rekey(world.ident("sess-after"))
     assert result.previous_ids == () and result.changed_files == ()
-    assert world.file().read_bytes() == before and not (world.data / "sessions" / "index" / "sess-after.json").exists()
+    assert world.file().read_bytes() == before and world.local_files() == []
 
 
 def test_rekey_merges_a_record_the_new_id_already_registered(world):
@@ -661,11 +655,56 @@ def test_rekey_merges_a_record_the_new_id_already_registered(world):
     assert world.keys() == [("alpha", "sess-after")]
 
 
-def test_the_hook_fast_path_helpers_see_the_index(world):
-    assert not sessions.has_any_index(data_dir=world.data) and not sessions.has_index("sess-one", data_dir=world.data)
-    world.register(world.ident("sess-one"), "alpha")
-    assert sessions.has_any_index(data_dir=world.data) and sessions.has_index("sess-one", data_dir=world.data)
-    assert not sessions.has_index("sess-two", data_dir=world.data)
+def test_no_session_state_is_kept_in_the_data_directory_only_lock_files(world):
+    """Guard (distributed truth, principle 1): register, release, refresh, re-key and dismiss leave nothing under
+    ``<data>/sessions/`` but information-free lock files, however many sessions and roots are involved."""
+    proc = world.proc()
+    before = world.ident("sess-before", proc)
+    for ref in ("alpha", "beta", "tmp/delta"):
+        world.register(before, ref)
+    assert world.local_files() == []
+    world.rekey(world.ident("sess-after", proc), "~/.claude/projects/-p/sess-after.jsonl")
+    assert world.local_files() == []
+    world.kill(proc)
+    world.refresh(world.ident("sess-after"), "~/.claude/projects/-p/sess-after-2.jsonl")
+    assert world.local_files() == []
+    world.release(world.ident("sess-after"), "alpha")
+    world.release(None, "beta", all_local=True)
+    assert world.local_files() == []
+    locks = sorted(p.name for p in (world.data / "sessions").rglob("*") if p.is_file())
+    assert locks and all(name.endswith(".lock") for name in locks), locks
+
+
+def test_refresh_and_rekey_find_the_registrations_through_the_files_alone(world):
+    """No data directory exists at all: the files in the project are enough to find, and to correct, a session."""
+    proc = world.proc()
+    ident = world.ident("sess-one", proc)
+    world.register(ident, "alpha")
+    world.register(ident, "tmp/delta")
+    import shutil
+
+    shutil.rmtree(world.data)  # whatever the machine kept locally is gone
+    world.kill(proc)
+    resumed = world.ident("sess-one")
+    result = world.refresh(resumed)
+    assert sorted(r.task for r in result.refreshed) == ["alpha", "delta"], "both roots are refreshed"
+    assert {r.stamp for r in world.records()} == {resumed.stamp}
+    shutil.rmtree(world.data)
+    result = world.rekey(harness.Identity("sess-three", resumed.pid, resumed.stamp))  # /clear of the resumed process
+    assert result.previous_ids == ("sess-one",) and len(result.rekeyed) == 2
+    assert world.keys() == [("alpha", "sess-three")] and world.keys(root=world.tmp_root) == [("delta", "sess-three")]
+
+
+def test_refresh_does_not_see_a_registration_in_another_project(world, tmp_path):
+    """The case the files-only design does not cover: the session registered in a project other than the one scanned."""
+    old = world.proc()
+    world.register(world.ident("sess-one", old), "alpha")
+    world.kill(old)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    result = sessions.refresh(world.ident("sess-one"), HOST, project_root=elsewhere, data_dir=world.data)
+    assert result.refreshed == () and result.changed_files == ()
+    assert world.records()[0].state == sessions.STATE_NOT_RUNNING
 
 
 # -- read verbs, locks ----------------------------------------------------------------------------------

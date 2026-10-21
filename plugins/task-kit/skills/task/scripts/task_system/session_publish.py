@@ -18,9 +18,9 @@ strand. Each network attempt then:
    Attempts are bounded (:data:`MAX_ATTEMPTS` within :data:`WINDOW_S` seconds).
 
 Library API (every function is offline except :func:`publish`): :func:`session_file`, :func:`preflight`,
-:func:`pending`, :func:`publish`. Every :func:`publish` outcome, failures included, is one line in
-``<data dir>/sessions/publish.log``; a log that cannot be written raises, because a hidden failure is worse than a
-loud one.
+:func:`pending`, :func:`publish`. Every :func:`publish` outcome, failures included, is the returned
+:class:`PublishResult`; the caller reports it (the CLI to its output, the SessionStart hook to its failure log).
+The data directory keeps only the per-repository lock file (information-free), never a record of outcomes.
 """
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ import signal
 import subprocess
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
@@ -44,7 +43,6 @@ from .resolve import LOCATION_DEV_TASKS, LOCATION_TMP
 SESSIONS_DIRNAME = ".sessions"
 SESSION_SUFFIX = ".yaml"
 SESSIONS_DATA_SUBDIR = "sessions"
-PUBLISH_LOG = "publish.log"
 
 MAX_ATTEMPTS = 3
 WINDOW_S = 60.0
@@ -312,16 +310,6 @@ def lock_path(top: Path, data_dir: Path) -> Path:
     return Path(data_dir) / SESSIONS_DATA_SUBDIR / "locks" / f"repo-{key}.lock"
 
 
-def _log(data_dir: Path, top: Path | None, host: str, result: PublishResult) -> None:
-    path = Path(data_dir) / SESSIONS_DATA_SUBDIR / PUBLISH_LOG
-    path.parent.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    message = " ".join(result.message.split())
-    line = f"{stamp} host={host} repo={top if top else '-'} status={result.status} attempts={result.attempts} {message}\n"
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(line)
-
-
 def _result(status: str, message: str, *, committed: bool, published: bool, attempts: int,
             files: Sequence[str], top: Path | None) -> PublishResult:
     return PublishResult(status, message, committed, published, attempts, tuple(files), top)
@@ -451,10 +439,9 @@ def publish(repo_root: Path, machine, *, data_dir: Path | None = None, record: b
     """Commit this machine's session files in ``repo_root``'s repository, then publish them.
 
     Holds the per-repository lock for the whole call. Never raises for a git or network condition: those are
-    :class:`PublishResult` statuses, each logged to ``publish.log``. ``data_dir`` defaults to the plugin's
-    bootstrap data directory.
+    :class:`PublishResult` statuses; nothing is written to the data directory but the lock file. ``data_dir``
+    defaults to the plugin's bootstrap data directory.
     """
-    host = host_of(machine)
     data_dir = Path(data_dir) if data_dir is not None else resolve_data_dir()
     top = _toplevel(Path(repo_root))
     if not record:
@@ -472,5 +459,4 @@ def publish(repo_root: Path, machine, *, data_dir: Path | None = None, record: b
                 BUSY, f"not committed: another publish holds the repository lock for {top}; the record "
                 f"publishes at the next publish (`task sessions publish`)", committed=False, published=False,
                 attempts=0, files=(), top=top)
-    _log(data_dir, top, host, result)
     return result

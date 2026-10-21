@@ -207,6 +207,14 @@ class Rig:
             return []
         return yaml.safe_load(path.read_text(encoding="utf-8"))["sessions"]
 
+    def local_files(self) -> list[str]:
+        """Every file under ``<data dir>/sessions/`` that is not a lock file (there must be none: git is the truth)."""
+        directory = self.data_dir / "sessions"
+        if not directory.is_dir():
+            return []
+        return sorted(p.relative_to(directory).as_posix() for p in directory.rglob("*")
+                      if p.is_file() and not (p.parent.name == "locks" and p.suffix == ".lock"))
+
     def remote_text(self, rel: str) -> str:
         return git(self.remote, "show", f"{BRANCH}:{rel}").stdout
 
