@@ -291,6 +291,22 @@ unconfigurable opinion whose test passes is a finding.
   sees `tmp/` tasks. User ruling 2026-10-19: "let's say we don't support tmp/ tasks at all
   in the dashboard I think that's the easiest thing to do".
 
+- **task-kit's working-session registration lasts until hand-off; exiting the harness does
+  not release it.** `/task work` registers the Claude Code session as working a task and
+  `/task hand-off` releases it. Exit, crash and resume leave the record in place, so a user who
+  ends sessions without a hand-off accumulates registrations that show as `not running` on
+  this machine and `unverified` on others. A user will reasonably want a record to end with
+  its process; we decline a flag because a record that disappears when a process dies would
+  turn a session's absence into a statement that the work stopped, which only the human who
+  hands off can make, and a kill, a crash or a laptop sleep would then silently drop a claim
+  that other machines rely on. Such a user releases with `/task hand-off`,
+  `task sessions release <ref> --all-local`, or a dashboard dismissal, or turns recording
+  off with `sessions: {record: false}` in `~/.claude/task.local.yaml`. User ruling
+  2026-10-21: "the /task hand-off procedure should include unregistering that you are
+  working on a task. The /task work procedure should include registering that you are
+  working on a task. If a human interrupts this, that is on the human. If you exit a harness
+  I don't think that should count as interrupting working on a task."
+
 An opinion that FAILS the test needs neither a register entry nor a seam -- it is simply a
 good default. Opinions that PASS and are still unconfigurable are findings, tracked with
 per-finding verdicts in the reference above; known examples are the task system's durability

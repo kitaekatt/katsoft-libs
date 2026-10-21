@@ -347,3 +347,41 @@ def test_the_dashboard_state_module_re_exports_the_moved_resolver():
     assert dstate.resolve_data_dir is datadir.resolve_data_dir
     assert dstate.DATA_ROOT_ENV == datadir.DATA_ROOT_ENV
     assert issubclass(dstate.DashboardStateError, datadir.DataDirError)  # one handler covers both
+
+
+# -- Windows gate: registration is refused until process verification is measured there ---------------------
+
+
+@pytest.mark.parametrize("platform", ["win32", "cygwin", "msys"])
+def test_identity_is_refused_on_windows_with_a_stated_reason(platform, sleeper):
+    """Revert: drop the platform check in resolve_identity -> the call proceeds past the gate (red)."""
+    env = {"CLAUDE_CODE_SESSION_ID": "sid-1", "CLAUDE_PID": str(os.getpid())}
+    with pytest.raises(harness.IdentityError) as caught:
+        harness.resolve_identity(env, platform=platform)
+    assert str(caught.value) == harness.WINDOWS_REFUSAL
+    assert "not supported on Windows" in str(caught.value) and "CLAUDE_PID" in str(caught.value)
+
+
+def test_the_windows_refusal_precedes_every_other_identity_check():
+    """A Windows caller with no session id still gets the platform reason, never a misleading env message."""
+    with pytest.raises(harness.IdentityError) as caught:
+        harness.resolve_identity({}, platform="win32")
+    assert str(caught.value) == harness.WINDOWS_REFUSAL
+
+
+def test_other_platforms_pass_the_gate_and_reach_the_ordinary_checks():
+    with pytest.raises(harness.IdentityError) as caught:
+        harness.resolve_identity({"CLAUDE_CODE_SESSION_ID": "sid-1"}, platform="darwin")
+    assert "CLAUDE_PID is not set" in str(caught.value)
+
+
+def test_work_reports_a_windows_refusal_on_the_session_line_and_writes_nothing(monkeypatch, tmp_path):
+    """Revert: drop the gate -> registration is attempted on Windows (red on both assertions)."""
+    from task_system import sessions_cli
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    env = {"CLAUDE_CODE_SESSION_ID": "sid-1", "CLAUDE_PID": str(os.getpid())}
+    lines = sessions_cli.register_for_work(tmp_path, "alpha", env=env, config_path=tmp_path / "none.yaml",
+                                           data_dir=tmp_path / "data")
+    assert lines == [f"session: not registered: {harness.WINDOWS_REFUSAL}"]
+    assert not (tmp_path / "data").exists() and not (tmp_path / "dev").exists()
