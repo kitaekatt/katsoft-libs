@@ -146,8 +146,14 @@ class Host:                                            # what register(host) may
     def cli(self, operation, build_parser, run) -> None     # databench [<dir>] <operation>
     def view(self, view_id, title, *, nav=True) -> None     # announced by GET /api/v1/modules
     def generation(self, op: "GenerationOperation") -> None  # used from M7
-    def viewer_annotator(self, fn) -> None                  # adds keys to a file context
+    def context_contributor(self, fn) -> None               # see below
     def enabled(self, module_id) -> bool                    # soft links between modules
+# fn(kind, path, probe) -> Mapping[str, object], kind in {"directory", "file", "entry"}:
+# merged into the directory context, the file context (path = the file; its viewer keys
+# included) and each child entry's metadata. `probe` is core's ListingProbe (exact-spelling
+# names and the visibility policy, sharing the request's names cache), so a contributor never
+# calls filesystem.py's private methods. A key a contributor adds is absent when its module is
+# disabled; the explorer view treats an absent key as "no link".
 def load_enabled(path: Path | None = None) -> tuple[str, ...]
     # <config root>/databench/modules.json {"schema": 1, "enabled": [...]}; absent: all three
 def register_enabled(host: Host, enabled: Iterable[str]) -> None   # imports enabled entries only
@@ -215,13 +221,19 @@ lazy `entities` import becomes a registered context contributor),
 
 **M1-U4 html backend** (after U3; shares `server.py`, `cli.py`, `filesystem.py`). Owns
 `databench:src/databench/html_module.py` (added; not named `index_pages*`): the index-page record
-and style routes, a viewer annotator for marked pages (the marker logic leaves `filesystem.py`),
+and style routes, a context contributor that adds `has_index_page` and `index_page` to directory
+contexts, file contexts (for the parent directory) and directory entries, and the marked-page raw
+rule to file viewer keys, exactly where `filesystem.py:1262-1269,1702-1710,1914-1936` add them
+today (the marker logic leaves `filesystem.py`),
 the `index-pages` CLI operation delegating to `index_pages_cli.is_invocation` and `main`, and the
 generation operation M6 uses. Also owns `databench:src/databench/generate_cli.py` (asks the
 registry for operations instead of importing `index_pages_*`),
 `databench:src/databench/generate_config.py`, `databench:src/databench/llm_gateway.py` (added:
 core's own `resolve_llm_kit`; the copy in `index_pages_runner.py` stays until the section 6
-batch), `databench:tests/test_html_module.py`. `filesystem.index_pages_runner_settings` stays in
+batch), `databench:tests/test_html_module.py` (with html enabled, the directory, file and
+entry payloads of a fixture tree match goldens captured before the split byte for byte; revert:
+contribute to files only -> the directory and entry goldens go red; with html disabled the keys
+are absent). `filesystem.index_pages_runner_settings` stays in
 core until the section 6 batch, because its caller `index_pages_cli.py` is fingerprinted; it
 imports nothing from html.
 
@@ -229,7 +241,13 @@ imports nothing from html.
 `databench:web/src/main.tsx` (nav and routes come from `GET /api/v1/modules`; `/` opens
 explorer when enabled, else the first enabled module's view, else a core page saying no module is
 enabled; a deep link into a disabled module shows "module disabled"; comment location links are
-soft links to explorer), `databench:tests/module_isolation.py` (helper),
+soft links to explorer), `databench:src/databench/cli.py` (core option `--view VIEW_ID`: it
+ensures or attaches to the server as bare `databench` does and opens the browser at that view's
+route from the registry; an unknown or disabled view exits 1 naming the enabled views; an option,
+so no directory name collides with it), `databench:tests/test_cli_view.py` (an enabled view
+opens its URL through a fake opener, on a fresh and on an attached server; a disabled and an
+unknown view exit 1; revert: ignore `--view` -> the root URL opens -> red),
+`databench:tests/module_isolation.py` (helper),
 `databench:tests/test_module_isolation.py`, the manifest's Python allowlist (emptied). The
 isolation test, per enabled set (none; each module alone; all), builds the app and the CLI parser
 in a subprocess and asserts no other module's file is in `sys.modules`; a `module(id)` marker and
@@ -404,6 +422,12 @@ ported (q3; M8).
   launcher, scheduler, runner and runtime, jobs edge, translation, authoring, helpers,
   characterization, acceptance), `plugins/task-kit/skills/task/scripts/task_hold.py` (deleted),
   and the `tests/task-kit/` files that exercise only those modules (deleted; the unit lists them).
+- `tests/task-kit/test_task_kit_package.py`, which mixes kept and retired contracts (`:63-105`):
+  the `dashboard` capability test keeps asserting that step 1 runs `bin/task-kit`; the llm-kit
+  install-edge test stays; the handshake test is replaced by one asserting that `work`'s first
+  step is the work verb and that no capability or reference names `task_hold.py`, and it no
+  longer reads `references/dashboard.md` for "## The /task work handshake" or "## Launcher exit
+  codes".
 - `plugins/task-kit/bin/task_kit_entrypoint.py`, `bin/task-kit`, `bin/task-kit.cmd`:
   `task-kit export ...` unchanged; bare `task-kit` runs `databench --view tasks` when databench
   is on PATH, else exits 1 saying databench provides the task view and how a machine gets it;
