@@ -312,7 +312,7 @@ unconfigurable opinion whose test passes is a finding.
   upstream.** A registration (and a release) is committed on the checked-out
   branch of the task root's repository, the upstream is fetched and fast-forwarded or
   merged into the checked-out HEAD and working tree, and the file is pushed: at `/task work`,
-  and at each release; `task sessions publish` pushes records committed but not yet pushed, and nothing publishes them in the background. The integration changes the user's
+  at each release, and at a resumed or cleared session's start for the records the SessionStart hook updated; `task sessions publish` pushes records committed but not yet pushed. The integration changes the user's
   working tree like a pull, and the push publishes to a remote. A user will reasonably want
   a tool that never touches their branch or remote on their behalf; we decline a narrower
   mode because a registration kept only on one machine cannot tell another machine that a
