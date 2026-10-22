@@ -554,11 +554,13 @@ builders.
 **Decisions.**
 - **Registration by web entry, reached through one lazy glob.** Each module has
   `web/src/modules/<id>/web.tsx` whose default export is a `ModuleWeb`. The shell names no module
-  file: `module-web.ts` holds the one `import.meta.glob(MODULE_WEB_GLOB)` call (lazy), and loads
+  file: `module-web.ts` holds the one call
+  `import.meta.glob<ModuleWeb>("./modules/*/web.tsx", { import: "default" })` (lazy; Vite requires
+  literal arguments), and loads
   the entries of the modules `GET /api/v1/modules` reports enabled, and only those, so a disabled
   module's code is never downloaded (the browser counterpart of "never imported").
 - **The boundary test sees the glob.** It accepts exactly one `import.meta.glob` in core, in
-  `module-web.ts`, with the literal `MODULE_WEB_GLOB`; any other glob, or any `import()` of a
+  `module-web.ts`, with exactly those literal arguments; any other glob, or any `import()` of a
   module path, in a core file fails. The allowlist must be empty.
 - **Module-to-module needs go through shell contributions.** html's page viewer reaches explorer's
   file view as a `fileViewers` contribution that explorer reads with `useFileViewers()`, so
@@ -583,10 +585,12 @@ builders.
 
 ```ts
 // web/src/module-web.ts (core)
-export const MODULE_WEB_GLOB = "./modules/*/web.tsx";
+// the only glob, written literally (Vite does not accept variables as glob arguments):
+// const entries = import.meta.glob<ModuleWeb>("./modules/*/web.tsx", { import: "default" });
 export type ModuleViewProps = { nav: ComponentChildren };
 export type ProjectRoutesProps = { modules: Modules };
-export type FileViewerProps = { context: FileContext; rawPrefix: string };
+export type FileViewerProps = { context: FileContext; rawPrefix: string;
+  onNavigate: (path: string) => void };            // IndexPagesViewer relays page links
 export type FileViewerEntry = {
   id: string;
   applies: (context: FileContext) => boolean;   // e.g. html: a marked index page not opted out
@@ -617,7 +621,10 @@ export function useFileViewers(): FileViewerEntry[];
 `api-path-builders.test.ts` (its builder table names `routes.ts` and the explorer files).
 Checks: re-adding `import { TasksView } from "./modules/tasks/tasks-view"` to `main.tsx` fails the
 boundary test; changing the glob literal, or adding a second glob, fails it; `loadModuleWeb(["tasks"])`
-calls only the tasks loader (revert: load all, then filter -> red); a mismatched `module` throws.
+calls only the tasks loader (revert: load all, then filter -> red); a mismatched `module` throws;
+two loaded entries that both declare `projectRoutes` are rejected (revert: last one wins -> red).
+The test proves which loaders are called; that a disabled chunk is never fetched is M4-U5's
+browser gate.
 
 **M4-U3 explorer view extraction** (developed beside U2 against the frozen interface; lands in the
 same commit). Owns `databench:web/src/modules/explorer/web.tsx` (`{module: "explorer",
@@ -638,15 +645,17 @@ null && viewer.index_pages !== false`), `databench:web/src/modules/html/index-pa
 explorer's `ViewerPane` inside a `FileViewersContext` holding html's entry), and
 `databench:web/src/modules/tasks/web.tsx` (`{module: "tasks", views: {tasks: TasksView}}`).
 Checks: the index-pages tests pass with only that wrapper; with no html entry loaded, a marked page
-opens in the code viewer and Raw follows core's rule (revert: keep a direct html import in
+opens in explorer's ordinary HTML viewer (the sandboxed iframe at `main.tsx:648`) with Raw
+available, because the identifying context keys are absent (revert: keep a direct html import in
 `viewer-pane.tsx` -> boundary red).
 
-**M4-U5 gates and docs** (after U2-U4). Owns `databench:web/tests/browser-check.mjs` additions,
+**M4-U5 gates and docs** (after U2-U4). Owns `databench:web/vite.config.ts` (enables
+`build.manifest`), `databench:web/tests/browser-check.mjs` additions,
 `databench:web/tests/browser-modules.mjs` (added), `databench:README.md` and
 `databench:CLAUDE.md` (web map). Browser gates, desktop and Pixel 7: all modules enabled
 (`browser-check.mjs` unchanged otherwise); explorer disabled (`/` redirects to `/-/tasks`, a project
 URL shows "Module disabled", no explorer chunk is requested); html disabled (a marked page shows
-as code with Raw per core's rule, no html chunk is requested); tasks disabled
+in the ordinary HTML viewer, a sandboxed iframe, with Raw available; no html chunk is requested); tasks disabled
 (`browser-tasks.mjs` case 2 and no tasks chunk). Build check: `npm run build` emits one chunk per
 `modules/*/web.tsx` (read from the Vite manifest). Verify also: `npm test`, typecheck, the Python
 suite, the fingerprint verifier (unchanged: no Python file moves), databench push.
