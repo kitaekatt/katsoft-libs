@@ -14,6 +14,6 @@ Any other command exits 2 and names these three.
 
 ## What the retirement leaves alone
 
-The earlier dashboard's runtime data (`dashboard/` in task-kit's data directory: its database, run directories and `server.json`) is not deleted by task-kit. Delete it yourself when you no longer need it. The `dashboard:` settings in `~/.claude/task.local.yaml` are no longer read; `sessions:` and `project_directories` still are.
+The earlier dashboard's runtime data (`dashboard/` in task-kit's data directory: its database, run directories and `server.json`) is not deleted by task-kit. Delete it yourself when you no longer need it. The `dashboard:` settings in `~/.claude/task.local.yaml` are not read; `sessions:` and `project_directories` still are.
 
 Queueing work is the `queue` capability of the task skill: it hands the unit to a background worker per awesome-kit:orchestrate. `/task work` registers the session without any dashboard handshake.

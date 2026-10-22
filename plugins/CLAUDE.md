@@ -279,17 +279,18 @@ unconfigurable opinion whose test passes is a finding.
   preference a team can hold two of at once, and a seam here would mean two
   incompatible YAML dialects.
 
-- **task-kit's dashboard lists `dev/tasks` tasks only; `tmp/` tasks are not shown.** The
-  dashboard identifies a project as a git repository (the `origin` remote URL basename,
-  else the directory name) and merges every checkout of one repository into one project,
-  showing a task as `<repo>:<stub>`. A `tmp/` task is per-checkout scratch: two checkouts
+- **task-kit's export lists `dev/tasks` tasks only; `tmp/` tasks are not exported, so
+  databench's task view does not show them.** The export identifies a project as a git
+  repository (the `origin` remote URL basename, else the directory name) and groups every
+  checkout of one repository into one project, naming a task `<repo>:<stub>`. A `tmp/` task is per-checkout scratch: two checkouts
   can each hold an unrelated `tmp/<stub>` with the same name, so it has no repository-level
   identity to merge on. A team that keeps active work in `tmp/` will reasonably want it
   shown; we decline a flag because it would reintroduce per-checkout projects beside
   repository projects in one list. Such a team promotes the task with
   `task move <ref> dev/tasks`. The task CLI (list, review, work) is unaffected and still
   sees `tmp/` tasks. User ruling 2026-10-19: "let's say we don't support tmp/ tasks at all
-  in the dashboard I think that's the easiest thing to do".
+  in the dashboard I think that's the easiest thing to do" (the task view was task-kit's
+  dashboard when ruled; databench now provides it).
 
 - **task-kit's working-session registration lasts until hand-off; exiting the harness does
   not release it.** `/task work` registers the Claude Code session as working a task and

@@ -345,7 +345,7 @@ references:
     summary: "How to fill in and maintain a hand-off-type task folder: the seven-section CLAUDE.md contract (Immediate Priorities = references to item ids), plan.md's task_items block + rotation discipline (completion = removal; promotion rule), the enforced document size budgets (note at the healthy target, blocking warning at the ceiling; log.md exempt), the one-time pre-contract-folder conversion procedure, log.md filter, the durable-outputs rule (does this document belong in the folder at all -- declare at authoring time, archive verifies), anti-patterns, self-verify. Load when populating or updating a scaffolded folder, when validate emits a size finding, or when archive refuses on durable outputs."
   - id: dashboard_reference
     path: references/dashboard.md
-    keywords: [task dashboard, dashboard, databench, task view, task-kit export, task-kit stop, legacy dashboard]
+    keywords: [task dashboard, dashboard, databench, task view, task-kit export, task-kit stop, legacy dashboard, task-export, databench export, export contract, task-export.schema.json]
     summary: "Where the task view lives now: databench's tasks view over task-kit's export, what bare `task-kit` runs, and `task-kit stop` for a server an earlier version started. Load when the dashboard capability is routed and the question goes beyond launching it."
   - id: example_claude_md
     path: references/example-claude-md.md
