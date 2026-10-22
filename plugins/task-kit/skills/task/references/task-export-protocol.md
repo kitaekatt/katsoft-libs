@@ -63,8 +63,10 @@ Every field is present; `?` marks a value that may be null.
 | `checkouts[]` | `{id: string, root: string (absolute), repository: string}` |
 | `tasks[].checkout`, `.path`, `.stub`, `.location` | string; `path` is project-relative (`dev/tasks/<stub>`) |
 | `tasks[].revision` | string; the content revision of the task's `task.yaml`, `plan.md` and `log.md` |
-| `tasks[].title?`, `.priority?`, `.description?`, `.summary?` | string |
-| `tasks[].summary_source?` | `"task.yaml"` (later: `"answer"`) |
+| `tasks[].title?`, `.priority?`, `.description?`, `.summary?` | string; `summary` is the headline of the task's orientation answer (current or stale) when it has one, else `task.summary` |
+| `tasks[].summary_source?` | open enum: `"answer"` (the orientation answer's headline), `"task.yaml"` |
+| `tasks[].answers` | `{<question id>: {state, answer?, answerer?, as_of?, fingerprint?}}`, one entry per question of the question catalog (empty when the catalog cannot be loaded) |
+| `tasks[].coverage?` | `{catalog_version: integer, applicable: integer, current: integer}`: of the catalog's questions that apply to the task's classification, how many have a current answer; null when the catalog cannot be loaded |
 | `tasks[].classification` | open enum: active, blocked, deferred, closed, archived, orphaned, remote, invalid |
 | `tasks[].blocked_by` | [string] |
 | `tasks[].last_activity?` | string, `YYYY-MM-DD HH:MM` of the newest update (a date-only entry reads as 12:00) |
@@ -89,7 +91,34 @@ Identity and grouping:
 - Order: repositories by name, checkouts by root, tasks by repository name,
   then path, then checkout root.
 - `errors[].code` is an open enum. task-kit 0.15.0 emits `unreadable`,
-  `repo_identity` and `sessions`.
+  `repo_identity` and `sessions`; the release that adds `tasks[].answers` also
+  emits `answers` and `questions`.
+
+Answers (`tasks[].answers`):
+
+- A question is declared data (id, version, the inputs it reads, an answer
+  schema, the classifications it applies to); the catalog is the shipped
+  questions plus a fleet layer. An answer is current when the fingerprint it
+  stored equals the fingerprint of the question definition plus its inputs now.
+- `state` is an open enum: `current`, `stale` (an answer exists for older
+  inputs), `missing`, `invalid` (answer files exist and none is usable) and
+  `not-applicable` (the question does not apply to the task's classification).
+  An unusable answer file is also an `errors[]` entry with code `answers`,
+  naming the file; it never stops the export.
+- `answer` is the chosen answer, an object shaped by the question's answer
+  schema, null for `missing`, `invalid` and `not-applicable`. Any machine
+  chooses the same one among the records of several machines, using nothing
+  machine-local.
+- `answerer` is `{kind: "model" | "script", entry?, name?, tier?, effort?,
+  attempts: [{entry, outcome}]}`: a model answer names its endpoint entry, cost
+  tier and effort; a script answer names the script. `as_of` is
+  `{task_commit?, code_commit?}`, the commits whose content the answer
+  describes. `fingerprint` is the inputs fingerprint a model answer stored,
+  null for a script answer.
+- A script answer is computed when the export runs, from the task folder's git
+  history and the clock, and is never stored. The shipped script questions are
+  `activity` (`days_since`, `last_at`, `last_entry`) and `task_commits`
+  (`commits`: `{sha, date, subject}`, newest first, at most 10).
 
 ## Payload of `item`
 

@@ -216,7 +216,7 @@ class TestTaskListingAndReview:
         yaml_result = run_cli(
             ["list", "--format", "yaml", "--root", str(tmp_path)], tmp_path
         )
-        assert yaml.safe_load(yaml_result.stdout)["schema_version"] == "1"
+        assert yaml.safe_load(yaml_result.stdout)["schema_version"] == "2"
         assert "missing task.summary" in yaml_result.stderr
 
     def test_list_text_has_deferred_section_between_open_and_closed(
