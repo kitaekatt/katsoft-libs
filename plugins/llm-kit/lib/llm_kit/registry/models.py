@@ -54,6 +54,8 @@ import sys
 from pathlib import Path
 from typing import Mapping, Optional
 
+from llm_kit import _runtime
+
 from .model_endpoints import (
     HARNESS_KIND,
     TRANSPORT_KIND,
@@ -239,6 +241,21 @@ def fleet_config_path() -> Path:
     return Path.home() / ".claude" / "config" / f"{CONFIG_PLUGIN}.yaml"
 
 
+def package_mode_model_config(base: dict) -> dict:
+    """THE package-mode model-list policy point.
+
+    PENDING USER RULING ``model-list-decision``. Package mode has no
+    ``bootstrap_lib.config_resolve``, so the layered config.yaml files cannot be
+    read. Implemented (the planner's recommendation): the shipped defaults, with
+    the endpoint registry file overridable through ``MODEL_ENDPOINTS_REGISTRY``
+    (``registry.model_endpoints``). The alternative awaiting the ruling is to
+    refuse here when ``MODEL_ENDPOINTS_REGISTRY`` is unset; change this function
+    and nothing else. ``tests/llm-kit/test_runtime_mode.py`` pins the
+    recommended behaviour by name.
+    """
+    return base
+
+
 def load_model_config(*, project_root: Optional[str] = None) -> dict:
     """Resolve the effective model config: shipped baseline deep-merged with the
     fleet, machine, and (optional) project layers.
@@ -256,6 +273,8 @@ def load_model_config(*, project_root: Optional[str] = None) -> dict:
     into a traceback with no way to recover.
     """
     base = copy.deepcopy(DEFAULT_MODEL_CONFIG)
+    if _runtime.mode() == "package":
+        return package_mode_model_config(base)
     try:
         from bootstrap_lib.config_resolve import (
             ConfigError,
