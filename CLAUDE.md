@@ -213,6 +213,7 @@ After publish:
 
 - Users with `autoUpdate: true` receive the update on next session start.
 - Users without auto-update run `/plugin marketplace update` then `/plugin update`.
+- The publishing agent runs `bootstrap run` right after a successful `publish.py`, so this machine picks up the release in the same session.
 
 ### Dev-only plugins -- do not publish to master
 
