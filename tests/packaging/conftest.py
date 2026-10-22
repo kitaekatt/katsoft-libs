@@ -10,8 +10,8 @@ environment variable ``WHEEL_CLOSURE_SOURCE=local|pypi``:
 ``local`` builds both wheels from the working tree (the release builders'
 recipe) and installs them. ``pypi`` installs the RELEASED versions named by
 packages/*/pyproject.toml from PyPI and expects each marker's COMMIT to equal
-the commit packages/released.json records; it fails loudly while nothing is
-released. pytest registers ``--wheel-source`` only for runs that collect this
+the commit packages/released.json records; it fails loudly when the version
+packages/released.json records is not on PyPI. pytest registers ``--wheel-source`` only for runs that collect this
 directory's conftest at startup (name tests/packaging on the command line); the
 environment variable works for a whole-suite run.
 """
