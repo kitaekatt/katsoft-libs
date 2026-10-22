@@ -145,7 +145,7 @@ If the user says go, Mode 4 should be amended for explicitly package-ready distr
 | Claim | Measurement | Result |
 |---|---|---|
 | Both libraries build wheels | `uv build --wheel` from scratch copies | `llm_kit-0.4.0` (174 entries), `bootstrap-0.158.3` (101), exit 0 |
-| llm-kit is install-clean for databench's modules | fresh venv, `python -I`, 4 consumer modules | import OK; zero third-party modules loaded |
+| llm-kit is install-clean for databench's modules | fresh venv, the interpreter in isolated mode (`-I`), 4 consumer modules | import OK; zero third-party modules loaded |
 | D1 undeclared `bootstrap_lib` | llm-kit-only venv, walk of 168 modules | 2 fail: `dispatch.review_lane`, `pipeline.runtime.yaml_extract` (pyyaml only in extras) |
 | D2 data files missing | `review_profiles.resolve_config` in bootstrap venv | ConfigError (`defaults/*.yaml` absent from wheel) |
 | D3 plugin-layout paths | read `shell_hook.py:51`, `harvest.py:63` | break outside the plugin tree; not hit by `execution_event` |
@@ -153,8 +153,8 @@ If the user says go, Mode 4 should be amended for explicitly package-ready distr
 | `@master` | same, ref `master` | lock stores branch and resolved SHA; moves only on `uv lock --upgrade` |
 | `tool.uv.sources` vs `Requires-Dist` | built consumer wheel both ways | sources are not carried into the wheel; direct URLs in `project.dependencies` install via `uv tool install` |
 | Repo visibility, tags | `gh repo view`; `git ls-remote --tags` | PUBLIC; 0 tags; `publish.py` creates none |
-| Re-exec blocker | stub plugin venv under scratch HOME | console script and `python -m llm_kit.cli` both exec into the plugin venv; `main(argv=[...])` does not |
-| `.pth` shadows the wheel | python -I, scratch lib copy with marker | bootstrap `pth_line` does `sys.path.insert(0, ...)` (`shared_lib.py:105-132`): `.pth` copy wins; plain-path `.pth` loses; reinstall leaves it; metadata still reports the wheel |
+| Re-exec blocker | stub plugin venv under scratch HOME | console script and the module entry `-m llm_kit.cli` both exec into the plugin venv; `main(argv=[...])` does not |
+| `.pth` shadows the wheel | isolated-mode interpreter (`-I`), scratch lib copy with marker | bootstrap `pth_line` does `sys.path.insert(0, ...)` (`shared_lib.py:105-132`): `.pth` copy wins; plain-path `.pth` loses; reinstall leaves it; metadata still reports the wheel |
 | Consumer inventory | grep of manifests and imports | databench; claude-settings and codex-settings (`managed_state`); six `execution_event` importers |
 | databench's CLI use | read call sites | 10 sites in `index_pages_runner.py`, `generate_config.py`, `markup.py`; no consumer-CLI contract in llm-kit |
 

@@ -32,7 +32,7 @@ and no plugins-kit. This repo's plugin venvs later install the same packages, wh
 ## Clean-machine closure
 
 Measured with `bootstrap_lib` blocked and `HOME` pointed at a nonexistent directory (databench), and
-with a wheel of llm-kit 0.4.0 in a fresh 3.12 venv under `python -I` (spiritcrossing surface).
+with a wheel of llm-kit 0.4.0 in a fresh 3.12 venv under the venv interpreter in isolated mode (`-I`) (spiritcrossing surface).
 
 | Reach | Result | Cause |
 |---|---|---|
@@ -106,7 +106,7 @@ Three stdlib-only modules move into one distribution owned by bootstrap, source 
 
 `cli/__init__.py:146-165` re-execs into a plugin venv whenever one exists. The replacement requires
 positive plugin-launch context: only a launch from the plugin cache or plugin data directory
-re-execs. An installed console script or `python -m llm_kit.cli` stays in its invoking environment
+re-execs. An installed console script or the module entry `-m llm_kit.cli` stays in its invoking environment
 and never discovers an unrelated plugin venv. The private opt-out `_BOOTSTRAP_GUARD_SKIP_REEXEC=1`
 goes away.
 
@@ -141,7 +141,7 @@ Order is binding. Each step has a done-check; the task item id follows in parent
    wheels, add the shims and the positive-context re-exec. Done when a fresh venv from the built
    wheels, with a scratch `HOME`, `bootstrap_lib` blocked and a fake `OPENROUTER_API_KEY`, passes
    `models describe`, `completion complete`, `jobs run|resume`, the console script and
-   `python -m llm_kit.cli` (against a stub endpoint or dry path); metadata tests pass; reverting the
+   the module entry `-m llm_kit.cli` (against a stub endpoint or dry path); metadata tests pass; reverting the
    `model_declaration` move turns the closure test red.
 3. CLI goldens and deprecation (`cli-goldens-deprecation`). Golden fixtures for the verbs databench
    uses, beside `contract/public-surface.json`; the two-minor deprecation policy
