@@ -185,8 +185,8 @@ claude --plugin-dir ~/Dev/plugins-kit/plugins/my-plugin
 **Reload vs restart:** edits to hook/skill script content are live; `/reload-plugins` reloads registration in-session; only a SessionStart re-fire or a real version update needs a restart. Details: [plugin-reload-lifecycle.md](plugins/bootstrap/skills/bootstrap/references/plugin-reload-lifecycle.md).
 
 **Publishing** is `uv run python scripts/publish.py` -- the only user-gated action in this repo, and the source of truth for the flow; do not hand-run its steps. Definition of a publish, `marketplace.json` as derived data, the commit-scoped pre-commit check, and dev-only filtering:
-
 [docs/reference/publish-reconcile.md](docs/reference/publish-reconcile.md).
+
 **Packages.** `packages/` holds PyPI distributions released by `publish.py`'s
 package flow; mechanics: [docs/reference/package-release.md](docs/reference/package-release.md).
 `katsoft-contracts` (`packages/katsoft-contracts/src/katsoft_contracts/`) is the
