@@ -107,8 +107,8 @@ three times). The projection then carries it to master.
 ## Operator commands
 
 ```bash
-uv run python scripts/publish.py --check       # preflight, no network
-uv run python scripts/publish.py                # release packages, then plugins
+uv run --extra dev python scripts/publish.py --check   # preflight, no network
+uv run --extra dev python scripts/publish.py           # release packages, then plugins
 gh run rerun <run id>                                   # resume a failed run
 gh workflow run release-packages.yml --ref master -f tag=<dist>-v<version>
 ```
