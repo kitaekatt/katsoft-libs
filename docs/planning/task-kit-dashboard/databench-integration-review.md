@@ -182,3 +182,94 @@ This was read-only; I changed no files. **[C]** marks a confirmed premise, **[H]
 - Reaching every machine: "Can I distribute databench without source code I.e. via npm" (open; see distribution investigation).
 - Switch granularity: "One set per machine (Recommended)".
 - Index pages in background regeneration: "A drop down configures what type of regen is enabled. It all is by default."
+
+## Distribution investigation (sonnet, read-only, 2026-10-21)
+
+**Short answer:** Yes, you can ship databench without its source. The practical way is a frozen per-platform binary, because npm and wheels both ship readable source. The harder problem is that databench imports `llm_kit` and `bootstrap_lib` at import time. That must be decided before freezing. I did not check task-kit's task_system, so the task integration is untested. Items marked (general) are general knowledge, not from the repos.
+
+### 1. What a frozen binary must bundle
+
+Python dependencies (`/Users/christina/Dev/databench/pyproject.toml`):
+- `fastapi>=0.115`, `pillow>=11,<13`, `pyyaml>=6`, `uvicorn>=0.34`. Requires Python 3.12 or newer.
+- Pillow is the only native wheel. (general) PyInstaller handles it, and uvicorn needs its protocol modules listed as hidden imports.
+- Package data is `assets/*.css`, `dev_roots.yaml` and `index_pages_refs/*.md`. These are read through `importlib.resources` (`dev_roots.py:288`, `index_pages.py:758`), which works in a frozen build once the files are declared as data.
+
+Web client:
+- `setup.py:15-31` runs `npm ci` and `vite build` into `databench/static` during `build_py`. The server serves `Path(__file__).with_name("static")` (`server.py:593-598`).
+- Node is therefore needed only at build time. There is a built `dist/databench-0.1.0-py3-none-any.whl`.
+- From a checkout, `cli.py:726-747` rebuilds `web/dist` on demand. A frozen build must take the packaged static path.
+
+Source-hash self-reads that break or change when frozen:
+- `index_pages_generation.py:962` hashes `Path(__file__).read_bytes()`.
+- `index_pages_worktree.py:845-882` globs `index_pages*.py` from `_PACKAGE` to compute a fingerprint.
+- In a PyInstaller build there are no `.py` files, so these fail or fingerprint something different. They need rewriting, for example to use a build-time hash constant.
+
+Shared libraries:
+- `index_pages_runner.py:161-163` does `from bootstrap_lib import execution_event` and `from llm_kit.pipeline.execution import deadlines, failure_cache, scheduler`, plus `llm_kit.pipeline.runtime.gate`.
+- `_require_shared_libraries()` runs at import (line ~156). It pins `LLM_KIT_VERSION = "0.1.9"` and `bootstrap 0.135.0` (lines 72-73) and probes signatures.
+- It also shells out to the `llm-kit` CLI via `resolve_llm_kit()` (lines 690-720). That path looks in `~/.claude/plugins/data/plugins-kit/llm-kit/.venv/bin/llm-kit`, then PATH. This is already the subprocess pattern.
+- `.claude/bootstrap.json` links them with `project_venv.shared_lib_imports` (`llm_kit`, `bootstrap_lib`). It also declares the plugin `plugins-kit:llm-kit` at `min_version` 0.1.9 and a launcher that runs the editable checkout.
+- Task-kit: `grep` shows no task_system import in databench `src` today, so the task integration does not exist yet.
+
+### 2. Distribution options
+
+**(a) PyInstaller or Nuitka binary, shipped as npm platform packages (esbuild pattern)**
+- Source hiding:
+  - PyInstaller ships `.pyc` inside the archive, which (general) is trivially decompiled. It is obfuscation, not protection.
+  - Nuitka compiles to C and is materially harder to reverse, but still not secure. The web JS bundle is minified but readable in any browser.
+- Update path: `npm i -g databench` pulls the optional dependency matching the OS and CPU (`@databench/darwin-arm64`, `win32-x64` and so on). Updates are `npm update`, or bootstrap if it manages the npm global.
+- Reach: needs Node on every machine. Node is already a bootstrap tool (`node18` in `bootstrap.json`).
+- Cost: a 3-platform CI matrix. Each needs a native runner, since neither tool cross-compiles. Binaries will be 40-80 MB each (hypothesis). Windows and macOS need code-signing or notarization; unsigned macOS binaries may be quarantined if downloaded through a browser. npm publishing needs a registry, which can be private.
+- Note: "without source" means the registry contains no source. You are not forced to use public npm.
+
+**(b) The same binary through bootstrap's `download:` recipes**
+- From `manifest-reference.md:452-476` and `:826`, a tool entry takes `download.url` plus `download.sha256`. The archive is extracted to `~/.local`, with a per-OS nesting allowed. `check` and path linking come with it. A failed download falls through to `install.<os>.command`.
+- Evidence gap: the `download:` mechanism is documented for tools and fonts. I did not verify that it handles a single executable (as opposed to an archive that holds one) or that it makes the file executable.
+- Source hiding is the same as (a).
+- Update path: bump the URL and sha256 in a manifest. Bootstrap's `check` probes the installed version, which is how a version bump is detected (verify with a test).
+- Reach: this is the fleet's existing channel and needs no Node or npm. It matches the "bootstrap owns dependency provisioning" rule (`CLAUDE.md:49`).
+- Cost: you need a host for the artifacts, for example GitHub Releases, and for a private repo an auth token. The recipe uses a plain `url`, so private-repo auth is unverified. You also pay the CI matrix and signing.
+- This is the cheapest path to every machine.
+
+**(c) Wheel or pipx**
+- Ships Python source, so it does not hide it. The `.whl` already exists, and `setup.py` bundles the client.
+- Update with `pipx upgrade`. It is easy and gives `llm_kit` as plain imports through the pipx venv.
+- It does not meet your goal.
+
+**(d) Make databench a plugins-kit plugin**
+- Source ships in the plugin cache, so it is visible. It would reach every machine via the marketplace and bootstrap.
+- It gives you shared_lib linking for free and a venv per plugin.
+- It conflicts with always-on service use and with `plugins/CLAUDE.md:457` on plugin boundaries. It also puts the whole Vite app in the plugin tree.
+- Choose it only if source visibility is acceptable.
+
+### 3. The integration constraint
+
+A frozen binary cannot use `.pth` links. `_require_shared_libraries()` would raise at import. Options:
+
+1. **Bundle at build time.** Freeze `llm_kit` and `bootstrap_lib` into the binary at pinned versions.
+   - This is robust and self-contained. But the binary carries a copy that drifts from the plugin.
+   - It conflicts with the `CLAUDE.md:427` rule that cross-plugin imports declare REQUIRED, REFUSE or DEGRADE, with the probe against the newest symbol. A bundled copy is "always present", so that rule collapses to a build pin.
+   - It also bypasses the "a shared-lib link pins no version" stance.
+   - The runner already hard-codes minimum versions, which gives you the pin mechanism.
+2. **Subprocess CLIs with JSON contracts.** Call `llm-kit` (already done via `resolve_llm_kit()`), `task-kit/bin/task-kit` (exists) and `models describe`.
+   - This fits freezing best and fits the cross-plugin rule, since the CLI is the boundary.
+   - Cost: the runner's scheduler, deadlines and gate usage are in-process library calls (`index_pages_runner.py:161-163`), not CLIs. That code would have to be redesigned or stay bundled (option 1).
+   - Task-kit has a CLI entrypoint (`plugins/task-kit/bin/task-kit`). Whether it has JSON output for the tasks UI is unverified.
+3. **A plugin-provided extension loaded from a path at runtime.**
+   - (general) PyInstaller does allow `sys.path` additions and importing external `.py` files at runtime. The frozen binary embeds its own interpreter and stdlib, so the external code must be pure Python and compatible with the bundled version (3.12 in this case).
+   - It would work for `llm_kit` and `bootstrap_lib` only if their native dependencies are also present in the bundle.
+   - It re-creates the version-skew risk, with no ImportError diagnosis. Hypothesis: not worth it.
+
+**Fit for a sole-user fleet:** option 2 for the task-kit tasks UI, which is new code with no legacy. Keep llm_kit and bootstrap_lib bundled under a pin (option 1) for the existing index-pages runner, until it is refactored to CLIs. That respects the plugin boundary and avoids version skew. Both are lower risk than (3).
+
+### 4. Recommendation and smallest first step
+
+Use (b): a Nuitka or PyInstaller binary per OS and CPU, released as artifacts and installed by a `download:` recipe in the fleet bootstrap manifest. Add npm platform packages later only if you want a public channel. Task-kit integration goes through the `task-kit` CLI as a subprocess. Bundle `llm_kit` and `bootstrap_lib` at a pinned version for now. Hypothesis: this is the least total work, but confirm each assumption below.
+
+Smallest first step, on macOS arm64 only:
+1. Build one PyInstaller onefile binary of the current `src/databench/cli.py` with the static client, plus the two shared libs bundled in.
+2. Fix the `__file__` hash and glob at `index_pages_generation.py:962` and `index_pages_worktree.py:845-882`.
+3. Run `databench --version` and the web UI from a directory with no checkout and no `.venv`.
+4. If that works, test whether the `download:` recipe accepts a single executable from a local `file://` or private URL.
+
+Open questions I did not resolve: which license the project wants, how code-signing is handled, and whether the private-repo download needs a token.
