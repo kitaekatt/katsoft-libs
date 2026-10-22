@@ -1,6 +1,7 @@
 # databench integration plan: a modular databench with a tasks module (2026-10-22)
 
-Status: plan only (unit `revise-databench-plan-modules`, 2026-10-22). No code changed. This
+Status: plan only (units `revise-databench-plan-modules` and `fix-databench-plan-xcheck`,
+2026-10-22; the second applies a codex/sol cross-check of `b7e92e26`). No code changed. This
 revision replaces the stage plan committed as `adced200` (stages S2 to S6 and a consent-default
 stage); section 9 says what was dropped. Code facts are as of plugins-kit dev `adced200`
 (task-kit 0.13.0, llm-kit 0.4.0) and databench `902d6ef`. plugins-kit paths are
@@ -74,6 +75,16 @@ On the tasks view:
 > do a mockup of that. Also there shouldn't be a spend control there I think we have databench to
 > configure spend
 
+On task-kit's dashboard (the previous revision's Q2):
+
+> i agree task-kit should remain entirely functional as it is today without the dashboard
+> running. It can provide necessary interface functionality so that databench can interface iwth
+> it.
+
+On databench's shipped consent (the previous revision's Q1):
+
+> databench ships with usage on spend off
+
 Still binding: "ok that particular concern is offloaded, for now it's just fine that databench
 requires plugins-kit and bootstrap to be installed, later we will switch to .venv if we implement
 this task" (`dev/tasks/shared-lib-packaging`); index pages "A drop down configures what type of
@@ -109,7 +120,7 @@ disabled module is never imported (eagerly, lazily or by literal `importlib`).
 
 | Part | Files (databench `src/databench/`) | Why |
 |---|---|---|
-| core: host | `cli.py` (front door), `server.py` (app shell), `modules_registry.py` (added), `module_manifest.py` (added), `path_sources.py`, `generation.py`, `llm_gateway.py`, `service.py`, `background.py` (added in M3 or M6) | runs the process and loads enabled modules |
+| core: host | `cli.py` (front door), `server.py` (app shell), `modules_registry.py` (added), `module_manifest.py` (added), `path_sources.py`, `generation.py`, `llm_gateway.py`, `service.py`, `background.py` (added in M1 or M7) | runs the process and loads enabled modules |
 | core: workspace | `projects.py`, `dev_roots.py` (+ `dev_roots.yaml`), `roots.py`, `filesystem.py` (root resolution, exact spelling, reads), `paths.py`, `ignore_rules.py`, `path_walk.py`, `store.py`, `system_viewer.py` | every module resolves projects and paths the same way |
 | core: access | `remote_access.py` | one access policy |
 | core: comments | `comments.py`, `comment_locations.py` | ruling (2) |
@@ -134,7 +145,7 @@ class Host:                                            # what register(host) may
     def route(self, method, path, handler, *, path_source, write=False) -> None
     def cli(self, operation, build_parser, run) -> None     # databench [<dir>] <operation>
     def view(self, view_id, title, *, nav=True) -> None     # announced by GET /api/v1/modules
-    def generation(self, op: "GenerationOperation") -> None  # used from M6
+    def generation(self, op: "GenerationOperation") -> None  # used from M7
     def viewer_annotator(self, fn) -> None                  # adds keys to a file context
     def enabled(self, module_id) -> bool                    # soft links between modules
 def load_enabled(path: Path | None = None) -> tuple[str, ...]
@@ -151,194 +162,326 @@ module cannot widen it.
 
 | Order | Stage | Repos | Depends on | User-visible when shipped | An early stop leaves |
 |---|---|---|---|---|---|
-| 1 | M1 Core registry and import-lint | databench | none | `databench modules list`; nothing can be disabled yet | a registry and a lint that stops any further coupling |
-| 2 | M2 Tasks module, read-only | plugins-kit (task-kit), databench | M1 | Tasks in databench's header: every project's tasks, project dropdown, sections, needs, items, working sessions (unverified tinted); detail with Orient, Decide and Trace lenses in databench's styling; `databench modules disable tasks` | tasks visible in databench; task-kit and its dashboard unchanged |
-| 3 | M3 Explorer and html extraction | databench | M1 | `databench modules disable explorer` or `html` removes that module's views, routes and CLI operations | three switchable modules over one core |
-| 4 | M4 Task answers | plugins-kit (task-kit), databench, claude-settings | M2 | the detail lenses show orientation and decisions answers with answerer, as-of commit and a stale marker; `task.py answers refresh` | answers refreshed by hand or by `task review` |
-| 5 | M5 Shared file summaries | databench | M3 | file summaries tracked in `.databench/`, shared through git | summaries shared; nothing regenerates in the background |
-| 6 | M6 Generation service | databench, plugins-kit (task-kit hook), claude-settings | M3, M4, M5 | an always-on service; settings panel with regeneration (on by default, type drop-down, all types by default), usage and spend; summaries, index pages and task answers stay fresh | (end of planned work) |
-| 7 | M7 Running work on tasks (deferred stub) | -- | a user need (q3) | -- | -- |
+| 1 | M1 Core split | databench | none | `databench modules list|enable|disable`; disabling explorer or html removes its views, routes and CLI operations, and core runs with no module enabled | a core that runs alone, two switchable modules, and a lint that blocks any further coupling |
+| 2 | M2 Tasks module, read-only | plugins-kit (task-kit), databench | M1 | Tasks in databench's header: every project's tasks, project dropdown, sections, needs, items, working sessions (unverified tinted); detail with Orient, Decide and Trace lenses in databench's styling; works with explorer and html disabled; `databench modules disable tasks` | tasks visible in databench; task-kit and its dashboard unchanged |
+| 3 | M3 task-kit dashboard cutover | plugins-kit (task-kit) | M2 shipped | `task-kit` and `/task dashboard` open databench's Tasks view; task-kit's browser dashboard and its Queue and Run are gone; every `task.py` verb and the skill work as before | two task views: databench's (read-only) and task-kit's (with runs) |
+| 4 | M4 Web module directories | databench | M2 | none (web files move into `web/src/modules/`) | web module files still share `web/src/`, held apart by the web allowlist |
+| 5 | M5 Task answers | plugins-kit (task-kit), databench, claude-settings | M2 | the detail lenses show orientation and decisions answers with answerer, as-of commit and a stale marker; `task.py answers refresh` | answers refreshed by hand or by `task review` |
+| 6 | M6 Shared file summaries | databench | M1 | file summaries tracked in `.databench/`, shared through git | summaries shared; nothing regenerates in the background |
+| 7 | M7 Generation service | databench, plugins-kit (task-kit hook), claude-settings | M1, M5, M6 | an always-on service; settings panel with regeneration (on by default, type drop-down, all types by default), usage (on by default) and spend (off by default); summaries, index pages and task answers stay fresh | (end of planned work) |
+| 8 | M8 Running work on tasks (deferred stub) | -- | a user need (q3) | -- | -- |
 
-M2 goes before M3 because it is the stage that puts tasks inside databench, and it can be clean
-from its first commit while the lint's allowlist still names the older couplings. M4 precedes
-M5 and M6 because answers are the detail view's main content and run by hand without a service.
+M1 carries the whole backend extraction of explorer and html, because the tasks module must ship
+running with both disabled and no expected isolation failure; a core that still imports them
+(`server.py:24-29`, `cli.py:38-44`, `filesystem.py:21`) cannot do that. M2 then puts tasks inside
+databench, and M3 removes the second task view (ruling of 2026-10-22 on task-kit's dashboard).
+M4 is a file move with no user-visible change and can wait. M5 precedes M6 and M7 because
+answers are the detail view's main content and run by hand without a service.
 
 ## 5. Stages
 
 Every unit owns the files it names; units that may run at once share none. Every check names the
 revert that must turn it red (`docs/reference/vacuous-checks.md`). Every databench unit's
-verification includes the generator-fingerprint comparison of section 6.
+verification runs the fingerprint verifier of section 6.
 
-### M1 Core registry and import-lint
+### M1 Core split
 
 **M1-U1 registry and module settings.** Owns `databench:src/databench/modules_registry.py`
-(added), `databench:src/databench/server.py` (builds a `Host` in `create_app`, serves
-`GET /api/v1/modules`), `databench:src/databench/cli.py` (`modules` operation),
-`databench:tests/test_modules_registry.py`, `databench:tests/path_route_registry.py`. Interface:
-section 3. Checks: a disabled module's entry is never imported (import spy; revert: import all,
-filter later -> red); an unknown id in `modules.json` fails loudly naming the file (revert:
-ignore -> red); absent file enables all three.
+(added), `databench:tests/test_modules_registry.py`. Interface: section 3. Checks: a disabled
+module's entry is never imported (import spy; revert: import all, filter later -> red); an
+unknown id in `modules.json` fails loudly naming the file (revert: ignore -> red); absent file
+enables all three.
 
-**M1-U2 import-lint with a ratchet.** Owns `databench:src/databench/module_manifest.py` (added:
-`CORE`, and per module a file list with globs, `index_pages*.py` among them),
-`databench:tests/test_module_boundaries.py`, `databench:web/src/module-boundaries.test.ts`. The
-Python test reads every file under `src/databench` (eager, local, `TYPE_CHECKING` and literal
+**M1-U2 import-lint.** Owns `databench:src/databench/module_manifest.py` (added: `CORE`, and per
+module a file list with globs, `index_pages*.py` among them),
+`databench:tests/test_module_boundaries.py`, `databench:web/src/module-boundaries.test.ts`, and
+the fingerprint verifier of section 6 (`databench:scripts/verify_generator_fingerprint.py`,
+`databench:tests/fixtures/generator_fingerprint_settings.json`,
+`databench:tests/test_generator_fingerprint_members.py`), which lands first so every later unit
+can run it. The Python test reads every file under `src/databench` (eager, local, `TYPE_CHECKING` and literal
 `importlib` imports): each file belongs to exactly one part; core imports no module file; a module
-imports only core and itself; `KNOWN_CROSS_EDGES` lists the edges of section 2 and fails when an
-entry is no longer needed, so it can only shrink. The web test applies the same rule to
-`web/src` import specifiers. Checks: a core file importing `index_pages` outside the allowlist
-(red); a stale allowlist entry (red); an unassigned file (red).
+imports only core and itself. Its allowlist starts as the edges of section 2 and only shrinks (a
+stale entry fails); M1-U5 ends with it empty. The web test applies the rule to `web/src` import
+specifiers with its own shrink-only allowlist, emptied in M4. Checks: a core file importing
+`index_pages` outside the allowlist (red); a stale allowlist entry (red); an unassigned file (red).
 
-**M1-U3 isolation harness.** Owns `databench:tests/module_isolation.py` (helper) and
-`databench:tests/test_module_isolation.py`: per enabled set, a subprocess builds the app and the
-CLI parser and asserts no other module's file is in `sys.modules`; a `module(id)` pytest marker
-and a `--databench-modules` option run one module's tests with the rest disabled. Sets that
-cannot pass before M3 (core alone, explorer alone, html alone) are listed as expected failures
-that M3 removes.
+**M1-U3 explorer backend** (after U1 and U2). Owns `databench:src/databench/explorer_module.py`
+(added: browse, tree, context and raw-write routes, entity routes and CLI operations, explorer
+view announcements), `databench:src/databench/server.py` (builds a `Host` in `create_app`, serves
+`GET /api/v1/modules`, keeps only core routes), `databench:src/databench/cli.py` (`modules`
+operation; module operations through the registry), `databench:src/databench/filesystem.py` (the
+lazy `entities` import becomes a registered context contributor),
+`databench:tests/path_route_registry.py`, `databench:tests/test_explorer_module.py`.
+
+**M1-U4 html backend** (after U3; shares `server.py`, `cli.py`, `filesystem.py`). Owns
+`databench:src/databench/html_module.py` (added; not named `index_pages*`): the index-page record
+and style routes, a viewer annotator for marked pages (the marker logic leaves `filesystem.py`),
+the `index-pages` CLI operation delegating to `index_pages_cli.is_invocation` and `main`, and the
+generation operation M6 uses. Also owns `databench:src/databench/generate_cli.py` (asks the
+registry for operations instead of importing `index_pages_*`),
+`databench:src/databench/generate_config.py`, `databench:src/databench/llm_gateway.py` (added:
+core's own `resolve_llm_kit`; the copy in `index_pages_runner.py` stays until the section 6
+batch), `databench:tests/test_html_module.py`. `filesystem.index_pages_runner_settings` stays in
+core until the section 6 batch, because its caller `index_pages_cli.py` is fingerprinted; it
+imports nothing from html.
+
+**M1-U5 module-aware shell and isolation** (after U4). Owns the shell routing in
+`databench:web/src/main.tsx` (nav and routes come from `GET /api/v1/modules`; `/` opens
+explorer when enabled, else the first enabled module's view, else a core page saying no module is
+enabled; a deep link into a disabled module shows "module disabled"; comment location links are
+soft links to explorer), `databench:tests/module_isolation.py` (helper),
+`databench:tests/test_module_isolation.py`, the manifest's Python allowlist (emptied). The
+isolation test, per enabled set (none; each module alone; all), builds the app and the CLI parser
+in a subprocess and asserts no other module's file is in `sys.modules`; a `module(id)` marker and
+`--databench-modules` run each module's tests with the rest disabled. No expected failures.
+
+**M1-U6 docs and release.** Owns `databench:README.md` ("Modules"; the boundary rule at
+README:25-27 admits first-party modules through the registry), `databench:CLAUDE.md` (directory
+map). Verify: full `uv run pytest`; each module's tests with the others disabled; `cd web && npm
+test && npm run typecheck`; `web/tests/browser-check.mjs` with all modules enabled and with
+explorer disabled; the fingerprint verifier; databench push.
 
 ### M2 Tasks module, read-only
 
-**M2-U0 protocol freeze** (plugins-kit). Owns
-`plugins/task-kit/skills/task/references/tasks-json-protocol.md` and
-`tests/task-kit/fixtures/tasks_json/`.
+**The export contract.** task-kit exports task facts, not manager views. The export lives in
+task-kit's domain package, outside `task_system/dashboard/`, and is reached by the `task-kit`
+command without importing dashboard code. Manager-derived values (sections, needs, hand-off
+command strings, item UI states, counts, filters) are computed by databench's tasks module.
 
 ```
-exit 0: {"protocol": 1, "task_kit_version": "<x.y.z>", "kind": "<kind>", "payload": {...}}
-exit 1 failure, 2 usage, 3 unknown task or item:
-        {"protocol": 1, "error": {"code": "<code>", "message": "<text>"}}
-Additive keys keep protocol 1; a removed, renamed or retyped key raises it.
-task-kit tasks snapshot --format json [--parent DIR]... [--refresh]
-    kind "snapshot", payload = dashboard_payload(inventory, server=None, runtime=None)
-task-kit tasks item --checkout ID --task KEY --item ID --format json
-    kind "item", payload = item_detail(task, item_id)
+task-kit export protocols --format json
+    no discovery; kind "protocols", payload {"protocols": [1]}
+task-kit export tasks --format json --protocol N [--parent DIR]...
+task-kit export item --format json --protocol N --checkout ID --task PATH --item ID
+stdout: exactly one JSON document and a newline, for success and for every handled error;
+        nothing else is ever written to stdout
+stderr: human diagnostics only; a consumer never parses it
+success: {"protocol": N, "task_kit_version": "x.y.z", "kind": "<kind>", "payload": {...}}
+error:   {"protocol": N, "task_kit_version": "x.y.z", "error": {"code": "<code>", "message": "<text>"}}
+exit codes: 0 ok; 1 internal; 2 usage; 3 not found; 4 protocol unsupported
+error codes: usage | unknown_checkout | unknown_task | unknown_item | protocol_unsupported |
+             discovery_failed | internal
+negotiation: the consumer calls `export protocols` first and then passes the highest protocol
+             both support; an unsupported --protocol exits 4 with the supported list in the message
+compatibility within a protocol: fields are only added; enums are open (a consumer maps an
+             unknown value to "other"); a removed, renamed, retyped or newly required field
+             takes the next protocol number, and the old one stays served for one task-kit minor
 ```
 
-**M2-U1 task-kit read verbs** (plugins-kit; after U0). Owns
-`plugins/task-kit/skills/task/scripts/task_system/dashboard/read_cli.py` (added),
-`dashboard/launcher.py` (a first argument `tasks` delegates to `read_cli.main`),
-`tests/task-kit/test_tasks_read_cli.py`. Read only: no lock, runtime database or `server.json`.
-Measured cost [E]: 0.65 s cold for 14 projects and 65 tasks (310 KB). Checks:
-`test_snapshot_matches_golden` (revert: emit `task.py list` JSON -> red);
-`test_parent_replaces_configured_directories`; `test_unknown_item_exit_3`;
-`test_read_verbs_write_nothing` (tree and data-dir digests before and after).
+Payload of `tasks` (protocol 1; every field present; `?` marks a nullable value):
 
-**M2-U2 tasks module backend** (databench; after U0 and M1, beside U1 with a fake executable).
+| Field | Type |
+|---|---|
+| `generated_at` | string, ISO 8601 UTC |
+| `revision` | string; changes whenever any field below changes |
+| `repositories[]` | `{id: string, name: string, checkouts: [string]}`; one per origin, checkouts merged |
+| `checkouts[]` | `{id: string, root: string (absolute), repository: string}` |
+| `tasks[].checkout`, `.path`, `.stub`, `.location` | string; `path` is project-relative (`dev/tasks/<stub>`) |
+| `tasks[].revision` | string |
+| `tasks[].title?`, `.priority?`, `.description?`, `.summary?` | string |
+| `tasks[].summary_source?` | `"task.yaml"` (M4 adds `"answer"`) |
+| `tasks[].classification` | open enum: active, blocked, deferred, closed, archived, orphaned, remote, invalid (`validate.py`) |
+| `tasks[].blocked_by` | [string] |
+| `tasks[].last_activity?` | string |
+| `tasks[].updates[]` | `{date: string, time?: string, detail: string}`, newest first, at most 20 |
+| `tasks[].updates_total` | integer |
+| `tasks[].has_items_block` | boolean |
+| `tasks[].items[]` | `{id, title: string, state: open enum available, in-flight, blocked-user, deferred (types.py:43), priority?: string, note?: string}` |
+| `tasks[].findings` | `{errors, warnings, item_errors, notes: [string]}` |
+| `tasks[].sessions[]` | `{host, session_id, registered_at: string, state: open enum running, not running, unverified (sessions.py:54-56), local: boolean, recorded_at?: string, task_state?: string}` |
+| `errors[]` | `{code: string, message: string, root?: string}`: discovery problems that did not stop the export |
+
+Payload of `item`: `{checkout, path, item: <the tasks[].items[] record>, plan_section?: string
+(the item's plan.md section text, at most 8000 characters), plan_section_truncated: boolean}`.
+
+**M2-U0 contract freeze** (plugins-kit). Owns
+`plugins/task-kit/skills/task/references/task-export-protocol.md` (the text above, normative),
+`plugins/task-kit/skills/task/references/task-export.schema.json` (JSON Schema for each kind),
+`tests/task-kit/fixtures/task_export/` (one fixture tree of two checkouts of one origin; golden
+`tasks`, `item` and error documents for protocol 1).
+
+**M2-U1 task-kit export** (plugins-kit; after U0). Owns `task_system/export.py` and
+`task_system/export_cli.py` (added), `task_system/repo_identity.py` (moved from
+`dashboard/repo_identity.py`, which re-imports it so the dashboard keeps working),
+`plugins/task-kit/bin/task_kit_entrypoint.py` (dispatches `export` before any dashboard import),
+`tests/task-kit/test_task_export.py`, `tests/task-kit/test_task_export_contract.py`. The export
+reads through the domain modules (`discovery`, `task_items`, `validate`, `sessions`) and imports
+nothing under `dashboard/`. Measured for sizing [E]: the dashboard inventory takes 0.65 s cold for
+14 projects and 65 tasks. Checks: every golden document validates against the schema and matches
+byte for byte (revert: emit `dashboard_payload` -> red); the schema test fails when a protocol-1
+field is removed or retyped against the frozen schema (revert: drop `updates_total` -> red);
+stdout holds exactly one document for each error code (revert: print a warning to stdout -> red);
+`export` imports no `task_system.dashboard` module (sys.modules check; revert: import inventory
+-> red); unknown checkout, task and item give distinct codes; the export writes nothing (tree and
+data-dir digests before and after).
+
+**M2-U2 tasks module backend** (databench; after U0 and M1, beside U1 with fake executables).
 Owns `databench:src/databench/tasks_module.py` and `databench:src/databench/tasks_host.py`
-(both listed under `tasks` in the manifest), `databench:src/databench/path_sources.py` (a
-`task-identity` source: task-kit resolves the identity against its own inventory, databench walks
-no client path), the route registry, `databench:tests/test_tasks_module.py` (marked
-`module("tasks")`).
+(listed under `tasks`), `databench:src/databench/path_sources.py` (a `task-identity` source:
+task-kit resolves the identity against its own discovery; databench walks no client path), the
+route registry, `databench:.claude/bootstrap.json` (adds `{"ref": "plugins-kit:task-kit",
+"min_version": "<the release that ships M2-U1>"}` beside llm-kit),
+`databench:tests/fixtures/fake_task_kit/` (current, pre-export, garbage-emitting and hanging
+fakes), `databench:tests/test_tasks_module.py` (marked `module("tasks")`).
 
 ```python
-TASK_KIT_PROTOCOL = 1
-class TaskKitUnavailable(Exception): code: str  # task_kit_absent | task_kit_too_old | task_kit_failed
+TASK_EXPORT_PROTOCOLS = (1,)
+class TaskKitUnavailable(Exception): code: str
+    # task_kit_absent | task_kit_too_old | task_kit_unsupported | task_kit_failed | task_kit_timeout
 def resolve_task_kit() -> str
-    # $CLAUDE_BOOTSTRAP_DATA_ROOT, else ~/.claude/plugins/data: plugins-kit/task-kit/bin/task-kit[.cmd]; then PATH
+    # $DATABENCH_TASK_KIT (tests), $CLAUDE_BOOTSTRAP_DATA_ROOT or ~/.claude/plugins/data:
+    # plugins-kit/task-kit/bin/task-kit[.cmd]; then PATH
 class TaskKitClient:
-    def __init__(self, executable=None, *, runner=subprocess.run, min_interval_s=2.0, timeout_s=30.0)
-    def snapshot(self, parents: Sequence[Path], *, refresh: bool = False) -> Mapping  # cached
+    def __init__(self, executable=None, *, runner=subprocess.run, min_interval_s=2.0,
+                 probe_timeout_s=10.0, timeout_s=30.0)
+    def negotiate(self) -> int                       # once per process, cached
+    def tasks(self, parents: Sequence[Path], *, refresh: bool = False) -> Mapping  # cached
     def item(self, checkout: str, task: str, item: str) -> Mapping
 def register(host: Host) -> None
 GET /api/v1/tasks?project=&q=&refresh=1
-    200 {"available": true, "task_kit_version": ..., "payload": ...}
+    200 {"available": true, "task_kit_version": ..., "protocol": 1, "view": <tasks-module view model>}
     200 {"available": false, "reason": {"code": ..., "message": ...}}
 GET /api/v1/task-item?checkout=&task=&item=        path source: task-identity
 databench --view tasks                             (no operation named `tasks`: $DEVROOT/tasks exists)
 ```
 
-`parents` are databench's expanded development roots. Checks: protocol 2 refused with the update
-command (revert -> served -> red); absent and too-old messages differ; the cache holds within the
-interval; the module passes with explorer and html disabled once M3 lands (until then, recorded
-as an expected failure in M1-U3).
+How `negotiate` classifies `task-kit export protocols --format json` [E: task-kit 0.13.0 answers
+this argv with exit 2, empty stdout and argparse's "invalid choice: 'export'" on stderr]:
 
-**M2-U3 tasks views** (databench web; after U2's routes). Owns
-`databench:web/src/modules/tasks/` (list, detail and tests) and the module-view slot in
-`databench:web/src/main.tsx`. List: prototype A's layout with the project dropdown (approved
-2026-10-17). Detail: concept C (ruled): Orient (legacy `summary` labelled legacy until M4,
-items, working sessions), Decide (needs, blocked-user items), Trace (task-record updates).
-Styling is databench's shell (ruling); the round-5 mockup refines it when it lands. No spend,
-usage or regeneration control (ruling); no Queue, Dismiss or authoring control (q3). Checks
-(vitest): fixture renders each section and lens; the project filter narrows; `available: false`
-renders the reason; an unverified session is tinted.
+| Outcome | Code |
+|---|---|
+| executable not found | `task_kit_absent` |
+| exit 2 and empty stdout | `task_kit_too_old` (predates `export`; message names `claude plugin update task-kit@plugins-kit`) |
+| one valid document whose `protocols` share none with databench's | `task_kit_unsupported` (names both lists and which side to update) |
+| no answer within `probe_timeout_s` (process killed) | `task_kit_timeout` |
+| anything else (non-zero exit with a document, stdout that is not exactly one JSON document, a schema mismatch) | `task_kit_failed` (keeps the error code or the last stderr line) |
 
-**M2-U4 docs and release.** Owns `databench:README.md` ("Modules", "Tasks module"; the boundary
-rule at README:25-27 admits first-party modules through the registry), `databench:CLAUDE.md`
-(directory map), task-kit `references/dashboard.md`, `plugin.json`, `pyproject.toml` (next free
-minor), `docs/planning/task-kit-dashboard/architecture.md` (decision 1: manager code lives in
-databench). Verify: the unit tests above; databench full `uv run pytest`, `cd web && npm test &&
-npm run typecheck`; claudx smoke of `task-kit tasks snapshot`; git-code-review;
-`publish.py --only task-kit` (pre-authorized); databench push; on this Mac, `databench --view
-tasks` shows the counts task-kit's dashboard shows.
+A current task-kit never produces "exit 2 with empty stdout" for this fixed argv, because every
+handled outcome writes a document; that is what separates too old from failed. The view model
+derives sections, needs, hand-off commands and item UI states from the export; `parents` are
+databench's expanded development roots. Checks: each fake maps to its code (revert: one generic
+code -> red); the cache holds within the interval; the module's tests pass with explorer and html
+disabled.
 
-### M3 Explorer and html extraction
+**M2-U3 tasks views** (databench web; after U2's routes). Owns `databench:web/src/modules/tasks/`
+(list, detail and tests). List: prototype A's layout with the project dropdown (approved
+2026-10-17). Detail: concept C (ruled): Orient (legacy `summary` labelled legacy until M4, items,
+working sessions), Decide (needs, blocked-user items), Trace (task-record updates). Styling is
+databench's shell (ruling); the round-5 mockup refines it when it lands. No spend, usage or
+regeneration control (ruling); no Queue, Dismiss or authoring control (q3). Checks (vitest):
+fixture renders each section and lens; the project filter narrows; each unavailable code renders
+its reason; an unverified session is tinted.
 
-**M3-U1 explorer module.** Owns `databench:src/databench/explorer_module.py` (added: browse,
-tree, context and raw-write routes, entity routes and CLI operations, explorer views),
-`databench:src/databench/server.py`, `databench:src/databench/cli.py`,
-`databench:src/databench/filesystem.py` (the lazy `entities` import becomes a registered context
-contributor), `databench:tests/test_explorer_module.py`.
+**M2-U4 browser release gate** (databench; after U3). Owns `databench:web/tests/browser-tasks.mjs`
+and its fixture server (the fake task-kit through `DATABENCH_TASK_KIT`), desktop and the Pixel 7
+profile `browser-check.mjs` uses. Cases: (1) tasks enabled with explorer and html disabled: the
+list renders, the project filter works, a detail opens with its three lenses; (2) tasks disabled:
+no Tasks entry, `/api/v1/tasks` answers 404, and a deep link shows "module disabled"; (3) a fresh
+page load of a deep-linked detail URL renders that task; (4) task-kit absent, too old, failed and
+timed out: each shows its reason and no stale data. Revert check: register the tasks view
+regardless of the enabled list -> case 2 red.
 
-**M3-U2 html module** (after U1; shares `server.py`, `cli.py`, `filesystem.py`). Owns
-`databench:src/databench/html_module.py` (added; not named `index_pages*`): the index-page record
-and style routes from `server.py`, a viewer annotator for marked pages (the marker logic leaves
-`filesystem.py`), the `index-pages` CLI operation delegating to `index_pages_cli.is_invocation`
-and `main`, and the generation operation M6 uses. Also owns `databench:src/databench/generate_cli.py`
-(asks the registry for operations instead of importing `index_pages_*`),
-`databench:src/databench/generate_config.py` and `databench:src/databench/llm_gateway.py` (added:
-core's own `resolve_llm_kit`; the copy in `index_pages_runner.py` stays until the batch in
-section 6), `databench:tests/test_html_module.py`. `filesystem.index_pages_runner_settings`
-stays in core until the section 6 batch, because its caller `index_pages_cli.py` is fingerprinted.
+**M2-U5 docs and release.** Owns `databench:README.md` ("Tasks module"), `databench:CLAUDE.md`,
+task-kit `references/dashboard.md` (points at the export), task-kit `plugin.json` and
+`pyproject.toml` (next free minor: the version M2-U2 declares),
+`docs/planning/task-kit-dashboard/architecture.md` (decision 1: manager code lives in databench).
+Order: task-kit is published first (`publish.py --only task-kit`, pre-authorized; claudx smoke of
+`task-kit export protocols` and `export tasks`), then databench is pushed with the raised
+`min_version`. Verify: unit tests; M2-U4; full databench suite; the fingerprint verifier;
+git-code-review over both ranges; on this Mac, `databench --view tasks` shows the task counts
+task-kit's dashboard shows.
 
-**M3-U3 web split.** Owns `databench:web/src/modules/explorer/`, `databench:web/src/modules/html/`
-and the shell's routing in `main.tsx`; empties the web allowlist.
+### M3 task-kit dashboard cutover (after M2 has shipped)
 
-**M3-U4 close-out.** Owns the manifest's allowlist (emptied), M1-U3's expected-failure list
-(emptied), README "Modules", `CLAUDE.md`. Verify: full suite; each module's tests with the others
-disabled; `web/tests/browser-check.mjs` with all modules enabled; generator fingerprint unchanged.
+Ruling: "i agree task-kit should remain entirely functional as it is today without the dashboard
+running. It can provide necessary interface functionality so that databench can interface iwth
+it." task-kit keeps and owns the export databench calls (M2); its own dashboard retires. Queue,
+run, cancel, retry, authoring forms, endpoint helpers and sub-agent characterization are not
+ported (q3; M8).
 
-### M4 Task answers
+**M3-U1 retire the dashboard** (plugins-kit). Owns:
+- `plugins/task-kit/skills/task/scripts/task_system/dashboard/` (deleted: server, static UI,
+  launcher, scheduler, runner and runtime, jobs edge, translation, authoring, helpers,
+  characterization, acceptance), `plugins/task-kit/skills/task/scripts/task_hold.py` (deleted),
+  and the `tests/task-kit/` files that exercise only those modules (deleted; the unit lists them).
+- `plugins/task-kit/bin/task_kit_entrypoint.py`, `bin/task-kit`, `bin/task-kit.cmd`:
+  `task-kit export ...` unchanged; bare `task-kit` runs `databench --view tasks` when databench
+  is on PATH, else exits 1 saying databench provides the task view and how a machine gets it;
+  `task-kit stop` stays for one task-kit minor so a server an earlier version started can be
+  stopped (identity-checked through the legacy `server.json`, refusing while jobs run unless
+  `--force`, as it does at 0.13.0), then goes.
+- `plugins/task-kit/skills/task/SKILL.md`: `/task dashboard` runs bare `task-kit`; the `/task work`
+  handshake step (`task_hold.py`) is removed, because no scheduler remains to yield; the `queue`
+  capability keeps only its background-worker branch; `references/dashboard.md` becomes a short
+  pointer to databench and `task-export-protocol.md`.
+- `plugins/task-kit/README.md`, `.claude-plugin/plugin.json` (description without a dashboard
+  that runs items), `pyproject.toml` (next free minor), `bootstrap.json` comment (psutil stays for
+  `procstamp.py` and `harness.py`; openai stays for M5's transport answerers).
+- Data: `<task-kit data dir>/dashboard/` (runtime database, run directories, `server.json`;
+  2.1 MB on this Mac [E]) is left in place; nothing is deleted.
+
+Checks: the existing tests of every `task.py` verb pass without edits (this unit may not edit
+them; reverting any verb change turns them red); no file under `plugins/task-kit/` imports
+`task_system.dashboard` (revert: keep `task_hold.py` -> red); bare `task-kit` with a fake
+databench on PATH runs `databench --view tasks`, and without one exits 1 with the message;
+the M2 export golden tests still pass; `task-kit stop` against a fixture `server.json` naming a
+dead pid reports it stale and signals nothing. Verify: serial `tests/task-kit` run; claudx smoke
+(`/task work` registers and pushes, `/task hand-off` releases, `/task dashboard` opens databench);
+git-code-review; `publish.py --only task-kit` (pre-authorized).
+
+### M4 Web module directories
+
+**M4-U1.** Owns `databench:web/src/modules/explorer/`, `databench:web/src/modules/html/` (moved
+from `web/src/`) and the web allowlist (emptied). Verify: `npm test`, typecheck, M1-U6's browser
+runs.
+
+### M5 Task answers
 
 `summary-on-commit-plan.md` units U1, U2, U4, U5, U7 and U10 keep their scope, interfaces and
 checks with these changes:
 
-- **U2** also owns `task_system/dashboard/snapshot.py`: `task_json` gains `answers`
-  (`{qid: {state, answer, answerer, as_of, fingerprint}}`) and `coverage`; protocol stays 1.
+- **U2** also owns `task_system/export.py`, the export schema and its golden fixtures:
+  `tasks[]` gains `answers` (`{qid: {state, answer, answerer, as_of, fingerprint}}`) and
+  `coverage`, and `summary_source` gains `"answer"`; additive, so protocol stays 1. (The
+  dashboard's `snapshot.py` is gone after M3.)
 - **U3 (re-cut)** has no switch in `task.local.yaml` and no spend statement or checkbox. Phases
   are `allow` sets: phase 1 `{"free"}`, phase 2 the caller's consent. By hand, the consent is
   plugins-kit's (`llm_kit.registry.consent.load_consent()`, per q1); a host passes its own with
   `--allow CLASSES`, which wins. `answerer.tier` is the llm-kit cost class.
-- **U4** adds `task-kit tasks answers refresh --format json [--parent DIR]... [--allow CLASSES]
-  [--batch N] [--stop-file PATH] [--deadline-s N]` (kind `answers-pass`) and `task-kit tasks
-  answers status --format json`. A stop file ends the pass between phases.
-- **U6** (service) becomes M6's `task-answers` operation; **U8** (dashboard UI) becomes M4-U8.
-- **M4-U8 answers in the tasks module** (databench web; after U2 is published). Owns the lens
+- **U4** adds `task-kit answers refresh --format json --protocol N [--parent DIR]... [--allow
+  CLASSES] [--batch N] [--stop-file PATH] [--deadline-s N]` (kind `answers-pass`) and `task-kit
+  answers status --format json --protocol N`, under the export's stdout, stderr, exit-code and
+  error-code rules (M2). A stop file ends the pass between phases.
+- **U6** (service) becomes M7's `task-answers` operation; **U8** (dashboard UI) becomes M5-U8.
+- **M5-U8 answers in the tasks module** (databench web; after U2 is published). Owns the lens
   components in `databench:web/src/modules/tasks/`: Orient shows the orientation answer, Decide
   the decisions with their stated defaults, Trace the task-record commits and activity; each
   answer shows answerer, as-of commit and a stale marker. Read-only.
-- **U9** drops the Windows service gate (M6) and every `task-kit service` text.
+- **U9** drops the Windows service gate (M7) and every `task-kit service` text.
 
-### M5 Shared file summaries
+### M6 Shared file summaries
 
 The databench task `shared-generated-content`, items `design-amendment` and `tracked-label-store`:
 summaries move from `~/.cache/databench/markup/<key>/labels.json` into `.databench/`. Owns
 `databench:src/databench/markup.py` (core) and `databench:docs/markup-design.md`. It keeps
 `_cache_root` and `_file_lock` and their meaning, because the fingerprinted `index_pages_cli.py`
-imports them. M6's file-summary operation runs by default on more than one machine only after
+imports them. M7's file-summary operation runs by default on more than one machine only after
 this lands, otherwise every machine pays for the same summaries.
 
-### M6 Generation service (core)
+### M7 Generation service (core)
 
-**M6-U1 settings and consent.** Owns `databench:src/databench/generation.py` (added):
+**M7-U1 settings and consent.** Owns `databench:src/databench/generation.py` (added):
 `<config root>/databench/generation.json` `{"schema": 1, "regeneration": {"enabled": bool,
 "types": [operation ids]}, "consent": {"usage": bool, "spend": bool}, "updated_at": ...}`. Absent
-file: regeneration on with every registered type (q6, "It all is by default"), consent per Q1.
+file: regeneration on with every registered type (q6, "It all is by default"); usage on and
+spend off ("databench ships with usage on spend off").
 `GET` and `PUT /api/v1/generation-settings` (write header; local clients only). A core settings
 panel holds the regeneration toggle, the type drop-down (operations of enabled modules) and the
 usage and spend checkboxes with the providers they send text to. `generate.yaml` v2 drops
 `harnesses`; a v1 file's harness keys are ignored with a note. Checks: absent file yields the
 shipped defaults; a remote `PUT` is refused.
 
-**M6-U2 consent applied through llm-kit.** Owns `databench:src/databench/llm_gateway.py`
+**M7-U2 consent applied through llm-kit.** Owns `databench:src/databench/llm_gateway.py`
 (`filter_models(ids, allowed) -> Filtered(usable, switched_off)`, one `llm-kit models describe
 <ids> --caller process --allow <classes> --json` per operation pass) and its call sites in
 `generate_cli.py` and `markup.py`; `databench:.claude/bootstrap.json` raises llm-kit's
@@ -347,36 +490,36 @@ The html operation receives already-filtered phase lists from `generate_cli`, so
 file changes. An operation whose list filters to empty is skipped with a status line, not exit 2.
 llm-kit is not changed.
 
-**M6-U3 service lifecycle.** Owns `databench:src/databench/service.py` (added), `cli.py`
+**M7-U3 service lifecycle.** Owns `databench:src/databench/service.py` (added), `cli.py`
 (`databench service ensure|stop|status|run [--json]`; bare `databench` ensures the service and
 opens the browser; `--dev` stays foreground), `databench:pyproject.toml` (psutil),
 `databench:tests/test_service.py`. Identity, stop protocol and checks as in the previous
 revision's S3-U1 (adapted from task-kit's `procspawn` and `procstamp` design).
 
-**M6-U4 background loop.** Owns `databench:src/databench/background.py` (added) and the startup
+**M7-U4 background loop.** Owns `databench:src/databench/background.py` (added) and the startup
 wiring in `server.py` (markup launch stderr to the service log, replacing DEVNULL at
 `server.py:676-681`). It runs each selected operation of each enabled module: file summaries
 (core), index pages (html; per repository after its origin HEAD moves, at most once per 24 h),
-task answers (tasks; `task-kit tasks answers refresh --format json --allow <databench consent>
---stop-file <service dir>/stop`). Checks: regeneration off runs nothing; a deselected type does
+task answers (tasks; `task-kit answers refresh --format json --protocol N --allow <databench
+consent> --stop-file <service dir>/stop`). Checks: regeneration off runs nothing; a deselected type does
 not run; a disabled module's operation is never registered.
 
-**M6-U5 triggers and wording.** Owns `plugins/task-kit/hooks/hooks.json` and
+**M7-U5 triggers and wording.** Owns `plugins/task-kit/hooks/hooks.json` and
 `plugins/task-kit/hooks/sessionstart/databench-ensure.sh` (async `startup`, `resume`, `clear`;
 runs `databench service ensure` when on PATH; absent or failing databench logs one line and exits
 0), `tests/task-kit/test_databench_ensure_hook.py`; claude-settings `USER-PREFERENCES.md`
 insight `generated_index_pages` (the regeneration switch and its types are the user's discretion;
 agents do not regenerate by hand).
 
-**M6-U6 release.** Windows smoke over ssh (detached service survives the starting session; stop
+**M7-U6 release.** Windows smoke over ssh (detached service survives the starting session; stop
 works) or ship with the gap stated; git-code-review; databench push; `publish.py --only task-kit`.
 
-### M7 Running work on tasks (deferred stub)
+### M8 Running work on tasks (deferred stub)
 
-Not planned (q3). Queue, run, cancel, authoring, session dismiss and any retirement of
-task-kit's own dashboard wait until the user needs them. The design kept for that point is the
-`adced200` revision of this file, section 5, stage 6 (a headless task-kit engine supervised by
-databench's service, proxied routes, UI parity).
+Not planned (q3). Queue, run, cancel, retry, authoring and session dismiss in databench wait
+until the user needs them; after M3 they exist nowhere. Starting points for that design: the
+`adced200` revision of this file, section 5, stage 6, and task-kit's dashboard code as of the
+last release before M3 (git history).
 
 ## 6. The index-pages generator fingerprint
 
@@ -405,10 +548,23 @@ repository's index pages stale"; that overstated it.
    core's).
 3. No added file may be named `index_pages*.py` or sit under `index_pages_refs/` or `assets/`;
    either would join the hash. The html registration file is `html_module.py`.
-4. Verification for every databench unit: a scratch script prints `generator_fingerprint` for a
-   fixed settings mapping at the unit's base commit and at its result, using the same llm-kit;
-   they must be equal. A plugins-kit llm-kit release that edits one of the five hashed modules
-   moves it too, so M4 and M6 touch none of them.
+4. A checked-in verifier, owned by M1-U2 and run by every databench unit:
+   `databench:scripts/verify_generator_fingerprint.py --base <commit> [--kit-root DIR]` with the
+   exact settings fixture `databench:tests/fixtures/generator_fingerprint_settings.json` (every
+   key `_fingerprint_settings` produces, with fixed values). It extracts the base commit's
+   `src/databench` with `git archive` into a scratch directory (removed in a `finally`), runs
+   `index_pages_worktree.generator_fingerprint` once for the base tree and once for the working
+   tree in separate `python -I` subprocesses whose `sys.path` puts the same llm-kit root first
+   (`--kit-root`, default the `llm_kit` the databench venv links), and prints for each side the
+   member list (stable name, sha256) and the digest. It exits 0 when the digests match, 1 with
+   the differing members when they do not, and 2 when the two sides resolved different llm-kit
+   bytes (the comparison is then refused). A pinned test
+   `databench:tests/test_generator_fingerprint_members.py` asserts the member list equals the
+   html manifest's hashed files plus `paths.py`, `ignore_rules.py`, `path_walk.py` and the five
+   llm-kit modules, and that `html_module.py`, `module_manifest.py` and `modules_registry.py` are
+   not members (revert: name the registration file `index_pages_module.py` -> red). A plugins-kit
+   llm-kit release that edits one of the five hashed modules moves the digest too, so M5 and M7
+   touch none of them.
 5. If a later change must touch fingerprinted files (the two leftovers, or moving html files
    into a directory), it goes in ONE databench commit, so the cost is paid once: one model-free
    local run per configured repository. Editing the bytes of the five generation inputs is
@@ -420,24 +576,20 @@ repository's index pages stale"; that overstated it.
   `allow` sets. Consent is plugins-kit's when the pass runs by hand and databench's when
   databench runs it (q1). The spend checkbox and its statement leave task-kit (ruling: "there
   shouldn't be a spend control there").
-- **D4.** The host is databench's generation service (M6). Deleted: `task-kit service ...`,
+- **D4.** The host is databench's generation service (M7). Deleted: `task-kit service ...`,
   `<data dir>/answers/service.{json,lock,stop,log}`, `hooks/sessionstart/service-ensure.sh`,
   `answers.service`, `answers.spend`, `answers.poll_s`. The pass algorithm stays task-kit code,
-  run as `task-kit tasks answers refresh --format json --allow ... --stop-file`. The row "inside
+  run as `task-kit answers refresh --format json --allow ... --stop-file`. The row "inside
   the dashboard server: Rejected" reverses for databench's detached service.
 - **D7.** "service off" reads "regeneration off"; "spend off" reads "class not consented".
-- **Units.** U3 re-cut; U6 becomes M6-U4's `task-answers` operation; U8 becomes M4-U8; U9 loses
+- **Units.** U3 re-cut; U6 becomes M7-U4's `task-answers` operation; U8 becomes M5-U8; U9 loses
   the Windows service gate.
 
 ## 8. Open questions (recommended default in brackets)
 
-- **Q1. databench's shipped consent.** q2 allows consent on by default; which classes?
-  [usage on, spend off: free and subscription harness models run, metered API models do not until
-  the user ticks spend.]
-- **Q2. task-kit's own dashboard.** "Task kit remains a fully functional plugin" and "All code
-  related to the manager lives in databench", with q3 deferring running work. [Keep task-kit's
-  dashboard working and frozen: no further features there; every further manager feature goes
-  into databench's tasks module; moving runs out of task-kit waits for M7.]
+- **Q1. task-kit's dashboard data at the M3 cutover.** `<task-kit data dir>/dashboard/` holds
+  the runtime database, run directories and `server.json` (2.1 MB on this Mac). Delete it?
+  [No: leave it in place and name its path in the release notes; delete only on your word.]
 
 ## 9. Decisions this plan makes, and what it dropped
 
@@ -449,8 +601,13 @@ Decided on the user's behalf:
   llm-kit does not change; databench's llm-kit floor becomes 0.4.0.
 - Regeneration and consent share one machine-written `generation.json`; `generate.yaml` stays
   hand-edited model lists.
-- All three modules are enabled by default; the lint starts with a shrink-only allowlist emptied
-  in M3.
+- All three modules are enabled by default; the Python lint allowlist is emptied in M1 and
+  the web one in M4.
+- The export is task-kit domain code (`task_system/export.py`), reached by `task-kit export`
+  without importing dashboard code; databench derives every manager view from it.
+- Too old versus failed is decided by a fixed probe argv (section 5, M2-U2).
+- M3 keeps `task-kit stop` for one task-kit minor so a server an older version started can be
+  stopped.
 - The tasks module reaches task-kit through its JSON CLI (process boundary, no `task_system`
   import), as in the previous revision.
 - Index pages in the background run per repository after its origin HEAD moves, at most once per
@@ -458,4 +615,5 @@ Decided on the user's behalf:
 
 Dropped from `adced200`: stage SC (llm-kit default flip and migration of task-kit, workflow-kit
 and other plugins-kit callers; q1 scopes consent to databench); the remote-access question (q5);
-stage S5's run host, engine supervision, UI parity and retirement (M7, deferred).
+stage S5's run host, engine supervision and UI parity (M8, deferred; task-kit's dashboard
+retires in M3 without them).
