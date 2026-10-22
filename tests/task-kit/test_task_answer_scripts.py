@@ -120,8 +120,8 @@ class TestReadRepoLog:
         assert [c.subject for c in log.touching("new_stub")] == ["move"]
 
     def test_non_ascii_paths_are_grouped_by_their_real_names(self, repo):
-        commit(repo, "accent", **{"p__café__plan": "1"})
-        assert [c.subject for c in answer_scripts.read_repo_log(repo).touching("p/café")] == ["accent"]
+        commit(repo, "accent", **{"p__caf\u00e9__plan": "1"})
+        assert [c.subject for c in answer_scripts.read_repo_log(repo).touching("p/caf\u00e9")] == ["accent"]
 
     def test_the_log_is_one_git_process_per_read_plus_the_head_probe(self, repo, monkeypatch):
         commit(repo, "a", p__a__plan="1")
