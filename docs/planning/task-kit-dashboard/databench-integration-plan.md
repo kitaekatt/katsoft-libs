@@ -121,12 +121,12 @@ disabled module is never imported (eagerly, lazily or by literal `importlib`).
 | Part | Files (databench `src/databench/`) | Why |
 |---|---|---|
 | core: host | `cli.py` (front door), `server.py` (app shell), `modules_registry.py` (added), `module_manifest.py` (added), `path_sources.py`, `generation.py`, `llm_gateway.py`, `service.py`, `background.py` (added in M1 or M7) | runs the process and loads enabled modules |
-| core: workspace | `projects.py`, `dev_roots.py` (+ `dev_roots.yaml`), `roots.py`, `filesystem.py` (root resolution, exact spelling, reads), `paths.py`, `ignore_rules.py`, `path_walk.py`, `store.py`, `system_viewer.py` | every module resolves projects and paths the same way |
+| core: workspace | `projects.py`, `dev_roots.py` (+ `dev_roots.yaml`), `roots.py`, `filesystem.py` (root resolution, exact spelling, reads), `paths.py`, `ignore_rules.py`, `path_walk.py`, `store.py`, `system_viewer.py`, `workspace_scope.py` (added in M1: which repositories `generate` covers) | every module resolves projects, paths and repositories the same way |
 | core: access | `remote_access.py` | one access policy |
 | core: comments | `comments.py`, `comment_locations.py` | ruling (2) |
-| core: file summaries | `markup.py` (label store, work list, generation through `llm-kit jobs`), `generate_config.py`, `generate_cli.py` (the `generate` front door over registered operations) | ruling (1); the html module's run state already shares markup's cache root and lock |
+| core: file summaries | `markup.py` (label store, work list, generation through `llm-kit jobs`), `generate_config.py`, `generate_cli.py` (the `generate` front door over core's and the modules' generation phases) | ruling (1); the html module's run state already shares markup's cache root and lock |
 | core: raw read | the raw route and its CSP contract | explorer's viewers and html's page viewer both read raw |
-| explorer | `entities.py`, `entity_edit.py`, `explorer_module.py` (added); browse, tree, context and raw-write routes; entity CLI operations; viewer components | browsing and editing |
+| explorer | `entities.py`, `entity_edit.py`, `explorer_module.py` (added); browse, tree, context and raw-write routes; entity CLI operations; entity declarations, loaded through explorer's root loader; viewer components | browsing and editing |
 | html | every `index_pages*.py`, `index_pages_refs/`, `assets/`, `html_module.py` (added) | index pages |
 | tasks | `tasks_module.py`, `tasks_host.py` (added) | the tasks view, through task-kit's JSON CLI |
 
@@ -135,34 +135,62 @@ markup labels) is core; `web/src/modules/explorer/`, `web/src/modules/html/`,
 `web/src/modules/tasks/` hold the views. Every module uses the shell's styling (ruling on look and
 feel); none ships its own.
 
-**Registry interface (core, fixed in M1):**
+**Registry interface (core; as built in databench `362ddfd..8280919`, plus the M1-U6 to U8
+additions marked "added"):**
 
 ```python
-MODULE_IDS = ("explorer", "html", "tasks")
-@dataclass(frozen=True)
-class ModuleSpec: id: str; title: str; entry: str     # "databench.html_module:register"
-class Host:                                            # what register(host) may call
-    def route(self, method, path, handler, *, path_source, write=False) -> None
-    def cli(self, operation, build_parser, run) -> None     # databench [<dir>] <operation>
-    def view(self, view_id, title, *, nav=True) -> None     # announced by GET /api/v1/modules
-    def generation(self, op: "GenerationOperation") -> None  # used from M7
-    def context_contributor(self, fn) -> None               # see below
+MODULE_SPECS = (ModuleSpec("explorer", "Explorer", "databench.explorer_module:register"),
+                ModuleSpec("html", "Index pages", "databench.html_module:register"))
+                # M2-U2 appends ModuleSpec("tasks", "Tasks", "databench.tasks_module:register")
+class Host:                                   # what register(host) may call
+    roots: RootRegistry                       # bound once the app exists; handlers read it per request
+    def route(self, method, path, handler, *, path_source, write=False, **options) -> None
+        # options are FastAPI route options; the path must start with /api/; write is True
+        # exactly for POST, PUT, PATCH and DELETE, and the server then requires core's
+        # write-intent header; local-only rules stay core's and a module cannot widen them
+    def cli(self, operation, build_parser, run) -> None
+        # build_parser given: the operation shares Databench's grammar, build_parser(parser)
+        # adds its options and run(args, parser) runs it; build_parser None: the operation
+        # parses its own argv and run(argv) receives the whole `databench [<dir>] <op> ...`
+    def view(self, view_id, title, *, nav=True) -> None    # client route /-/<view id>
+    def context_contributor(self, fn) -> None
+    def root_loader(self, fn: RootLoader) -> None          # added (M1-U6), one per module
+    def generation(self, phase: GenerationPhase) -> None   # typed by M1-U7
     def enabled(self, module_id) -> bool                    # soft links between modules
-# fn(kind, path, probe) -> Mapping[str, object], kind in {"directory", "file", "entry"}:
-# merged into the directory context, the file context (path = the file; its viewer keys
-# included) and each child entry's metadata. `probe` is core's ListingProbe (exact-spelling
-# names and the visibility policy, sharing the request's names cache), so a contributor never
-# calls filesystem.py's private methods. A key a contributor adds is absent when its module is
-# disabled; the explorer view treats an absent key as "no link".
-def load_enabled(path: Path | None = None) -> tuple[str, ...]
-    # <config root>/databench/modules.json {"schema": 1, "enabled": [...]}; absent: all three
-def register_enabled(host: Host, enabled: Iterable[str]) -> None   # imports enabled entries only
+# fn(kind, path, probe) -> Mapping[str, object], kind "directory" | "file" | "entry". probe is
+# filesystem.ListingProbe: names(directory) -> frozenset | None and visible(path) -> Path | None
+# (exact spelling and visibility, the request's names cache), kind, content (the bytes a file
+# context already read, b"" otherwise) and raw_view_exclude. A "viewer" mapping merges into the
+# file viewer; Raw precedence: a configured raw_view.exclude decides Raw for every file, else a
+# contributed raw_allowed decides, else Raw is allowed.
+@dataclass(frozen=True) class RootLoad: error: BrowseError | None; data: object        # added
+RootLoader = Callable[[BrowseRoot], RootLoad]                                           # added
+# register_enabled() ends by installing the enabled modules' loaders process-wide
+# (filesystem.install_root_loaders, replacing any earlier set). BrowseRoot.from_directory runs
+# them in canonical module order only when the core configuration, ignore rules and markup
+# overrides loaded cleanly; the first loader error becomes configuration_error and stops the
+# rest; each loader's data lands in BrowseRoot.extensions[module_id].
+class GenerationPhase(Protocol):                                                        # added
+    id: str                                   # also the regeneration type id (M7)
+    title: str
+    def check(self, models: Mapping[str, Sequence[str]]) -> str | None   # before any write
+    def run(self, scope: Scope, targets: Sequence[tuple[str, Path]],
+            models: Mapping[str, Sequence[str]]) -> PhaseResult
+@dataclass(frozen=True) class PhaseResult: status: int; recap: str                     # added
+def load_enabled(path=None) -> tuple[str, ...]   # <config root>/databench/modules.json
+def register_enabled(host, enabled) -> None      # imports enabled entries only
 GET /api/v1/modules -> {"enabled": [...], "views": [{"module", "id", "title", "nav"}]}
 databench modules list | enable ID | disable ID
+databench --view VIEW_ID        # fresh server: the CLI's enabled modules decide; attached
+                                # server: the views it announces; --restart checks the view
+                                # before stopping the running server
 ```
 
-A write route follows core's existing rule (write header; system-type actions local-only); a
-module cannot widen it.
+As built in M1: explorer registers the browse, tree, context, raw-write and entity routes, the
+`write`, `entities` and `entity-set` CLI operations and the `explorer` view; html registers the
+index-page record and style routes, the `index-pages` operation (own grammar) and its context
+contributor, and no web view (its page viewer is used inside explorer's file view, behind the
+`index_page` key); module navigation shows only when more than one view has `nav`.
 
 ## 4. Stage order
 
@@ -192,72 +220,100 @@ verification runs the fingerprint verifier of section 6.
 
 ### M1 Core split
 
-**M1-U1 registry and module settings.** Owns `databench:src/databench/modules_registry.py`
-(added), `databench:tests/test_modules_registry.py`. Interface: section 3. Checks: a disabled
-module's entry is never imported (import spy; revert: import all, filter later -> red); an
-unknown id in `modules.json` fails loudly naming the file (revert: ignore -> red); absent file
-enables all three.
+**Landed (databench `362ddfd..8280919`, pushed; fingerprint verifier against `902d6ef`:
+unchanged):** M1-U1 registry and per-machine enabled set; M1-U2 import-lint, web boundary test and
+fingerprint verifier; M1-U3 explorer backend; M1-U4 html backend (routes, `index-pages`
+operation, context contributor, core's `llm_gateway.resolve_llm_kit`); M1-U5 module-aware shell,
+`--view` and the isolation harness. The interface as built is section 3. Two allowlist groups
+remain, each a gap in the earlier revision of this plan: `filesystem.py -> entities.py` (entity
+declarations load when a root is built, which a per-request contributor cannot express) and
+`generate_cli.py -> index_pages_{cli,survey,worktree}` (scope resolution, the dev root's
+repository list and target selection serve the markup phase too). The isolation test still
+explains `entities.py` through that edge. M1-U6 to U9 close them; they run in order U6, then U7
+and U8 together, then U9.
 
-**M1-U2 import-lint.** Owns `databench:src/databench/module_manifest.py` (added: `CORE`, and per
-module a file list with globs, `index_pages*.py` among them),
-`databench:tests/test_module_boundaries.py`, `databench:web/src/module-boundaries.test.ts`, and
-the fingerprint verifier of section 6 (`databench:scripts/verify_generator_fingerprint.py`,
-`databench:tests/fixtures/generator_fingerprint_settings.json`,
-`databench:tests/test_generator_fingerprint_members.py`), which lands first so every later unit
-can run it. The Python test reads every file under `src/databench` (eager, local, `TYPE_CHECKING` and literal
-`importlib` imports): each file belongs to exactly one part; core imports no module file; a module
-imports only core and itself. Its allowlist starts as the edges of section 2 and only shrinks (a
-stale entry fails); M1-U5 ends with it empty. The web test applies the rule to `web/src` import
-specifiers with its own shrink-only allowlist, emptied in M4. Checks: a core file importing
-`index_pages` outside the allowlist (red); a stale allowlist entry (red); an unassigned file (red).
+**M1-U6 root loader; entities stay explorer's.** Decision: entity declarations are explorer's
+input (entity types, lists, details and edits); no core file reads them (comments, markup and
+store do not), so with explorer disabled a malformed declaration has nothing to block. Owns
+`databench:src/databench/modules_registry.py` (`RootLoad`, `RootLoader`, `Host.root_loader`,
+installation at the end of `register_enabled`), `databench:src/databench/filesystem.py`
+(`install_root_loaders`; `BrowseRoot.extensions`; `from_directory` runs the installed loaders as
+section 3 states; the `entity_types` field and the lazy `entities` import go),
+`databench:src/databench/explorer_module.py` (registers a loader wrapping
+`entities.load_entity_declarations`; reads `root.extensions["explorer"]`),
+`databench:src/databench/entity_edit.py` (reads the extension instead of `root.entity_types`),
+`databench:src/databench/module_manifest.py` (drops `filesystem.py -> entities.py`),
+`databench:tests/test_root_loader.py` (added), the conftest fixture that resets the installed
+loaders between tests. Checks: with explorer enabled, a root with a malformed entity declaration
+gives the same configuration error code and message as at `8280919` through the browse route,
+the comments route, the CLI `read` operation and the markup phase of `databench generate`
+(revert: register no loader -> no error -> red); a core configuration error still wins over an
+entity error; with explorer disabled the same root serves comments and `entities.py` is never
+imported; a second `register_enabled` with a smaller set removes the earlier loaders (revert:
+append instead of replace -> red); the lint passes with the entry removed.
 
-**M1-U3 explorer backend** (after U1 and U2). Owns `databench:src/databench/explorer_module.py`
-(added: browse, tree, context and raw-write routes, entity routes and CLI operations, explorer
-view announcements), `databench:src/databench/server.py` (builds a `Host` in `create_app`, serves
-`GET /api/v1/modules`, keeps only core routes), `databench:src/databench/cli.py` (`modules`
-operation; module operations through the registry), `databench:src/databench/filesystem.py` (the
-lazy `entities` import becomes a registered context contributor),
-`databench:tests/path_route_registry.py`, `databench:tests/test_explorer_module.py`.
+**M1-U7 core workspace scope and generation phases.** Decision: which repositories `generate`
+covers is core, because file summaries (core) and index pages (html) both run over it; each
+module contributes a generation phase, which `databench generate` runs from M1 on and M7's service
+runs later. No fingerprinted file changes, so core gets its own implementation of the selection
+html's files also hold; the parity test of M1-U8 keeps the two equal until the section 6 batch
+replaces html's copy with imports of core's. Owns `databench:src/databench/workspace_scope.py`
+(added, core):
 
-**M1-U4 html backend** (after U3; shares `server.py`, `cli.py`, `filesystem.py`). Owns
-`databench:src/databench/html_module.py` (added; not named `index_pages*`): the index-page record
-and style routes, a context contributor that adds `has_index_page` and `index_page` to directory
-contexts, file contexts (for the parent directory) and directory entries, and the marked-page raw
-rule to file viewer keys, exactly where `filesystem.py:1262-1269,1702-1710,1914-1936` add them
-today (the marker logic leaves `filesystem.py`),
-the `index-pages` CLI operation delegating to `index_pages_cli.is_invocation` and `main`, and the
-generation operation M6 uses. Also owns `databench:src/databench/generate_cli.py` (asks the
-registry for operations instead of importing `index_pages_*`),
-`databench:src/databench/generate_config.py`, `databench:src/databench/llm_gateway.py` (added:
-core's own `resolve_llm_kit`; the copy in `index_pages_runner.py` stays until the section 6
-batch), `databench:tests/test_html_module.py` (with html enabled, the directory, file and
-entry payloads of a fixture tree match goldens captured before the split byte for byte; revert:
-contribute to files only -> the directory and entry goldens go red; with html disabled the keys
-are absent). `filesystem.index_pages_runner_settings` stays in
-core until the section 6 batch, because its caller `index_pages_cli.py` is fingerprinted; it
-imports nothing from html.
+```python
+@dataclass(frozen=True) class Scope: mode: str; base: Path        # "repository" | "dev-root"
+@dataclass(frozen=True) class Skipped: name: str; reason: str; explicit: bool
+@dataclass(frozen=True) class Selection:
+    targets: tuple[tuple[str, Path], ...]   # one checkout per origin, in order
+    names: tuple[str, ...] | None           # the dev root's configured list, or None
+    skipped: tuple[Skipped, ...]            # refused names and duplicate copies
+def resolve_scope(directory: Path) -> Scope         # the four rules of generate_cli's docstring
+def is_primary_checkout(directory: Path) -> bool
+def origin_identity(checkout: Path) -> str | None   # the normalized origin URL
+def select(scope: Scope) -> tuple[Selection, str | None]
+    # dev root: primary checkouts one level deep minus dev_roots exclusions, one per origin;
+    # the configured list is `index_pages.repositories` (key kept; read through
+    # filesystem.index_pages_runner_settings and, for the read-back check, through
+    # dev_roots.parse_yaml_subset as the survey reads it); writes the config when absent and
+    # returns its text
+```
 
-**M1-U5 module-aware shell and isolation** (after U4). Owns the shell routing in
-`databench:web/src/main.tsx` (nav and routes come from `GET /api/v1/modules`; `/` opens
-explorer when enabled, else the first enabled module's view, else a core page saying no module is
-enabled; a deep link into a disabled module shows "module disabled"; comment location links are
-soft links to explorer), `databench:src/databench/cli.py` (core option `--view VIEW_ID`: it
-ensures or attaches to the server as bare `databench` does and opens the browser at that view's
-route from the registry; an unknown or disabled view exits 1 naming the enabled views; an option,
-so no directory name collides with it), `databench:tests/test_cli_view.py` (an enabled view
-opens its URL through a fake opener, on a fresh and on an attached server; a disabled and an
-unknown view exit 1; revert: ignore `--view` -> the root URL opens -> red),
-`databench:tests/module_isolation.py` (helper),
-`databench:tests/test_module_isolation.py`, the manifest's Python allowlist (emptied). The
-isolation test, per enabled set (none; each module alone; all), builds the app and the CLI parser
-in a subprocess and asserts no other module's file is in `sys.modules`; a `module(id)` marker and
-`--databench-modules` run each module's tests with the rest disabled. No expected failures.
+and `databench:src/databench/generate_cli.py` (config gate; each enabled phase's `check`;
+scope; selection; core's `file-summaries` phase; then each enabled module's phases in canonical
+order; exit status the largest, as at `8280919`; `--skip PHASE` repeatable, with `--no-markup-refresh`
+and `--no-index-pages` kept as aliases; skipping a phase that is not registered prints a note),
+`databench:src/databench/modules_registry.py` (`GenerationPhase`, `PhaseResult`, typed
+`Host.generation`), `databench:src/databench/module_manifest.py` (`workspace_scope.py` in
+`CORE`; the three `generate_cli.py` entries dropped), `databench:tests/test_workspace_scope.py`
+(added). `generate_cli` keeps `NO_ORIGIN` (html's phase imports it from core) and
+`ensure_dev_root_config` (delegating to `workspace_scope`). Checks: `tests/test_generate_cli.py`
+passes with only a `module("html")` marker added, all modules enabled (repository mode, dev-root
+mode, the written config, refused names, duplicate copies, no-origin skips, exit statuses;
+revert: drop the configured-list rule -> red); with html disabled,
+`databench generate` on a dev root runs file summaries over the same targets and loads no html
+file; `generate_cli.py` imports no `index_pages*` file (lint).
 
-**M1-U6 docs and release.** Owns `databench:README.md` ("Modules"; the boundary rule at
+**M1-U8 html generation phase** (developed beside U7 against its frozen interface; lands in
+the same commit). Owns `databench:src/databench/html_module.py` (registers
+`IndexPagesPhase(id="index-pages")`: `check` requires both or neither of the judgment and
+generation lists, as `generate_cli` does at `8280919`; `run` applies the origin split
+(`index_pages_cli.split_refused`, `index_pages_worktree.has_origin`), builds the argv
+(`repository_index_argv`, moved from `generate_cli.py`) and calls `index_pages_cli.main(argv,
+models=...)`), `databench:tests/test_html_generation_phase.py` and
+`databench:tests/test_workspace_scope_parity.py` (both `module("html")`; the parity test gives
+fixture dev roots with duplicate origins, a linked worktree, an excluded name, a configured list
+naming a missing and an origin-less repository, and asserts `workspace_scope.select` equals
+`index_pages_cli.select_configured` or `select_targets` followed by `split_duplicates`; revert:
+drop core's one-copy-per-origin rule -> red).
+
+**M1-U9 close-out and release.** Owns `databench:tests/module_isolation.py` (`explained`
+admits nothing; the isolation test is strict), the manifest's Python allowlist (must be empty),
+`databench:README.md` ("Modules", "Generate" with phases and `--skip`; the boundary rule at
 README:25-27 admits first-party modules through the registry), `databench:CLAUDE.md` (directory
-map). Verify: full `uv run pytest`; each module's tests with the others disabled; `cd web && npm
-test && npm run typecheck`; `web/tests/browser-check.mjs` with all modules enabled and with
-explorer disabled; the fingerprint verifier; databench push.
+map). Verify: full `uv run pytest`; each module's tests with the others disabled
+(`--databench-modules`); `cd web && npm test && npm run typecheck`; `web/tests/browser-check.mjs`
+with all modules enabled and with explorer disabled; the fingerprint verifier against `902d6ef`;
+databench push.
 
 ### M2 Tasks module, read-only
 
@@ -334,8 +390,15 @@ stdout holds exactly one document for each error code (revert: print a warning t
 data-dir digests before and after).
 
 **M2-U2 tasks module backend** (databench; after U0 and M1, beside U1 with fake executables).
-Owns `databench:src/databench/tasks_module.py` and `databench:src/databench/tasks_host.py`
-(listed under `tasks`), `databench:src/databench/path_sources.py` (a `task-identity` source:
+Owns `databench:src/databench/tasks_module.py` and `databench:src/databench/tasks_host.py`,
+`databench:src/databench/module_manifest.py` (`MODULES["tasks"]` lists both),
+`databench:src/databench/modules_registry.py` (appends `ModuleSpec("tasks", "Tasks",
+"databench.tasks_module:register")`; and, because a module added after a machine wrote
+`modules.json` must default to on as an absent file does, the file becomes `{"schema": 2,
+"disabled": [...]}`: schema 1 is read as disabled = {explorer, html} minus its `enabled` list
+and rewritten as schema 2 on the next save; checks: a schema-1 file listing only `explorer`
+yields explorer and tasks enabled, html disabled; revert: keep reading `enabled` -> tasks off ->
+red), `databench:src/databench/path_sources.py` (a `task-identity` source:
 task-kit resolves the identity against its own discovery; databench walks no client path), the
 route registry, `databench:.claude/bootstrap.json` (adds `{"ref": "plugins-kit:task-kit",
 "min_version": "<the release that ships M2-U1>"}` beside llm-kit),
@@ -456,7 +519,7 @@ git-code-review; `publish.py --only task-kit` (pre-authorized).
 ### M4 Web module directories
 
 **M4-U1.** Owns `databench:web/src/modules/explorer/`, `databench:web/src/modules/html/` (moved
-from `web/src/`) and the web allowlist (emptied). Verify: `npm test`, typecheck, M1-U6's browser
+from `web/src/`) and the web allowlist (emptied). Verify: `npm test`, typecheck, M1-U9's browser
 runs.
 
 ### M5 Task answers
@@ -522,7 +585,8 @@ revision's S3-U1 (adapted from task-kit's `procspawn` and `procstamp` design).
 
 **M7-U4 background loop.** Owns `databench:src/databench/background.py` (added) and the startup
 wiring in `server.py` (markup launch stderr to the service log, replacing DEVNULL at
-`server.py:676-681`). It runs each selected operation of each enabled module: file summaries
+`server.py:676-681`). Its operations are M1's generation phases, and a regeneration type id is a
+phase id. It runs each selected phase of each enabled module: file summaries
 (core), index pages (html; per repository after its origin HEAD moves, at most once per 24 h),
 task answers (tasks; `task-kit answers refresh --format json --protocol N --allow <databench
 consent> --stop-file <service dir>/stop`). Checks: regeneration off runs nothing; a deselected type does
@@ -567,9 +631,12 @@ repository's index pages stale"; that overstated it.
    `ignore_rules.py` and `path_walk.py` stay as core files at theirs.
 2. Every coupling is cut on the non-fingerprinted side: `filesystem.py`, `server.py`, `cli.py`,
    `generate_cli.py`, `generate_config.py`. `index_pages_cli -> markup` needs no edit because
-   markup is core. Two leftovers stay until a batch: `filesystem.index_pages_runner_settings`
-   (called from `index_pages_cli.py`) and `index_pages_runner.resolve_llm_kit` (a copy beside
-   core's).
+   markup is core. Three leftovers stay until a batch: `filesystem.index_pages_runner_settings`
+   (called from `index_pages_cli.py`), `index_pages_runner.resolve_llm_kit` (a copy beside
+   core's), and html's repository selection (`index_pages_cli.select_targets`,
+   `select_configured`, `split_duplicates`; `index_pages_survey.find_repositories`,
+   `is_primary_checkout`, `normalize_remote_url`), duplicated by core's `workspace_scope` and
+   held equal by M1-U8's parity test; the batch makes html import core's.
 3. No added file may be named `index_pages*.py` or sit under `index_pages_refs/` or `assets/`;
    either would join the hash. The html registration file is `html_module.py`.
 4. A checked-in verifier, owned by M1-U2 and run by every databench unit:
@@ -634,6 +701,11 @@ Decided on the user's behalf:
   stopped.
 - The tasks module reaches task-kit through its JSON CLI (process boundary, no `task_system`
   import), as in the previous revision.
+- Entity declarations stay explorer's and load through a root loader (M1-U6); with explorer
+  disabled a malformed declaration blocks nothing.
+- The repositories `generate` covers are core (`workspace_scope`, M1-U7); each module adds a
+  generation phase, which `databench generate` and M7's service both run.
+- `modules.json` records the disabled set (schema 2, M2-U2), so a module added later is on.
 - Index pages in the background run per repository after its origin HEAD moves, at most once per
   24 h.
 
