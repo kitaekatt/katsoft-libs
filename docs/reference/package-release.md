@@ -122,6 +122,44 @@ Publisher per distribution (owner `kitaekatt`, repository `plugins-kit`,
 workflow `release-packages.yml`, environment `pypi`); an authenticated `gh` on
 the publishing machine; and a publish go-signal.
 
+## katsoft-llm-kit
+
+Install and extras (the extras mirror `plugins/llm-kit/pyproject.toml`, minus
+its `dev` extra; `tests/llm-kit/test_dist_metadata_parity.py` holds them
+equal):
+
+```bash
+pip install katsoft-llm-kit
+pip install "katsoft-llm-kit[sdk,jobs,config]"
+```
+
+| Extra | Brings |
+|---|---|
+| `config`, `jobs`, `pipeline` | PyYAML |
+| `sdk` | the OpenAI client (the OpenRouter HTTP path) |
+| `local` | psutil |
+| `frontdoor` | FastAPI, uvicorn, httpx |
+
+The base install depends on `katsoft-contracts>=1.0,<2` only. The console
+script is `llm-kit`; the import package is `llm_kit`.
+
+Package mode (`llm_kit._runtime.mode() == "package"`, set by the hook-written
+`llm_kit/_deployment.py`):
+
+- Features that need the marketplace's `bootstrap_lib` raise
+  `UnsupportedInPackageMode`: the Codex backend and adapter, claudx
+  propagation, skill context and the code-review lane. Codex reachability
+  uses the PATH + `--version` check.
+- The model registry reads the shipped defaults, and
+  `MODEL_ENDPOINTS_REGISTRY` overrides the registry file. Behaviour when no
+  registry is configured is pending user ruling `model-list-decision` (shipped
+  defaults, as implemented, or refuse when unset); the single policy point is
+  `registry.models.package_mode_model_config`.
+- Do not install the package into an environment that also holds the plugin's
+  linked `llm_kit` (the bootstrap shared-lib `.pth`). `mode()` raises
+  `RuntimeIdentityError` there and removes nothing; use separate
+  environments.
+
 ## Measured premises
 
 Measured 2026-10-22 (uv 0.12.5, hatchling 1.32.0, CPython 3.12.9, macOS

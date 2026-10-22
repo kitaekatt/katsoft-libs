@@ -185,6 +185,26 @@ def test_loaded_copy_must_be_the_installed_copy(site, tmp_path):
 
 # --- C3: the three routed contracts ----------------------------------------
 
+def test_contracts_too_old_is_worded_apart_from_absent(site, tmp_path):
+    """katsoft_contracts imports but lacks the routed module: upgrade, not install."""
+    stale = tmp_path / "stale"
+    (stale / "katsoft_contracts").mkdir(parents=True)
+    (stale / "katsoft_contracts" / "__init__.py").write_text("", encoding="utf-8")
+    body = (
+        "from llm_kit import _runtime\n"
+        "try:\n"
+        "    _runtime.load('model_declaration')\n"
+        "except _runtime.ContractsMissing as exc:\n"
+        "    result = str(exc)"
+    )
+    too_old = package(site, body, extra_paths=[stale], contracts=False)["ok"]
+    absent = package(site, body, contracts=False)["ok"]
+    assert "is installed but has no model_declaration" in too_old and "upgrade katsoft-contracts" in too_old
+    assert ">=1.0,<2" in too_old and "install katsoft-contracts" not in too_old
+    assert "install katsoft-contracts" in absent and "upgrade" not in absent
+    assert too_old != absent
+
+
 def test_contracts_missing_named(site):
     out = package(site, (
         "from llm_kit import _runtime\n"

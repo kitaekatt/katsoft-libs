@@ -242,16 +242,13 @@ def fleet_config_path() -> Path:
 
 
 def package_mode_model_config(base: dict) -> dict:
-    """THE package-mode model-list policy point.
+    """The model config in package mode: the shipped defaults, unchanged.
 
-    PENDING USER RULING ``model-list-decision``. Package mode has no
-    ``bootstrap_lib.config_resolve``, so the layered config.yaml files cannot be
-    read. Implemented (the planner's recommendation): the shipped defaults, with
-    the endpoint registry file overridable through ``MODEL_ENDPOINTS_REGISTRY``
-    (``registry.model_endpoints``). The alternative awaiting the ruling is to
-    refuse here when ``MODEL_ENDPOINTS_REGISTRY`` is unset; change this function
-    and nothing else. ``tests/llm-kit/test_runtime_mode.py`` pins the
-    recommended behaviour by name.
+    The installed package has no layered config.yaml files to read. The
+    endpoint registry file is still resolved by
+    :mod:`llm_kit.registry.model_endpoints`, and ``MODEL_ENDPOINTS_REGISTRY``
+    overrides its path. This is the one place package mode decides what the
+    model list is when no registry is configured.
     """
     return base
 

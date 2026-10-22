@@ -213,7 +213,9 @@ def load(name: str, error: Optional[type] = None) -> Any:
     Only a ``ModuleNotFoundError`` that names ``katsoft_contracts`` or the
     routed submodule means the contracts distribution is missing; it becomes
     :class:`ContractsMissing`, or ``error`` (the calling product's own
-    ``ImportError`` subclass) worded the same. Every other ``ImportError``
+    ``ImportError`` subclass) worded the same. Absent (``katsoft_contracts``
+    does not import: install) and too old (it imports but lacks the routed
+    module: upgrade) read differently. Every other ``ImportError``
     propagates unchanged: a broken contracts install must not read as an absent
     one.
     """
@@ -227,10 +229,18 @@ def load(name: str, error: Optional[type] = None) -> Any:
     except ModuleNotFoundError as exc:
         if exc.name not in (CONTRACTS_PACKAGE, qualified):
             raise
-        missing = ContractsMissing(
-            f"{qualified} is not importable: install {CONTRACTS_DIST} "
-            f"(the {DIST} package depends on it)"
-        )
+        if exc.name == qualified:
+            # The package imports but lacks the routed module: too old (or
+            # stale), a different remedy from an absent install.
+            missing = ContractsMissing(
+                f"{CONTRACTS_DIST} is installed but has no {name}; upgrade "
+                f"{CONTRACTS_DIST} ({DIST} requires >=1.0,<2)"
+            )
+        else:
+            missing = ContractsMissing(
+                f"{qualified} is not importable: install {CONTRACTS_DIST} "
+                f"(the {DIST} package depends on it)"
+            )
         if error is None:
             raise missing from exc
         raise error(str(missing)) from exc
