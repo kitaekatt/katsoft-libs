@@ -1,6 +1,8 @@
 # Shared library packaging: go / no-go recommendation
 
-Date: 2026-10-22. Status: final verdict NO-GO NOW (timing), awaiting the user's acceptance or override. Owning task:
+Date: 2026-10-22. Status: the user ruled GO for a bootstrap-independent databench on 2026-10-22, superseding the timing NO-GO below
+("but i want databench in its own .venv the context is i want to make databench installable via npm and i don't want
+people to have to install bootstrap or plugins-kit to run databench"); the plan is `packaging-plan.md`. Owning task:
 `shared-lib-packaging` (feasibility study; parent `task-kit-extraction`, item
 `databench-integration`). Every measurement below is a scratch measurement, 2026-10-22
 (uv 0.12.5, CPython 3.12.9, macOS arm64): builds and installs from scratch copies; no
