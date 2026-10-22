@@ -1,18 +1,20 @@
-# task-kit task metadata: questions answered at commit time -- design plan
+# task-kit task metadata: questions and answers -- design plan
 
-Status: design only (unit `summary-on-commit-plan`, 2026-10-21). No code changed.
-Code facts are as of dev `d6bb301a` (task-kit 0.13.0, llm-kit 0.3.2, bootstrap 0.158.3).
-Paths are relative to `plugins/task-kit/skills/task/scripts/` unless they start with
-`plugins/`, `tests/`, `docs/` or `~`.
+Status: design only (unit `summary-on-commit-plan`, round 2, 2026-10-21). No code changed.
+Code facts are as of plugins-kit dev `d6bb301a` (task-kit 0.13.0, llm-kit 0.3.2, bootstrap
+0.158.3); tasks-repo measurements are at tasks `ed36ca41`. Paths are relative to
+`plugins/task-kit/skills/task/scripts/` unless they start with `plugins/`, `tests/`, `docs/`
+or `~`.
 
 ## Question
 
-How should task-kit generate each task's orientation summary at git commit time, so the
-dashboard detail view can orient first: what the task is, where it stands, what is next? The
-user widened the question: the summary is one instance of durable, LLM-computed task metadata,
-organised as questions and answers, with versioned schemas and automatic upgrades of every task.
+How should task-kit produce each task's orientation summary so the dashboard detail view can
+orient first (what the task is, where it stands, what is next)? The user widened it: the summary
+is one instance of durable task metadata, organised as questions and answers, computed by the
+cheapest capable answerer, kept by a task-kit service the user turns on or off, with a separate
+switch for paid usage.
 
-## Binding rulings (user, 2026-10-21, verbatim)
+## Binding rulings (user, verbatim)
 
 > Generated summary. Maybe this can be tied to the git commit process somehow with a script
 > that calls a local qwen relay falling back to luna med.
@@ -32,6 +34,18 @@ organised as questions and answers, with versioned schemas and automatic upgrade
 > sure i imagine these are things we'll iterate on. But the core idea is questions and answers
 > computed via meta-data.
 
+Round 2:
+
+> I don't think we need to directly associate computation and commit out of sync means out of
+> sync.
+
+> I was thinking of this more as a service that is on or off and why not have a checkbox for
+> spend usage
+
+> Index: even cheaper than qwen is answered by script
+
+The user stated no preference on the first question set (round 2).
+
 Distributed-truth rulings this design leans on (`docs/reference/distributed-truth.md`):
 
 > if the data isn't in the task file, wherever it goes still needs to be commited, because we
@@ -42,68 +56,72 @@ Distributed-truth rulings this design leans on (`docs/reference/distributed-trut
 > I don't think there should be anything machine specific except for private information
 > specific to this machine
 
+> i mentioned including the process so we can verify local machines. For an external machine i
+> agree for now that can be unverified. Eventually we will make it so the task-kit service is
+> running on all the machines all the time, and then you can ask the other machine if it's valid
+> or not, but that's for the future
+
 ## Recommendation in brief
 
-1. **Primitive.** A QUESTION is declared data: id, version, prompt, the input readers it uses,
-   an answer schema, the statuses it applies to, an optional model override. Its ANSWER is
-   computed through llm-kit and stored in the task folder with provenance: inputs
-   fingerprint, as-of commit, model entry, effort, time, re-selections. The catalog is data
-   (shipped files plus a fleet layer); a question that uses existing readers is added or
-   retired without code.
-2. **Freshness is computed.** An answer is current when its stored fingerprint equals the
-   fingerprint of the question definition plus the inputs it reads. Editing a question or
-   changing an input makes its answers stale; writing an answer changes no fingerprint.
-3. **Storage.** `<task>/answers/<question id>/<host id>.yaml`, committed. Each machine writes
-   only its own files (principle 2), so concurrent answering never produces conflicting
-   commits; readers take the newest current answer from any host.
-4. **Schema versions.** The format version stays in `task._schema_version` (deterministic,
-   idempotent, byte-identical migrators). The question set is versioned by the catalog. A
-   task's coverage is computed from its answers, never stored: a failed upgrade leaves the task
-   visibly on its old coverage, with nothing to clean up.
-5. **Freshness trigger.** A synchronous git post-commit hook in the repository that versions
-   the task folders (the tasks repo; never plugins-kit) refreshes the stale or missing answers
-   of the tasks a commit touched, and commits only this machine's answer files before the
-   caller's push.
-6. **Bulk upgrade.** One verb, `task.py answers upgrade`, run by hand or automatically from
-   task-kit's own SessionStart hook when `answers.auto_upgrade` is on (fleet on, shipped off),
-   within a per-start budget, with git as the deduplicator. Not bootstrap; not the dashboard.
-7. **Model chain through llm-kit.** Fleet declaration `[qwen38-5090, qwen38-m5, luna, haiku]` at
-   effort medium; shipped default `[luna, haiku]` at medium. llm-kit selects and falls through
-   on halts; on a task error or rejected answer task-kit re-selects with `exclude` and records
-   every re-selection (the code-review lane precedent).
-8. **First question set:** `orientation` (headline, state, next) and `decisions` (what waits on
-   the user, with defaults only when the files state one, each grounded by a verbatim quote).
-   Further questions are ranked in D6 and added as data.
+1. **Primitive.** A QUESTION is declared data: id, version, the input readers it uses, an
+   answer schema, the statuses it applies to, and its answerers. Its ANSWER carries provenance:
+   inputs fingerprint, as-of commit, answerer, time. The catalog is data (shipped files plus a
+   fleet layer); a question that uses existing readers and answerers needs no code.
+2. **Cheapest capable answerer first.** Script (deterministic; computed on read, never stored)
+   -> free model (an llm-kit registry entry with `billing: unmetered`: `qwen38-5090`,
+   `qwen38-m5`) -> paid model (`luna`, `haiku`, at effort medium) only when spend is on and the
+   task's repository is listed for external answerers. Provenance names the answerer.
+3. **Out of sync means out of sync.** No coupling to commits. An answer is current when its
+   stored fingerprint equals the fingerprint of the question definition plus its inputs;
+   otherwise it is shown stale, with its as-of commit.
+4. **Storage.** Model answers live in `<task>/answers/<question id>/<host id>.yaml`, committed,
+   one writer per file, with the machine fingerprint ownership check working sessions use.
+   Readers choose deterministically, never by wall-clock time.
+5. **The task-kit service.** One background process per machine, separate from the dashboard,
+   with two switches: `answers.service` (on/off) and `answers.spend` (paid usage), shown as
+   dashboard checkboxes with CLI equivalents. It polls, answers a bounded batch, commits only
+   its own answer files and publishes them through the session publisher under that publisher's
+   repository lock. Off: answers go stale, visibly; `task.py answers refresh` does the same work
+   by hand.
+6. **Schema versions.** v1 versions the question catalog only. Task-format migrations are
+   deferred until a structural change exists; the rule for them is stated in D5.
+7. **Model chain through llm-kit.** One declaration in preference order; tier and consent are
+   applied as `exclude`; a task error or rejected answer re-selects with every attempted entry
+   excluded.
+8. **First questions:** `orientation` and `decisions` (model); `activity` and `task_commits`
+   (script).
 
 ## Premise outcomes
 
 | Premise | Outcome | Evidence |
 |---|---|---|
-| task-kit generates a one-line `task.summary` with Codex Luna at medium effort, triggered by `review`, persisted with fingerprint and provenance | CONFIRMED, with a correction: provenance is a date only; no model is recorded | `summary_ops.py:22-29`, `:121-155` (calls `CodexCliBackend` directly, not through the registry), `:267-275` (`state_ops.update(summary=, summary_fingerprint=, summary_updated=<ISO date>)`); `task.py:353-355` |
-| Writing a summary does not change the fingerprint | CONFIRMED | `listing.py:26` (summary keys excluded), `listing.py:92-109`; `discovery.py:189-214` drops `summary:` log entries |
-| Bookkeeping log lines are harmless to freshness | REFUTED | the detail-view mockup's sample task has 22 of 25 dated log lines reading "update: refresh (no field edits)" (`detail-view/index.html`); every such entry enters the fingerprint (`listing.py:92-109`), so each one invalidates the summary |
-| Task folders are committed in the private tasks repo, on several machines | CONFIRMED | `dev/tasks -> /Users/christina/Dev/tasks/plugins-kit` (symlink); plugins-kit ignores `dev/tasks/` (`docs/reference/task-folders.md`). The tasks repo has no installed hooks and no `core.hooksPath` |
-| Who commits in the tasks repo, and how often | MEASURED | agents (`git add -A && git commit && git push`, tasks-repo `CLAUDE.md` "Always push"), repo-sync `auto_commit: true` at SessionStart (same file), `session_publish.py:330` (`git commit -- .sessions/<host>.yaml`). 517 non-merge commits in the 7 days to 2026-10-21: 500 touched one task folder, 12 touched 2 to 6, 1 touched 16, 5 touched none. 75 task folders: 40 active, 34 closed, 1 deferred |
-| llm-kit expresses an ordered declaration with fallback | CONFIRMED, with two limits | Python: `llm_kit.dispatch.declaration.run(names, RunRequest, exclude=, max_attempts=, reachability_cache=)` (`plugins/llm-kit/lib/llm_kit/dispatch/declaration.py:870-907`). CLI: `llm-kit completion complete --models a,b,c --effort medium` (`cli/completion.py:303-311`, `cli/_common.py:69-79`). Render: `llm-kit models describe <ids> --caller process`. Measured on this Mac: `describe qwen38-5090 qwen38-m5 luna haiku --caller process` lists all four usable in declared order (luna is the only paced entry, so pace ordering moves nothing); with `--requirements '{"params":["effort"]}'` all four stay usable, so one effort reaches every entry. Limits: `run` moves on only on a classified halt or launch failure ("A task error, schema-invalid output, or an unclassified timeout stays a failed attempt", printed by describe; `declaration.py:1036-1043`); per-entry effort exists only in `llm_kit.jobs` (`model_efforts`, `jobs/model.py:26-30`). task-kit's dashboard already calls `run` (`dashboard/jobs_edge.py:331-372`) |
-| The two qwen38 endpoints | CONFIRMED | `~/.claude/config/model-endpoints.yaml`: `qwen38-5090` (`http://5090w.localdomain:8080/v1`, context 262144) and `qwen38-m5` (`http://m5pro.localdomain:8000/v1`, context 32768), both `billing: {mode: unmetered}`. Naming them directly bypasses the front-door entry `qwen38`, whose third tier is DeepSeek Flash on OpenRouter (local-llm-domain `SKILL.md`, "Front door"). qwen38-m5's 32768-token context caps a question's input |
-| A task format version exists | CONFIRMED | `task._schema_version` is required (`schemas.py:23`); `validate.py:471-475` reports an unknown version as a schema violation; the hand-off type knows `("1",)` (`types.py:45`); validate findings gate `work` (`schemas.py`, durable_outputs comment) |
-| What the mockups need | READ | `docs/planning/task-kit-dashboard/detail-view/index.html`, "Data the concepts use": a generated summary "with as-of commit, time, model and freshness" in all four concepts. Concept C (`c-situation.html`) shows "as of d6bb301a + task record 7cd92a28", the model, and "Waiting on you: 2 decisions", each with its question, defaults and an "Accept the defaults" action |
-| A commit made inside post-commit is safe | MEASURED (git 2.54.0, macOS, scratch repo, removed afterwards) | post-commit receives `GIT_INDEX_FILE=.git/index`; a nested `git commit --only -- <path>` succeeds after a plain commit, a `commit -a`, and a `commit -- <path>` made while another path was staged, and that path stays staged; the hook's nonzero exit is ignored; the nested commit fires post-commit again; post-commit fires during `git rebase` (detached HEAD, `rebase-merge` present) and does not fire for an automatic merge commit |
-| A late, detached answer commit is harmless | REFUTED | `session_publish.py` docstring, steps 2 and 4: publication refuses while any local-only commit touches a path other than this machine's session file |
-| bootstrap can install the hook | REFUTED for the tasks repo | `bootstrap_lib/engine.py:6305-6316`: `git_config` converges keys only in the session's project directory |
-| `~/.claude/task.local.yaml` is shared across machines | REFUTED | claude-settings `.gitignore:96`; the tracked fleet layer convention is `~/.claude/config/<plugin>.yaml` (llm-kit `registry/models.py`, `fleet_config_path`) |
-| The dashboard shows summary staleness | REFUTED | it reads only `core.summary` (`dashboard/inventory.py:250`, `dashboard/snapshot.py:144,422`, `dashboard/static/app.js:850`) |
-| Windows runs the hook stub and the POSIX `task-kit` shim | UNTESTED | the shim handles `MINGW*`/`MSYS*` (`plugins/task-kit/bin/task-kit`); Git for Windows runs hooks with its bundled sh. U9 measures it |
-| Latency of a real question on qwen38-5090, qwen38-m5, luna medium, haiku medium | UNTESTED | sets `hook_deadline_s`; U3 measures it |
-| An llm-kit `OutputContract` keeps the qwen transports selectable | UNTESTED | `run` merges a contract's selection requirement into `describe`, which may hide an entry; U3 checks, else task-kit validates the answer itself |
+| task-kit generates a one-line `task.summary` with Codex Luna at medium effort, triggered by `review`, with fingerprint and provenance | CONFIRMED, with a correction: provenance is a date only; no model is recorded | `summary_ops.py:22-29`, `:121-155` (`CodexCliBackend` directly, not the registry), `:267-275`; `task.py:353-355` |
+| Writing a summary does not change the fingerprint | CONFIRMED | `listing.py:26`, `listing.py:92-109`; `discovery.py:189-214` |
+| Bookkeeping log lines are harmless to freshness | REFUTED | the detail-view mockups' sample task has 22 of 25 dated log lines reading "update: refresh (no field edits)" (`docs/planning/task-kit-dashboard/detail-view/index.html`); every such entry enters the fingerprint (`listing.py:92-109`) |
+| Task folders are committed only in the private tasks repo | CONFIRMED | `dev/tasks -> /Users/christina/Dev/tasks/plugins-kit`; plugins-kit ignores `dev/tasks/` (`docs/reference/task-folders.md`) |
+| Who commits in the tasks repo, and how often | MEASURED | Writers: agents (`git add -A && git commit && git push`, tasks-repo `CLAUDE.md` "Always push"), repo-sync `auto_commit: true`, `session_publish.py:330`. Counts (git 2.54.0, tasks HEAD `ed36ca41`): `git -C ~/Dev/tasks log --no-merges --since=2026-10-14T00:00:00-05:00 --until=2026-10-21T00:00:00-05:00 --oneline` = 477 commits; with `--name-only`, grouping paths of three or more components by their first two (project/stub) and ignoring `.sessions`: 462 touched one task folder, 11 touched 2 to 6, 1 touched 16, 3 touched none. 75 `task.yaml` files |
+| llm-kit expresses an ordered declaration with fallback | CONFIRMED, with two limits | Python `llm_kit.dispatch.declaration.run(names, RunRequest, exclude=, max_attempts=, reachability_cache=)` (`plugins/llm-kit/lib/llm_kit/dispatch/declaration.py:870-907`); CLI `llm-kit completion complete --models a,b,c --effort medium` (`cli/completion.py:303-311`, `cli/_common.py:69-79`); render `llm-kit models describe <ids> --caller process`. Measured on this Mac: `describe qwen38-5090 qwen38-m5 luna haiku --caller process` lists all four usable in declared order; with `--requirements '{"params":["effort"]}'` all four stay usable. Limits: `run` moves on only on a classified halt or launch failure (`declaration.py:1036-1043`), excluding halted entries only within one call (`:953-955`); per-entry effort exists only in `llm_kit.jobs` (`jobs/model.py:26-30`) |
+| Free versus paid is knowable from llm-kit | CONFIRMED | `EndpointEntry.billing_mode` (`registry/model_endpoints.py:160`; values `unmetered`, `provider-reported`, `:464-467`; invalid metadata is ignored, `:491-510`). `qwen38-5090` and `qwen38-m5` declare `billing: {mode: unmetered}` (`~/.claude/config/model-endpoints.yaml`); harness entries carry none |
+| The two qwen38 endpoints | CONFIRMED | `qwen38-5090` (`http://5090w.localdomain:8080/v1`, 262144 context), `qwen38-m5` (`http://m5pro.localdomain:8000/v1`, 32768 context). Naming them bypasses the front door `qwen38`, whose third tier is DeepSeek Flash on OpenRouter (local-llm-domain `SKILL.md`, "Front door") |
+| Standing authorization covers sending task files to OpenAI and Anthropic | REFUTED as a blanket claim | `private_ai_review_and_consultation` limits: "Exclude credentials, secrets, personal/customer data, and unrelated files" (`~/.claude/USER-PREFERENCES.md`); task files are not classified. Hence the fail-closed consent in D2 |
+| A per-repository consent mechanism exists to reuse | CONFIRMED | dashboard endpoint helpers take consent keys `repo_identity.config_key` (`dashboard/config.py:47`, `:159`) |
+| Host-named files need a collision check | CONFIRMED | sessions carry a machine fingerprint and refuse a same-named file with another fingerprint (`machine.py:132-140`; `sessions.py:454-461`, `:598-607`) |
+| The session publisher can publish answer files | REFUTED as built | it commits and pushes only this machine's session file (`session_publish.py:136-139`, `:394-417`); it holds a per-repository lock (`:307-310`, `:454-456`). U5 widens it |
+| A task format version exists | CONFIRMED | `task._schema_version` required (`schemas.py:23`); unknown version is a schema violation (`validate.py:471-475`); hand-off type knows `("1",)` (`types.py:45`); findings gate `work` |
+| What the mockups need | READ | `detail-view/index.html` "Data the concepts use": a generated summary "with as-of commit, time, model and freshness" in all four concepts; concept C shows "as of d6bb301a + task record 7cd92a28", the model, and "Waiting on you" decisions with defaults |
+| A commit made inside post-commit is safe | MEASURED NARROWLY; no longer load-bearing (no hook) | git 2.54.0, macOS, one scratch repo: plain, `-a` and path-scoped outer commits; not measured: concurrency, Windows, failure recovery, publisher interaction |
+| The dashboard shows summary staleness | REFUTED | `dashboard/inventory.py:250`, `dashboard/snapshot.py:144,422`, `dashboard/static/app.js:850` |
+| Windows runs the detached service | UNTESTED | the dashboard already detaches through `procspawn` (`dashboard/launcher.py:184-191`); U9 measures it |
+| Latency per answerer | UNTESTED | U3 measures it |
+| An llm-kit `OutputContract` keeps the transports selectable | UNTESTED | U3 checks, else task-kit validates the answer itself |
 
 ## D1. The primitive: questions and answers
 
 **Question file.** Shipped: `plugins/task-kit/skills/task/questions/<id>.yaml`, listed in
 `questions/catalog.yaml` (`version: 1`, active ids). Fleet layer:
-`~/.claude/config/task-kit/questions/<id>.yaml`; a file with a shipped id replaces it, and
-`retired: true` retires it. Unknown keys, an unknown reader or a bad schema are errors naming
-the file.
+`~/.claude/config/task-kit/questions/<id>.yaml`; a file with a shipped id replaces it;
+`retired: true` retires it. Unknown keys, an unknown reader or script, or a bad schema are errors
+naming the file.
 
 ```yaml
 _schema_version: "1"
@@ -112,11 +130,12 @@ version: 1
 title: Orientation
 applies_to: [active, blocked, deferred, closed]
 inputs: [task, claude_md, plan_md, items, activity]
-max_input_chars: 60000
-prompt: |
+max_input_chars: 40000      # must be >= the sum of the readers' limits
+script: null                # script answerer tried first; null for none
+prompt: |                   # null for a script-only question
   From the task files below, answer for someone opening this task: what it is,
   where it stands, and the single next action. Return one JSON object.
-answer:                 # JSON schema subset
+answer:                     # JSON schema subset
   type: object
   required: [headline, state, next]
   additionalProperties: false
@@ -124,401 +143,400 @@ answer:                 # JSON schema subset
     headline: {type: string, maxLength: 100}
     state: {type: string, maxLength: 200}
     next: {type: string, maxLength: 160}
-grounding: []           # answer fields that must quote the inputs verbatim
-models: null            # null: the configured chain; else a declaration overriding it
-effort: null            # null: the configured effort
+grounding: []               # fields that must quote the inputs verbatim
+models: null                # null: the configured chain; else a declaration overriding it
+effort: null                # null: the configured effort
 ```
 
-**Input readers** are code; each has a fixed canonical text and size limit, and a question
-names them.
+**Input readers** are code. Each returns UTF-8 text with LF newlines and trailing whitespace
+stripped per line, cut at its fixed limit with a final `[truncated]` line.
 
-| Reader | Reads | Excludes |
-|---|---|---|
-| `task` | the task.yaml task block | `_schema_version`; legacy `summary`, `summary_fingerprint`, `summary_updated` |
-| `claude_md` | CLAUDE.md | -- |
-| `plan_md` | plan.md | -- |
-| `items` | parsed `task_items` (id, title, state, priority, note) | -- |
-| `activity` | dated log.md entries, newest first, last 40 | summary-maintenance entries and `refresh (no field edits)` bookkeeping |
-| `task_commits` (v2) | git log of the task folder | -- |
-| `code_commits` (v2) | the project's git log after the task's previous as-of code commit; needs a task-root to project-checkout map | -- |
+| Reader | Reads | Limit | Excludes |
+|---|---|---|---|
+| `task` | the task.yaml task block, canonical YAML | 4000 | `_schema_version`; legacy `summary`, `summary_fingerprint`, `summary_updated` |
+| `claude_md` | CLAUDE.md | 12000 | -- |
+| `plan_md` | plan.md | 12000 | -- |
+| `items` | parsed `task_items` (id, title, state, priority, note) | 6000 | -- |
+| `activity` | dated log.md entries, newest first | 6000 | summary-maintenance entries and `refresh (no field edits)` |
+| `task_commits` (v1, script use) | `git log` of the task folder | -- | -- |
+| `code_commits` (v2) | the project's log after the previous as-of code commit; needs a task-root to checkout map | -- | -- |
+| `answer:<qid>` (v2) | another question's best answer | -- | -- |
 
-**Answer record**, `<task>/answers/<question id>/<host id>.yaml` (host id from
-`machine.host_id`, as working sessions use):
+**Fingerprint:** sha256 of `json.dumps({"question": <digest>, "inputs": [[name, text], ...]},
+sort_keys=True, ensure_ascii=True, separators=(",", ":"))`, inputs in declared order. The
+question digest is sha256 of the same canonical JSON of the definition (id, version, inputs,
+limits, script, prompt, answer schema, grounding). Models, effort and switches are excluded, so
+changing them never invalidates an answer.
+
+**Model answer record**, `<task>/answers/<question id>/<host id>.yaml`:
 
 ```yaml
 _schema_version: "1"
+host: studio                    # equals the file name
+machine: 3f9a0c1d2e4b5a6c       # machine.fingerprint, 16 hex
+os_instance: macos
 question: orientation
 question_version: 1
 answer:
-  headline: Generate each task's orientation at commit time for the dashboard detail view
-  state: Design plan written; no implementation unit has started
-  next: User answers the commit-wait question, then U1, U3 and U6 start in parallel
+  headline: Generate each task's orientation for the dashboard detail view
+  state: Design plan in its second round; no implementation unit has started
+  next: User answers the three plan questions, then the U1 interface freeze
 inputs_fingerprint: <64 hex>
 as_of:
-  task_commit: <sha>      # tasks-repo commit whose content was read
-  code_commit: null       # set only by questions that read code inputs
-generated:
-  at: "2026-10-21T19:05:12-07:00"
+  task_commit: <sha>            # tasks-repo HEAD whose content was read
+  code_commit: null             # set only by questions reading code inputs
+answerer:
+  kind: model                   # model | script
   entry: qwen38-5090
+  tier: free                    # free | paid
   effort: medium
-  reselections: []        # e.g. ["qwen38-5090: invalid answer: next exceeds 160 chars"]
+  attempts:                     # every entry tried, in order
+    - {entry: qwen38-5090, outcome: completed}
+generated_at: "2026-10-21T19:05:12-05:00"   # informational; never used to choose
 ```
 
-**Fingerprint:** sha256 over canonical JSON of the question digest (id, version, prompt,
-inputs, answer schema, grounding, limits) and each input's canonical text. The model chain is
-not part of it, so changing models does not invalidate answers.
+**Script answers** are computed on read and never stored: they are reproducible from git and
+the clock, so a file would add commits and could only go stale. Their provenance is
+`answerer: {kind: script, name: <script>}` and `as_of.task_commit` = HEAD at read time.
 
-**Best answer and states:**
+**Choosing among model records** (any host):
 
-| State | Rule | Shown |
-|---|---|---|
-| `current` | a valid record's fingerprint equals the current one; the newest such (`generated.at`, then host id) wins | the answer with as-of commit, time, model |
-| `stale` | valid records exist, none current; the newest is shown | the answer marked stale, with its as-of commit and time |
-| `missing` | no record | "not answered yet" |
-| `invalid` | a file that does not parse or fails the answer schema | a note naming the file, never a finding that gates `work`; valid records from other hosts still count |
-| `not-applicable` | the task's status is outside `applies_to` | nothing |
+| State | Rule |
+|---|---|
+| `current` | records whose fingerprint equals the current one; the winner is the one whose `answerer.entry` comes first in the reader's effective declaration, then lowest host id, then machine fingerprint |
+| `stale` | no current record; the winner is the record whose `as_of.task_commit` descends from the others' (`git merge-base --is-ancestor`); incomparable records fall back to host id, then fingerprint |
+| `missing` | no record |
+| `invalid` | a file that does not parse, fails the schema, or whose `host` differs from its file name: a note naming the file, never a finding that gates `work`; valid records still count |
+| `not-applicable` | status outside `applies_to` |
 
-**Answer validation** (task-kit side, after the call): one JSON object matching the answer
-schema; values single-line and non-empty; typographic punctuation converted to ASCII (dashes to
-`--`, curly quotes to `'` and `"`, ellipsis to `...`, arrows to `->`), any other non-ASCII
-rejected (the tasks repo is ASCII-only); each `grounding` field must contain a
-whitespace-normalised verbatim substring of the inputs. A rejected answer is a task error for
-the chain (D5); nothing beyond the listed conversions is repaired.
+**Answer validation** (task-kit side): one JSON object matching the schema; values single-line
+and non-empty; typographic punctuation converted to ASCII (dashes to `--`, curly quotes,
+ellipsis to `...`, arrows to `->`), other non-ASCII rejected; each `grounding` field must
+contain a whitespace-normalised verbatim substring of the inputs. A rejected answer is a task
+error for the chain (D2).
 
-## D2. Storage
+## D2. Answerers, tiers, spend and consent
 
-- **Per question, per host, in the task folder, committed.** Principle 2 ("one writer per
-  file"): two machines answering one question at once (two upgraders, or commits of one task on
-  two machines) write different files, so their commits merge cleanly and the reader decides.
-  Cost: one small file per machine per question per task.
-- **Why not task.yaml keys** (where `summary` lives at d6bb301a): `state_ops.update`
-  re-serialises task.yaml and appends a log line (`state_ops.py:206-208`), so every refresh
-  would rewrite two agent-edited files, and one shared file is the cross-machine conflict
-  principle 2 rules out.
-- **No loop.** No reader reads `answers/`; writing an answer appends no log line. The commit
-  carrying answers sets `TASK_KIT_ANSWERS_HOOK=skip`, so the hook it fires exits at once. Either
-  guard alone stops recursion; both are tested.
-- **Committed content only.** The hook answers only for a task folder whose files (except
-  `answers/`) are unchanged from HEAD; otherwise the task is deferred, naming the files.
-- **Housekeeping.** A machine rewrites its own file in place. Files of retired questions or of a
-  vanished host are inert (never current); only their owner removes them (`answers prune`).
+Order for one question on one task: (1) its `script`, if any, when the script returns an
+answer; (2) free model entries; (3) paid model entries, only when allowed. Granularity is the
+question: a need that mixes a script fact and a model judgment is two questions, the second
+reading the first (`answer:<qid>`, v2).
 
-## D3. Schema versions, upgrade, and who runs it
+**Script answerers** are named functions in `task_system/answer_scripts.py`:
+`answer(ctx: ScriptContext) -> Mapping | None` (None: cannot answer; the next tier runs).
+`ScriptContext` holds the task folder, the repository top, a per-read git log of the
+repository (one `git log --name-only` per read, grouped by folder, so a 75-task snapshot costs
+one git process), and the read time. v1 scripts: `activity` (days since the last dated
+activity, last entry), `task_commits` (the task folder's latest commits: sha, date, subject).
 
-**Two layers.**
-- *Format version* -- `task._schema_version` in task.yaml. A structural change ships a migrator
-  `N-1 -> N` that is deterministic (byte-identical output on every machine, so two machines
-  applying it merge cleanly), idempotent (a folder at N is untouched), validates its result,
-  and leaves the folder at N-1 on any failure. validate reports an unknown version and findings
-  gate `work`, so a release teaches validate a version one release before any migrator writes
-  it. The question mechanism needs no format change: v1 ships the migrator runner, exercised by
-  a test fixture, with no production migrator.
-- *Question set* -- the catalog version. Answering is the per-version migration for questions:
-  idempotent (a current answer is never recomputed) and safe to repeat on any machine. A task's
-  coverage ("catalog 1: 2 of 2 current") is computed from its answer files, never stored.
+**Free or paid** comes from llm-kit's registry: an entry is free when its `billing_mode` is
+`unmetered`; every other entry (harness entries, metered transports, invalid metadata) is paid.
+This is the fleet's existing convention ("a tier is paid unless the registry declares
+`billing.mode: unmetered`", local-llm-domain `SKILL.md`, "Acceptance runs").
 
-**Upgrade verb.** `task.py answers upgrade [--all | <ref>...] [--budget N] [--no-commit]
-[--publish]`: for each eligible task folder in the repository, apply pending format migrators,
-then answer every applicable question whose best answer is missing or stale. It fetches before
-each batch and skips tasks that gained a current answer upstream, commits each batch of this
-machine's own answer files with `--only`, and with `--publish` pushes through the session
-publisher, whose own-files rule U5 widens from "this machine's session file" to "this machine's
-session file and answer files".
+**Paid use requires both** `answers.spend: true` and the task's repository consent key
+(`repo_identity.config_key`) in `answers.external_repositories`. Otherwise every paid entry is
+passed to llm-kit as `exclude`. This fails closed: the shipped default is local-only, and no
+claim is made that task files are already authorized for external providers. Free entries
+are owner-hosted LAN endpoints. No input redaction is built: nothing in the repository detects
+secrets, and a pattern pass would read as protection it does not give; consent per repository
+is the control.
 
-**Who runs it.**
-
-| Runner | Verdict | Why |
-|---|---|---|
-| bootstrap pass | No | bootstrap provisions dependencies; the tasks repo is not the session's project; a model workload would lengthen every session start |
-| dashboard | No | principle 9 and the ruling "I don't like any dependency on the dashboard running"; every dashboard would become a writer |
-| `task.py answers upgrade` by hand | Yes | the one implementation |
-| task-kit SessionStart hook with `answers.auto_upgrade: true` | Yes: the automatic path | detached (the hook is async), one upgrader per machine under an OS lock (transient coordination, principle 1), at most `answers.upgrade_budget` tasks per session start; failures written to `<data dir>/answers/upgrade-failures.log` only on failure (precedent: `sessions/session-start-hook.log`) |
-| post-commit hook | Yes, for the touched tasks | keeps worked tasks current (D4) |
-
-**Races.** Concurrent upgraders on two machines write disjoint files and merge cleanly; the
-only cost is duplicate calls for tasks neither had fetched. Nothing waits on another machine's
-claim (principle 4).
-
-**Failure.** A question that cannot be answered leaves that task's answer missing or stale,
-visibly on every machine (computed from git); the reason is reported where the run happened
-(stderr, or the failure log of the background run). A failed format migrator leaves
-`_schema_version` unchanged. No answer is deleted because a refresh failed.
-
-**Un-upgraded folders keep every verb's contract.** No verb requires an answer; `work` and
-`validate` never gate on answers. `list --format json` serves `summary` from the orientation
-answer, else from legacy `task.summary` (read compatibility for a format-1 field, labelled
-`summary_source: legacy`). `update --summary` keeps writing `task.summary` and prints a note
-when an orientation answer supersedes it for display.
-
-## D4. Freshness: the commit-time refresh
-
-| Option | Verdict | Deciding evidence |
-|---|---|---|
-| pre-commit hook | Rejected | network before the record is committed (violates principle 7); under fail_loudly a model failure would abort commits, including repo-sync's and session publication's |
-| post-commit, synchronous | **Chosen** | commit first; failures go to the committer's stderr and the commit stands; the answer commit precedes the caller's `git push`, so one push carries both |
-| post-commit, detached | Rejected as default | races the caller's next git command for `index.lock`, and lands after the push (offered as question 1) |
-| a task.py verb called by `update` / hand-off | Kept as repair, not the trigger | most task commits are raw `git commit` by agents and repo-sync |
-| dashboard lazy generation | Rejected | principle 9; every dashboard a writer |
-| pre-push | Rejected | a commit made during pre-push is not in the push being performed |
-
-**Which repository:** only the one that versions task folders (the tasks repo here). plugins-kit
-never commits a task folder (`dev/tasks/` ignored, load-bearing). A consumer whose `dev/tasks`
-is tracked in its project repo installs the hook there.
-
-**Which commits:** task folders the commit touched (diff against the first parent; all files
-for a root commit), eligible statuses only. Automatic merges do not fire post-commit (measured);
-the machine that wrote the incoming change refreshed its own answers.
-
-**Algorithm (`task-kit answers refresh --post-commit`):**
-1. Exit 0 at once when `TASK_KIT_ANSWERS_HOOK=skip`.
-2. Skip with one stderr note on a detached HEAD or a sequencer operation (`rebase-merge`,
-   `rebase-apply`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `MERGE_HEAD` via `git rev-parse
-   --git-path`). Measured: post-commit fires during a rebase.
-3. Map touched paths to task folders (nearest ancestor holding `task.yaml`); `.sessions/` and
-   root files map to none. None: exit 0 without importing llm-kit.
-4. Keep clean folders; defer dirty ones with reasons; beyond `max_tasks_per_commit`, defer the
-   rest ("run task-kit answers upgrade").
-5. For each kept task, answer every applicable question whose best answer is missing or stale,
-   in parallel (4 workers), within `hook_deadline_s`, sharing one reachability cache.
-6. Re-compute each fingerprint before writing; a task changed meanwhile is reported superseded.
-7. Write this host's answer files atomically; one commit
-   `git commit -q -m "task-kit answers: <stubs>" --only -- <answer paths>` with
-   `TASK_KIT_ANSWERS_HOOK=skip`. Never push.
-8. Print one line per task and question; exit 1 when anything failed or was deferred.
-
-**Install.** task-kit renders the hook, so it is a plugin output (root `CLAUDE.md`,
-"Anti-pattern: hand-creating an artifact a plugin is supposed to produce"). `task-kit answers
-hook install --repo <dir>` writes the POSIX sh stub to `git rev-parse --git-path hooks` (honours
-`core.hooksPath`), LF, mode 755, with a version marker; it refuses a post-commit hook it did not
-write; `check` is nonzero when missing or outdated; `install` is idempotent. The stub calls
-`"${CLAUDE_BOOTSTRAP_DATA_ROOT:-$HOME/.claude/plugins/data}/plugins-kit/task-kit/bin/task-kit"
-answers refresh --post-commit`, with no PATH dependency. A claude-settings env_check converges it
-per machine (U10). Installing is the per-repository opt-in. Not a tracked `.githooks/` in the
-tasks repo: the hook is a task-kit output and that repo holds only task data.
-
-**Deadline.** `hook_deadline_s: 90` keeps an agent's `git commit && git push` within the Claude
-Code Bash tool's 120 s default timeout; U3's latency measurement may lower it.
-
-## D5. Model chain through llm-kit
-
-**Config** (`answers:` section; layers, highest first: `~/.claude/task.local.yaml` per key ->
-`~/.claude/config/task-kit.yaml` (fleet, tracked in claude-settings) -> shipped default; unknown
-keys or wrong types are errors naming the file):
-
-```yaml
-answers:
-  models: [qwen38-5090, qwen38-m5, luna, haiku]   # model declaration, preference order
-  effort: medium
-  hook_deadline_s: 90
-  max_tasks_per_commit: 4
-  auto_upgrade: true
-  upgrade_budget: 20
-```
-
-Shipped default: `models: [luna, haiku]`, `effort: medium`, `hook_deadline_s: 90`,
-`max_tasks_per_commit: 4`, `auto_upgrade: false`, `upgrade_budget: 20`. The fleet value above is
-U10. `qwen38-*` ids exist only in the fleet's private registry, so they never appear in the
-shipped default (OP-1). `[luna, haiku]` lists a Codex and a Claude entry (root `CLAUDE.md`
-convention, `tests/repo-scripts/test_shipped_model_families.py`; U3 adds this default to it).
-The declaration is validated with `bootstrap_lib.model_declaration.parse` (bootstrap 0.129.0,
-below task-kit's 0.138.0 floor). One effort for every entry is enough: all four entries admit
-`params: ["effort"]` (measured), so per-entry effort is not needed.
-
-**Dispatch.** `declaration.run(models, RunRequest(system=<question prompt>, prompt=<inputs>,
-options=BackendOptions(effort=..., timeout_s=<remaining deadline, or 180 outside the hook>,
+**Dispatch.** `declaration.run(models, RunRequest(system=<prompt>, prompt=<inputs>,
+options=BackendOptions(effort=<effort>, timeout_s=min(remaining, 180),
 client_id="task-kit:answers")), requirements={"guarantees": ["filesystem-write", "shell-exec",
-"subagent-spawn"]}, exclude=<entries already failed>, max_attempts=len(models),
-reachability_cache=<per batch>)`. llm-kit chooses the entry (declared order; pace among paced
-entries; reachability; quota) and moves on by itself after a halt or launch failure. When `run`
-returns a failed attempt (task error or timeout) or task-kit rejects the answer (D1), task-kit
-adds that entry to `exclude` and calls `run` again, at most once per entry, and records each
-re-selection in `reselections` and on stderr. Precedent: code-review lanes re-select through
+"subagent-spawn"]}, exclude=E, max_attempts=len(models) - len(E), reachability_cache=<per
+pass>)`. llm-kit chooses the entry (declared order, pace among paced entries, reachability,
+quota) and moves on by itself after a halt or launch failure. On `RUN_FAILED` or a rejected
+answer, task-kit adds every entry in `result.attempts` to `E` permanently, records each attempt,
+and calls `run` again while entries remain. Precedent: code-review lanes re-select through
 describe with `--exclude` and disclose every route (`plugins/CLAUDE.md` register, "An
 unexplained lane failure re-selects through describe, and every re-selection is disclosed").
-Without it, a qwen task error (such as the empty-content case local-llm-domain lists as
-`reasoning_effort_eats_the_budget`) would end the run with no fall-through. A question's own
-`models`/`effort` override the chain; a local-only question declares
-`models: [qwen38-5090, qwen38-m5]`.
+One `effort` reaches every entry (all four admit `params: ["effort"]`, measured).
 
-**Privacy.** Inputs are private task files. The qwen entries are owner-hosted LAN endpoints;
-luna and haiku send inputs to OpenAI and Anthropic, covered by the standing authorization
-`private_ai_review_and_consultation` (configured providers).
+**llm-kit is optional.** Without it (absent or too old), model answering refuses with the
+install or update command (distinct messages, probing the newest call shape used), and the
+dashboard discloses "model answers unavailable: <reason>". Script answers and every other verb
+work without it.
 
-**Optional edge.** Answering keeps task-kit's REFUSE posture for llm-kit: absent or too old, the
-verb exits with the install or update command (distinct messages), probing the newest call shape
-used (`run` with `exclude`, `requirements` and `reachability_cache`); U3 states the minimum
-version. Un-upgraded folders and every other verb work without llm-kit.
+## D3. Storage and ownership
+
+- Per question, per host, in the task folder, committed. Principle 2: two machines answering
+  one question write different files and merge cleanly.
+- Ownership, as working sessions do it: a machine writes only `<host id>.yaml` files carrying
+  its own `machine` fingerprint; it refuses, naming the file, to write a same-named file
+  carrying another fingerprint (two machines share a host id: set `sessions.host` on one, the
+  override sessions already use); it reads such a file as another machine's.
+- Why not task.yaml keys (where `summary` lives at `d6bb301a`): `state_ops.update`
+  re-serialises task.yaml and appends a log line (`state_ops.py:206-208`), rewriting two
+  agent-edited files per refresh, and one shared file is the conflict principle 2 rules out.
+- No loop: no reader reads `answers/` (only `answer:<qid>`, by declaration), and writing an
+  answer appends no log line.
+- Answers describe committed content: a task folder with uncommitted changes outside
+  `answers/` is skipped and named in status.
+- Housekeeping: a machine rewrites its own file in place; `answers prune` removes this
+  machine's files for retired questions; other machines' files are never edited.
+
+## D4. The task-kit service
+
+**What it is.** `task-kit service`, one background process per machine, the first duty of the
+task-kit service the user expects on every machine (the session-verification query in
+`working-sessions-plan.md`, "Future direction", is a later duty). It is not the dashboard
+process: the dashboard is a view (principle 9, "I don't like any dependency on the dashboard
+running"), answering must run where no dashboard is open, and closing the dashboard must not
+stop it. Nothing depends on it running: off, answers go stale visibly and `task.py answers
+refresh` does a pass by hand.
+
+**Switches** (config `answers:` section): `service` (on/off) and `spend` (paid usage). The
+dashboard shows each as a checkbox with its effective value and source layer; CLI:
+`task-kit service on|off`, `task-kit service spend on|off`. A toggle writes the machine layer
+(`~/.claude/task.local.yaml`, the `answers.service` or `answers.spend` key only); the writer
+refuses, naming the file, when a round trip would drop comments.
+
+**Lifecycle.** Singleton per machine through an OS file lock (`<data dir>/answers/service.lock`,
+transient coordination, principle 1). Started, when `service` is on and the lock is free, by
+task-kit's SessionStart hook (adds the `startup` source to the existing `resume`/`clear`), by the
+dashboard launcher, and by `task-kit service on`; detached through `procspawn` with stdout and
+stderr appended to `<data dir>/answers/service.log` (the error channel `plugins/CLAUDE.md`
+requires of a detached process). It runs until `off`, `task-kit service stop`, reboot or crash;
+the next start restarts it. OS login autostart is not in v1 (question 3).
+
+**One pass, per task repository in scope, every `poll_s` seconds** (repositories holding the
+task roots discovery finds):
+1. Skip the repository (status note) when HEAD is detached or a git operation is in progress:
+   `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `REBASE_HEAD`, `rebase-merge/`,
+   `rebase-apply/`, `sequencer/` (located with `git rev-parse --git-path`).
+2. Take the session publisher's per-repository lock (`session_publish.lock_path`, bounded wait;
+   busy: skip this pass).
+3. Recovery: commit this machine's own answer files that are dirty or untracked (ownership
+   checked) with `git commit --only -- <paths>`. This runs before any freshness check, so an
+   answer written but not committed in an earlier pass is never skipped as current.
+4. Compute pending locally: eligible, clean task folders; applicable model-tier questions whose
+   script does not answer and whose best record is missing or stale.
+5. If pending work exists or own commits are unpublished, publish (fetch, integrate, push own
+   files), then recompute pending, so answers other machines published are counted.
+6. Answer up to `batch_size` pending items (up to 4 in parallel) through D2, re-checking each
+   fingerprint before writing (a task changed meanwhile is dropped and noted).
+7. Write own files atomically; one commit `--only` own paths; publish.
+8. Release the lock.
+
+An idle pass reads files and computes fingerprints only; it touches the network only when there
+is work or something to publish. Agents' git commands do not take the task-kit lock; a
+collision surfaces as git's own `index.lock` error in one of them, and the next pass's step 3
+repairs the service side.
+
+**Publication.** U5 widens the publisher's own-files rule from "this machine's session file" to
+"this machine's session file and its answer files": a path `answers/<qid>/<host id>.yaml` whose
+committed content carries this machine's fingerprint. Every other refusal stays (foreign
+local commits, foreign diff).
+
+**Status.** `task-kit service status` prints the effective switches and their layers, consent
+keys, whether the service runs (lock probe, verifiable on this machine), pending and unpublished
+counts per repository (computed from git), and the log path. The dashboard shows the same.
+
+**Rejected triggers.**
+
+| Option | Verdict | Why |
+|---|---|---|
+| post-commit hook (synchronous or detached) | Rejected | user ruling: "out of sync means out of sync" |
+| pre-commit hook | Rejected | network before the record is committed (principle 7) |
+| inside the dashboard server | Rejected | principle 9 and the ruling on dashboard dependency |
+| bootstrap pass | Rejected | bootstrap provisions dependencies; a model workload would lengthen every session start |
+| `task.py answers refresh` | Kept | the by-hand path, same engine |
+
+## D5. Schema versions
+
+- **v1 versions the question catalog.** `questions/catalog.yaml` `version: 1` names the active
+  questions; answering is the per-version upgrade: idempotent (a current answer is never
+  recomputed), safe on any machine. A task's coverage ("catalog 1: 3 of 4 current") is
+  computed, never stored; a task whose answers failed stays visibly on its old coverage.
+- **Task-format migrations are deferred** until a structural change exists. When one does: a
+  deterministic, idempotent migrator `N-1 -> N` that writes byte-identical files on any
+  machine; validate learns version N one release before any migrator writes it (findings gate
+  `work`); and it needs its own publication contract, because the publisher's own-files rule
+  cannot push shared `task.yaml` files.
+- **Un-upgraded folders keep every verb's contract.** No verb requires an answer; `work` and
+  `validate` never gate on answers; `list --format json` serves `summary` from the orientation
+  answer, else from legacy `task.summary` (labelled `summary_source: legacy`); `update
+  --summary` keeps writing `task.summary` and notes when an orientation answer supersedes it.
 
 ## D6. Question catalog (ranked by value per cost)
 
-| # | Question | Inputs | Call cost | Stale when | qwen-safe | Mockup surface | Ships |
-|---|---|---|---|---|---|---|---|
-| 1 | orientation: headline, state, next | task, claude_md, plan_md, items, activity | one call, about 3k-15k tokens in, about 150 out | any of its inputs change (about every task commit) | yes (fits qwen38-m5's 32k) | the summary block in A, B, C, D; C "Where it stands" | v1 |
-| 2 | decisions waiting on the user: item, question, default (only when the files state one), evidence quote; at most 5 | items, plan_md, claude_md, activity; applies to active and blocked | one call, same input size, short output | plan.md, CLAUDE.md or item changes | yes | C "Waiting on you" with defaults and "Accept the defaults"; header markers in A and B | v1 |
-| 3 | code commits that belong to the task: sha, subject, one-line why | task, items, code_commits after the previous as-of | one call; up to 50 subjects and paths, about 2k-5k tokens | the task is committed and its project gained commits after the stored as-of code commit | yes | "Latest code commits for the task" in A, B, C, D; D timeline; the as-of code commit in C's provenance line | v2 (code_commits reader, task-root to checkout map) |
-| 4 | current item of a working session | items, task_commits | small | a task commit | yes | C working card | v2 (deterministic heuristic first: item id in the newest commit) |
-| 5 | blocker kind (user, external, technical, none) and one-line risk | task, items, activity | small; may fold into orientation as fields | as orientation | yes | header markers in A; list row tint | v2 |
-| 6 | item-to-event links | items, task_commits, activity | medium | task commits | yes | D timeline filter | v3 (deterministic id match first) |
-| 7 | related tasks | this task's orientation answer, every task's headline | one call with about 75 headlines | any headline changes, fanning out to every task; needs a coarser trigger | yes | B fact rail | v3 |
-| 8 | remaining size estimate | items, plan_md | small | plan.md changes | yes | B fact rail; list sort | v3 |
+| # | Question | Answerer | Inputs | Cost | Stale when | Free-tier safe | Mockup surface | Ships |
+|---|---|---|---|---|---|---|---|---|
+| 1 | orientation: headline, state, next | model | task, claude_md, plan_md, items, activity | one call, about 3k-10k tokens in | its inputs change | yes (fits qwen38-m5's 32k) | summary block in A, B, C, D | v1 |
+| 2 | task-record commits | script | task_commits | one git log per read | never stored | n/a | "Latest task-record commits" in A, B, C, D | v1 |
+| 3 | activity age and last entry | script | activity, clock | none | never stored | n/a | C "Picking it back up"; list row | v1 |
+| 4 | decisions waiting on the user: item, question, default (only when stated), evidence quote; at most 5 | model | items, plan_md, claude_md, activity; active and blocked only | one call, short output | those inputs change | yes | C "Waiting on you", "Accept the defaults"; header markers | v1 |
+| 5 | item state history | script | task_items across task commits | git show per commit touching plan.md | never stored | n/a | D timeline | v2 |
+| 6 | current item of a working session | script (item id in the newest commit), then model | items, task_commits | small | a task commit | yes | C working card | v2 |
+| 7 | code commits belonging to the task | model | task, items, code_commits | one call, about 2k-5k tokens | project commits after the stored as-of code commit | yes | "Latest code commits" in A, B, C, D | v2 |
+| 8 | blocker kind and one-line risk | model | task, items, activity | small | as orientation | yes | header markers; list tint | v2 |
+| 9 | item-to-event links | script, then model | items, task_commits, activity | medium | task commits | yes | D timeline filter | v3 |
+| 10 | related tasks | model | answer:orientation of every task | one call, about 75 headlines | any headline changes (fans out) | yes | B fact rail | v3 |
+| 11 | remaining size | model | items, plan_md | small | plan.md changes | yes | B fact rail | v3 |
 
-Not questions, because the files or git answer them without a model: the hand-off note (a
-convention `/task hand-off` writes; C), abandonment (activity age), item state changes over
-time (diff of `task_items`; D), latest task-record commits (git log). Items 1 and 2 lead because
-they serve every concept's first screen and read only the task folder; item 3 is the gap the
-mockups name ("connects the task to the work") but needs a cross-repository reader.
+Not questions: the hand-off note (a convention `/task hand-off` writes; C).
 
 ## D7. Failure reporting
 
-| Situation | Commit | Answers | Reported |
-|---|---|---|---|
-| qwen entries fail, luna or haiku succeeds | stands | written; `reselections` set | stderr names each re-selection |
-| offline (every entry fails) | stands | unchanged: stale or missing, visible | stderr lists each entry's reason; exit 1 |
-| llm-kit absent or too old | stands | unchanged | install or update command on stderr |
-| deadline, per-commit cap or upgrade budget reached | stands | unchanged for deferred tasks | stderr (or failure log) names them and the repair command |
-| uncommitted source edits | stands | deferred | stderr names the files |
-| answer commit fails (`index.lock` held by another git process) | stands | written, left uncommitted; the next commit carries it | stderr names the git error; no retry |
-| format migrator fails | -- | -- | `_schema_version` unchanged; reported |
-| hook not installed on a machine | stands | not refreshed by that machine's commits | env_check `check` fails naming the repo |
+| Situation | Answers | Reported |
+|---|---|---|
+| free entries fail, paid allowed and succeeds | written; `attempts` lists every entry | service log and status |
+| spend off or no consent, free entries down | unchanged: stale or missing | status: "N waiting: no free answerer usable" |
+| llm-kit absent or too old | model answers unchanged; script answers served | status and dashboard name the remedy |
+| uncommitted task changes | that task skipped | status names the folder |
+| git operation in progress or detached HEAD | repository skipped | status note |
+| lock busy | pass skipped | log line |
+| commit fails (`index.lock`) | written, uncommitted; next pass's recovery step commits it | log line |
+| publish refused or offline | committed, unpublished | status shows the unpublished count and the publisher's message |
+| host id collision | not written | refusal naming the file and the `sessions.host` remedy |
+| service off | stale over time, visibly | status "service off" |
 
-The only fallback anywhere is the configured chain, and every use of it is recorded.
+The only fallback is the declared chain, within the tiers the switches allow; every attempt is
+recorded.
 
 ## Contract changes
 
 - `task.py review` (default `--generate-missing-summaries`) answers the orientation question
-  into answer files; it no longer writes task.yaml summary keys or a log line; it still does not
-  commit.
-- `list --format json`: adds `answers` (state per question); `summary` comes from the
-  orientation answer, else legacy; `summary_status` gains `invalid` and `not-applicable`, so
-  `schema_version` goes to `"2"` (a widened value set; `docs/reference/vacuous-checks.md`
-  Shape 9).
-- `update --summary`: unchanged write; a note when an orientation answer supersedes it.
-- Added verbs `task.py answers refresh|upgrade|status|prune|hook`; the `task-kit` launcher
-  forwards `task-kit answers ...`.
-- Added environment variable `TASK_KIT_ANSWERS_HOOK` (`skip`).
-- `session_publish` publishes this machine's answer files as well as its session file.
-- task-kit's SessionStart hook gains the `startup` source (automatic upgrade).
+  through the engine (tiers and switches apply) and commits only this machine's answer files; it
+  no longer writes task.yaml summary keys or a log line.
+- `list --format json`: adds `answers`; `summary` from the orientation answer, else legacy;
+  `summary_status` gains `invalid` and `not-applicable`; `schema_version` `"2"`.
+- `update --summary`: unchanged write; a note when superseded.
+- Added: `task.py answers refresh|status|prune`; `task-kit service on|off|spend|status|stop|run`.
+- `session_publish` publishes this machine's answer files too (ownership checked).
+- task-kit's SessionStart hook gains the `startup` source (ensures the service runs).
 - `plugins/CLAUDE.md` "Who talks to an LLM" row for task-kit: `llm_kit.dispatch.declaration.run`
-  instead of `BackendOptions` and `CodexCliBackend`.
+  and the registry's `billing_mode`.
 
 ## Submit gates
 
-- **Razor:** `answers.models` (default `[luna, haiku]`), `answers.effort` (medium),
-  `hook_deadline_s` (90), `max_tasks_per_commit` (4), `auto_upgrade` (false), `upgrade_budget`
-  (20), the question catalog (shipped plus fleet files); commit-time refresh is opt-in per
-  repository by `answers hook install`. Hardcoded, test fails: the answer file layout and record
-  schema (task-kit's own data format) and the input reader vocabulary (code). Git-only hook and
-  answer commits: covered by the registered stance "task-kit:task privileges git as the
-  automated VCS", which U9 extends to name them (OP-7).
-- **Write paths:** answer files are project-durable (committed task data); the hook stub goes
-  into the repository's git hooks directory (machine-local repository configuration, not
-  tracked); `<data dir>/answers/upgrade-failures.log` is user-scoped, written only on failure.
-  None is derived from the script's own location.
-- **Agent directives:** SKILL.md text for `answers` and `review` (U9) states the configured chain,
-  not "Codex Luna at medium effort", which stops being true.
-- **Optional dependency:** llm-kit REFUSE for answering (D5).
-- **Shipped model families:** `[luna, haiku]`, added to the guard (U3).
+- **Razor.** Configurable with defaults: `answers.service` (false), `answers.spend` (false),
+  `answers.external_repositories` (empty), `answers.models` (`[luna, haiku]`), `answers.effort`
+  (medium), `answers.poll_s` (60), `answers.batch_size` (4), the question catalog (shipped plus
+  fleet files). Hardcoded, test fails: answer record layout and schema, reader and script
+  vocabulary (code), the free/paid rule (llm-kit's registry convention). The git-privilege
+  register entry is extended to name answer commits (OP-7). `[luna, haiku]` lists a Codex and a
+  Claude entry (`tests/repo-scripts/test_shipped_model_families.py`); `qwen38-*` ids are
+  fleet-private and never shipped (OP-1).
+- **Write paths.** Answer files: project-durable (committed task data). Service lock and log:
+  user-scoped (`<data dir>/answers/`). Switch toggles: user-scoped (`~/.claude/task.local.yaml`).
+  None derived from the script's own location.
+- **Agent directives.** SKILL.md text (U9) states the tiers and switches, not "Codex Luna at
+  medium effort".
+- **Optional dependency.** llm-kit: REFUSE for model answering, DEGRADE with disclosure in the
+  dashboard.
 
 ## Implementation units
 
-Fixed interfaces (all in `task_system/`):
-- `questions.py` (U1): `Question(id, version, title, applies_to, inputs, max_input_chars,
-  prompt, answer_schema, grounding, models, effort, digest)`, `Catalog(version, questions)`,
-  `load_catalog(shipped_dir, fleet_dir=None)`, `CatalogError`.
-- `question_inputs.py` (U1): `READERS`, `read_inputs(folder, block, names, limit) ->
-  InputBundle(texts)`, `inputs_fingerprint(question, bundle) -> str`.
-- `answer_store.py` (U2): `answer_path(folder, qid, host)`, `AnswerRecord`,
-  `read_answers(folder, qid)`, `write_answer(folder, qid, host, record)`,
-  `best_answer(folder, question, current_fp) -> AnswerState(status, record, host, notes)`,
-  `coverage(folder, catalog, block) -> Coverage`.
-- `answers_config.py` (U3): `AnswersConfig(models, effort, hook_deadline_s,
-  max_tasks_per_commit, auto_upgrade, upgrade_budget)`, `load_answers_config(fleet_path=None,
-  machine_path=None)`, `DEFAULT_MODELS`.
-- `answer_chain.py` (U3): `ask(question, bundle, config, *, deadline=None,
-  reachability_cache=None, run=None) -> Asked(answer, entry, effort, reselections)`;
-  `validate_answer(question, raw, bundle)`; raises `ChainExhausted`, `AnswerBackendUnavailable`.
-- `answer_sync.py` (U4): `refresh(repo_root, *, mode, refs=(), commit=True, publish=False,
-  budget=None, config=None) -> RefreshReport`, `touched_task_folders(repo_root, rev="HEAD")`,
-  `sequencer_state(repo_root)`.
-- `format_migrations.py` (U4): `MIGRATORS`, `migrate_folder(folder) -> MigrationResult`.
-- `answer_hook.py` (U6): `render_stub()`, `hook_path(repo_root)`, `install(repo_root)`,
-  `check(repo_root)`, `remove(repo_root)`.
-- `answers_cli.py` (U4): `main(argv) -> int`.
+**U1 starts with an interface freeze** (`task_system/answers_types.py` plus golden fixtures
+under `tests/task-kit/fixtures/answers/`: one task folder, its expected bundle text and
+fingerprint). U2, U3 and U5 start once it lands.
+
+```python
+@dataclass(frozen=True)
+class Question:
+    id: str; version: int; title: str
+    applies_to: tuple[str, ...]; inputs: tuple[str, ...]; max_input_chars: int
+    script: str | None; prompt: str | None
+    answer_schema: Mapping[str, Any]          # read-only mapping
+    grounding: tuple[str, ...]
+    models: tuple[str, ...] | None; effort: str | None
+    source: Path; digest: str                 # sha256 hex
+
+@dataclass(frozen=True)
+class InputBundle:
+    task_id: str
+    texts: tuple[tuple[str, str], ...]        # (reader, canonical text), declared order
+    truncated: tuple[str, ...]
+    def prompt_text(self) -> str: ...         # "=== <reader> ===\n<text>\n", in order
+
+@dataclass(frozen=True)
+class Answerer:
+    kind: str                                 # "model" | "script"
+    entry: str | None; name: str | None; tier: str | None; effort: str | None
+    attempts: tuple[tuple[str, str], ...]     # (entry, outcome)
+
+RunFn = Callable[..., Any]   # declaration.run(names, request, *, project_root, requirements,
+                             #   exclude, max_attempts, reachability_cache) -> RunResult
+# deadline: absolute time.monotonic() seconds, or None
+```
+
+Module interfaces: `questions.load_catalog(shipped_dir, fleet_dir=None) -> Catalog`;
+`question_inputs.read_inputs(folder, block, question) -> InputBundle`,
+`inputs_fingerprint(question, bundle) -> str`; `answer_scripts.answer(name, ctx)`;
+`answer_store.write_answer(folder, qid, machine, record)`, `best_answer(folder, question,
+current_fp, preference) -> AnswerState`, `coverage(...)`; `answers_config.load(...) ->
+AnswersConfig`; `answer_chain.ask(question, bundle, config, *, consent, deadline=None,
+reachability_cache=None, run=None) -> Asked(answer, answerer)`;
+`answer_engine.run_pass(repo_top, machine, config, *, budget) -> PassReport`;
+`session_publish.repo_lock(top, data_dir, wait_s)`, `publish_holding_lock(top, machine)`.
 
 | Unit | Scope | Owns | Depends on |
 |---|---|---|---|
-| U1 catalog and inputs | question file schema, layers, retire; readers incl. bookkeeping exclusion; digest and fingerprint; the two v1 question files | `task_system/questions.py`; `task_system/question_inputs.py`; `plugins/task-kit/skills/task/questions/{catalog.yaml,orientation.yaml,decisions.yaml}`; `tests/task-kit/test_task_questions.py`; `tests/task-kit/test_task_question_inputs.py` | none |
-| U2 answer store and readers | record format, best-answer rule, states, coverage, ASCII and caps; `listing.py` answers, legacy read compatibility, projection `"2"` | `task_system/answer_store.py`; `task_system/listing.py`; `tests/task-kit/test_task_answer_store.py`; listing tests asserting summary fields | U1 interface |
-| U3 config and chain | config layers; `run` plus `exclude` re-selection; answer validation incl. grounding; llm-kit probe and minimum version; latency of the four entries on 10 real tasks (p50/p95, sets the deadline); whether an `OutputContract` keeps the transports | `task_system/answers_config.py`; `task_system/answer_chain.py`; `tests/task-kit/test_task_answers_config.py`; `tests/task-kit/test_task_answer_chain.py`; `tests/repo-scripts/test_shipped_model_families.py` | none |
-| U4 refresh and upgrade engine | D4 algorithm; upgrade with budget, batches, fetch-skip; `--only` commits; format migrator runner (fixture-tested); CLI; launcher routing | `task_system/answer_sync.py`; `task_system/format_migrations.py`; `task_system/answers_cli.py`; `plugins/task-kit/bin/task_kit_entrypoint.py`; `tests/task-kit/test_task_answer_sync.py` | U1, U2, U3 |
-| U5 publication and automatic upgrade | own-files rule in the publisher; SessionStart `startup` source spawning one locked, budgeted upgrader with its failure log | `task_system/session_publish.py`; `plugins/task-kit/hooks/hooks.json`; `plugins/task-kit/hooks/sessionstart/session-start.sh`; `task_session_start.py`; `tests/task-kit/test_task_sessions_publish.py`; `tests/task-kit/test_task_session_start_hook.py` | U4 |
-| U6 hook install | stub, install/check/remove, foreign-hook refusal, `core.hooksPath`, LF and mode; end-to-end once U4 lands | `task_system/answer_hook.py`; `tests/task-kit/test_task_answer_hook.py` | none; end-to-end after U4 |
-| U7 task.py, review, validate | `answers` verb dispatch; `review` through U3 and U2; `update --summary` note; review HTML; answer files as non-gating notes in validate; `summary_ops.py` reduced to the review adapter | `task.py`; `task_system/summary_ops.py`; `task_system/review_html.py`; `task_system/validate.py`; `tests/task-kit/test_task_answers_review.py` and review/update/validate tests asserting summary text | U2, U4 |
-| U8 dashboard | `answers` and coverage in inventory and snapshot (digest included); orientation block with as-of commit, model, stale marker; decisions with defaults; row tooltip = headline; layout from the picked mockup | `task_system/dashboard/{inventory,snapshot}.py`; `task_system/dashboard/static/{app.js,app.css}`; `plugins/task-kit/skills/task/references/dashboard.md`; `tests/task-kit/test_dashboard_answers.py`; `tests/task-kit/test_dashboard_ui_contract.py` | U2; mockup pick |
-| U9 docs, Windows gate, release | SKILL.md; README; design doc section; `plugins/CLAUDE.md` (LLM table row, git-privilege register entry); version bump in `plugin.json` and `pyproject.toml`; Windows smoke over ssh (hook from Git Bash and from PowerShell-launched git); claudx smoke; git-code-review; md-domain lanes; publish on the user's go-signal | `plugins/task-kit/skills/task/SKILL.md`; `plugins/task-kit/{README.md,.claude-plugin/plugin.json,pyproject.toml}`; `plugins/task-kit/skills/task/design/task-system-design.md`; `plugins/CLAUDE.md` | U1 to U8 |
-| U10 fleet wiring (claude-settings) | `config/task-kit.yaml` with the fleet `answers:` values; env_check running `answers hook check` / `install --repo "$DEVROOT/tasks"`; first `answers upgrade --all` on one machine (75 tasks) | claude-settings `config/task-kit.yaml`; `scripts/env/tasks-links.sh` or a sibling env_check | U9 published |
+| U1 catalog, inputs, scripts | interface freeze and fixtures first; question loading, layers, retire; readers with limits and exclusions; digest and fingerprint; `activity` and `task_commits` scripts; the four v1 question files | `task_system/answers_types.py`; `task_system/questions.py`; `task_system/question_inputs.py`; `task_system/answer_scripts.py`; `plugins/task-kit/skills/task/questions/`; `tests/task-kit/fixtures/answers/`; `tests/task-kit/test_task_questions.py`; `tests/task-kit/test_task_question_inputs.py`; `tests/task-kit/test_task_answer_scripts.py` | none |
+| U2 store and readers | record format, ownership refusal, choice rules, states, coverage; `listing.py` answers, script answers on read, legacy read compatibility, projection `"2"` | `task_system/answer_store.py`; `task_system/listing.py`; `tests/task-kit/test_task_answer_store.py`; listing tests asserting summary fields | U1 freeze |
+| U3 config and chain | config layers, switch writer; free/paid from the registry; spend and consent exclusion; persistent re-selection; answer validation incl. grounding; llm-kit probe; latency of each entry on 10 real tasks; OutputContract check | `task_system/answers_config.py`; `task_system/answer_chain.py`; `tests/task-kit/test_task_answers_config.py`; `tests/task-kit/test_task_answer_chain.py`; `tests/repo-scripts/test_shipped_model_families.py` | U1 freeze |
+| U4 engine and CLI | one pass (D4 steps 1-8) callable by the service and by `answers refresh`; `answers status|prune`; CLI module; launcher routing | `task_system/answer_engine.py`; `task_system/answers_cli.py`; `plugins/task-kit/bin/task_kit_entrypoint.py`; `tests/task-kit/test_task_answer_engine.py` | U2, U3, U5 |
+| U5 publisher | `repo_lock`, `publish_holding_lock`; own answer files with ownership check | `task_system/session_publish.py`; `tests/task-kit/test_task_sessions_publish.py` | U1 freeze |
+| U6 service | `task-kit service` lifecycle: singleton lock, detached run with log, poll loop over U4, on/off/spend/status/stop; SessionStart `startup` ensure-running | `task_system/answer_service.py`; `plugins/task-kit/hooks/hooks.json`; `plugins/task-kit/hooks/sessionstart/session-start.sh`; `task_session_start.py`; `tests/task-kit/test_task_answer_service.py`; `tests/task-kit/test_task_session_start_hook.py` | U4 |
+| U7 task.py, review, validate | `answers` verb dispatch; `review` through U4; `update --summary` note; review HTML; answer notes non-gating in validate; `summary_ops.py` reduced to the review adapter | `task.py`; `task_system/summary_ops.py`; `task_system/review_html.py`; `task_system/validate.py`; `tests/task-kit/test_task_answers_review.py` and review/update/validate tests asserting summary text | U2, U4 |
+| U8 dashboard | answers with answerer, as-of commit, stale marker; decisions with defaults; service and spend checkboxes, running state, pending counts; launcher ensures the service; layout from the picked mockup | `task_system/dashboard/{inventory,snapshot,server,launcher}.py`; `task_system/dashboard/static/{app.js,app.css}`; `plugins/task-kit/skills/task/references/dashboard.md`; `tests/task-kit/test_dashboard_answers.py`; `tests/task-kit/test_dashboard_ui_contract.py` | U2, U6; mockup pick |
+| U9 docs, Windows gate, release | SKILL.md; README; design doc; `plugins/CLAUDE.md` (LLM table row, register entry); version bump; Windows smoke over ssh (service detaches, survives the starting session, passes run); claudx smoke; git-code-review; md-domain lanes; publish on the user's go-signal | `plugins/task-kit/skills/task/SKILL.md`; `plugins/task-kit/{README.md,.claude-plugin/plugin.json,pyproject.toml}`; `plugins/task-kit/skills/task/design/task-system-design.md`; `plugins/CLAUDE.md` | U1 to U8 |
+| U10 fleet wiring (claude-settings) | `config/task-kit.yaml`: `answers.service: true`, `models: [qwen38-5090, qwen38-m5, luna, haiku]`, `effort: medium`, spend and consent per the user's answers | claude-settings `config/task-kit.yaml` | U9 published |
 
-Order: U1, U3 and U6 in parallel (U2 may start on U1's fixed interface); U4; then U5 and U7 in
-parallel; U8 alongside once U2 lands and a mockup is picked; U9; U10.
+Order: U1 freeze; then U1 rest, U2, U3, U5 in parallel; U4; U6 and U7 in parallel; U8 once U2
+and U6 land and a mockup is picked; U9; U10.
 
 ## Checks (each shown to fail by the stated revert)
 
-- **U1** A fleet file with a shipped id replaces it; `retired: true` drops it; an unknown reader
-  is an error naming the file (revert: skip it silently -> red). Appending a `refresh (no field
+- **U1** A fleet file replaces a shipped id; `retired: true` drops it; an unknown reader or
+  script is an error naming the file (revert: skip silently -> red). A `refresh (no field
   edits)` line leaves the orientation fingerprint unchanged (revert the exclusion -> changed,
-  red). Editing a prompt changes the digest.
-- **U2** Writing an answer changes no fingerprint (revert: hash every folder file -> stale at
-  once, red). A current record beats a newer stale one; among current records the newest wins
-  (revert the ordering -> red). A malformed file is an `invalid` note while another host's valid
-  answer still shows. Legacy `task.summary` is served, labelled, when no orientation answer
-  exists.
-- **U3** A fake first entry returning invalid JSON is excluded and the second entry answers,
-  with `reselections` naming the first (revert: one `run` without `exclude` -> `RUN_FAILED`,
-  red). `effort: medium` reaches luna (revert -> registry default `high`, red). A default absent
-  verbatim from the inputs is rejected (revert grounding -> accepted, red). All entries failing
-  raises `ChainExhausted` naming each. Layer precedence per key; unknown key names the file. The
-  families guard goes red when `haiku` is removed from the default.
-- **U4** (scratch git repos) A commit touching one task yields one follow-up commit with only
-  this host's answer files, and a separately staged path stays staged (revert `--only` -> swept
-  in, red). Each recursion guard alone stops recursion. A commit during a rebase writes nothing
-  (revert the sequencer guard -> red). A dirty `plan.md` defers. Upgrade skips a task holding a
-  current answer from another host (revert -> recomputed, red) and honours the budget. A fixture
-  migrator applied twice yields byte-identical files; a failing one leaves `_schema_version`
-  unchanged.
-- **U5** The publisher pushes a commit holding only this host's answer files and refuses one
-  holding another host's (revert the host check -> pushed, red). `startup` with `auto_upgrade:
-  false` starts nothing; with `true` and pending work it spawns one upgrader; a second start
-  finds the lock held and exits.
-- **U6** LF, executable stub with marker; second install a no-op; a foreign hook refused and left
-  byte-identical (revert -> overwritten, red); `core.hooksPath` honoured; `check` nonzero when
-  missing or outdated.
-- **U7** `review` writes answer files and leaves task.yaml and log.md byte-identical (revert to
-  `state_ops.update` -> both change, red); `update --summary` prints the superseded note; an
-  invalid answer file never gates `work`.
-- **U8** A stale answer renders its marker and as-of commit (revert -> no marker, red); decisions
-  render their defaults; a changed answer changes the snapshot digest.
-- **U9** Windows: the hook runs from Git Bash and from PowerShell-launched git and the follow-up
-  commit exists; or ship with the gap stated.
+  red). The golden fixture's bundle text and fingerprint match byte for byte. `activity` changes
+  with the clock and is never written to disk.
+- **U2** Writing an answer changes no fingerprint (revert: hash `answers/` -> stale at once,
+  red). A file named for this host carrying another fingerprint is refused and left
+  byte-identical (revert the check -> overwritten, red). Two current records pick the same
+  winner when `generated_at` values are swapped (revert to newest-wins -> flips, red). A stale
+  winner is the descendant as-of commit. Legacy `task.summary` is served, labelled.
+- **U3** A fake halt on entry A then `RUN_FAILED` on entry B never returns to A (revert:
+  exclude only `result.entry` -> A retried, red). With spend off, `luna` and `haiku` are in
+  `exclude` (revert -> paid entry dispatched, red); spend on without consent: still excluded.
+  `effort: medium` reaches luna. Ungrounded default rejected. Families guard red without
+  `haiku`.
+- **U4** (scratch repos) A pass after a failed commit commits the dirty own file before
+  freshness checks (revert step order -> file stays uncommitted forever, red). A separately
+  staged path stays staged. A repository with `REBASE_HEAD` or `sequencer/` is skipped. A dirty
+  task folder is skipped. A task holding another host's current answer is not recomputed.
+- **U5** Publishes a commit holding only this host's answer files with its fingerprint; refuses
+  one holding another host's file or a file named for this host with another fingerprint
+  (revert the content check -> pushed, red).
+- **U6** A second start finds the lock held and exits; `off` stops the process; the detached
+  process's stderr reaches the log (revert to `/dev/null` -> the forced failure is invisible,
+  red); `startup` with `service: false` starts nothing.
+- **U7** `review` leaves task.yaml and log.md byte-identical (revert to `state_ops.update` ->
+  changed, red); an invalid answer file never gates `work`.
+- **U8** A stale answer shows its marker and as-of commit; toggling a checkbox changes the
+  effective switch and its layer.
+- **U9** Windows: the service runs detached after the starting session ends, or ship with the
+  gap stated.
 
 ## Questions for the user
 
-1. **Commit wait.** At the measured rate (517 tasks-repo commits in 7 days, 500 touching one
-   task) every task commit would wait for its answers: seconds on a qwen38 endpoint (U3
-   measures it), at most the 90 s deadline on luna or haiku. Accept that, or prefer commits
-   that never wait, with answers committed and published in the background afterwards
-   (fresh on other machines later, and the caller's next git command can meet a held
-   `index.lock`)?
-2. **Fallback spend for automatic upgrades.** When both qwen38 endpoints are down, should the
-   automatic bulk upgrade fall back to luna and haiku (spends subscription quota, up to
-   `upgrade_budget` tasks x 2 questions per session start), or answer only on qwen and leave
-   the rest for later? Commit-time refresh would still fall back either way.
-3. **First questions.** Are `orientation` and `decisions` (waiting-on-you with defaults) the
-   right first pair, or should another catalog row lead?
+1. **Switch scope.** Should the service and spend checkboxes apply to this machine only (the
+   default in this plan, like `sessions.record`), or to every machine at once?
+2. **External consent.** With spend on, may the tasks repo's task files be sent to OpenAI
+   (luna) and Anthropic (haiku)? Default: no; the service then answers with script and qwen38
+   only.
+3. **Always running.** Is "started by any Claude Code session or the dashboard, runs until off
+   or reboot" enough for v1, or should v1 also install an OS login autostart (LaunchAgent,
+   systemd user unit, Windows scheduled task)?
 
 ## Blockers and outside dependencies
 
 - None for U1 to U9.
 - U10 changes the claude-settings repository, outside plugins-kit.
-- Publishing task-kit needs the user's go-signal (root `CLAUDE.md`); U10 needs the published
-  launcher.
+- Publishing task-kit needs the user's go-signal (root `CLAUDE.md`).
 - The Windows check needs ssh access to a Windows fleet machine.
