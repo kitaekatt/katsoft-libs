@@ -31,7 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Optional
 
-from llm_kit.registry.model_endpoints import EndpointEntry
+from llm_kit.registry.model_endpoints import HARNESS_KIND, TRANSPORT_KIND, EndpointEntry
 
 FREE, USAGE, SPEND = "free", "usage", "spend"
 COST_CLASSES = (FREE, USAGE, SPEND)
@@ -74,7 +74,7 @@ class CostVerdict:
 
 def is_unmetered(entry: EndpointEntry) -> bool:
     """True when the entry's billing mode is ``unmetered`` (the single paid/unpaid rule)."""
-    raise NotImplementedError("U1")
+    return entry.billing_mode == "unmetered"
 
 
 def normalize_allow(allow: Optional[Iterable[str]]) -> Optional[frozenset]:
@@ -82,7 +82,52 @@ def normalize_allow(allow: Optional[Iterable[str]]) -> Optional[frozenset]:
 
     Raises ValueError on an unknown cost class. Consumes a generator once.
     """
-    raise NotImplementedError("U1")
+    if allow is None:
+        return None
+    if isinstance(allow, str):
+        raise ValueError(
+            f"allow must be an iterable of cost classes, not the string {allow!r}; "
+            f"valid classes: {', '.join(COST_CLASSES)}"
+        )
+    names = frozenset(allow)
+    unknown = sorted(str(n) for n in names if n not in COST_CLASSES)
+    if unknown:
+        raise ValueError(
+            f"unknown cost class {', '.join(repr(u) for u in unknown)}; "
+            f"valid classes: {', '.join(COST_CLASSES)}"
+        )
+    return names
+
+
+def _classify_harness(
+    entry: EndpointEntry, harness_auth: Optional[Mapping[str, HarnessAuth]]
+) -> CostVerdict:
+    name = (entry.harness or "").lower()
+    if name not in ("claude", "codex"):
+        return CostVerdict(SPEND, f"harness {entry.harness!r} has no subscription rule")
+    auth = (harness_auth or {}).get(name)
+    if auth is None:
+        return CostVerdict(SPEND, f"no auth state for harness {name}")
+    if auth.state == SUBSCRIPTION:
+        return CostVerdict(USAGE, f"{name} on subscription auth: {auth.reason}")
+    return CostVerdict(SPEND, f"{name} auth is {auth.state}: {auth.reason}")
+
+
+def _classify_frontdoor(
+    entry: EndpointEntry, entries: Optional[Mapping[str, EndpointEntry]]
+) -> CostVerdict:
+    group = entry.model
+    tiers = [
+        e
+        for e in (entries or {}).values()
+        if e.kind == TRANSPORT_KIND and e.routing is not None and e.routing.group == group
+    ]
+    if not tiers:
+        return CostVerdict(SPEND, f"no tiers declared for group {group}")
+    for tier in sorted(tiers, key=lambda t: t.id):
+        if not is_unmetered(tier):
+            return CostVerdict(SPEND, f"tier {tier.id} metered")
+    return CostVerdict(FREE, f"every tier of group {group} is unmetered")
 
 
 def classify(
@@ -92,9 +137,19 @@ def classify(
     harness_auth: Optional[Mapping[str, HarnessAuth]] = None,
 ) -> CostVerdict:
     """Classify one entry per the module rules. Pure; never probes auth."""
-    raise NotImplementedError("U1")
+    if entry is None:
+        return CostVerdict(SPEND, "no registry entry: billing undeclared")
+    if entry.kind == HARNESS_KIND:
+        return _classify_harness(entry, harness_auth)
+    if entry.kind == TRANSPORT_KIND:
+        if entry.frontdoor:
+            return _classify_frontdoor(entry, entries)
+        if is_unmetered(entry):
+            return CostVerdict(FREE, "billing.mode unmetered")
+        return CostVerdict(SPEND, "billing not declared unmetered")
+    return CostVerdict(SPEND, f"unknown entry kind {entry.kind!r}")
 
 
 def cost_class(entry: Optional[EndpointEntry], **kw) -> str:
     """The cost class name only: ``classify(entry, **kw).cost_class``."""
-    raise NotImplementedError("U1")
+    return classify(entry, **kw).cost_class
