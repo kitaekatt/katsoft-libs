@@ -546,8 +546,8 @@ def real_smoke(wheel: Path, entry, pins: list[str]) -> dict:
     try:
         venv = tmp / "venv"
         steps = [["uv", "venv", "--no-config", "--python", rb.BUILD_PYTHON, str(venv)]]
-        python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        steps.append(["uv", "pip", "install", "--no-config", "--python", str(python),
+        venv_python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        steps.append(["uv", "pip", "install", "--no-config", "--python", str(venv_python),
                       str(wheel), *pins])
         for cmd in steps:
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -555,7 +555,7 @@ def real_smoke(wheel: Path, entry, pins: list[str]) -> dict:
                 raise ObservationFailed(f"{' '.join(cmd[:3])} failed:\n"
                                         + result.stderr.strip())
         result = subprocess.run(
-            [str(python), "-I", "-c", _SMOKE, entry.name, entry.import_name,
+            [str(venv_python), "-I", "-c", _SMOKE, entry.name, entry.import_name,
              entry.marker_module], capture_output=True, text=True, cwd=tmp)
         if result.returncode != 0:
             raise ObservationFailed("smoke interpreter failed:\n" + result.stderr.strip())
