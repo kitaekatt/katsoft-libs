@@ -19,6 +19,8 @@ that reopened the question is `$DEVROOT/databench`.
 
 ## Recommendation: (b) PROCEED IN PART, incrementally
 
+Verdict status: pending advisor re-check of present-day value (see "Fingerprint cost" below).
+
 Package and pin `llm-kit` for databench, inside the bootstrap-managed environment databench
 already runs in. Bootstrap dependence is accepted during the transition and a pinned `.venv`
 is the intended end state (`dev/tasks/task-kit-extraction/plan.md:274`), so detached
@@ -34,15 +36,18 @@ distribution is not a precondition. The first increment, in order:
 4. Replace the llm-kit signature probe with an installed-version check; the SHA lives in the
    lock.
 5. Test the actual models, completion and jobs verbs with a plugin venv present, plus `.pth`
-   shadowing and `generator_fingerprint` stability.
+   shadowing.
 
 Value delivered by the increment alone: reproducible llm-kit behavior; no signature probe;
-a plugin release no longer changes the five llm_kit files that databench's
-`generator_fingerprint` hashes (`index_pages_worktree.py:845-920`), which forces one
-model-free re-run in every configured repository (13 on the user's Mac); databench chooses
-when to absorb llm-kit changes. Cost: small-to-medium. **Work may stop after this increment.**
+databench chooses when to absorb llm-kit changes (upgrade control). Cost: small-to-medium. **Work may stop after this increment.**
 The complete bootstrap-independent destination is medium cross-repository work and is not
 part of this recommendation.
+
+Fingerprint cost (measured and dismissed): `generator_fingerprint`
+(`index_pages_worktree.py:845-920`) hashes five llm_kit module files, so an llm-kit release
+makes each configured repository run one model-free index-pages pass (about 20 extra git
+processes; pages are rewritten only when their own inputs change). The user agreed this is
+not a factor; it is not a benefit of pinning and not a reason for it.
 
 ## Interface decision
 
@@ -96,8 +101,8 @@ concerns and the lack of a true consumer who needs the libraries"):
 
 User objection 2, no true consumer: databench imports four llm_kit modules
 (`pipeline.execution.{deadlines,failure_cache,scheduler}`, `pipeline.runtime.gate`) plus
-`bootstrap_lib.execution_event`, and its signature probe and fingerprint rerun are measured
-costs of the `.pth` path. The consumer inventory also found `bootstrap_lib.managed_state` in
+`bootstrap_lib.execution_event`, and its signature probe is a measured cost of the
+`.pth` path (no version is carried). The consumer inventory also found `bootstrap_lib.managed_state` in
 claude-settings and codex-settings, so databench is not the only external consumer of
 `bootstrap_lib`.
 
@@ -152,8 +157,9 @@ If the user says go, Mode 4 should be amended for explicitly package-ready distr
 ## Decisions for the user
 
 1. Go or no-go on the first increment (five steps above). No-go means keep the `.pth` path.
-2. Pinned (deliberate bumps) or follow-latest. The advisor recommends pinned: following the
-   latest release surrenders most of the fingerprint-rerun benefit.
+2. Pinned (deliberate bumps) or follow-latest. The advisor recommended pinned, for
+   reproducibility and upgrade control; the advisor's reasoning is being re-checked after
+   the fingerprint cost was dismissed.
 
 ## Hypotheses
 
@@ -175,5 +181,6 @@ If the user says go, Mode 4 should be amended for explicitly package-ready distr
   edges and a medium cost.
 - Sol, follow-up (cross-check 3, binding): after the user ruled that bootstrap dependence is
   acceptable, PROCEED IN PART incrementally; interface and first increment as above; pinned
-  bumps.
+  bumps. That ruling listed the fingerprint rerun as a benefit; the user dismissed it
+  afterwards, and the ruling is being re-checked on present-day value.
 - No Astra or Fable escalation: Sol judged none warranted.
