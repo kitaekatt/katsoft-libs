@@ -92,7 +92,7 @@ Identity and grouping:
 - Order: repositories by name, checkouts by root, tasks by repository name,
   then path, then checkout root.
 - `errors[].code` is an open enum. task-kit 0.15.0 emits `unreadable`,
-  `repo_identity` and `sessions`; the release that adds `tasks[].answers` also
+  `repo_identity` and `sessions`; task-kit 0.17.0, which adds `tasks[].answers`, also
   emits `answers` and `questions`.
 
 Answers (`tasks[].answers`):
