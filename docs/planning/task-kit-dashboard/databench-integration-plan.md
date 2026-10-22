@@ -165,11 +165,17 @@ class Host:                                   # what register(host) may call
 # contributed raw_allowed decides, else Raw is allowed.
 @dataclass(frozen=True) class RootLoad: error: BrowseError | None; data: object        # added
 RootLoader = Callable[[BrowseRoot], RootLoad]                                           # added
-# register_enabled() ends by installing the enabled modules' loaders process-wide
-# (filesystem.install_root_loaders, replacing any earlier set). BrowseRoot.from_directory runs
-# them in canonical module order only when the core configuration, ignore rules and markup
-# overrides loaded cleanly; the first loader error becomes configuration_error and stops the
-# rest; each loader's data lands in BrowseRoot.extensions[module_id].
+RootLoaders = tuple[tuple[str, RootLoader], ...]                                       # added
+Host.root_loaders() -> RootLoaders     # an immutable snapshot, canonical module order  # added
+# No process-wide registry: every root is built with an explicit snapshot.
+# BrowseRoot.from_directory(directory, *, loaders: RootLoaders) -- `loaders` is a REQUIRED
+# keyword (core-only callers pass ()), so no call site can skip it silently. It runs the
+# loaders only when the core configuration, ignore rules and markup overrides loaded cleanly;
+# the first loader error becomes configuration_error and stops the rest; each loader's data
+# lands in BrowseRoot.extensions[module_id]. RootRegistry takes the snapshot once and uses it
+# for the default root and every lazily resolved project root; markup.markup_refresh and
+# markup.markup_accept take it as a required keyword too; a module's CLI `run` reads
+# host.root_loaders() through its registration closure.
 class GenerationPhase(Protocol):                                                        # added
     id: str                                   # also the regeneration type id (M7)
     title: str
@@ -235,22 +241,33 @@ and U8 together, then U9.
 **M1-U6 root loader; entities stay explorer's.** Decision: entity declarations are explorer's
 input (entity types, lists, details and edits); no core file reads them (comments, markup and
 store do not), so with explorer disabled a malformed declaration has nothing to block. Owns
-`databench:src/databench/modules_registry.py` (`RootLoad`, `RootLoader`, `Host.root_loader`,
-installation at the end of `register_enabled`), `databench:src/databench/filesystem.py`
-(`install_root_loaders`; `BrowseRoot.extensions`; `from_directory` runs the installed loaders as
-section 3 states; the `entity_types` field and the lazy `entities` import go),
-`databench:src/databench/explorer_module.py` (registers a loader wrapping
-`entities.load_entity_declarations`; reads `root.extensions["explorer"]`),
-`databench:src/databench/entity_edit.py` (reads the extension instead of `root.entity_types`),
-`databench:src/databench/module_manifest.py` (drops `filesystem.py -> entities.py`),
-`databench:tests/test_root_loader.py` (added), the conftest fixture that resets the installed
-loaders between tests. Checks: with explorer enabled, a root with a malformed entity declaration
-gives the same configuration error code and message as at `8280919` through the browse route,
-the comments route, the CLI `read` operation and the markup phase of `databench generate`
-(revert: register no loader -> no error -> red); a core configuration error still wins over an
-entity error; with explorer disabled the same root serves comments and `entities.py` is never
-imported; a second `register_enabled` with a smaller set removes the earlier loaders (revert:
-append instead of replace -> red); the lint passes with the entry removed.
+`databench:src/databench/modules_registry.py` (`RootLoad`, `RootLoader`, `RootLoaders`,
+`Host.root_loader`, `Host.root_loaders`), `databench:src/databench/filesystem.py`
+(`BrowseRoot.extensions`; `from_directory(directory, *, loaders)` as section 3 states; the
+`entity_types` field and the lazy `entities` import go), `databench:src/databench/roots.py`
+(`RootRegistry(..., root_loaders=...)` for the default and every lazy root),
+`databench:src/databench/server.py` (passes `host.root_loaders()` to the registry),
+`databench:src/databench/cli.py` (passes the snapshot at every core root construction),
+`databench:src/databench/markup.py` (`markup_refresh` and `markup_accept` take `loaders`),
+`databench:src/databench/generate_cli.py` (passes the snapshot to markup roots; U7 then owns
+this file), `databench:src/databench/explorer_module.py` (registers a loader wrapping
+`entities.load_entity_declarations`; its CLI operations pass `host.root_loaders()`),
+`databench:src/databench/entities.py` (`_LoadSession` and `list_entity_types` read the
+declarations from `root.extensions["explorer"]`; nothing reads `root.entity_types`),
+`databench:src/databench/entity_edit.py` (the same), `databench:src/databench/module_manifest.py`
+(drops `filesystem.py -> entities.py`), `databench:tests/test_root_loader.py` (added), and the
+conftest fixture, which builds a `Host` for the test's enabled set and supplies its snapshot to
+any test that builds a root. Checks: with explorer enabled, a root with a malformed entity
+declaration gives the same configuration error code and message as at `8280919` through the
+browse route, the comments route, the CLI `read` operation, a direct `markup_refresh` and
+`markup_accept` call given explorer's snapshot, and the markup phase of `databench generate`
+(revert: register no loader -> no error -> red); two apps built in one process, one with
+explorer and one without, each keep their own loaders for a project root resolved lazily after
+both exist (revert: a module-level loader list -> red); a lazily resolved project root carries
+the loader's error and data; a core configuration error still wins over an entity error; with
+explorer disabled the same root serves comments and `entities.py` is never imported; a grep
+test finds no `entity_types` attribute read outside `entities.py`'s own data structures; the lint
+passes with the entry removed.
 
 **M1-U7 core workspace scope and generation phases.** Decision: which repositories `generate`
 covers is core, because file summaries (core) and index pages (html) both run over it; each
@@ -285,9 +302,10 @@ and `--no-index-pages` kept as aliases; skipping a phase that is not registered 
 `databench:src/databench/modules_registry.py` (`GenerationPhase`, `PhaseResult`, typed
 `Host.generation`), `databench:src/databench/module_manifest.py` (`workspace_scope.py` in
 `CORE`; the three `generate_cli.py` entries dropped), `databench:tests/test_workspace_scope.py`
-(added). `generate_cli` keeps `NO_ORIGIN` (html's phase imports it from core) and
+(added), `databench:tests/test_generate_cli.py` (only a `module("html")` marker is added).
+`generate_cli` keeps `NO_ORIGIN` (html's phase imports it from core) and
 `ensure_dev_root_config` (delegating to `workspace_scope`). Checks: `tests/test_generate_cli.py`
-passes with only a `module("html")` marker added, all modules enabled (repository mode, dev-root
+passes with only that marker added, all modules enabled (repository mode, dev-root
 mode, the written config, refused names, duplicate copies, no-origin skips, exit statuses;
 revert: drop the configured-list rule -> red); with html disabled,
 `databench generate` on a dev root runs file summaries over the same targets and loads no html
@@ -302,9 +320,12 @@ generation lists, as `generate_cli` does at `8280919`; `run` applies the origin 
 models=...)`), `databench:tests/test_html_generation_phase.py` and
 `databench:tests/test_workspace_scope_parity.py` (both `module("html")`; the parity test gives
 fixture dev roots with duplicate origins, a linked worktree, an excluded name, a configured list
-naming a missing and an origin-less repository, and asserts `workspace_scope.select` equals
-`index_pages_cli.select_configured` or `select_targets` followed by `split_duplicates`; revert:
-drop core's one-copy-per-origin rule -> red).
+naming a missing and an origin-less repository, plus a dev root with no config, and asserts
+that `workspace_scope.select` and `index_pages_cli.select_configured` or `select_targets`
+followed by `split_duplicates` agree on the ordered target list (names and paths), on every
+skipped entry's name, reason text and `explicit` flag, on the error raised for an invalid
+configured list, and that the config text core writes equals what `generate_cli` wrote at
+`8280919` for the same root; revert: drop core's one-copy-per-origin rule -> red).
 
 **M1-U9 close-out and release.** Owns `databench:tests/module_isolation.py` (`explained`
 admits nothing; the isolation test is strict), the manifest's Python allowlist (must be empty),
@@ -400,7 +421,11 @@ and rewritten as schema 2 on the next save; checks: a schema-1 file listing only
 yields explorer and tasks enabled, html disabled; revert: keep reading `enabled` -> tasks off ->
 red), `databench:src/databench/path_sources.py` (a `task-identity` source:
 task-kit resolves the identity against its own discovery; databench walks no client path), the
-route registry, `databench:.claude/bootstrap.json` (adds `{"ref": "plugins-kit:task-kit",
+route registry, the tests and helpers that write or assert `modules.json`
+(`databench:tests/module_isolation.py`, `databench:tests/test_modules_registry.py`,
+`databench:tests/test_explorer_module.py`, `databench:tests/test_module_isolation.py`,
+`databench:tests/test_html_module.py`: helpers write schema 2; the schema-1 migration tests stay
+strict, using the fixed legacy set {explorer, html}), `databench:.claude/bootstrap.json` (adds `{"ref": "plugins-kit:task-kit",
 "min_version": "<the release that ships M2-U1>"}` beside llm-kit),
 `databench:tests/fixtures/fake_task_kit/` (current, pre-export, garbage-emitting and hanging
 fakes), `databench:tests/test_tasks_module.py` (marked `module("tasks")`).
