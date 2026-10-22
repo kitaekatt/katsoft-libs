@@ -1,6 +1,6 @@
 # Shared library packaging: go / no-go recommendation
 
-Date: 2026-10-22. Status: recommendation, awaiting the user's decision. Owning task:
+Date: 2026-10-22. Status: final verdict NO-GO NOW (timing), awaiting the user's acceptance or override. Owning task:
 `shared-lib-packaging` (feasibility study; parent `task-kit-extraction`, item
 `databench-integration`). Every measurement below is a scratch measurement, 2026-10-22
 (uv 0.12.5, CPython 3.12.9, macOS arm64): builds and installs from scratch copies; no
@@ -17,11 +17,27 @@ that reopened the question is `$DEVROOT/databench`.
 - (b) Proceed in part.
 - (c) Do not proceed; keep the `.pth` mechanism.
 
-## Recommendation: (b) PROCEED IN PART, incrementally
+## Recommendation: NO-GO NOW (timing); switch atomically and pin deliberately when the .venv install is wanted
 
-Verdict status: pending advisor re-check of present-day value (see "Fingerprint cost" below).
+This is a timing no-go, not a rejection of the architecture. The measured design stands
+(outcome (b) in shape: package and pin `llm-kit` only). Reasons it is not worth doing now:
 
-Package and pin `llm-kit` for databench, inside the bootstrap-managed environment databench
+- The remaining benefits (reproducibility, upgrade control, removing the signature probe)
+  are real, but no present failure or costly churn justifies the migration. Plugin releases
+  are already controlled by the sole user; removing the probe is cleanup, not user value.
+- The CLI split-brain arises only once imports are pinned while the CLI floats, so the
+  switch must be atomic. It is a reason for atomicity, not for starting now.
+- Reproducibility would still be partial while `bootstrap_lib` stays linked and llm-kit's
+  user-level registry files keep moving.
+- The `.pth` path works and follows the installed plugin automatically.
+
+Triggers to run the plan below: (1) installing databench into its own `.venv` becomes an
+actual distribution requirement, or (2) real version drift between the plugin copy and
+databench causes observed failures.
+
+### Ready-to-run plan for a trigger
+
+Run all five steps in one change (never pin imports while the CLI still floats). Package and pin `llm-kit` for databench, inside the bootstrap-managed environment databench
 already runs in. Bootstrap dependence is accepted during the transition and a pinned `.venv`
 is the intended end state (`dev/tasks/task-kit-extraction/plan.md:274`), so detached
 distribution is not a precondition. The first increment, in order:
@@ -39,7 +55,9 @@ distribution is not a precondition. The first increment, in order:
    shadowing.
 
 Value delivered by the increment alone: reproducible llm-kit behavior; no signature probe;
-databench chooses when to absorb llm-kit changes (upgrade control). Cost: small-to-medium. **Work may stop after this increment.**
+databench chooses when to absorb llm-kit changes (upgrade control). Cost: small-to-medium
+(dependency and lock changes, stale `.pth` removal, invocation centralization, API wrappers,
+cross-environment tests). **Work may stop after this increment.**
 The complete bootstrap-independent destination is medium cross-repository work and is not
 part of this recommendation.
 
@@ -47,7 +65,8 @@ Fingerprint cost (measured and dismissed): `generator_fingerprint`
 (`index_pages_worktree.py:845-920`) hashes five llm_kit module files, so an llm-kit release
 makes each configured repository run one model-free index-pages pass (about 20 extra git
 processes; pages are rewritten only when their own inputs change). The user agreed this is
-not a factor; it is not a benefit of pinning and not a reason for it.
+not a factor; it is not a benefit of pinning and not a reason for it. Its withdrawal is what
+turned the verdict from proceed to no-go now.
 
 ## Interface decision
 
@@ -156,10 +175,13 @@ If the user says go, Mode 4 should be amended for explicitly package-ready distr
 
 ## Decisions for the user
 
-1. Go or no-go on the first increment (five steps above). No-go means keep the `.pth` path.
-2. Pinned (deliberate bumps) or follow-latest. The advisor recommended pinned, for
-   reproducibility and upgrade control; the advisor's reasoning is being re-checked after
-   the fingerprint cost was dismissed.
+1. Accept the timing no-go (recommended: accept; keep the `.pth` path until a trigger), or
+   override and run the five-step increment now.
+2. Confirm pinned-with-deliberate-bumps as the policy for the eventual switch (recommended:
+   pinned). Rule: an exact SHA, bumped on purpose. Reasons: repeatable environments,
+   reviewed upgrades, straightforward rollback, and an unrelated plugin update cannot
+   silently change databench. Follow-latest would keep most of today's coupling while adding
+   packaging machinery, which removes the reason to switch.
 
 ## Hypotheses
 
@@ -179,8 +201,10 @@ If the user says go, Mode 4 should be amended for explicitly package-ready distr
 - Sol, go / no-go (cross-check 2): AMEND; no-go unless the user chooses a
   bootstrap-independent product; found the extra `model_declaration` and `interrupt_contract`
   edges and a medium cost.
-- Sol, follow-up (cross-check 3, binding): after the user ruled that bootstrap dependence is
-  acceptable, PROCEED IN PART incrementally; interface and first increment as above; pinned
-  bumps. That ruling listed the fingerprint rerun as a benefit; the user dismissed it
-  afterwards, and the ruling is being re-checked on present-day value.
+- Sol, follow-up (cross-check 3): after the user ruled that bootstrap dependence is
+  acceptable, PROCEED IN PART incrementally; pinned bumps. That ruling listed the
+  fingerprint rerun as a benefit, which the user then dismissed.
+- Sol, re-ruling (cross-check 3, binding; 2026-10-22): NO-GO NOW (timing). Keep the measured
+  design; run the five steps atomically when the `.venv` install is a distribution
+  requirement or real drift causes failures; pin an exact SHA with deliberate bumps.
 - No Astra or Fable escalation: Sol judged none warranted.
