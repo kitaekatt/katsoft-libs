@@ -194,8 +194,8 @@ canonical source of `execution_event`, `interrupt_contract` and `model_declarati
 `plugins/bootstrap/bootstrap_lib/` holds byte copies. Edit the canonical file, then run
 `uv run --extra dev python scripts/sync_contracts_copy.py` (`--check` reports drift
 and changes nothing); `tests/contracts` guards the copies and the frozen goldens.
-Releases are tagged `<dist>-v<version>` (e.g. `katsoft-contracts-v1.0.0`); library
-
+Releases are tagged `<dist>-v<version>` (e.g. `katsoft-contracts-v1.0.0`);
+library versions are independent of plugin versions.
 
 **Publication completeness is conditional on configuration.** A plugin is
 correctly published when its manifest says `published: true` (or omits the
