@@ -141,6 +141,11 @@ def _text(value: str) -> str:
     return to_final(value)
 
 
+# Fields llm-kit added after the legacy suite (cost-class filter). While they hold
+# their default they carry no behavior, so the differential ignores them.
+_FINAL_ONLY_DEFAULT_FIELDS = {("Disposition", "cost_class"): None, ("Ranking", "switched_off"): ()}
+
+
 class _Out(tuple):
     """An ``outcome`` result: already normalised, so ``norm`` passes it through."""
 
@@ -156,6 +161,9 @@ def norm(value):
         out = {"__type__": type(value).__name__}
         for f in dataclasses.fields(value):
             item = getattr(value, f.name)
+            key = (type(value).__name__, f.name)
+            if key in _FINAL_ONLY_DEFAULT_FIELDS and item == _FINAL_ONLY_DEFAULT_FIELDS[key]:
+                continue
             out[f.name] = "<masked>" if f.name in _MASKED_FIELDS else norm(item)
         return out
     if isinstance(value, Mapping):

@@ -92,6 +92,7 @@ DISPOSITION_UNROUTABLE = "unroutable"
 DISPOSITION_REQUIREMENTS_MISMATCH = "requirements-mismatch"
 DISPOSITION_EXCLUDED = "excluded"
 DISPOSITION_SHADOWED_CORE = "shadowed-core"
+DISPOSITION_SWITCHED_OFF = "switched-off"
 #: Dispositions that stay in the render. Everything else is hidden.
 _RENDERED = (DISPOSITION_USABLE, DISPOSITION_OUT_OF_QUOTA, DISPOSITION_UNREACHABLE)
 
@@ -271,6 +272,7 @@ class Disposition:
     disposition: str
     detail: str = ""
     resets_at: Optional[int] = None
+    cost_class: Optional[str] = None
 
     def describe_line(self) -> str:
         text = self.disposition
@@ -279,13 +281,16 @@ class Disposition:
         return f"{self.id}: {text}" + (f" ({self.detail})" if self.detail else "")
 
     def to_json(self) -> Dict[str, Any]:
-        return {
+        data: Dict[str, Any] = {
             "id": self.id,
             "declared_index": self.declared_index,
             "disposition": self.disposition,
             "detail": self.detail,
             "resets_at": self.resets_at,
         }
+        if self.cost_class is not None:
+            data["cost_class"] = self.cost_class
+        return data
 
 
 @dataclass(frozen=True)
@@ -404,6 +409,9 @@ class Ranking:
     rendered_entries: tuple = ()
     dispositions: tuple = field(default=(), repr=False)
     rule: str = ""
+    # Entries switched off by the cost-class allow filter. They are SHOWN (render
+    # and to_json name them when non-empty), never hidden; empty leaves output unchanged.
+    switched_off: tuple = field(default=(), repr=False)
 
     @property
     def default(self) -> Optional[EntryState]:
