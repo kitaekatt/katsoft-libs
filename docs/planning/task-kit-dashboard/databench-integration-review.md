@@ -50,7 +50,7 @@ Rejected options:
 - **Service lifecycle:** detached start, identity record, restart on code change, stop protocol. Port these from task-kit's `launcher`/`procspawn`/`procstamp` (architecture.md:74-129), as `databench service ensure|stop|status`.
 - **Tasks UI and routes:** a thin `tasks_host.py` adapter over the task library.
 - **The background loop:**
-  - the task scheduler; its runner interpreter can be injected (`scheduler.py:333-347, 1424`), so pass task-kit's venv python;
+  - the task scheduler; its runner interpreter can be injected (`scheduler.py:333-347, 1424`), so pass task-kit's venv interpreter;
   - the session reconcile/publish pass;
   - answer passes;
   - markup refresh, which is already there;
