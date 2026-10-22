@@ -125,7 +125,7 @@ dashboard:
 
 ## Working-session registrations
 
-`/task work` registers the session in git (`<task root>/.sessions/<host>.yaml`); the dashboard reads those files for every physical task root and shows each registration on the task row as a small inline marker, with the full list in the task details:
+`/task work` registers the session in git (`<task root>/.sessions/<host>.yaml`) and publishes it: it commits this machine's file on the task root's checked-out branch, fetches the upstream, fast-forwards or merges it into the checked-out HEAD and working tree (as a pull would; a merge that stops on conflicts is aborted), and pushes only when the net change from the upstream is session files. It never force-pushes, rebases, stashes or switches branches. `sessions: {record: false}` in `~/.claude/task.local.yaml` turns registration and publication off. The dashboard reads those files for every physical task root and shows each registration on the task row as a small inline marker, with the full list in the task details:
 
 | Marker | Meaning | Effect |
 |---|---|---|
@@ -135,9 +135,9 @@ dashboard:
 
 We never prevent an action because of an unverifiable state, so only the first kind holds. Re-check reports the registrations that remain and never releases one; a registration ends at `/task hand-off`, or with `task sessions release <ref> --all-local`. The dashboard has no Release button.
 
-**Dismiss** (task details, on an unverified record). User ruling: "The human dismissing is contribution of information." So the dismissal is an authoritative fact, not a local view setting. It is recorded in git, in this machine's own session file (`dismissed:` with the target's host, session id and `registered_at`, plus `dismissed_at`; the file's host says who), and published like a registration, so no machine ever edits another machine's file. Every reader hides the dismissed record at once. The owning machine drops it at its next write even if its process looks alive; a session that is in fact still working registers again at its next `/task work` (a new `registered_at`) and shows again. This machine drops its dismissal entry once the target record is gone.
+**Dismiss** (task details, on an unverified record). The dismissal is an authoritative fact, not a local view setting. It is recorded in git, in this machine's own session file (`dismissed:` with the target's host, session id and `registered_at`, plus `dismissed_at`; the file's host says who), and committed and pushed like a registration (the same fetch, fast-forward or merge, and push), so no machine ever edits another machine's file. Every reader hides the dismissed record at once. The owning machine drops it at its next write even if its process looks alive; a session that is in fact still working registers again at its next `/task work` (a new `registered_at`) and shows again. This machine drops its dismissal entry once the target record is gone.
 
-In the background (one pass per minute) the server reconciles this machine's session files -- records on closed, archived or missing tasks, records some machine dismissed, and dismissal entries whose target is gone -- and publishes this machine's pending session files, bounded, reporting each outcome in the server's own log (the data directory keeps only lock files, never session state). It never pushes a file that is not this machine's own.
+In the background (one pass per minute) the server reconciles this machine's session files -- records on closed, archived or missing tasks, records some machine dismissed, and dismissal entries whose target is gone -- and publishes this machine's pending session files in the same way, bounded, unless `sessions.record` is false, reporting each outcome in the server's own log (the data directory keeps only lock files, never session state). It never pushes a file that is not this machine's own.
 
 ## Launcher exit codes
 

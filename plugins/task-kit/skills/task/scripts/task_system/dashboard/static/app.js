@@ -174,7 +174,7 @@ function sessionRowsHtml(task) {
     return '<span class="sess-line ' + sessionClass(s) + '" title="' + esc(sessionTitle(s)) + '" aria-label="' + esc(sessionLabel(s)) + '">' + esc(sessionText(s)) + ' <span class="muted">(session ' +
       esc(s.session) + (s.checkout ? ', ' + esc(s.checkout) : '') + (s.task_state && s.task_state !== 'open' && s.task_state !== 'unknown' ? ', task ' + esc(s.task_state) : '') + ')</span>' +
       (s.dismissable ? ' <button type="button" class="pill" data-action="dismisssession" data-key="' + esc(tkey(task)) + '" data-host="' + esc(s.host) + '" data-sid="' + esc(s.session_id) +
-        '" data-reg="' + esc(s.registered_at) + '" title="Hide this registration in this dashboard. It changes nothing on the other machine or in git; a new registration shows again.">Dismiss</button>' : '') + '</span>';
+        '" data-reg="' + esc(s.registered_at) + '" title="Dismiss this registration. This machine records the dismissal in its own session file and publishes it to git, so every dashboard hides the record and the owning machine drops it at its next write. No other machine file is edited; a new registration shows again.">Dismiss</button>' : '') + '</span>';
   }).join('<br>') + '</dd>';
 }
 
@@ -1030,7 +1030,7 @@ function recheckSessionsNotice(r, task) {
     text: 'Re-check does not release a registration. Still registered: ' + found.map(sessionText).join('; ') +
       '. A registration ends at /task hand-off, or with: task sessions release ' + task.id + ' --all-local' };
 }
-/* Dismiss hides another machine's unverified registration in THIS dashboard only; no session file or git state changes. */
+/* Dismiss records, in this machine's own session file, a dismissal of another machine's unverified registration, then commits and pushes it (dismiss_and_publish); every reader hides the record. No other machine's file is edited. */
 function doDismissSession(el) {
   var p = splitIKey(el.getAttribute('data-key') + '|-');
   send('POST', '/api/v1/sessions/dismiss', { checkout: p.project, task: p.task, host: el.getAttribute('data-host'),

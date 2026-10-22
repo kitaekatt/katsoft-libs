@@ -1,7 +1,8 @@
 # task-kit working sessions: implementation plan
 
-Status: units U0-U6 landed (commits under "Implementation units"); U-noindex is in progress and U7
-remains. The user ruled on Q1 and Q2; the rulings are folded into the decisions. Governing
+Status as of 2026-10-21: units U0-U6 landed (commits under "Implementation units"); U-noindex landed as 38a1e497;
+U7 release prep landed as d6bb301a (version 0.13.0, Windows registration refusal, README, register entry); publication
+is pending. The user ruled on Q1 and Q2; the rulings are folded into the decisions. Governing
 principles for state shared across machines: docs/reference/distributed-truth.md.
 Target release:
 task-kit 0.13.0 (dev and master both carry task-kit 0.12.0 on 2026-10-21). Publishing task-kit is
@@ -408,7 +409,7 @@ background `SessionsMaintainer` (60 s reconcile and publish of its own file).
 | U4 CLI and skill (e45181cf) | `work` registration and `session:` lines (in `_cmd_work` after `state_ops.work` returns; `state_ops` untouched); `sessions` verb; `list`/`show`/`status`; docstring; SKILL.md (work relay, hand-off release step, `sessions` capability); the `sessions:` keys of `task.local.yaml` | `task.py`; `task_system/listing.py`; `plugins/task-kit/skills/task/SKILL.md`; `tests/task-kit/test_task_sessions_cli.py` and any task-kit test asserting list/show/status/work text | U2, U3 |
 | U5 session-start hook (d95665c5) | `hooks.json` (SessionStart, matchers `resume` and `clear`, `async: true`); the bash 3.2/zsh-safe script (forced interpreter chain as in `plugins/presence-kit/hooks/stop/presence-stop.sh`; `task.py` re-execs into the venv), dispatching on the input's `source` | `plugins/task-kit/hooks/hooks.json`; `plugins/task-kit/hooks/sessionstart/session-start.sh`; `task_session_start.py`; `tests/task-kit/test_task_session_start_hook.py`; the allowlist entry in `tests/repo-scripts/test_python_invocation_standard.py` | U2, U3, U0 |
 | U6 dashboard (283b4ec5) | inventory read of `.sessions` per physical root; task-row `sessions`; revision; `held` from registrations; Re-check reports only; dismiss route; `SessionsMaintainer`; badge and details | `task_system/dashboard/{inventory,snapshot,scheduler,server}.py`; `task_system/dashboard/static/{app.js,app.css}`; `plugins/task-kit/skills/task/references/dashboard.md`; `tests/task-kit/{test_dashboard_sessions.py,test_dashboard_inventory.py,test_dashboard_ui_contract.py,ui_harness.js}` | U2, U3 |
-| U-noindex (in progress) | Remove the machine-local session index and `publish.log`; records are found from the root files only (decisions 16, 17) | `task_system/sessions.py`, `task_system/session_publish.py`, the hook script and their tests | U2, U3, U5 |
+| U-noindex (landed as 38a1e497) | Remove the machine-local session index and `publish.log`; records are found from the root files only (decisions 16, 17) | `task_system/sessions.py`, `task_system/session_publish.py`, the hook script and their tests | U2, U3, U5 |
 | U7 docs, Windows gate, release | register entry (plugins/CLAUDE.md: registration lasts until hand-off; the git-privilege entry extended to session publication); README; design doc section; version 0.13.0 in plugin.json and pyproject.toml; Windows smoke over ssh (or ship with Windows registration refused and say why); review; claudx smoke; publish | `plugins/CLAUDE.md`; `plugins/task-kit/{README.md,.claude-plugin/plugin.json,pyproject.toml}`; `plugins/task-kit/skills/task/design/task-system-design.md` | all |
 
 Order: U0 and U1 in parallel; then U2 and U3 in parallel; then U4, U5 and U6 in parallel; then U-noindex; U7 last.

@@ -92,7 +92,10 @@ bootstrap pass that provisions this version.
 
 Inside a Claude Code session, `/task work <ref>` also registers that session as working the task. The registration is a
 record in `<task root>/.sessions/<host>.yaml`, one file per machine, committed and pushed with the task folder's own
-repository (a `tmp/` task stays local). `/task hand-off` releases it (`task sessions release <ref>`). A registration lasts
+repository (a `tmp/` task stays local). Publishing commits the file on the checked-out branch, then fetches the upstream and
+fast-forwards or merges it into the checked-out HEAD and working tree, as a pull would (a merge that stops on conflicts is
+aborted), and pushes only when the net change from the upstream is session files. It never force-pushes, rebases, stashes or
+switches branches. `sessions: {record: false}` turns it off. `/task hand-off` releases it (`task sessions release <ref>`). A registration lasts
 from work until hand-off: exiting Claude Code, a crash or a resume does not end it, and nothing removes a record because its
 process died. An interrupted session is cleaned up by a person with `task sessions release <ref> --all-local`, or by
 dismissing it in the dashboard. Registration adds `session:` lines on stderr and changes neither the output nor the exit
