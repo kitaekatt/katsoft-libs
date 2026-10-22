@@ -143,3 +143,94 @@ After U0, units U1, U1b, U2, U3 and U4 can run in parallel, and no two own the s
 - /Users/christina/Dev/plugins-kit/plugins/llm-kit/lib/llm_kit/pipeline/execution/drivers/claude_bg.py
 - /Users/christina/Dev/plugins-kit/plugins/llm-kit/lib/llm_kit/frontdoor/acceptance.py
 - /Users/christina/Dev/plugins-kit/plugins/llm-kit/lib/llm_kit/cli/__init__.py
+
+## Amendment (revision 2a): codex auth through `codex doctor --json`
+
+This section REPLACES the codex premises, the `codex_auth` interface and checks C8-C9 above (codex/sol re-check: findings 1-7 resolved; this fixes its one new blocker, the effective configuration stack).
+
+### Amendment summary
+
+`codex_auth` no longer reads Codex's files itself. It now asks Codex for its own resolved configuration by running `codex doctor --json` (Codex 0.162.0 on this machine) in the same working directory and environment as the run.
+
+- **What doctor reports:** its `config.load` check states its scope as "invocation config, including cloud-managed policy". It also reports the effective `model provider` and the `cwd`, plus the stored auth mode and whether an API key is stored.
+- **Layers I found in the codex binary:** mdm, system, user, project (`.codex/config.toml`), session flags, cloud requirements, cloud-managed config, and legacy managed config from a file or MDM. The binary also names `/etc/codex/config.toml`, `/etc/codex/requirements.toml` and `/etc/codex/managed_config.toml`.
+- **Why I stopped reading files:** cloud and MDM layers cannot be read from disk, so a file reader cannot cover every provider-affecting layer.
+- **The rule:** an auth environment variable gives METERED before doctor runs. Otherwise the result is SUBSCRIPTION only when doctor's report positively shows the `openai` provider, ChatGPT auth and no stored API key. Any other provider or auth mode is METERED. Anything else is UNKNOWN, which counts as spend: doctor missing, a non-zero exit, a timeout, an unknown schema, a missing field, or a check whose status is not ok.
+- **The managed/system-provider test you asked for** is C8c below.
+
+This replaces the codex parts of the Premises, the `codex_auth` part of the `adapters/harness_auth.py` interface, and C8--C9 of the checks. Nothing else changes.
+
+---
+
+### Premises (replaces the codex bullets)
+
+- **[E] Codex inherits the whole environment.** The codex adapter passes no `env` (`adapters/codex_backend.py:405-420`), and the runner uses `env=None` (`adapters/claude_runner.py:118-129`).
+- **[E] The production argv sets no provider or profile.** It sets `-C <root>`, a model, an effort, and in text-only mode only `features.*=false` plus `model_catalog_json` (`codex_backend.py:699-725`, `adapters/capabilities.py:543-553`).
+  - `ignore_user_config` is passed only in text-only mode.
+  - **[H]** It drops only the user layer. System, managed and cloud layers still apply.
+- **[E] Config layers in the binary.** `strings` on the native binary (`.../codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex`, 0.162.0) shows the tagged enum `ConfigLayerSource`, with the variants `mdm`, `system`, `user`, project (`dotCodexFolder`, `.codex/config.toml`), `sessionFlags`, `cloudRequirements`, `cloudManagedConfig`, `legacyManagedConfigFile` and `legacyManagedConfigMdm`. It also names `/etc/codex/config.toml`, `/etc/codex/requirements.toml`, `/etc/codex/managed_config.toml` and the preferences domain `com.openai.codex`.
+- **[E] Auth modes in the binary:** `apiKey`, `chatgpt` and `amazonBedrock`.
+- **[E] Auth environment variables in the binary:** `CODEX_API_KEY`, `OPENAI_API_KEY` and `CODEX_ACCESS_TOKEN`, next to `auth.json`.
+- **[E] State of this machine.**
+  - `/etc/codex` does not exist.
+  - The `com.openai.codex` defaults domain exists. I saw only desktop-app Sparkle keys there.
+  - `CODEX_HOME` is unset, and `~/.codex` is a symlink to `~/Dev/codex-settings`.
+  - `auth.json` has the keys `{auth_mode, OPENAI_API_KEY: null, tokens{id_token, access_token, refresh_token, account_id}, last_refresh}` with `auth_mode == "chatgpt"`.
+  - I printed no secret values.
+- **[E] Codex can dump its effective configuration.** `codex doctor --json` ("Emit a redacted machine-readable report"; it accepts `-c`) returns JSON with `schemaVersion: 1` and `codexVersion`. Its `checks` include:
+  - `config.load`: `status`, plus `details` with `"model provider"`, `"configuration scope"` and `"cwd"`. Here these read `"openai"`, `"invocation config, including cloud-managed policy"` and the process cwd.
+  - `auth.credentials`: `status`, plus `details` with `"stored auth mode"` (`"chatgpt"`), `"stored API key"` (`"false"`) and `"stored ChatGPT tokens"` (`"true"`).
+  - It took about 4 s here, and `codex login status` agrees ("Logged in using ChatGPT").
+- **[E]** The `app-server` protocol has a `config/read` method that returns `layers` (`ConfigReadResponse`). It needs a daemon round-trip, so I do not use it.
+- **[H] Doctor may write.** Doctor may make network checks (`network.provider_reachability`) and write logs under `CODEX_HOME`. It changes no configuration.
+- **[H] `CODEX_ACCESS_TOKEN`** may carry a ChatGPT token rather than an API key. Its presence is still treated as not proven subscription.
+
+### `adapters/harness_auth.py`: the `codex_auth` part (replaces the earlier spec)
+
+```python
+CODEX_AUTH_ENV = ("CODEX_API_KEY", "OPENAI_API_KEY", "CODEX_ACCESS_TOKEN")
+DOCTOR_SCHEMA = 1
+def codex_auth(env: Mapping[str, str] | None = None, *, cwd: Path,
+               runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+               timeout_s: float = 30.0) -> HarnessAuth
+def probe_harness_auth(harnesses: Iterable[str], env: Mapping[str, str] | None = None,
+                       *, cwd: Path) -> dict[str, HarnessAuth]
+```
+
+The rule is evaluated in order and never raises.
+
+1. **Environment first.** If `CODEX_API_KEY` or `OPENAI_API_KEY` is set and non-empty, the result is METERED. If only `CODEX_ACCESS_TOKEN` is set, the result is UNKNOWN. The reason names the variable, and the runner is not called.
+2. **Run doctor.** Run `codex doctor --json` through `runner`, with `cwd=cwd`, the same `env` (default `os.environ`), and `timeout_s`. The run itself passes no `-c` provider or profile override, so doctor gets none either. **If the backend ever adds a `-c` key starting with `model_provider`, `model_providers` or `profile`, it must be forwarded here too. Until then, `codex_auth` assumes no such key.**
+3. **Parse the report.** The result is UNKNOWN on a missing executable, a timeout, a non-zero exit, a JSON decode error, `schemaVersion != 1`, or any missing field among those below.
+4. **Read the checks.** Let `cl = checks["config.load"]` and `ac = checks["auth.credentials"]`.
+   - If `cl.status` or `ac.status` is not `"ok"`, the result is UNKNOWN. The configuration did not load cleanly, so a layer may not have been applied.
+   - If `cl.details["model provider"]` is not exactly `"openai"`, the result is METERED, with the reason "effective provider <name>". This covers a provider chosen by any layer: system, project, MDM, cloud-managed or requirements.
+   - If `ac.details["stored auth mode"]` is not exactly `"chatgpt"`, or `ac.details["stored API key"]` is not exactly `"false"`, the result is METERED.
+   - Otherwise the result is SUBSCRIPTION, with the reason "doctor: provider openai, chatgpt auth (codex <version>)".
+5. **Never log secrets.** Reasons quote only field names and the provider or auth-mode value, never a token. The report is already redacted.
+
+**Caching and callers:**
+- Results are cached per process, keyed by `(cwd, the values of CODEX_AUTH_ENV, CODEX_HOME)`.
+- `describe` passes `cwd=Path(project_root or Path.cwd()).resolve()`.
+- `run` passes `request.workspace or project_root or Path.cwd()`, resolved. This matches the backend's `-C` root default (`codex_backend.py:366-373`). `run` probes once per call.
+- No file-reading fallback: if doctor is missing or older than this schema, the result is UNKNOWN, which counts as spend.
+
+### Checks (replace C8 and C9)
+
+All of these use an injected `runner` with canned doctor JSON, plus a tmp `CODEX_HOME`.
+
+- **C8a** `test_harness_auth::test_codex_env_key_metered_without_doctor`: `OPENAI_API_KEY=x` gives METERED, and the runner spy is never called. `CODEX_ACCESS_TOKEN=x` gives UNKNOWN. An empty value falls through to doctor. **Revert:** drop the environment step, or use `name in env`.
+- **C8b** `::test_codex_doctor_openai_chatgpt_is_subscription`. **Revert:** default to UNKNOWN; this test then goes red, which shows the positive path is real.
+- **C8c** `::test_codex_managed_provider_metered` (the managed/system-provider test): the tmp `CODEX_HOME/config.toml` says `model_provider = "openai"` and `auth.json` says chatgpt, but the doctor fixture reports `"model provider": "azure"`, as a `/etc/codex/managed_config.toml` or cloud-managed layer would produce. The expected result is METERED. **Revert:** take the provider from `CODEX_HOME/config.toml` instead of doctor.
+- **C8d** `::test_codex_doctor_apikey_auth_metered`: covers `"stored auth mode": "apiKey"`, and separately `"stored API key": "true"`. **Revert:** check only one of the two fields.
+- **C8e** `::test_codex_doctor_failure_unknown`, parametrized over: `FileNotFoundError`, `TimeoutExpired`, exit code 1, non-JSON output, `schemaVersion: 2`, a missing `"model provider"`, and `config.load.status == "warn"`. Each must give UNKNOWN. **Revert:** treat a missing field as `openai`, or drop the status gate.
+- **C8f** `::test_codex_doctor_uses_run_cwd_and_env`: a runner spy asserts `cwd` equals the run's workspace and `env` is the same mapping. A `run()`-level variant asserts that one probe is made per `run`. **Revert:** call the runner with `cwd=None`.
+- **C8g** `::test_codex_cache_key_includes_cwd`: two different `cwd` values cause two probes. **Revert:** cache by `env` alone.
+- **C9** `::test_reasons_hold_no_secret`: a fixture token string placed in the `auth.json` and doctor fixtures never appears in any reason. **Revert:** include raw `details` in the reason.
+- **C9-live** (optional, behind the existing live marker; not part of CI): on a machine logged in to ChatGPT, the real `codex doctor --json` gives SUBSCRIPTION. On this machine the inputs it reads are already confirmed (provider `openai`, `chatgpt`, stored API key `false`).
+
+### Critical files for implementation
+- /Users/christina/Dev/plugins-kit/plugins/llm-kit/lib/llm_kit/adapters/codex_backend.py
+- /Users/christina/Dev/plugins-kit/plugins/llm-kit/lib/llm_kit/adapters/capabilities.py
+- /Users/christina/Dev/plugins-kit/plugins/llm-kit/lib/llm_kit/adapters/claude_runner.py
+- /Users/christina/Dev/plugins-kit/plugins/llm-kit/lib/llm_kit/dispatch/declaration.py
