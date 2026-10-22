@@ -3,7 +3,7 @@ _schema_version: 1
 name: task
 author: christina
 skill-type: capability-skill
-description: Use when creating, listing, working, queueing, closing, archiving, or moving task folders and task_list refs, or when the user queues work. Do NOT use for native TaskCreate/TodoWrite or code review.
+description: Use when creating, listing, working, queueing, closing, archiving or moving task folders and task_list refs. Do NOT use for TaskCreate/TodoWrite or code review.
 ---
 
 # Task
@@ -260,7 +260,7 @@ capability_skill:
         - n: 2
           action: "Make the unit a task item when it belongs to a dev/tasks task: add the plan.md task_items entry and its `### <id> -- <title>` section with the clarified brief (and `accept:` when a check exists), so the item is eligible (references/dashboard.md, Actions). The dashboard's Queue or Add item and queue then starts it. The CLI has no queue verb; report which item is ready and that Queue is the remaining step."
         - n: 3
-          action: "When the dashboard does not fit (no dev/tasks task, llm-kit unavailable, or the unit is not a task item), launch a background worker with the clarified brief per awesome-kit:orchestrate (run_in_background), arm the liveness watch that skill requires, and keep the main thread free."
+          action: "When the dashboard does not fit (no dev/tasks task, llm-kit unavailable, or the unit is not a task item), launch a background worker with the clarified brief per awesome-kit:orchestrate (run_in_background), and keep the main thread free."
       gotchas:
         - "Never do the queued work in the main thread, and never `/task work` a task to do its queued item inline: a session that works a task holds it, and the dashboard yields (`held`) until the hand-off."
         - "Do not restate the definition elsewhere; it lives in section Queued work only. Do not add queue verbs, routes or states."
