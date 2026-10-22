@@ -141,8 +141,11 @@ def _text(value: str) -> str:
     return to_final(value)
 
 
-# Fields llm-kit added after the legacy suite (cost-class filter). While they hold
-# their default they carry no behavior, so the differential ignores them.
+# Fields llm-kit added after the legacy suite (cost-class filter). They hold their
+# default unless a caller passes ``allow``, which no scenario here does (the legacy
+# side has no such argument), so the differential ignores them only while default;
+# a non-default value still reaches the comparison. ``test_allow_filter.py`` pins the
+# allow=None output byte for byte against literals captured before the filter existed.
 _FINAL_ONLY_DEFAULT_FIELDS = {("Disposition", "cost_class"): None, ("Ranking", "switched_off"): ()}
 
 
@@ -2012,7 +2015,8 @@ def test_lazy_backend_builds_nothing_until_used_and_exactly_once(sides, pipeline
 @pytest.mark.parametrize(
     "attr,extra",
     [
-        ("decl", set()), ("observer", set()), ("seats", set()), ("usage", set()),
+        ("decl", {"DISPOSITION_SWITCHED_OFF"}), ("observer", set()), ("seats", set()),
+        ("usage", set()),
         ("reach", {"EndpointProbe", "probe_model_endpoint"}),
     ],
 )
