@@ -123,3 +123,62 @@ databench applies this filter to markup job lists, to the index-pages judgment a
 3. **Switch granularity.** One set of three switches per machine, or one set per operation (task answers, content markup, index pages)?
 4. **Index pages in background regeneration.** They are expensive, and each run pushes commits to every repository's origin. If they are included, the `generated_index_pages` insight in USER-PREFERENCES.md (regenerated "at the user's discretion"; agents do not schedule them) needs rewording so that the switch is that discretion.
 5. **Remote access to task actions.** In tailnet mode, which task actions may a remote client use? I recommend view only, and never Queue.
+
+## Addendum: a layer below databench (unit databench-taskkit-arch)
+
+This was read-only; I changed no files. **[C]** marks a confirmed premise, **[H]** a hypothesis.
+
+**Recommendation:** add one small lower layer, inside llm-kit. It holds the model-filter policy and the per-machine usage and spend settings. Nothing else needs a shared layer.
+
+### What goes into llm-kit, and why it pays for itself
+
+1. **Classifier and filter** (this is S1 in my earlier report, unchanged).
+   - Add `cost_class(entry, env)` returning free, usage or spend.
+   - Add an `allow=` set on `describe` and `run`, with a visible `switched-off` disposition.
+   - The facts it uses are already llm-kit's [C]:
+     - `kind`, `harness` and `billing_mode` in `model_endpoints.py:107-108, 151-160, 464-467`;
+     - the fleet paid rule `is_paid` in `frontdoor/acceptance.py:90-92`;
+     - the variables that divert a claude harness to metered billing, in `claude_bg.py:177-197`.
+   - Every consumer would otherwise re-implement this: databench's generate, `task.py answers refresh`, and any later unattended caller.
+
+2. **Storage and reader for `usage` and `spend`** (this replaces part of my earlier section 4).
+   - Earlier I put all three switches in databench's `generate.yaml`. That means task-kit must copy databench's config-path resolution, a file contract across two repos that no shared test covers.
+   - Instead, llm-kit owns one per-machine file in its own data directory, with `load_consent()` / `save_consent()`.
+     - llm-kit already keeps per-machine state there for usage pacing (`dispatch/usage_budget.py:112`) [C].
+     - That directory is the home plugins/CLAUDE.md:400 assigns to user- and machine-scoped plugin data.
+   - databench's UI shows the checkboxes and writes the file through `save_consent()`. That keeps them databench controls, as you ruled. The databench service passes `allow=load_consent()` for every operation it hosts.
+   - The `task.py` refresh you run yourself calls the same function, with no databench process and no duplicated path. If the file is absent, only free models run, and the output says so.
+   - There is a second payoff. The two booleans are the simplest form of two mechanisms llm-kit already has:
+     - `usage` mirrors subscription pacing (`conserve_usage`, `usage_budget.pinned_evaluate`);
+     - `spend` mirrors the USD cap (`pipeline/runtime/spend_ledger.py:485`).
+     If you later want "spend up to $X a day" instead of on/off, it lands where those mechanisms already live.
+   - **Scope rule:** the filter is opt-in per caller. Interactive callers keep their current routing, so orchestrate and the review lanes are not gated by a background-regeneration setting. Those are the session-caller paths in `declaration.py:534-536`.
+
+3. **The `regeneration` switch stays in databench.** It controls whether databench's own service runs background passes, and it never gates a refresh you run yourself. It has only one reader.
+
+### What I considered and would not put in a lower layer
+
+- **Service core** (detached start, process identity, ensure/stop, the background loop).
+  - After the migration databench is its only host, so the code should simply move into databench.
+  - It cannot go in `bootstrap_lib`, which must stay stdlib-only (plugins/CLAUDE.md:538-541), while this code needs psutil.
+  - A new plugin to hold it would cost more than it saves.
+  - Revisit only if a second long-running host appears. [H] llm-kit's front-door server could be one; I did not measure its lifecycle.
+- **Repo-identity normalization** (task-kit `repo_identity.py:79`, databench `index_pages_survey.py:225`).
+  - databench's copy has to run on a bare interpreter (README:2396-2399), so it cannot import a `.pth`-linked library.
+  - The duplicate is small. Leave both, or let databench's host adapter use task-kit's copy.
+- **Freshness and provenance record formats** (index-page decision records, markup labels, task answer files).
+  - The three differ in who owns and writes them: commits from a private worktree, a per-user cache, and per-host committed files.
+  - A shared format would couple three schemas for little reuse. The per-attempt record already comes from llm-kit's `RunResult.attempts`.
+
+### Changes to the earlier report
+
+- **section 4:** the per-machine `usage` and `spend` state moves from databench's `generate.yaml` to llm-kit's data directory, still written through databench's UI. `regeneration` stays in databench. `task.py`'s refresh path calls `llm_kit` instead of copying a databench path.
+- **section 5:** S1 adds `load_consent` / `save_consent` and the consent file to the llm-kit unit. databench's switch-file v2 then carries only `regeneration`, plus the migration that turns the old `harnesses: {claude, codex}` into the new `usage` value. Edit `summary-on-commit-plan.md` D2 and D4 to read consent from llm-kit.
+- **section 6, one added decision for you:** should every unattended llm-kit caller honor the usage and spend consent by default (job runs, workflow-kit nodes), or only the callers databench hosts plus `task.py`'s refresh path? I recommend opt-in per caller now, and widening it only if you ask.
+
+## User decisions (2026-10-21, verbatim answers)
+
+- Host: "Yes, retire task-kit's (Recommended)".
+- Reaching every machine: "Can I distribute databench without source code I.e. via npm" (open; see distribution investigation).
+- Switch granularity: "One set per machine (Recommended)".
+- Index pages in background regeneration: "A drop down configures what type of regen is enabled. It all is by default."
