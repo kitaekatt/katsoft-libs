@@ -88,6 +88,8 @@ def norm(value):
         return (type(value).__name__, sorted(norm(v) for v in value))
     if isinstance(value, Path):
         return ("Path", str(value))
+    if isinstance(value, str):
+        return to_final(value)  # named deliberate wording differences (final_wording.RENAMES)
     return value
 
 

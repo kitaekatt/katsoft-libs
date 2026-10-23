@@ -70,6 +70,8 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 import pytest
 
+from final_wording import to_final
+
 _HERE = Path(__file__).resolve().parent
 _REPO = _HERE.parents[1]
 _FIXTURES = _HERE / "fixtures" / "cross_state"
@@ -323,6 +325,9 @@ def first_difference(a: Any, b: Any, path: str = "$") -> Optional[str]:
             if found:
                 return found
         return None
+    if isinstance(a, str) and isinstance(b, str):
+        # named deliberate wording differences, including the shipped sol/luna model ids
+        return None if to_final(a) == to_final(b) else f"{path}: {a!r} != {b!r}"
     return None if a == b else f"{path}: {a!r} != {b!r}"
 
 

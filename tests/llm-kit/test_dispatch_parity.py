@@ -163,6 +163,8 @@ def norm(value):
         value = claude_contract_to_final(value)  # llm-kit delivers a claude contract natively
         out = {"__type__": type(value).__name__}
         for f in dataclasses.fields(value):
+            if f.name == "call_modes":
+                continue  # declared difference: the final Capabilities record carries it
             item = getattr(value, f.name)
             key = (type(value).__name__, f.name)
             if key in _FINAL_ONLY_DEFAULT_FIELDS and item == _FINAL_ONLY_DEFAULT_FIELDS[key]:
@@ -171,7 +173,8 @@ def norm(value):
         return out
     if isinstance(value, Mapping):
         return ("map", type(value).__name__,
-                [(norm(k), "<masked>" if k in _MASKED_FIELDS else norm(v)) for k, v in value.items()])
+                [(norm(k), "<masked>" if k in _MASKED_FIELDS else norm(v))
+                 for k, v in value.items() if k != "call_modes"])
     if isinstance(value, (list, tuple)):
         return (type(value).__name__, [norm(v) for v in value])
     if isinstance(value, (set, frozenset)):

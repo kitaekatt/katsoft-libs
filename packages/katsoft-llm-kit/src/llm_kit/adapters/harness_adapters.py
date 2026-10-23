@@ -31,6 +31,7 @@ from llm_kit.registry.effort import (
     HarnessAdapterError,
     harness_effort_order,
 )
+from llm_kit.registry.model_profiles import check_effort
 
 
 PathLike = Union[str, os.PathLike[str]]
@@ -180,12 +181,15 @@ class HarnessAdapter:
             raise HarnessAdapterError(
                 f"{self.name} effort must be a non-empty string (got {value!r})"
             )
-        if self.effort_menu is not None and value not in self.effort_menu:
-            accepted = "|".join(sorted(self.effort_menu))
-            raise HarnessAdapterError(
-                f"{self.name} does not accept effort {value!r}; "
-                f"accepted efforts: {accepted}"
-            )
+        # One validator for every dispatch path: the exact model's measured
+        # menu when it has one, else this adapter's harness-wide menu.
+        check_effort(
+            value,
+            route=self.name,
+            model=entry.model,
+            fallback=None if self.effort_menu is None else harness_effort_order(self.name),
+            subject=self.name,
+        )
         return value
 
     def _validate_prompt_args(

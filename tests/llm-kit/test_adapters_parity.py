@@ -127,6 +127,13 @@ def sides():
 # --------------------------------------------------------------------------
 
 _MASKED_FIELDS = frozenset({"wall_ms", "started_at", "ended_at"})
+
+# Declared difference: the final Capabilities record carries ``call_modes`` (which
+# modes an adapter honors); the frozen legacy record has no such field. Both the
+# dataclass shape and its comparable value leave the field out, and a dedicated
+# test below pins the final side's values.
+_FINAL_ONLY_FIELDS = frozenset({"call_modes"})
+_CALL_MODES_PARAM = ", call_modes: 'Tuple[str, ...]' = ('completion',)"
 _TEXT_SUBS: list[str] = []
 
 
@@ -162,6 +169,8 @@ def norm(value):
         value = claude_contract_to_final(value)  # llm-kit delivers a claude contract natively
         out = {"__type__": type(value).__name__}
         for f in dataclasses.fields(value):
+            if f.name in _FINAL_ONLY_FIELDS:
+                continue
             item = getattr(value, f.name)
             out[f.name] = "<masked>" if f.name in _MASKED_FIELDS else norm(item)
         return out
@@ -361,7 +370,7 @@ _FN_ADDR = re.compile(r"<function (\w+) at 0x[0-9a-fA-F]+>")
 
 
 def _sig(fn) -> str:
-    text = _SIG_PREFIX.sub("X.", str(inspect.signature(fn)))
+    text = _SIG_PREFIX.sub("X.", str(inspect.signature(fn))).replace(_CALL_MODES_PARAM, "")
     # Deliberate: codex_backend names Budget through registry.conserve.
     text = text.replace("usage_budget.Budget", "conserve.Budget")
     return _FN_ADDR.sub(r"<function \1>", text)
@@ -394,9 +403,12 @@ def shape(value):
                     f.default if f.default is not dataclasses.MISSING and _simple(f.default) else "<d>",
                 )
                 for f in dataclasses.fields(value)
+                if f.name not in _FINAL_ONLY_FIELDS
             ]
         for key, item in vars(value).items():
             if key.startswith("__") and key.endswith("__") and key not in ("__init__", "__call__"):
+                continue
+            if dataclasses.is_dataclass(value) and key in _FINAL_ONLY_FIELDS:
                 continue
             raw = item.__func__ if isinstance(item, (staticmethod, classmethod)) else item
             if inspect.isfunction(raw):
@@ -438,15 +450,15 @@ def assert_same_surface(legacy_mod, final_mod, *, only_legacy=(), only_final=())
 
 # (attr, names only the legacy module has, names only the final module has)
 _SURFACE_CASES = [
-    ("acap", (), ()),
+    ("acap", (), ("MODE_COMPLETION", "MODE_WORKSPACE")),
     ("profile", (), ()),
-    ("harness", (), ("codex_command",)),
+    ("harness", (), ("check_effort", "codex_command")),
     ("runner", (), ()),
     ("backends", (), ()),
     # The final backend delegates to llm_kit.adapters.codex_command directly, so
     # the legacy probe constant, probe function and its signature import are gone.
     ("codex", ("IGNORE_USER_CONFIG_BOOTSTRAP", "_codex_argv_builder", "inspect", "usage_budget"),
-     ("codex_command", "conserve", "usage_sources")),
+     ("CODEX_EFFORT_ORDER", "CODEX_HARNESS", "check_effort", "codex_command", "conserve", "usage_sources")),
     ("opencode", (), ()),
     ("account", (), ()),
     ("client", (), ()),

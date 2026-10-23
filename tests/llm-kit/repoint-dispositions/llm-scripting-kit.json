@@ -152,13 +152,28 @@
     {
       "path": "tests/llm-scripting-kit/test_completion_capabilities.py",
       "disposition": "rewrite",
-      "reason": "Re-pointed at llm-kit's final module names: import statements.",
+      "reason": "Re-pointed at llm-kit's final module names: skips injected on declared-difference tests, import statements; 5 declared difference(s) below.",
       "rewrite_classes": [
+        "declared-skip",
         "import",
         "text-edit"
       ],
       "collection_count": 90,
-      "baseline_failures": []
+      "baseline_failures": [],
+      "declared_differences": {
+        "llm-scripting-kit/test_completion_capabilities.py::test_codex_effort_is_forwarded_unvalidated": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test pins that CodexCliBackend forwards any effort string unvalidated. llm-kit holds both Codex paths to the exact model's measured effort menu (llm_kit.registry.model_profiles.check_effort) and refuses an effort outside it before dispatch; the final behavior is pinned by tests/llm-kit/test_model_profiles.py::test_codex_backend_refuses_an_effort_outside_the_exact_model_menu."
+        },
+        "llm-scripting-kit/test_completion_capabilities.py::test_harness_family_records_serialize_byte_identically": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test hashes the serialized family record. llm-kit's record also carries call_modes (which call modes an adapter honors), so the digest differs by construction; the final records and their call_modes are pinned by tests/llm-kit/test_call_modes.py."
+        },
+        "llm-scripting-kit/test_completion_capabilities.py::test_openrouter_family_record_only_gains_conditional_effort": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test hashes the serialized family record. llm-kit's record also carries call_modes (which call modes an adapter honors), so the digest differs by construction; the final records and their call_modes are pinned by tests/llm-kit/test_call_modes.py."
+        }
+      }
     },
     {
       "path": "tests/llm-scripting-kit/test_completion_claude_runner.py",
@@ -544,7 +559,7 @@
     {
       "path": "tests/llm-scripting-kit/test_model_resolve.py",
       "disposition": "rewrite",
-      "reason": "Re-pointed at llm-kit's final module names: skips injected on declared-difference tests, import statements; 1 declared difference(s) below.",
+      "reason": "Re-pointed at llm-kit's final module names: skips injected on declared-difference tests, import statements; 2 declared difference(s) below.",
       "rewrite_classes": [
         "declared-skip",
         "import"
@@ -555,6 +570,10 @@
         "llm-scripting-kit/test_model_resolve.py::TestBaselineSync::test_default_yaml_matches_constant": {
           "mirror_status": "skipped",
           "reason": "Compares the shipped default_config.yaml seed file with DEFAULT_MODEL_CONFIG. llm-kit carries no seed file by design (decision 7: it seeds no user config and reads the legacy locations unchanged), so there is nothing to compare; the constant itself is exercised by the rest of this file."
+        },
+        "llm-scripting-kit/test_model_resolve.py::TestShippedHarnessEntries::test_shipped_harness_entries_are_discoverable_by_kind": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test pins the shipped sol and luna model ids gpt-5.6-sol and gpt-5.6-luna. llm-kit ships the current Codex catalogue ids gpt-6.1-sol and gpt-6-luna (measured 2026-10-23, llm_kit.registry.model_profiles); the shipped ids are pinned by tests/llm-kit/test_model_profiles.py::test_shipped_codex_defaults_name_measured_current_models."
         }
       }
     },

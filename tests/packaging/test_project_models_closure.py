@@ -22,7 +22,7 @@ _DOC = {
     "version": 1,
     "catalog": [
         {"id": "second", "label": "Second", "endpoint": "openrouter", "model": "vendor/model-b"},
-        {"id": "first", "label": "First", "endpoint": "sol", "model": "gpt-x",
+        {"id": "first", "label": "First", "endpoint": "sol", "model": "gpt-6.1-sol",
          "efforts": ["low", "high"]},
     ],
     "selections": {"k.two": {"model": "second"}, "k.one": {"model": "first", "effort": "high"}},

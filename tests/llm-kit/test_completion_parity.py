@@ -135,7 +135,11 @@ def norm(value, depth: int = 0):
         return (
             "dc",
             type(value).__name__,
-            {f.name: norm(getattr(value, f.name), d) for f in dataclasses.fields(value)},
+            {
+                f.name: norm(getattr(value, f.name), d)
+                for f in dataclasses.fields(value)
+                if f.name not in _FINAL_ONLY_FIELDS
+            },
         )
     if isinstance(value, Mapping):
         return ("map", type(value).__name__, {k: norm(v, d) for k, v in value.items()})
@@ -256,7 +260,13 @@ def record_variants(side: _Side):
 # 1. Module surface
 # --------------------------------------------------------------------------
 
+# Final-only call-mode vocabulary (declared difference, see _FINAL_ONLY_FIELDS).
+_FINAL_ONLY_NAMES = frozenset(
+    {"CALL_MODES", "CallModeError", "MODE_COMPLETION", "MODE_WORKSPACE", "require_call_mode"}
+)
+
 _SKIP_NAMES = {
+    *_FINAL_ONLY_NAMES,
     "annotations",
     "__builtins__",
     "__cached__",
@@ -292,9 +302,20 @@ _SKIP_CLASS_ATTRS = {
 }
 
 
+# Declared difference: the final Capabilities record carries ``call_modes``; the
+# frozen legacy record has none. Shapes, signatures and JSON leave it out here,
+# and tests/llm-kit/test_call_modes.py pins the final side.
+_FINAL_ONLY_FIELDS = frozenset({"call_modes"})
+_CALL_MODES_PARAM = ", call_modes: 'Tuple[str, ...]' = ('completion',)"
+
+
+def _without_final_only(document: dict) -> dict:
+    return {k: v for k, v in document.items() if k not in _FINAL_ONLY_FIELDS}
+
+
 def _sig(fn) -> str:
     try:
-        return str(inspect.signature(fn))
+        return str(inspect.signature(fn)).replace(_CALL_MODES_PARAM, "")
     except (TypeError, ValueError):
         return "nosig"
 
@@ -316,6 +337,7 @@ def describe(obj):
                 name: describe_attr(val)
                 for name, val in sorted(obj.__dict__.items())
                 if name not in _SKIP_CLASS_ATTRS and not name.startswith("_abc")
+                and not (dataclasses.is_dataclass(obj) and name in _FINAL_ONLY_FIELDS)
             },
         }
         if dataclasses.is_dataclass(obj):
@@ -338,6 +360,7 @@ def describe(obj):
                         f.hash,
                     )
                     for f in dataclasses.fields(obj)
+                    if f.name not in _FINAL_ONLY_FIELDS
                 ],
             }
         return ("class", info)
@@ -352,6 +375,8 @@ def describe(obj):
 
 
 def describe_attr(val):
+    if isinstance(val, tuple) and val and all(isinstance(v, str) for v in val):
+        val = tuple(v for v in val if v not in _FINAL_ONLY_FIELDS)  # __match_args__
     if isinstance(val, staticmethod):
         return ("static", _sig(val.__func__))
     if isinstance(val, classmethod):
@@ -365,7 +390,11 @@ def describe_attr(val):
 
 def module_surface(mod) -> dict:
     return {
-        name: describe(obj)
+        name: (
+            ("val", norm([n for n in obj if n not in _FINAL_ONLY_NAMES]))
+            if name == "__all__"
+            else describe(obj)
+        )
         for name, obj in sorted(vars(mod).items())
         if name not in _SKIP_NAMES
     }
@@ -777,7 +806,7 @@ def test_capability_records_parity():
         c = S.capabilities
         out = []
         for name, rec in records(S).items():
-            out.append((f"{name}/json", ("ok", norm(json.dumps(rec.to_json())))))
+            out.append((f"{name}/json", ("ok", norm(json.dumps(_without_final_only(rec.to_json()))))))
             out.append((f"{name}/dc", outcome(lambda r=rec: r)))
             for subject in (c.FILESYSTEM_WRITE, c.SHELL_EXEC, c.SUBAGENT_SPAWN, "other"):
                 out.append((f"{name}/denies/{subject}", outcome(rec.denies, subject)))
@@ -787,7 +816,7 @@ def test_capability_records_parity():
             out.append((f"subjects/{disallowed!r}", outcome(c.subjects_for_disallowed_tools, disallowed)))
         out.append(("param-min", outcome(lambda: c.ParamCapability("int").to_json())))
         out.append(("param-full", outcome(lambda: c.ParamCapability("str", c.PASSTHROUGH, ("a",), ("d",), "e", "n").to_json())))
-        out.append(("caps-min", outcome(lambda: c.Capabilities("x").to_json())))
+        out.append(("caps-min", outcome(lambda: _without_final_only(c.Capabilities("x").to_json()))))
         out.append(("caps-frozen", outcome(setattr, c.Capabilities("x"), "adapter", "y")))
         return out
 

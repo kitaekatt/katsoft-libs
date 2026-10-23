@@ -17,8 +17,10 @@ project's own repository):
 
 The file holds no keys, key files, base URLs, consent or vendor capability
 claims: endpoints, credentials and billing resolve through the endpoint
-registry, and the effort menu is the library's. A project may narrow a menu and
-never widen it. ``null`` effort means "omit"; the string ``none`` is an explicit
+registry, and the effort menu is the library's, measured per exact model
+(``model_profiles``). A project may narrow a menu and never widen it; a harness
+model the library has not measured has no menu, so its row declares no
+``efforts`` and its selections carry a null effort. ``null`` effort means "omit"; the string ``none`` is an explicit
 disable value accepted only where the library menu lists it. Nothing here
 translates ``off`` or any other word.
 
@@ -47,16 +49,18 @@ import os
 import re
 import stat
 import uuid
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
-from .effort import (
-    EFFORT_KEY,
-    TEMPLATE_KEY,
-    HarnessAdapterError,
-    harness_effort_order,
-    style_effort_menu,
+from .effort import EFFORT_KEY, TEMPLATE_KEY, style_effort_menu
+from .model_profiles import (
+    MENU_ENDPOINT_STYLE,
+    MENU_EXACT_MODEL,
+    MENU_NONE,
+    ROUTE_OPENROUTER,
+    exact_effort_menu,
 )
 
 SCHEMA = "llm-kit.project-models/v1"
@@ -115,37 +119,62 @@ class EndpointInfo:
     """What validation needs to know about one registry endpoint.
 
     ``harness`` is set for a harness entry (``codex``, ``claude``, ...);
-    ``effort_style`` for a transport entry that resolves one. A legacy wrapper
-    endpoint (``openrouter``) names neither, so the library knows no menu for it.
+    ``effort_style`` for a transport or wrapper endpoint that resolves one.
+    ``route`` keys the measured exact-model profiles: the harness name for a
+    harness entry, ``openrouter`` for a transport whose base URL is
+    openrouter.ai, None for any other endpoint.
     """
 
     name: str
     kind: str
     harness: Optional[str] = None
     effort_style: Optional[str] = None
+    route: Optional[str] = None
 
 
 EffortMenuResolver = Callable[[EndpointInfo, str], "tuple[str, ...]"]
 
 
+def library_effort_menu_with_source(
+    endpoint: EndpointInfo, model: str
+) -> "tuple[tuple[str, ...], str]":
+    """``(menu, source)``: the ordered effort menu the library accepts, and where it came from.
+
+    EXACT-MODEL FIRST. A model with a measured profile
+    (:mod:`llm_kit.registry.model_profiles`) takes that menu, for a harness
+    entry and for an openrouter.ai transport alike (``library-model``). A harness
+    model with no profile has NO menu: the library does not invent one
+    (``none``). A transport that resolves an effort style and has no profile
+    takes that style's wire menu (``library-endpoint-style``); a transport with
+    neither delivers no effort (``none``). An empty menu means a row may declare
+    no ``efforts`` and a selection must carry a null effort.
+    """
+    exact = exact_effort_menu(endpoint.route, model)
+    if exact is not None:
+        return exact, MENU_EXACT_MODEL
+    if endpoint.harness is not None:
+        return (), MENU_NONE
+    menu = style_effort_menu(endpoint.effort_style)
+    return menu, (MENU_ENDPOINT_STYLE if menu else MENU_NONE)
+
+
 def library_effort_menu(endpoint: EndpointInfo, model: str) -> "tuple[str, ...]":
     """The ordered effort menu the library accepts for ``endpoint`` and ``model``.
 
-    SEAM FOR EXACT-MODEL MENUS. The menu is the endpoint-wide one: the
-    harness order for a harness entry, the effort style's menu for a transport
-    entry, and empty when the endpoint delivers no effort. ``model`` is passed
-    and unused so a measured per-model profile can replace this body without
-    touching validation, the CLI or the file format. An empty menu means the
-    library knows no effort for the pair: a row may then declare no ``efforts``
-    and a selection must carry a null effort.
+    Validation's default ``menu_for`` and the seam a test may replace; see
+    :func:`library_effort_menu_with_source` for the rule.
     """
-    del model
-    if endpoint.harness is not None:
-        try:
-            return harness_effort_order(endpoint.harness)
-        except HarnessAdapterError as exc:
-            raise _invalid(f"endpoint {endpoint.name!r}", str(exc)) from None
-    return style_effort_menu(endpoint.effort_style)
+    return library_effort_menu_with_source(endpoint, model)[0]
+
+
+def _route_of(base_url: Optional[str]) -> Optional[str]:
+    """``openrouter`` when ``base_url`` is on openrouter.ai, else None."""
+    if not isinstance(base_url, str):
+        return None
+    host = (urlsplit(base_url).hostname or "").lower()
+    if host == "openrouter.ai" or host.endswith(".openrouter.ai"):
+        return ROUTE_OPENROUTER
+    return None
 
 
 class _Endpoints:
@@ -177,12 +206,44 @@ class _Endpoints:
         entry = discovery.get(name)
         if entry is not None:
             if entry.kind == HARNESS_KIND:
-                return EndpointInfo(name, HARNESS_KIND, harness=entry.harness)
-            return EndpointInfo(name, entry.kind, effort_style=resolve_effort_style(entry).style)
+                return EndpointInfo(name, HARNESS_KIND, harness=entry.harness, route=entry.harness)
+            return EndpointInfo(
+                name,
+                entry.kind,
+                effort_style=resolve_effort_style(entry).style,
+                route=_route_of(entry.base_url),
+            )
         endpoints = config.get("endpoints") or {}
         if isinstance(endpoints, Mapping) and name in endpoints:
-            return EndpointInfo(name, "wrapper")
+            return self._wrapper(name, config)
         return None
+
+    def _wrapper(self, name: str, config: dict) -> EndpointInfo:
+        """A legacy wrapper endpoint (the shipped ``openrouter`` record): its resolved base URL and style."""
+        from .models import EndpointResolveError, resolve_endpoint  # noqa: PLC0415
+
+        try:
+            resolved = resolve_endpoint(name, config=config, project_root=self._project_root)
+        except EndpointResolveError:
+            return EndpointInfo(name, "wrapper")
+        return EndpointInfo(
+            name,
+            "wrapper",
+            effort_style=resolved.get("effort_style"),
+            route=_route_of(resolved.get("base_url")),
+        )
+
+    def entry(self, name: str) -> Any:
+        """The discovered registry entry for ``name``, or None (a wrapper endpoint has none)."""
+        return self._load()[1].get(name)
+
+    def notes(self) -> "list[str]":
+        """The registry's non-fatal loader notes (skipped declarations)."""
+        return list(self._load()[1].notes)
+
+    def entries(self) -> "Mapping[str, Any]":
+        """Every discovered registry entry by id (the cost classifier's tier lookup)."""
+        return self._load()[1].entries
 
     def known(self) -> list[str]:
         config, discovery = self._load()

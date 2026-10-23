@@ -19,7 +19,7 @@ from test_cli_harness import home, write  # noqa: F401 -- home is a fixture
 _DOC = {
     "version": 1,
     "catalog": [
-        {"id": "b", "label": "Beta", "endpoint": "cdx", "model": "gpt-x", "efforts": ["low", "high"]},
+        {"id": "b", "label": "Beta", "endpoint": "cdx", "model": "gpt-6-luna", "efforts": ["low", "high"]},
         {"id": "a", "label": "Alpha", "endpoint": "local", "model": "m-local",
          "request_defaults": {"extras": {"provider": {"sort": "latency"}}}},
     ],

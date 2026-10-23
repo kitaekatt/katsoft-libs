@@ -193,8 +193,28 @@ def same_json(left: Outcome, right: Outcome) -> Outcome:
     """Equal exit code and stderr; stdout equal after parsing and clock scrubbing."""
     assert left.code == right.code, (left, right)
     assert left.err == right.err, (left.err, right.err)
-    assert normalize_json_text(left.out, {}) == normalize_json_text(right.out, {}), (left.out, right.out)
+    a, b = normalize_json_text(left.out, {}), normalize_json_text(right.out, {})
+    assert a == b, _first_difference(a, b)
     return left
+
+
+def _first_difference(a: Any, b: Any, path: str = "$") -> str:
+    """The path and the two values of the first place two parsed JSON documents differ."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        for key in sorted(set(a) | set(b)):
+            if key not in a or key not in b:
+                return f"{path}.{key}: present on one side only"
+            where = _first_difference(a[key], b[key], f"{path}.{key}")
+            if where:
+                return where
+        return ""
+    if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+        for index, (x, y) in enumerate(zip(a, b)):
+            where = _first_difference(x, y, f"{path}[{index}]")
+            if where:
+                return where
+        return ""
+    return "" if a == b else f"{path}: {a!r} != {b!r}"
 
 
 @pytest.fixture()

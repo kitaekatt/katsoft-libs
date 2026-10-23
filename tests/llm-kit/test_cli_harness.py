@@ -33,7 +33,7 @@ from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
 import pytest
 
-from final_wording import claude_contract_to_final
+from final_wording import claude_contract_to_final, to_final
 
 REPO = Path(__file__).resolve().parents[2]
 LEGACY_LIBS = (
@@ -132,9 +132,13 @@ def scrub_json(value: Any) -> Any:
         return claude_contract_to_final({
             k: ("<t>" if (k in _TIME_KEYS or k.endswith("_at")) else scrub_json(v))
             for k, v in value.items()
+            # Declared difference: llm-kit adapter records carry ``call_modes``.
+            if k != "call_modes"
         })
     if isinstance(value, list):
         return [scrub_json(v) for v in value]
+    if isinstance(value, str):
+        return to_final(value)  # named deliberate wording differences (final_wording.RENAMES)
     return value
 
 

@@ -9,11 +9,18 @@ check, 2 an endpoint name that does not resolve).
 (``llm_kit.registry.project_models``): a refusal prints one JSON ``error``
 object (``kind`` ``project-models``, a ``code``, a ``message``) on stderr and
 exits 2; nothing is written on a refusal.
+
+``catalog`` reads that file and prints the ordered model catalogue
+(``llm_kit.registry.catalog``) as one JSON document: the project's order, its
+selections, each row's exact-model effort menu, modes and cost. It dispatches
+nothing and probes no provider; ``--probe-auth`` opts into asking the claude and
+codex CLIs how they are authenticated so a harness row gets a cost class.
 """
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from llm_kit.adapters.capabilities import adapter_capabilities
@@ -50,7 +57,9 @@ from llm_kit.dispatch.reachability import (
     check_many,
 )
 from llm_kit.dispatch.seats import discover_seats
+from llm_kit.registry import catalog as model_catalog
 from llm_kit.registry import project_models
+from llm_kit.registry.consent import load_consent
 from llm_kit.registry.effort import remap_effort
 from llm_kit.registry.models import (
     EndpointResolveError,
@@ -343,11 +352,7 @@ def _cmd_seats(
 # Which adapter family serves an endpoint. Mirrors create_backend's harness
 # dispatch; capabilities are per ADAPTER FAMILY while endpoints are per registry
 # entry, and several entries share one adapter (sol and luna are both codex).
-_HARNESS_ADAPTERS = {
-    "claude": "claude-cli",
-    "codex": "codex-cli",
-    "opencode": "opencode-cli",
-}
+_HARNESS_ADAPTERS = model_catalog.ADAPTER_BY_HARNESS
 
 
 def _adapter_for(entry: Any) -> Optional[str]:
@@ -480,6 +485,42 @@ def _cmd_project(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_catalog(args: argparse.Namespace) -> int:
+    """``models catalog``: the project's ordered catalogue; a refusal is a JSON error, exit 2."""
+    modes = {name: cap.call_modes for name, cap in adapter_capabilities().items()}
+    try:
+        project = project_models.read_project_models(
+            project_root=args.project_root, file=args.file
+        )
+        harness_auth = None
+        if args.probe_auth:
+            from llm_kit.adapters.harness_auth import probe_harness_auth  # noqa: PLC0415
+
+            used = {
+                row["endpoint"] for row in project.document["catalog"]
+            }
+            discovery = discover_model_entries(project_root=args.project_root)
+            harnesses = {
+                discovery[name].harness for name in used
+                if name in discovery and discovery[name].kind == "harness"
+            }
+            harness_auth = probe_harness_auth(
+                harnesses, cwd=Path(args.project_root or ".").resolve()
+            )
+        result = model_catalog.build_catalog(
+            project,
+            project_root=args.project_root,
+            modes_by_adapter=modes,
+            consent=load_consent(),
+            harness_auth=harness_auth,
+        )
+    except project_models.ProjectModelsError as exc:
+        _json({"error": exc.to_json()}, stream=sys.stderr)
+        return EXIT_USAGE
+    _json(result)
+    return EXIT_OK
+
+
 def _add_project_file_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--project-root",
@@ -589,6 +630,22 @@ def _parser() -> argparse.ArgumentParser:
     _add_project_arg(resolve)
     resolve.add_argument("--model")
     resolve.add_argument("--cheap", action="store_true")
+    catalog = sub.add_parser(
+        "catalog",
+        help=(
+            "Print the project's ordered model catalogue as JSON: its selections, "
+            "each row's exact-model effort menu, modes and cost. Dispatches nothing."
+        ),
+    )
+    _add_project_file_args(catalog)
+    catalog.add_argument(
+        "--probe-auth",
+        action="store_true",
+        help=(
+            "Ask the claude and codex CLIs how they are authenticated, so a harness "
+            "row reports a cost class. Off by default: without it that class is null."
+        ),
+    )
     project = sub.add_parser(
         "project",
         help="Show, validate or write the tracked project model file (catalogue and selections).",
@@ -641,6 +698,8 @@ def run(argv: Sequence[str]) -> int:
             return _cmd_models(args.endpoint, args.project_root)
         if args.cmd == "project":
             return _cmd_project(args)
+        if args.cmd == "catalog":
+            return _cmd_catalog(args)
         if args.cmd == "resolve":
             return _cmd_resolve(
                 _declared_models(args), args.model, args.cheap, args.project_root,

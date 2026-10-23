@@ -31,7 +31,7 @@ _DOC = {
     "version": 1,
     "catalog": [
         {
-            "id": "zeta", "label": "Zeta", "endpoint": "cdx", "model": "gpt-6-zeta",
+            "id": "zeta", "label": "Zeta", "endpoint": "cdx", "model": "gpt-6.1-sol",
             "efforts": ["low", "high", "max"],
         },
         {
@@ -54,7 +54,7 @@ catalog:
   - id: zeta
     label: Zeta
     endpoint: cdx
-    model: gpt-6-zeta
+    model: gpt-6.1-sol
     efforts: [low, high, max]
   - id: alpha
     label: Alpha
@@ -478,7 +478,7 @@ def test_the_effort_menu_is_replaceable_per_endpoint_and_model(project):
 
     def exact(endpoint, model):
         calls.append((endpoint.name, model))
-        return ("none", "low") if model == "gpt-6-zeta" else ()
+        return ("none", "low") if model == "gpt-6.1-sol" else ()
 
     narrow = doc()
     narrow["catalog"][0]["efforts"] = ["none"]
@@ -486,19 +486,30 @@ def test_the_effort_menu_is_replaceable_per_endpoint_and_model(project):
     narrow["catalog"][1].pop("request_defaults")
     narrow["selections"] = {"k": {"model": "zeta", "effort": "none"}}
     pm.validate_project_models(narrow, project_root=str(project), menu_for=exact)
-    assert ("cdx", "gpt-6-zeta") in calls
+    assert ("cdx", "gpt-6.1-sol") in calls
     # The library default for the same document refuses `none` on a codex harness.
     with pytest.raises(pm.ProjectModelsError, match="library menu"):
         pm.validate_project_models(narrow, project_root=str(project))
 
 
-def test_library_menu_is_the_endpoint_wide_menu(project):
+def test_library_menu_is_the_exact_model_menu(project):
     info = pm.EndpointInfo
-    assert pm.library_effort_menu(info("cdx", "harness", harness="codex"), "any") == (
-        "low", "medium", "high", "xhigh", "max")
-    assert pm.library_effort_menu(info("local", "transport", effort_style="ninfer"), "any") == (
-        "none", "low", "medium", "xhigh")
+    codex = info("cdx", "harness", harness="codex", route="codex")
+    assert pm.library_effort_menu(codex, "gpt-6-luna") == ("low", "medium", "high", "xhigh", "max")
+    assert pm.library_effort_menu(codex, "gpt-6.1-sol") == ("low", "medium", "high", "xhigh", "max", "ultra")
+    # A harness model nobody measured has no menu: the library invents none.
+    assert pm.library_effort_menu(codex, "gpt-x") == ()
+    assert pm.library_effort_menu_with_source(codex, "gpt-x") == ((), "none")
+    assert pm.library_effort_menu_with_source(codex, "gpt-6-luna")[1] == "library-model"
+    # A transport with a resolved style and no profile keeps the style's wire menu.
+    local = info("local", "transport", effort_style="ninfer")
+    assert pm.library_effort_menu(local, "any") == ("none", "low", "medium", "xhigh")
+    assert pm.library_effort_menu_with_source(local, "any")[1] == "library-endpoint-style"
     assert pm.library_effort_menu(info("openrouter", "wrapper"), "any") == ()
+    # openrouter.ai rows take the measured vendor menu, `none` included.
+    router = info("openrouter", "wrapper", route="openrouter")
+    assert pm.library_effort_menu(router, "deepseek/deepseek-v4.1-flash") == ("none", "low", "high", "max")
+    assert pm.library_effort_menu(router, "deepseek/unmeasured") == ()
 
 
 def test_missing_pyyaml_is_a_named_dependency_error(project, monkeypatch):

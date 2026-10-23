@@ -43,6 +43,8 @@ from pathlib import Path
 from typing import Any, Callable, ClassVar, Dict, Mapping, Optional
 
 from llm_kit.registry import conserve
+from llm_kit.registry.effort import CODEX_EFFORT_ORDER, CODEX_HARNESS
+from llm_kit.registry.model_profiles import check_effort
 from . import codex_command, usage_sources
 from llm_kit.completion import halt
 from .claude_runner import run_cli_streaming
@@ -324,6 +326,17 @@ class CodexCliBackend:
                     f"{self.name} text-only mode patches the model's catalog "
                     "entry, so it needs a model id; nothing was dispatched"
                 )
+        # The effort is held to the exact model's measured menu here, before any
+        # temp file, argv or runner call -- the same validator CodexAdapter
+        # uses, so neither Codex path can bypass it. With no model id the
+        # harness-wide menu stands.
+        check_effort(
+            opts.effort,
+            route=CODEX_HARNESS,
+            model=model or None,
+            fallback=CODEX_EFFORT_ORDER,
+            subject=self.name,
+        )
         timeout_s = (
             opts.timeout_s if opts.timeout_s is not None else self.default_timeout_s
         )

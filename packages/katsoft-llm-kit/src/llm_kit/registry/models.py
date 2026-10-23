@@ -99,12 +99,15 @@ DEFAULT_MODEL_CONFIG = {
         # models are deliberately NOT shipped: they name providers from the
         # user's own opencode config, which this repo neither ships nor reads,
         # so there is no default that would resolve anywhere but here.
+        # sol and luna name the current ids of the Codex catalogue (measured
+        # 2026-10-23, llm_kit.registry.model_profiles); the gpt-5.6 ids are
+        # listed there as an older generation.
         "sol": {
-            "harness": "codex", "model": "gpt-5.6-sol", "effort": "high",
+            "harness": "codex", "model": "gpt-6.1-sol", "effort": "high",
             "tier": 3, "family": "openai",
         },
         "luna": {
-            "harness": "codex", "model": "gpt-5.6-luna", "effort": "high",
+            "harness": "codex", "model": "gpt-6-luna", "effort": "high",
             "tier": 2, "family": "openai",
         },
         # Astra (gpt-6-astra) is OpenAI's frontier tier, a peer of fable, so

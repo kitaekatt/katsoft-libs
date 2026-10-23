@@ -19,7 +19,7 @@
       "path": "cfg/m.yaml",
       "schema": "llm-kit.project-models/v1",
       "selections": 2,
-      "sha256": "7f9a12ba16c7766fd32c60c99696cc3fa09024102fe1efe8bf51aa48fcaaf0cc"
+      "sha256": "aadf666abeeb13073f4423e90f3a010ae7fa03a4c4541103c21729c4ee7b820d"
     }
   }
 }
