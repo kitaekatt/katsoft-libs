@@ -66,6 +66,7 @@ from unittest import mock
 
 import pytest
 
+from test_cli_harness import shipped_openrouter_without_style  # noqa: F401 -- fixture
 from final_wording import claude_contract_to_final, to_final
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -132,8 +133,23 @@ _MASKED_FIELDS = frozenset({"wall_ms", "started_at", "ended_at"})
 # modes an adapter honors); the frozen legacy record has no such field. Both the
 # dataclass shape and its comparable value leave the field out, and a dedicated
 # test below pins the final side's values.
-_FINAL_ONLY_FIELDS = frozenset({"call_modes"})
+# The final LLMResponse also carries ``reported_model`` and the ``estimated_cost_*`` pair (a
+# downstream-reported model id and a non-authoritative cost figure); the frozen legacy one has neither.
+_FINAL_ONLY_FIELDS = frozenset({"call_modes", "reported_model", "estimated_cost_usd", "estimated_cost_source"})
 _CALL_MODES_PARAM = ", call_modes: 'Tuple[str, ...]' = ('completion',)"
+# LLMResponse's final-only trailing parameters (see _FINAL_ONLY_FIELDS).
+_RESPONSE_EXTRA_PARAMS = (
+    ", reported_model: 'Optional[str]' = None",
+    ", estimated_cost_usd: 'Optional[float]' = None",
+    ", estimated_cost_source: 'Optional[str]' = None",
+)
+
+
+def _without_final_only_params(text: str) -> str:
+    text = text.replace(_CALL_MODES_PARAM, "")
+    for param in _RESPONSE_EXTRA_PARAMS:
+        text = text.replace(param, "")
+    return text
 _TEXT_SUBS: list[str] = []
 
 
@@ -370,7 +386,7 @@ _FN_ADDR = re.compile(r"<function (\w+) at 0x[0-9a-fA-F]+>")
 
 
 def _sig(fn) -> str:
-    text = _SIG_PREFIX.sub("X.", str(inspect.signature(fn))).replace(_CALL_MODES_PARAM, "")
+    text = _without_final_only_params(_SIG_PREFIX.sub("X.", str(inspect.signature(fn))))
     # Deliberate: codex_backend names Budget through registry.conserve.
     text = text.replace("usage_budget.Budget", "conserve.Budget")
     return _FN_ADDR.sub(r"<function \1>", text)
@@ -454,7 +470,11 @@ _SURFACE_CASES = [
     ("profile", (), ()),
     ("harness", (), ("check_effort", "codex_command")),
     ("runner", (), ()),
-    ("backends", (), ()),
+    # Final-only: the Claude effort check (check_effort over the harness-wide menu) and the
+    # estimated-cost labels / reported-model reader that fill LLMResponse's final-only fields.
+    ("backends", (), ("CLAUDE_EFFORT_ORDER", "CLAUDE_HARNESS", "ESTIMATE_SOURCE_CLAUDE_CLI",
+                      "ESTIMATE_SOURCE_USAGE_COST", "_claude_reported_model", "_untrusted_native_cost",
+                      "check_effort")),
     # The final backend delegates to llm_kit.adapters.codex_command directly, so
     # the legacy probe constant, probe function and its signature import are gone.
     ("codex", ("IGNORE_USER_CONFIG_BOOTSTRAP", "_codex_argv_builder", "inspect", "usage_budget"),
@@ -577,6 +597,7 @@ def registry(tmp_path, monkeypatch):
     return path
 
 
+@pytest.mark.usefixtures("shipped_openrouter_without_style")
 def test_resolve_endpoint_profile_over_a_registry(par, registry):
     def scenario(S):
         return {
@@ -1084,6 +1105,7 @@ def test_openrouter_request_building(par, named_registry):
     assert result["skill_context_wrong_type"]["res"][0] == "raise"
 
 
+@pytest.mark.usefixtures("shipped_openrouter_without_style")
 def test_openrouter_endpoint_introspection(par, named_registry):
     def scenario(S):
         out = {}

@@ -33,6 +33,7 @@ _REGISTRY = """\
 default: or-deepseek
 models:
   or-deepseek: {base_url: https://openrouter.ai/api/v1, model: deepseek/deepseek-v4.1-flash, effort_style: top-level, key_env: OPENROUTER_API_KEY, billing: {mode: provider-reported}}
+  or-nostyle: {base_url: https://openrouter.ai/api/v1, model: deepseek/deepseek-v4.1-flash, key_env: OPENROUTER_API_KEY}
   astra: {harness: codex, model: gpt-6-astra, tier: 4, family: openai}
 """
 
@@ -149,10 +150,10 @@ def test_a_row_the_library_has_not_measured_says_so(project, capsys, monkeypatch
 
 
 def test_an_endpoint_that_cannot_send_an_effort_is_flagged(project, capsys, monkeypatch):
-    """The shipped `openrouter` record resolves no effort style: the menu is the model's, the wire is not."""
+    """An endpoint that resolves no effort style: the menu is the model's, the wire is not."""
     document = {
         "version": 1,
-        "catalog": [{"id": "d", "label": "D", "endpoint": "openrouter", "model": "deepseek/deepseek-v4.1-flash",
+        "catalog": [{"id": "d", "label": "D", "endpoint": "or-nostyle", "model": "deepseek/deepseek-v4.1-flash",
                      "efforts": ["none", "low", "high", "max"]}],
         "selections": {"k": {"model": "d", "effort": "none"}},
     }
@@ -162,6 +163,20 @@ def test_an_endpoint_that_cannot_send_an_effort_is_flagged(project, capsys, monk
     assert row["efforts"] == ["none", "low", "high", "max"]
     assert row["effort_delivery"] == {"deliverable": False, "style": None}
     assert any("resolves no effort style" in note for note in got["notes"])
+
+
+def test_the_shipped_openrouter_endpoint_can_send_an_effort(project, capsys, monkeypatch):
+    """The shipped `openrouter` record declares effort_style top-level, so the exact menu is deliverable."""
+    document = {
+        "version": 1,
+        "catalog": [{"id": "d", "label": "D", "endpoint": "openrouter", "model": "deepseek/deepseek-v4.1-flash",
+                     "efforts": ["none", "low", "high", "max"]}],
+        "selections": {"k": {"model": "d", "effort": "max"}},
+    }
+    pm.write_project_models(document, project_root=str(project))
+    _out, got = _catalog(capsys, monkeypatch, project)
+    assert got["models"][0]["effort_delivery"] == {"deliverable": True, "style": "top-level"}
+    assert not any("resolves no effort style" in note for note in got["notes"])
 
 
 # --- cost and consent ---------------------------------------------------------------
@@ -249,12 +264,12 @@ def test_listing_reads_no_user_cache_and_runs_no_process(project, home, capsys, 
     assert [m for m in got["models"] if m["id"] == "luna"][0]["efforts"] == ["low", "medium", "high", "xhigh", "max"]
     touched = [p for p in _Audit.opened if "models_cache" in p or f"{os.sep}.codex" in p or p.endswith(".codex")]
     assert touched == []
-    # What it may read under HOME is the registry's own configuration layers and the consent
-    # file (their home-directory conventions are owned by the neutral-paths work), never a harness cache.
-    claude = [p for p in _Audit.opened if f"{os.sep}.claude" in p]
-    allowed = (f"{os.sep}.claude{os.sep}config{os.sep}", f"{os.sep}.claude{os.sep}plugins{os.sep}data{os.sep}plugins-kit{os.sep}")
-    assert all(any(a in p for a in allowed) for p in claude), claude
-    assert not any(f"{os.sep}.claude{os.sep}projects" in p or p.endswith(".claude.json") for p in _Audit.opened)
+    # Nothing under HOME/.claude is opened at all: the consent file, the endpoint registry and the
+    # key files resolve to the neutral $XDG_CONFIG_HOME/llm-kit/ paths first, and a legacy ~/.claude
+    # file is opened only when it exists (this HOME holds none). No harness path is touched.
+    claude = [p for p in _Audit.opened if f"{os.sep}.claude" in p or p.endswith(".claude")]
+    assert claude == [], claude
+    assert not any(p.endswith(".claude.json") for p in _Audit.opened)
 
 
 # --- the project file is the only input --------------------------------------------------

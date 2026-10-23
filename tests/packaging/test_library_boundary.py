@@ -187,18 +187,18 @@ PATH_ALLOWLIST: dict[str, list[tuple[str, str]]] = {
         ('Path.home() / ".claude" / "jobs"', "Claude Code background-jobs root read by the claude-bg driver"),
     ],
     "katsoft-llm-kit/src/llm_kit/registry/consent.py": [
-        ('Path.home() / ".claude" / "plugins"', _CLAUDE_HOME + " (consent file)"),
+        ('Path.home() / ".claude" / "plugins"', "READ-ONLY legacy consent file, used only when the neutral $XDG_CONFIG_HOME/llm-kit/consent.json is absent; consent is never written there"),
     ],
     "katsoft-llm-kit/src/llm_kit/registry/constants.py": [
-        ('CLI_COMMAND = "~/.claude/plugins', _CLAUDE_HOME + " (CLI launcher path text)"),
-        ("CLAUDE_BOOTSTRAP_DATA_ROOT:-$HOME/.claude/plugins/data", _CLAUDE_HOME + " (CLI launcher path text)"),
-        ('Path.home() / ".claude" / "plugins"', _CLAUDE_HOME + " (legacy env file)"),
+        ('CLI_COMMAND = "~/.claude/plugins', "display text of the Claude plugin venv launcher shown in agent-facing messages; never opened, read or written"),
+        ("CLAUDE_BOOTSTRAP_DATA_ROOT:-$HOME/.claude/plugins/data", "display text of the redirected Claude plugin venv launcher; never opened, read or written"),
+        ('Path.home() / ".claude" / "plugins"', "READ-ONLY legacy user key file, used only when neither $LLM_KIT_ENV_FILE nor the neutral $XDG_CONFIG_HOME/llm-kit/.env exists; keys are never written there"),
     ],
     "katsoft-llm-kit/src/llm_kit/registry/model_endpoints.py": [
-        ('Path(".claude") / "config"', _CLAUDE_HOME + " (endpoint registry file)"),
+        ('Path(".claude") / "config"', "READ-ONLY legacy endpoint registry, used only when $MODEL_ENDPOINTS_REGISTRY is unset and the neutral $XDG_CONFIG_HOME/llm-kit/model-endpoints.yaml is absent"),
     ],
     "katsoft-llm-kit/src/llm_kit/registry/models.py": [
-        ('Path.home() / ".claude" / "config"', _CLAUDE_HOME + " (fleet config layer)"),
+        ('Path.home() / ".claude" / "config"', "fleet config layer, read only through bootstrap_lib's layered resolver on a fleet install; a package-only install (no bootstrap_lib) never reads it"),
     ],
 }
 

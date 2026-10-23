@@ -379,3 +379,32 @@ def floors_in_text_to_final(text: str) -> str:
     for _name, legacy, final in FLOORS:
         text = text.replace(f">= {legacy}", f">= {final}").replace(f" {legacy} or newer", f" {final} or newer")
     return text
+
+
+#: The shipped ``openrouter`` endpoint declares ``effort_style: top-level`` in llm-kit so the
+#: exact-model efforts it validates are actually put on the wire; the frozen legacy baseline
+#: declares none, so a legacy direct call dropped every effort. The difference shows up as a
+#: config key (``DEFAULT_MODEL_CONFIG``, layered configs) and as a resolved delivery
+#: (``effort_style`` / ``effort_style_source``).
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+
+def openrouter_style_to_legacy(value):
+    """``value`` (a dict) with the shipped openrouter endpoint's declared effort style removed.
+
+    Recognised by the shipped endpoint's base URL and key variable together with
+    ``effort_style == "top-level"``, and idempotent, so a harness may pass both sides
+    through it. A resolved endpoint (it carries ``effort_style_source``) is rewritten to
+    the legacy "no style" delivery; a config endpoint loses the key.
+    """
+    if (
+        isinstance(value, dict)
+        and value.get("base_url") == OPENROUTER_BASE_URL
+        and value.get("key_env") == "OPENROUTER_API_KEY"
+        and value.get("effort_style") == "top-level"
+        and value.get("effort_style_source", "endpoint") == "endpoint"
+    ):
+        if "effort_style_source" in value:
+            return {**value, "effort_style": None, "effort_style_source": "none"}
+        return {k: v for k, v in value.items() if k != "effort_style"}
+    return value

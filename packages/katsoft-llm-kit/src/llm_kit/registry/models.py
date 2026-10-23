@@ -91,6 +91,12 @@ DEFAULT_MODEL_CONFIG = {
             "base_url": "https://openrouter.ai/api/v1",
             "key_env": "OPENROUTER_API_KEY",
             "account_check": "openrouter",
+            # OpenRouter takes ``reasoning_effort`` as a top-level body field
+            # (measured 2026-10-23: deepseek/deepseek-v4.1-flash lists it, with
+            # reasoning, in supported_parameters). Without a style the
+            # direct seam drops every effort, so the exact-model menu in
+            # model_profiles would be validated and then never sent.
+            "effort_style": "top-level",
         },
         # HARNESS entries: no base_url, so nothing here calls them over HTTP.
         # They are shipped because they are codex SUBSCRIPTION models -- nothing

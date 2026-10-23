@@ -146,6 +146,8 @@ def _text(value: str) -> str:
 # side has no such argument), so the differential ignores them only while default;
 # a non-default value still reaches the comparison. ``test_allow_filter.py`` pins the
 # allow=None output byte for byte against literals captured before the filter existed.
+# Capabilities.call_modes; LLMResponse.reported_model and its estimated_cost_* pair.
+_FINAL_ONLY_FIELD_NAMES = frozenset({"call_modes", "reported_model", "estimated_cost_usd", "estimated_cost_source"})
 _FINAL_ONLY_DEFAULT_FIELDS = {("Disposition", "cost_class"): None, ("Ranking", "switched_off"): ()}
 
 
@@ -163,8 +165,8 @@ def norm(value):
         value = claude_contract_to_final(value)  # llm-kit delivers a claude contract natively
         out = {"__type__": type(value).__name__}
         for f in dataclasses.fields(value):
-            if f.name == "call_modes":
-                continue  # declared difference: the final Capabilities record carries it
+            if f.name in _FINAL_ONLY_FIELD_NAMES:
+                continue  # declared difference: the final records carry these
             item = getattr(value, f.name)
             key = (type(value).__name__, f.name)
             if key in _FINAL_ONLY_DEFAULT_FIELDS and item == _FINAL_ONLY_DEFAULT_FIELDS[key]:
@@ -174,7 +176,7 @@ def norm(value):
     if isinstance(value, Mapping):
         return ("map", type(value).__name__,
                 [(norm(k), "<masked>" if k in _MASKED_FIELDS else norm(v))
-                 for k, v in value.items() if k != "call_modes"])
+                 for k, v in value.items() if k not in _FINAL_ONLY_FIELD_NAMES])
     if isinstance(value, (list, tuple)):
         return (type(value).__name__, [norm(v) for v in value])
     if isinstance(value, (set, frozenset)):

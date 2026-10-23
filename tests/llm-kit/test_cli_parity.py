@@ -47,6 +47,7 @@ from test_cli_harness import (  # noqa: F401 -- fixtures
     normalize_json_text,
     run,
     scrub_json,
+    shipped_openrouter_without_style,
     write,
 )
 
@@ -115,6 +116,12 @@ class Side:
         owner = self.m.cli if self.name == "legacy" else self.m.account
         monkeypatch.setattr(owner, "USER_ENV_FILE", path)
         monkeypatch.setattr(self.m.api_key, "USER_ENV_FILE", path)
+        if self.name == "final":
+            # llm-kit WRITES the user key file at $LLM_KIT_ENV_FILE (else the neutral
+            # path) and reads the legacy constant above only as a fallback.
+            monkeypatch.setenv("LLM_KIT_ENV_FILE", str(path))
+        else:
+            monkeypatch.delenv("LLM_KIT_ENV_FILE", raising=False)
 
     @property
     def BackendSelection(self) -> Any:
@@ -517,6 +524,7 @@ class TestCompletion:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("shipped_openrouter_without_style")  # declared difference, see the fixture
 class TestModels:
     def test_endpoints_lists_the_registry_identically(self, sides, registry, capsys, monkeypatch, tmp_path):
         left, right = both(sides, "models", "endpoints", capsys=capsys, monkeypatch=monkeypatch, tmp=tmp_path)

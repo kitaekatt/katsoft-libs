@@ -693,10 +693,10 @@
           "base_url": "https://openrouter.ai/api/v1",
           "default_model": "gpt-mini",
           "effort_delivery": {
-            "deliverable": false,
-            "emits": null,
-            "source": "none",
-            "style": null
+            "deliverable": true,
+            "emits": "reasoning_effort",
+            "source": "endpoint",
+            "style": "top-level"
           },
           "key_env": "OPENROUTER_API_KEY",
           "kind": "transport",

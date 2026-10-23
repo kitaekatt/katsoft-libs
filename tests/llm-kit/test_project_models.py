@@ -39,7 +39,7 @@ _DOC = {
             "efforts": ["none", "low"],
             "request_defaults": {"extras": {"provider": {"sort": "latency"}, "a": [1, 2]}},
         },
-        {"id": "mid", "label": "Mid", "endpoint": "openrouter", "model": "deepseek/x"},
+        {"id": "mid", "label": "Mid", "endpoint": "plain", "model": "deepseek/x"},
     ],
     "selections": {
         "draft.generate.primary": {"model": "zeta", "effort": "high"},
@@ -70,7 +70,7 @@ catalog:
           sort: latency
   - id: mid
     label: Mid
-    endpoint: openrouter
+    endpoint: plain
     model: deepseek/x
 selections:
   art:

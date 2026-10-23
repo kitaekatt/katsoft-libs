@@ -305,8 +305,22 @@ _SKIP_CLASS_ATTRS = {
 # Declared difference: the final Capabilities record carries ``call_modes``; the
 # frozen legacy record has none. Shapes, signatures and JSON leave it out here,
 # and tests/llm-kit/test_call_modes.py pins the final side.
-_FINAL_ONLY_FIELDS = frozenset({"call_modes"})
+# LLMResponse also gains ``reported_model`` and the ``estimated_cost_*`` pair in the final library.
+_FINAL_ONLY_FIELDS = frozenset({"call_modes", "reported_model", "estimated_cost_usd", "estimated_cost_source"})
 _CALL_MODES_PARAM = ", call_modes: 'Tuple[str, ...]' = ('completion',)"
+# LLMResponse's final-only trailing parameters (see _FINAL_ONLY_FIELDS).
+_RESPONSE_EXTRA_PARAMS = (
+    ", reported_model: 'Optional[str]' = None",
+    ", estimated_cost_usd: 'Optional[float]' = None",
+    ", estimated_cost_source: 'Optional[str]' = None",
+)
+
+
+def _without_final_only_params(text: str) -> str:
+    text = text.replace(_CALL_MODES_PARAM, "")
+    for param in _RESPONSE_EXTRA_PARAMS:
+        text = text.replace(param, "")
+    return text
 
 
 def _without_final_only(document: dict) -> dict:
@@ -315,7 +329,7 @@ def _without_final_only(document: dict) -> dict:
 
 def _sig(fn) -> str:
     try:
-        return str(inspect.signature(fn)).replace(_CALL_MODES_PARAM, "")
+        return _without_final_only_params(str(inspect.signature(fn)))
     except (TypeError, ValueError):
         return "nosig"
 
@@ -512,10 +526,11 @@ def test_completion_holds_types_not_filled_capability_records():
     import llm_kit.completion as pkg
 
     names = sorted(m.name for m in pkgutil.iter_modules(pkg.__path__))
+    # invoke_protocol and workspace_manifest (protocol 2 and its filesystem receipt) are final-only too.
     # factory_protocols (I6) holds the injected-factory contracts; it is a final module
     # only, so it joins the expected list here and not in ALL_MODULES, which also feeds
     # the legacy side of the module-by-module comparison.
-    assert names == sorted(ALL_MODULES + ("factory_protocols",)), names
+    assert names == sorted(ALL_MODULES + ("factory_protocols", "invoke_protocol", "workspace_manifest")), names
     for name in names:
         mod = importlib.import_module(f"llm_kit.completion.{name}")
         assert _filled_records(mod) == [], (name, _filled_records(mod))

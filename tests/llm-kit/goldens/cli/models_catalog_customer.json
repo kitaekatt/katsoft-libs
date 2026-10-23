@@ -248,7 +248,7 @@
         }
       ],
       "notes": [
-        "consent: no consent file (<T>/home/.claude/plugins/data/plugins-kit/llm-kit/consent.json); only free models are allowed; run `llm-kit consent set --usage on` to allow usage-billed models"
+        "consent: no consent file (<T>/home/.config/llm-kit/consent.json); only free models are allowed; run `llm-kit consent set --usage on` to allow usage-billed models"
       ],
       "path": ".llm-kit/models.yaml",
       "schema": "llm-kit.model-catalog/v1",

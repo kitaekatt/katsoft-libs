@@ -172,6 +172,15 @@
         "llm-scripting-kit/test_completion_capabilities.py::test_openrouter_family_record_only_gains_conditional_effort": {
           "mirror_status": "skipped",
           "reason": "The legacy test hashes the serialized family record. llm-kit's record also carries call_modes (which call modes an adapter honors), so the digest differs by construction; the final records and their call_modes are pinned by tests/llm-kit/test_call_modes.py."
+        },
+        "llm-scripting-kit/test_completion_capabilities.py::test_claude_effort_is_conditional_and_unvalidated": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test pins that ClaudeCliBackend forwards any effort string unvalidated. llm-kit holds the Claude CLI to the exact model's measured effort menu (llm_kit.registry.model_profiles.check_effort) and, for a model with no measured profile, to the harness-wide menu, and refuses an effort outside it before dispatch; the final behavior is pinned by tests/llm-kit/test_invoke_protocol.py::test_claude_refuses_an_effort_outside_the_exact_model_menu."
+        },
+        "llm-scripting-kit/test_completion_capabilities.py::test_openrouter_dropped_params_change_nothing[effort]": {
+          "mirror_status": "skipped",
+          "injected": false,
+          "reason": "The legacy test pins that the openrouter family drops an effort without changing the request. llm-kit's shipped openrouter endpoint declares effort_style top-level, so an effort IS placed in the request body (reasoning_effort) and the exact-model menu it validates is actually sent; the final behavior is pinned by tests/llm-kit/test_invoke_protocol.py::test_deepseek_effort_reaches_the_wire."
         }
       }
     },
@@ -200,12 +209,19 @@
       "disposition": "rewrite",
       "reason": "Re-pointed at llm-kit's final module names: import statements, module-name strings, test_text_edits rows; 2 test_text_edits row(s) in repoint-map.json adapt the test to the final layout.",
       "rewrite_classes": [
+        "declared-skip",
         "import",
         "module-string",
         "text-edit"
       ],
       "collection_count": 72,
-      "baseline_failures": []
+      "baseline_failures": [],
+      "declared_differences": {
+        "llm-scripting-kit/test_completion_contract.py::test_get_type_hints_resolves_output_contract_fields": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test pins output_contract and skill_context as the LAST TWO fields of LLMResponse. llm-kit's LLMResponse appends reported_model, estimated_cost_usd and estimated_cost_source after them (the downstream-reported model and a non-authoritative cost figure, for protocol 2); the field types are still resolved by typing.get_type_hints and the final order is pinned by tests/llm-kit/test_invoke_protocol.py::test_response_carries_the_reported_model_and_estimate_fields."
+        }
+      }
     },
     {
       "path": "tests/llm-scripting-kit/test_completion_contract_adapters.py",
@@ -551,10 +567,17 @@
       "disposition": "rewrite",
       "reason": "Re-pointed at llm-kit's final module names: import statements.",
       "rewrite_classes": [
+        "declared-skip",
         "import"
       ],
       "collection_count": 59,
-      "baseline_failures": []
+      "baseline_failures": [],
+      "declared_differences": {
+        "llm-scripting-kit/test_model_endpoints.py::TestPathResolution::test_convention_path_is_home_relative": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test pins the endpoint registry convention as ~/.claude/config/model-endpoints.yaml. llm-kit's convention is the neutral $XDG_CONFIG_HOME/llm-kit/model-endpoints.yaml (fallback ~/.config/llm-kit/), with ~/.claude/config/model-endpoints.yaml read only when the neutral file does not exist; both are pinned by tests/llm-kit/test_neutral_user_state.py."
+        }
+      }
     },
     {
       "path": "tests/llm-scripting-kit/test_model_resolve.py",
