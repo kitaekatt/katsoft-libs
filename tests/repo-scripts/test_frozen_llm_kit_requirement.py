@@ -57,3 +57,30 @@ def test_the_check_goes_red_when_the_declaration_is_lost():
     lost = {"project": {**project, "dependencies": [
         d for d in project["dependencies"] if not d.startswith("katsoft-llm-kit")]}}
     assert _missing(lost) == [f"dependencies lack {REQUIREMENT!r}"]
+
+
+PACKAGE_BOOTSTRAP_FLOOR = (0, 160, 0)
+
+
+def _version(text: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in text.split("."))
+
+
+def _below_package_floor(plugins: Path) -> list[str]:
+    """Plugins whose pyproject requires katsoft-llm-kit but whose bootstrap.json
+    requires_bootstrap is below 0.160.0, the first bootstrap that holds the venv
+    at the released package version and revokes undeclared .pth links."""
+    offenders = []
+    for pyproject in sorted(plugins.glob("*/pyproject.toml")):
+        deps = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"].get("dependencies", [])
+        if not any(d.startswith("katsoft-llm-kit") for d in deps):
+            continue
+        manifest = json.loads((pyproject.parent / "bootstrap.json").read_text(encoding="utf-8"))
+        floor = manifest.get("requires_bootstrap", "0.0.0")
+        if _version(floor) < PACKAGE_BOOTSTRAP_FLOOR:
+            offenders.append(f"{pyproject.parent.name}: requires_bootstrap={floor}")
+    return offenders
+
+
+def test_every_plugin_requiring_katsoft_llm_kit_floors_bootstrap_at_0_160_0():
+    assert _below_package_floor(PLUGINS) == []
