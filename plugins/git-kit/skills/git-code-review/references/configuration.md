@@ -208,8 +208,8 @@ How the effort reaches the model depends on the entry's harness:
   llm-kit. The runner refuses the lane with exit 2 when a codex entry's effort menu
   does not include the level, or when a transport entry cannot deliver an effort at all; the
   review reports that refusal as a configuration error. The Codex and Claude CLI backends also
-  hold the level to the exact model's measured menu (`gpt-6-luna` has no `ultra`) before they run. The runner's JSON envelope records the
-  effort it sent in its `effort` field.
+  hold the level to the exact model's measured menu (`gpt-6-luna` has no `ultra`) before they run.
+  The runner's JSON envelope records the effort it sent in its `effort` field.
 
 `model` and `effort` are therefore independent: any model may pair with any effort the model's
 harness accepts, and neither is ever traded for the other.

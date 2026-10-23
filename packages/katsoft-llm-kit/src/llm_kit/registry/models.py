@@ -672,7 +672,8 @@ def resolve_endpoint(
     Passing ``config=`` skips loading the LAYERED config.yaml -- it does not
     skip every file read. A name absent from ``config`` still falls through to
     the model-endpoints registry (below), which is read from
-    ``$MODEL_ENDPOINTS_REGISTRY`` / ``~/.claude/config/model-endpoints.yaml``
+    ``$MODEL_ENDPOINTS_REGISTRY`` / ``$XDG_CONFIG_HOME/llm-kit/model-endpoints.yaml``
+    (the legacy ``~/.claude/config`` file when that is absent)
     regardless of whether ``config`` was supplied. An unparseable registry
     surfaces as the registry's own :class:`EndpointResolveError` (naming the
     parse defect); a registry that is simply absent leaves the lookup empty and
