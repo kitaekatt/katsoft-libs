@@ -237,18 +237,12 @@ def test_a_missing_file_never_blocks_a_request_that_opts_in_but_a_present_bad_on
 def test_a_request_without_the_field_does_not_opt_in(world, capsys, omitted):
     request: dict = {} if omitted == "absent" else {"consent": omitted}
     code, doc, err = call(world, capsys, selection="chat", **request)
-    # the unconditional refusal still holds the request to the global policy (default: subscription off there)
-    assert code == 4 and err["error"]["kind"] == "consent", (doc, err)
-    allow()
-    code, doc, err = call(world, capsys, selection="chat", **request)
-    assert code == 0 and doc["consent"] == {"opted_in": False, "applied": True, "scope": None}
+    assert code == 0, (doc, err)  # no consent file, subscription class: not refused
+    assert doc["consent"] == {"opted_in": False, "applied": False, "scope": None}
 
 
-def test_removing_the_unconditional_refusal_is_one_line_and_the_layer_is_then_never_consulted(
-    world, capsys, home, monkeypatch  # noqa: F811
-):
-    """With UNCONDITIONAL_CONSENT off, a request without `consent` ignores the layer, even a broken file."""
-    monkeypatch.setattr(invoke_mod, "UNCONDITIONAL_CONSENT", False)
+def test_a_request_without_consent_never_consults_the_layer(world, capsys, home):  # noqa: F811
+    """A request without `consent` ignores the layer, even a broken file."""
     write(home / ".config" / "llm-kit" / "consent.json", "{broken")
     code, doc, err = call(world, capsys, selection="art")  # metered, broken file, no opt-in
     assert code == 0, (doc, err)
@@ -259,8 +253,7 @@ def test_removing_the_unconditional_refusal_is_one_line_and_the_layer_is_then_ne
     assert code == 4 and doc is None and err["error"]["kind"] == "configuration"
 
 
-def test_classification_is_reported_with_its_reason_whether_or_not_the_layer_is_used(world, capsys, monkeypatch):
-    monkeypatch.setattr(invoke_mod, "UNCONDITIONAL_CONSENT", False)
+def test_classification_is_reported_with_its_reason_whether_or_not_the_layer_is_used(world, capsys):
     _code, plain, _ = call(world, capsys, selection="art")
     assert plain["cost"]["class"] == "metered" and plain["cost"]["reason"]
     allow()

@@ -402,10 +402,9 @@ the output contract, the effort's wire delivery (what the endpoint can put on th
 and consent (only when
 the request opted in with `consent`: the entry's cost class must be allowed by the effective
 consent policy, and a refusal names the class, the scope and the `llm-kit consent set` command;
-an unreadable or malformed consent file is a `configuration` refusal in that case only). While
-`UNCONDITIONAL_CONSENT` is set in `llm_kit/dispatch/invoke.py`, a request that sends no `consent`
-field is refused for a `subscription` or `metered` entry unless the global consent file states
-that class `true` (`local` is always allowed); that refusal is outside the layer's design. A refusal exits 4
+an unreadable or malformed consent file is a `configuration` refusal in that case only). A request that
+sends no `consent` field does not opt in and is never refused for its cost class; only an opted-in
+request is checked. A refusal exits 4
 with `{"protocol": 2, "error": {"kind", "message"}}` on stderr; `kind` is one of
 `protocol`, `project-file`, `selection`, `effort`, `mode`, `path`, `contract`,
 `consent` and `configuration`. A call that ran exits 0 when completed, 1 when failed

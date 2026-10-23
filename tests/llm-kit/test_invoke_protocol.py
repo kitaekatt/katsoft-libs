@@ -198,7 +198,7 @@ def test_openrouter_completion_result_shape(world, capsys):
         "usd": None, "source": None,
         "estimated_usd": 0.0007, "estimated_source": "openrouter.usage.cost",
     }
-    assert doc["consent"] == {"opted_in": False, "applied": True, "scope": None}
+    assert doc["consent"] == {"opted_in": False, "applied": False, "scope": None}
     assert "files" not in doc
     assert doc["params"]["forwarded"] == ["extras.provider"]  # the row's request default reached the request, unvalidated
     assert world.http[0]["extra_body"] == {"provider": {"sort": "latency"}, "reasoning_effort": "max"}
@@ -554,28 +554,27 @@ def test_expect_files_must_be_relative_and_beneath_the_directory(world, capsys, 
 
 
 @pytest.mark.parametrize(
-    "selection,needs", [("art", "metered"), ("chat", "subscription"), ("draft.generate.primary", "subscription")]
+    "selection,cost_class", [("art", "metered"), ("chat", "subscription"), ("draft.generate.primary", "subscription")]
 )
-def test_a_request_without_the_consent_field_is_still_held_to_the_global_policy(world, capsys, selection, needs):
-    """The unconditional refusal (UNCONDITIONAL_CONSENT) is kept until the user decides to remove it.
+def test_a_request_without_the_consent_field_is_not_refused_for_its_cost_class(world, capsys, selection, cost_class):
+    """No consent file and no `consent` field: the optional layer does not apply, so the call dispatches.
 
-    Red on revert: set dispatch.invoke.UNCONDITIONAL_CONSENT to False and the fake transports are called.
+    Red on revert: restore a refusal for requests that did not opt in and the runner is never called.
     """
     code, doc, err = call(world, capsys, selection=selection)
-    assert code == 4 and doc is None
-    assert err["error"]["kind"] == "consent"
-    message = err["error"]["message"]
-    assert f"llm-kit consent set --{needs} on" in message and "nothing was dispatched" in message
-    assert world.runner_calls == 0  # no http request, no claude or codex process
+    assert code == 0, (doc, err)
+    assert doc["cost"]["class"] == cost_class
+    assert doc["consent"]["opted_in"] is False and doc["consent"]["applied"] is False
+    assert world.runner_calls >= 1  # a harness entry also runs an auth probe through the spied runner
 
 
 def test_consent_is_per_cost_class(world, capsys):
     allow(subscription=True, metered=False)
-    assert call(world, capsys, selection="chat")[0] == 0
-    assert call(world, capsys, selection="art")[0] == 4
+    assert call(world, capsys, selection="chat", consent=True)[0] == 0
+    assert call(world, capsys, selection="art", consent=True)[0] == 4
     allow(subscription=False, metered=True)
-    assert call(world, capsys, selection="art")[0] == 0
-    assert call(world, capsys, selection="chat")[0] == 4
+    assert call(world, capsys, selection="art", consent=True)[0] == 0
+    assert call(world, capsys, selection="chat", consent=True)[0] == 4
 
 
 def test_a_harness_on_metered_auth_is_a_metered_entry(world, capsys, monkeypatch):
@@ -584,7 +583,7 @@ def test_a_harness_on_metered_auth_is_a_metered_entry(world, capsys, monkeypatch
         harness_auth, "probe_harness_auth",
         lambda harnesses, env=None, *, cwd: {h.lower(): cost.HarnessAuth(cost.METERED, "ANTHROPIC_API_KEY is set") for h in harnesses},
     )
-    code, _doc, err = call(world, capsys, selection="chat")
+    code, _doc, err = call(world, capsys, selection="chat", consent=True)
     assert code == 4 and err["error"]["kind"] == "consent" and "metered" in err["error"]["message"]
     assert world.runner_calls == 0
 
@@ -592,9 +591,9 @@ def test_a_harness_on_metered_auth_is_a_metered_entry(world, capsys, monkeypatch
 def test_the_consent_override_file_is_honoured(world, capsys, monkeypatch, tmp_path):
     chosen = tmp_path / "my-consent.json"
     monkeypatch.setenv("LLM_KIT_CONSENT_FILE", str(chosen))
-    assert call(world, capsys, selection="art")[0] == 4
+    assert call(world, capsys, selection="art", consent=True)[0] == 4
     consent_mod.update_config({"subscription": False, "metered": True})
-    assert chosen.is_file() and call(world, capsys, selection="art")[0] == 0
+    assert chosen.is_file() and call(world, capsys, selection="art", consent=True)[0] == 0
 
 
 def test_a_legacy_consent_file_still_allows_the_call(world, home, capsys):  # noqa: F811
@@ -602,8 +601,8 @@ def test_a_legacy_consent_file_still_allows_the_call(world, home, capsys):  # no
     write(legacy, json.dumps({
         "schema": 2, "local": True, "subscription": True, "metered": False, "scopes": {}, "updated_at": "x",
     }))
-    assert call(world, capsys, selection="chat")[0] == 0
-    assert call(world, capsys, selection="art")[0] == 4  # the legacy file allows subscription only
+    assert call(world, capsys, selection="chat", consent=True)[0] == 0
+    assert call(world, capsys, selection="art", consent=True)[0] == 4  # the legacy file allows subscription only
     assert not (home / ".config").exists()  # reading it created no neutral file
 
 
@@ -795,7 +794,7 @@ def test_golden_expected_file_missing(world, capsys, tmp_path):
 
 
 def test_golden_consent_refusal(world, capsys, tmp_path):
-    got = _golden(world, "invoke_consent_refused", capsys, tmp_path, selection="art")
+    got = _golden(world, "invoke_consent_refused", capsys, tmp_path, selection="art", consent=True)
     assert got["exit"] == 4
 
 

@@ -1140,9 +1140,7 @@ background lane refuses under an open dispatch, and the workflow lane has no req
 
 Principle (user ruling 2026-10-23; `docs/reference/llm-kit-architecture.md`, "Caller consent"):
 consent governs caller-selected execution policy. The library makes no LLM calls of its own, the
-user of the library makes them, and writing code that invokes models needs no consent. The one
-departure from this design is the `UNCONDITIONAL_CONSENT` refusal on protocol 2, described at the
-end of this section. Design record:
+user of the library makes them, and writing code that invokes models needs no consent. Design record:
 `docs/planning/shared-lib-packaging/consent-design.md`.
 
 **Classification is information, always reported.** Every declared entry has a cost class
@@ -1177,8 +1175,7 @@ Classification fails closed, so an entry that cannot be shown to be `local` or `
 - **`metered`**: everything else, including a metered transport, an entry with no registry
   entry, and an unknown kind.
 
-**The consent layer is optional and off by default, except on protocol 2 while `UNCONDITIONAL_CONSENT` is set
-(see the end of this section).** `llm_kit.registry.consent` is a policy a
+**The consent layer is optional and off by default.** `llm_kit.registry.consent` is a policy a
 caller may apply; nothing consults it unless the caller opts in, and a caller may build its own
 layer instead. The file is `$LLM_KIT_CONSENT_FILE` when set, else
 `$XDG_CONFIG_HOME/llm-kit/consent.json`, else the legacy
@@ -1228,11 +1225,8 @@ opted in and the effective policy does not allow the class, it refuses with `err
 before any workspace scan, argv or runner call, so a refused call spawns nothing; the message names
 the scope and the `consent set` command that would allow the class.
 
-`llm_kit.dispatch.invoke.UNCONDITIONAL_CONSENT` is a module constant that is `True` in the source tree. While it
-is `True`, a protocol 2 request that sends no `consent` field is refused for a `subscription` or `metered`
-entry unless the global consent file states that class `true`; `local` is always allowed. The refusal is not
-part of the design above, and setting the constant to `False` removes it; that change needs the user's
-explicit approval.
+A protocol 2 request that sends no `consent` field does not opt in: it is never refused for its cost
+class and never reads the consent file. Only an opted-in request is checked.
 
 ## `llm_kit.cli`, launchers and bootstrap
 

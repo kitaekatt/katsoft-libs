@@ -27,9 +27,8 @@ spawned:
 The cost class comes from :func:`llm_kit.registry.cost.classify`, the rule the
 ``allow`` filter of ``declaration.describe`` applies, and the policy from
 :func:`llm_kit.registry.consent.policy`. The consent layer is optional: a request
-without the ``consent`` field does not opt in (the
-single ``UNCONDITIONAL_CONSENT`` branch still applies the global policy to such a
-request). This path does not go through
+without the ``consent`` field does not opt in and is
+never refused for its cost class. This path does not go through
 ``describe``: that ranks a declaration and probes reachability, and a project
 selection names exactly one entry, so a probe would only add a network or
 process call that the real call answers anyway.
@@ -98,10 +97,6 @@ from llm_kit.registry.models import (
 OUTCOME_COMPLETED = "completed"
 OUTCOME_FAILED = "failed"
 OUTCOME_HALTED = "halted"
-
-#: Whether a request WITHOUT the ``consent`` field is still held to the global consent policy (the refusal
-#: the optional layer replaces). The user's explicit yes is required to set this to False.
-UNCONDITIONAL_CONSENT = True
 
 HarnessProbe = Callable[[str, Path], Optional[HarnessAuth]]
 
@@ -393,18 +388,13 @@ def invoke(
         raise InvokeRefusal(KIND_CONSENT, f"unrecognised cost class {cost_class!r}")
     load_policy = policy_loader or consent_store.policy
     opted_in = request.consent is not None
-    # UNCONDITIONAL REFUSAL (pending the user's decision to remove it): a request that did not opt in is
-    # still held to the global policy. Removing it is setting UNCONDITIONAL_CONSENT to False here.
-    unconditional = UNCONDITIONAL_CONSENT and not opted_in
     consent_report: Dict[str, Any] = {
         "opted_in": opted_in,
-        "applied": opted_in or unconditional,
+        "applied": opted_in,
         "scope": request.consent.scope if request.consent is not None else None,
     }
     if request.consent is not None:
         _refuse_unless_allowed(load_policy, request.consent.scope, cost_class, verdict.reason, row["endpoint"])
-    elif unconditional:
-        _unconditional_consent_refusal(load_policy, cost_class, verdict.reason, row["endpoint"])
 
     # arm the controls a plain completion relies on (no file writes, no shell, no subagents)
     if request.mode != MODE_WORKSPACE and record is not None:
@@ -540,38 +530,6 @@ def _refuse_unless_allowed(
             KIND_CONSENT,
             f"{endpoint!r} is a {cost_class} entry ({reason}) and {policy.refusal(cost_class)}; "
             "nothing was dispatched",
-        )
-
-
-def _unconditional_consent_refusal(load_policy: PolicyLoader, cost_class: str, reason: str, endpoint: str) -> None:
-    """The refusal a request without the ``consent`` field still gets (the behaviour the optional layer replaces).
-
-    It keeps the semantics of the per-machine consent that preceded the layer:
-    ``local`` is always allowed; ``subscription`` and ``metered`` only when the
-    consent file's global policy states the class ``true`` (an absent file, an
-    unstated class, or a file that cannot be read or is malformed allows
-    local only). Kept until the user decides to remove it
-    (``UNCONDITIONAL_CONSENT``); removal is deleting this function and its call.
-    """
-    if cost_class == consent_store.LOCAL:
-        return
-    problem = ""
-    allowed = False
-    command = consent_store.set_command(cost_class)
-    try:
-        policy = load_policy(None)
-        state = policy.classes[cost_class]
-        allowed = state.allowed and state.provenance != consent_store.FROM_DEFAULT
-        where = str(policy.path)
-    except (consent_store.ConsentConfigError, OSError, ValueError) as exc:
-        problem = f" ({exc})"
-        where = "the consent file"
-    if not allowed:
-        raise InvokeRefusal(
-            KIND_CONSENT,
-            f"{endpoint!r} is a {cost_class} entry ({reason}) and the machine's consent does not allow "
-            f"{cost_class} calls ({where}){problem}; run `{command}` to allow them, or send "
-            "\"consent\": true to apply the optional consent layer instead; nothing was dispatched",
         )
 
 

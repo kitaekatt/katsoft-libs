@@ -71,11 +71,9 @@ provider `openai`, ChatGPT auth and no stored API key. A probe that cannot run, 
 returns an unrecognized report is unknown, which counts as `metered`.
 
 The library makes no model calls of its own; the caller's code makes them. Classification and
-the consent layer are designed as follows, with one departure: while `UNCONDITIONAL_CONSENT` is
-set (`llm_kit/dispatch/invoke.py`), a protocol 2 request that sends no `consent` field is
-refused for a `subscription` or `metered` entry unless the global consent file states that
-class `true`; `local` is always allowed. Apart from that refusal, the consent layer is optional
-and applies only when a caller opts in, and a caller may build its own policy instead. Opt in
+the consent layer are designed as follows. The consent layer is optional and applies only when a
+caller opts in; a protocol 2 request without a `consent` field is never refused for its cost
+class, and a caller may build its own policy instead. Opt in
 with `--consent [--consent-scope NAME]` on `models describe`, with the protocol 2 request
 field `"consent": true` (global policy) or `"consent": {"scope": "NAME"}`, or with
 `llm_kit.registry.consent.policy(scope=None)`. An explicit caller-owned `--allow <classes>`
@@ -103,9 +101,6 @@ With the layer applied, an entry whose class is not allowed gets the disposition
 or probed. `llm-kit models catalog` and `models describe` print a structured `consent` note
 that the layer is optional and how to opt in; each catalog row carries `cost` as
 `{class, reason}`.
-
-The `UNCONDITIONAL_CONSENT` refusal described above is not part of the layer's design; setting
-that constant to `False` removes it, and that change needs the user's explicit approval.
 
 ## Project model file
 

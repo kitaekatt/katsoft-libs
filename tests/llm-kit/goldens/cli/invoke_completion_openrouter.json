@@ -10,7 +10,7 @@
   "stdout": {
     "json": {
       "consent": {
-        "applied": true,
+        "applied": false,
         "opted_in": false,
         "scope": null
       },
