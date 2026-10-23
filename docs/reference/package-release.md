@@ -79,6 +79,17 @@ with the run URL and the resume commands below. `publish.py` never
 re-dispatches a run. On the next `publish.py` run the newest run decides;
 older failures are ignored.
 
+Before UPLOADED verifies and records, it waits for the simple index.
+`https://pypi.org/pypi/<d>/<v>/json` can list a wheel before
+`https://pypi.org/simple/<norm(d)>/` (PEP 691 JSON form, the page `uv` resolves
+from) does, and a consumer that syncs in that gap fails "unsatisfiable".
+`_wait_simple_index` polls the simple page every 10 s until it lists the
+wheel's filename, for up to 10 min; on timeout it stops with a message naming
+the distribution, version and filename, records nothing, and the next
+`publish.py` run resumes at UPLOADED. It applies to both the TAGGED path and a
+re-run that finds the wheel already uploaded. The fetch is `Services.simple_index`
+(injectable).
+
 ## Build (B3) and verify (B4)
 
 Build: `git archive <commit> -- <inputs>` (sources, `packages/<d>/`,
