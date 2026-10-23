@@ -8,7 +8,7 @@ import textwrap
 
 
 PLUGIN_LIB = Path(__file__).resolve().parents[2] / "plugins" / "yaml-data-editor-kit" / "lib"
-LLM_KIT_LIB = Path(__file__).resolve().parents[2] / "plugins" / "llm-kit" / "lib"
+LLM_KIT_LIB = Path(__file__).resolve().parents[2] / "packages" / "katsoft-llm-kit" / "src"
 
 
 def _python(code: str, *paths: Path) -> subprocess.CompletedProcess[str]:

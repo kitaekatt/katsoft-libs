@@ -122,7 +122,7 @@ per transport, not a model sweep."""
 # availability probe below. Stdlib-only module (see api_key.py's docstring),
 # so this import alone never requires the `openai` SDK.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_LLM_KIT_LIB = str(_REPO_ROOT / "plugins" / "llm-kit" / "lib")
+_LLM_KIT_LIB = str(_REPO_ROOT / "packages" / "katsoft-llm-kit" / "src")
 if _LLM_KIT_LIB not in sys.path:
     sys.path.insert(0, _LLM_KIT_LIB)
 

@@ -67,7 +67,7 @@ from yaml_data_editor_kit.dispatch.state import write_plan
 from yaml_data_editor_kit.dispatch.worker_mount import build_worker_command
 
 PLUGIN_LIB = Path(__file__).resolve().parents[2] / "plugins" / "yaml-data-editor-kit" / "lib"
-LLM_KIT_LIB = Path(__file__).resolve().parents[2] / "plugins" / "llm-kit" / "lib"
+LLM_KIT_LIB = Path(__file__).resolve().parents[2] / "packages" / "katsoft-llm-kit" / "src"
 
 _SUBPROCESS_TIMEOUT_S = 30.0
 
