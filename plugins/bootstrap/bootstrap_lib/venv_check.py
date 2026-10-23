@@ -594,6 +594,19 @@ def ensure_venv(
     target_errors: List[str] = []
     if released_ledger:
         targets, target_errors = package_targets(project_dir, released_ledger, extras)
+
+    def _finish(final: Result) -> Tuple[Result, List[str]]:
+        """Every return goes through here: an unresolved target is a failure.
+
+        Whatever path ran (early exit, no uv, uv error, sync failure), a passing
+        result with unresolved targets is converted, so no path can report a
+        converged venv while a released-package target is unmet.
+        """
+        if target_errors and final.passed:
+            entries.extend(e for e in target_errors if e not in entries)
+            final = _target_failure(venv_path, target_errors)
+        return final, entries
+
     result = check_venv(data_dir, project_dir, list(check_imports), **check_kwargs)
     content_hash = _project_content_hash(project_dir, targets)
     stamp_path = _venv_sync_stamp_path(venv_path)
@@ -605,10 +618,7 @@ def ensure_venv(
     ]
 
     if result.passed and not always_sync and not content_changed and not behind:
-        if target_errors:
-            entries.extend(target_errors)
-            result = _target_failure(venv_path, target_errors)
-        return result, entries
+        return _finish(result)
 
     extra_flags = " ".join(f"--extra {e}" for e in extras)
     pin_flags = " ".join(f"-P {dist}=={version}" for dist, version, _ in behind)
@@ -631,10 +641,10 @@ def ensure_venv(
     if not uv_bin:
         entries.append("uv not found on PATH or in ~/.local/bin")
         if behind:
-            return _target_failure(
+            result = _target_failure(
                 venv_path, [f"{dist} {version} (uv not found)" for dist, version, _i in behind]
-            ), entries
-        return result, entries
+            )
+        return _finish(result)
 
     cmd = [uv_bin, "sync", "--project", project_dir]
     for e in extras:
@@ -650,7 +660,9 @@ def ensure_venv(
         proc = subprocess.run(cmd, env=env, capture_output=True, timeout=120)
     except (subprocess.SubprocessError, OSError) as exc:
         entries.append(f"uv sync error: {exc}")
-        return (_target_failure(venv_path, [f"uv sync error: {exc}"]) if behind else result), entries
+        if behind:
+            result = _target_failure(venv_path, [f"uv sync error: {exc}"])
+        return _finish(result)
 
     was_passing = result.passed
     result = check_venv(data_dir, project_dir, list(check_imports), **check_kwargs)
@@ -681,9 +693,6 @@ def ensure_venv(
                 venv_path=venv_path,
                 remediation_cmd=uv_cmd,
             )
-        elif target_errors and result.passed:
-            entries.extend(target_errors)
-            result = _target_failure(venv_path, target_errors)
     elif result.passed:
         missed = [
             f"{dist} is {installed_version(venv_path, dist) or 'not installed'}, "
@@ -708,4 +717,4 @@ def ensure_venv(
                     entries.append(f"could not write venv dependency stamp: {exc}")
     else:
         entries.append(f"uv sync completed but re-check failed: {result.message}")
-    return result, entries
+    return _finish(result)

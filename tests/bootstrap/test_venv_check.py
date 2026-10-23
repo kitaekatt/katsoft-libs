@@ -1023,6 +1023,41 @@ class TestEnsureVenvReleasedTargets:
         assert ran and not always[0].passed
         assert not _venv_sync_stamp_path(venv_path).exists()
 
+    def test_unresolved_target_fails_when_uv_is_missing(self, tmp_path, monkeypatch):
+        """Passing check, stale stamp, nothing behind, unresolved target, no uv:
+        the `uv not found` return used to hand back the passing result."""
+        project, ledger, venv_path, ran = self._wire(
+            tmp_path, monkeypatch, requirement=f"{_LLM}~=1.1")
+        monkeypatch.setattr("bootstrap_lib.venv_check.find_uv", lambda: None)
+        assert not _venv_sync_stamp_path(venv_path).exists()   # stale: content_changed
+
+        result, entries = ensure_venv(str(project), venv_path, released_ledger=ledger)
+
+        assert not result.passed
+        assert "name[extras]>=A.B[.C],<N" in result.message
+        assert result.remediation_cmd == "bootstrap run"
+        assert any("uv not found" in e for e in entries)
+        assert any("name[extras]>=A.B[.C],<N" in e for e in entries)
+        assert ran == []
+        assert not _venv_sync_stamp_path(venv_path).exists()
+
+    def test_unresolved_target_fails_when_uv_cannot_be_run(self, tmp_path, monkeypatch):
+        """Same state, but launching uv raises: the `uv sync error` return."""
+        project, ledger, venv_path, ran = self._wire(
+            tmp_path, monkeypatch, requirement=f"{_LLM}~=1.1")
+
+        def _boom(cmd, **kw):
+            raise OSError("exec failed")
+
+        monkeypatch.setattr("bootstrap_lib.venv_check.subprocess.run", _boom)
+
+        result, entries = ensure_venv(str(project), venv_path, released_ledger=ledger)
+
+        assert not result.passed
+        assert result.remediation_cmd == "bootstrap run"
+        assert any("uv sync error" in e for e in entries)
+        assert not _venv_sync_stamp_path(venv_path).exists()
+
     def test_without_a_ledger_nothing_changes(self, tmp_path, monkeypatch):
         project, _ledger_path, venv_path, ran = self._wire(tmp_path, monkeypatch)
         _venv_sync_stamp_path(venv_path).write_text(_project_content_hash(str(project)))
