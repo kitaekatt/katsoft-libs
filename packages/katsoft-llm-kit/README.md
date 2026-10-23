@@ -9,6 +9,9 @@ pip install "katsoft-llm-kit[sdk,jobs,config]"
 llm-kit --help
 ```
 
+The library needs no AI harness, Claude Code, bootstrap or plugins-kit to
+install and use.
+
 The base install depends on `katsoft-contracts` (execution-event envelope,
 interrupt contract, model declaration parser) and nothing else. Extras:
 `config`, `jobs` and `pipeline` bring PyYAML; `sdk` brings the OpenAI client
