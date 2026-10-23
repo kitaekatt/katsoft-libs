@@ -334,6 +334,8 @@ def build_codex_exec_argv(
     extra_config: Iterable[str] = (),
     argv_prefix: Optional[Sequence[str]] = None,
     ignore_user_config: bool = False,
+    codex_config: Optional[dict[str, str]] = None,
+    image_paths: Sequence[PathLike] = (),
 ) -> list:
     """Build the ONE sanctioned ``codex exec`` invocation.
 
@@ -343,8 +345,10 @@ def build_codex_exec_argv(
         <prefix> exec [--ignore-user-config] -s <sandbox>
             -c windows.sandbox="unelevated"                 # Windows only
             -c sandbox_workspace_write.network_access=true  # when network
+            [-c shell_environment_policy.inherit="none|core"]
+            [-c approval_policy="never"]                 # protocol 2 allowlist
             [-m MODEL] [-c model_reasoning_effort=EFFORT] [-c EXTRA]...
-            -C <root> [--add-dir D]... [-o FILE] [--output-schema F] [--json]
+            -C <root> [--add-dir D]... [-o FILE] [--output-schema F] [-i IMAGE]... [--json]
             --skip-git-repo-check --color never -
 
     ``root``, every ``add_dirs`` entry, ``scratch_dir``, ``output_file`` and
@@ -385,6 +389,7 @@ def build_codex_exec_argv(
 
     root_str = _absolute(root, "root")
     dirs = [_absolute(d, "add_dirs[%d]" % i) for i, d in enumerate(add_dirs)]
+    images = [_absolute(d, "image_paths[%d]" % i) for i, d in enumerate(image_paths)]
     if scratch_dir is not None:
         dirs.append(_absolute(scratch_dir, "scratch_dir"))
 
@@ -397,6 +402,19 @@ def build_codex_exec_argv(
         argv += ["-c", 'windows.sandbox="unelevated"']
     if network:
         argv += ["-c", "sandbox_workspace_write.network_access=true"]
+    config_values = {
+        "shell_environment_policy.inherit": {"none", "core"},
+        "approval_policy": {"never"},
+    }
+    for key, value in (codex_config or {}).items():
+        if (
+            not isinstance(key, str)
+            or key not in config_values
+            or not isinstance(value, str)
+            or value not in config_values[key]
+        ):
+            raise ValueError(f"unsupported Codex config value for {key!r}; nothing was dispatched")
+        argv += ["-c", f'{key}="{value}"']
     if model:
         argv += ["-m", str(model)]
     if effort:
@@ -410,6 +428,8 @@ def build_codex_exec_argv(
         argv += ["-o", _absolute(output_file, "output_file")]
     if output_schema is not None:
         argv += ["--output-schema", _absolute(output_schema, "output_schema")]
+    for path in images:
+        argv += ["-i", path]
     if json_events:
         argv.append("--json")
     argv += ["--skip-git-repo-check", "--color", "never", "-"]

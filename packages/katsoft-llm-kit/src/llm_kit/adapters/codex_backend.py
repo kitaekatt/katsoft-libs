@@ -458,7 +458,9 @@ class CodexCliBackend:
                 catalog_path = self._write_text_only_catalog(
                     model, root, log_prefix=opts.log_prefix, timeout_s=timeout_s
                 )
-            extras = opts.extras
+            extras = dict(opts.extras or {})
+            codex_config = extras.pop("__llm_kit_codex_config", None)
+            image_paths = extras.pop("__llm_kit_image_paths", ())
             if plan is not None and plan.schema_json is not None:
                 # Native contract delivery: the canonical schema document goes
                 # to --output-schema through the same builder key the legacy
@@ -466,11 +468,18 @@ class CodexCliBackend:
                 # contract sent beside extras.output_schema, so nothing here
                 # overrides a caller's own schema file.
                 schema_path = self._write_schema_file(plan.schema_json)
-                extras = {**dict(opts.extras or {}), "output_schema": str(schema_path)}
+                extras = {**extras, "output_schema": str(schema_path)}
             argv = self._build_argv(
                 root=root, model=model, effort=opts.effort,
-                output_file=output_path, extras=extras, catalog_path=catalog_path,
+                output_file=output_path,
+                extras={
+                    **extras,
+                    **({"__llm_kit_codex_config": codex_config} if codex_config else {}),
+                    **({"__llm_kit_image_paths": image_paths} if image_paths else {}),
+                },
+                catalog_path=catalog_path,
             )
+            response_options = dataclasses.replace(opts, extras=extras)
             prompt = compose_prompt(system, user)
 
             started_at = utc_now_iso()
@@ -543,13 +552,13 @@ class CodexCliBackend:
             wall_ms=wall_ms,
             attempts=1,
             from_cache=False,
-            dropped_params=derive_dropped_params(self.capabilities, opts),
-            forwarded_params=derive_forwarded_params(self.capabilities, opts),
+            dropped_params=derive_dropped_params(self.capabilities, response_options),
+            forwarded_params=derive_forwarded_params(self.capabilities, response_options),
             execution_controls_applied=self._applied_controls(argv),
             # Under a contract, structured is set only by finalize_contract,
             # and only to a validated object; the legacy bare parse is for
             # the extras.output_schema path alone.
-            structured=None if plan is not None else self._parse_structured(text, opts.extras),
+            structured=None if plan is not None else self._parse_structured(text, response_options.extras),
             started_at=started_at,
             ended_at=utc_now_iso(),
         )
@@ -781,6 +790,12 @@ class CodexCliBackend:
         if effort is not None:
             kwargs["effort"] = effort
         mapping = extras if isinstance(extras, dict) else dict(extras or {})
+        codex_config = mapping.get("__llm_kit_codex_config")
+        image_paths = mapping.get("__llm_kit_image_paths", ())
+        if codex_config:
+            kwargs["codex_config"] = dict(codex_config)
+        if image_paths:
+            kwargs["image_paths"] = image_paths
         for key in CODEX_EXTRA_KEYS:
             if key in mapping and mapping[key] is not None:
                 kwargs[key] = mapping[key]

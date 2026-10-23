@@ -24,6 +24,10 @@ of ``selection`` or ``model``):
                  and refused for ``completion``; must exist beneath the project root
 ``expect_files`` relative paths that must be regular files in ``working_dir`` after a
                  workspace call; otherwise the call is reported failed
+``watch_files`` non-empty list of relative paths; workspace receipts hash only this list
+                  and ``expect_files``. It does not detect other writes or deletions
+``images``       relative regular files attached to the initial prompt; Codex only
+``codex_config`` closed Codex configuration object with two allowlisted keys
 ``output_schema`` a JSON Schema the answer must satisfy (validated-result policy)
 ``effort``       explicit effort, or ``null`` to send none; absent means the selection's
 ``max_tokens``   output token cap, a positive integer
@@ -98,6 +102,9 @@ _REQUEST_KEYS = (
     "mode",
     "working_dir",
     "expect_files",
+    "watch_files",
+    "images",
+    "codex_config",
     "output_schema",
     "effort",
     "max_tokens",
@@ -127,6 +134,10 @@ class InvokeRequest:
     mode: str
     working_dir: Optional[str]
     expect_files: Tuple[str, ...]
+    watch_files: Optional[Tuple[str, ...]]
+    images: Tuple[str, ...]
+    codex_config: Mapping[str, str]
+    codex_config_given: bool
     output_contract: Optional[OutputContract]
     effort_given: bool
     effort: Optional[str]
@@ -182,6 +193,49 @@ def _text(mapping: Mapping[str, Any], key: str, *, required: bool = False) -> Op
     return value
 
 
+_CODEX_CONFIG_VALUES = {
+    "shell_environment_policy.inherit": frozenset({"none", "core"}),
+    "approval_policy": frozenset({"never"}),
+}
+
+
+def parse_codex_config(value: Any, *, what: str = "codex_config") -> Dict[str, str]:
+    """Validate the closed Codex configuration allowlist; never accept raw -c pairs."""
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise InvokeRefusal(KIND_PROTOCOL, f"{what} must be an object")
+    unknown = sorted(str(key) for key in value if key not in _CODEX_CONFIG_VALUES)
+    if unknown:
+        raise InvokeRefusal(KIND_PROTOCOL, f"{what} has unknown key(s): " + ", ".join(unknown))
+    out: Dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(item, str):
+            raise InvokeRefusal(KIND_PROTOCOL, f"{what}.{key} must be a string")
+        if item not in _CODEX_CONFIG_VALUES[key]:
+            raise InvokeRefusal(KIND_CONFIGURATION, f"{what}.{key} value {item!r} is prohibited")
+        out[key] = item
+    return out
+
+
+def _relative_list(value: Any, *, what: str, nonempty: bool) -> Optional[Tuple[str, ...]]:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise InvokeRefusal(KIND_PROTOCOL, f"{what} must be a list of relative paths")
+    if nonempty and not value:
+        raise InvokeRefusal(KIND_PATH, f"{what} must not be empty")
+    out: List[str] = []
+    for item in value:
+        try:
+            out.append(confine_relative(item, what=f"{what} entry"))
+        except ValueError as exc:
+            raise InvokeRefusal(KIND_PATH, str(exc)) from None
+    if len(set(out)) != len(out):
+        raise InvokeRefusal(KIND_PATH, f"{what} lists a path twice")
+    return tuple(out)
+
+
 def parse_invoke_request(payload: Any) -> InvokeRequest:
     """Validate a decoded protocol 2 request; :class:`InvokeRefusal` on any fault."""
     if not isinstance(payload, Mapping):
@@ -213,6 +267,10 @@ def parse_invoke_request(payload: Any) -> InvokeRequest:
         )
     working_dir = _text(payload, "working_dir")
     expect_raw = payload.get("expect_files")
+    watch = _relative_list(payload.get("watch_files"), what="watch_files", nonempty=True)
+    images = _relative_list(payload.get("images"), what="images", nonempty=False) or ()
+    if mode != MODE_WORKSPACE and watch is not None:
+        raise InvokeRefusal(KIND_MODE, "watch_files applies to mode 'workspace' only")
     if mode == MODE_COMPLETION:
         if working_dir is not None:
             raise InvokeRefusal(KIND_PATH, "working_dir applies to mode 'workspace' only")
@@ -262,6 +320,10 @@ def parse_invoke_request(payload: Any) -> InvokeRequest:
         mode=mode,
         working_dir=working_dir,
         expect_files=tuple(expect),
+        watch_files=watch,
+        images=images,
+        codex_config=parse_codex_config(payload.get("codex_config")),
+        codex_config_given="codex_config" in payload,
         output_contract=contract,
         effort_given=effort_given,
         effort=effort,
@@ -331,6 +393,7 @@ def result_document(
     error: Optional[Mapping[str, Any]] = None,
     halt: Optional[Mapping[str, Any]] = None,
     params: Optional[Mapping[str, Any]] = None,
+    manifest: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """One protocol 2 result.
 
@@ -355,6 +418,8 @@ def result_document(
         document["consent"] = dict(consent)
     if files is not None:
         document["files"] = [record.to_json() for record in files]
+    if manifest is not None:
+        document["manifest"] = dict(manifest)
     if params is not None:
         document["params"] = dict(params)
     if error is not None:
@@ -384,6 +449,9 @@ def describe_invoke_schema() -> Dict[str, Any]:
             "mode": f"one of {', '.join(MODES)}, optional (default {MODE_COMPLETION})",
             "working_dir": "string, required for workspace and refused for completion; must exist beneath project_root",
             "expect_files": "list of relative paths, workspace only; a missing or non-regular file fails the call",
+            "watch_files": "non-empty list of relative paths, workspace only; receipt hashes this list plus expect_files",
+            "images": "list of relative regular file paths; attached to Codex initial prompt only",
+            "codex_config": "optional closed object: shell_environment_policy.inherit=none|core; approval_policy=never",
             "output_schema": "JSON Schema object in the supported subset, optional",
             "effort": "string or null, optional; absent means the selection's effort, null sends none",
             "max_tokens": "integer >= 1, optional",
@@ -398,6 +466,7 @@ def describe_invoke_schema() -> Dict[str, Any]:
         "result": {
             "status": f"{STATUS_COMPLETED} or {STATUS_FAILED}",
             "files": "workspace only: [{path, size, sha256}] created or modified under working_dir",
+            "manifest": "workspace only: {scope: all|watch, watched_paths: [...] when scope is watch}; deletions are not reported",
             "cost": (
                 "{class, reason, usd, source, estimated_usd, estimated_source}; the class and its reason are "
                 "always reported; usd null means unknown, never zero"

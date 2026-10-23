@@ -292,6 +292,107 @@ def test_codex_completion_arms_text_only_and_reports_no_served_model(world, caps
     assert "model_reasoning_effort=high" in exec_argv and "read-only" in exec_argv
 
 
+def test_absent_codex_config_keeps_the_existing_workspace_argv(world, capsys):
+    allow()
+    (world.root / "work").mkdir()
+    code, _doc, err = call(world, capsys, model="luna", mode="workspace", working_dir="work")
+    argv = world.codex[-1]
+    assert argv == [
+        "codex", "exec", "-s", "workspace-write", "-c",
+        "sandbox_workspace_write.network_access=true", "-m", "gpt-6-luna", "-C",
+        str((world.root / "work").resolve()), "-o", argv[argv.index("-o") + 1],
+        "--json", "--skip-git-repo-check", "--color", "never", "-",
+    ]
+    assert code == 0, err
+
+
+@pytest.mark.parametrize("inherit", ["none", "core"])
+def test_codex_config_emits_only_requested_allowlisted_overrides(world, capsys, inherit):
+    allow()
+    (world.root / "work").mkdir()
+    document = {**_DOC, "catalog": [dict(row) for row in _DOC["catalog"]]}
+    luna = next(row for row in document["catalog"] if row["id"] == "luna")
+    opposite = "core" if inherit == "none" else "none"
+    luna["request_defaults"] = {"extras": {"codex_config": {"shell_environment_policy.inherit": opposite}}}
+    pm.write_project_models(document, project_root=str(world.root))
+    code, _doc, err = call(
+        world, capsys, model="luna", mode="workspace", working_dir="work",
+        codex_config={"shell_environment_policy.inherit": inherit, "approval_policy": "never"},
+    )
+    assert code == 0, err
+    argv = world.codex[-1]
+    assert argv[argv.index("-c") + 1] == "sandbox_workspace_write.network_access=true"
+    assert f'shell_environment_policy.inherit="{inherit}"' in argv
+    assert 'approval_policy="never"' in argv
+    assert f'shell_environment_policy.inherit="{opposite}"' not in argv
+
+
+@pytest.mark.parametrize(("key", "value"), [
+    ("shell_environment_policy.inherit", "all"),
+    ("shell_environment_policy.inherit", "on-request"),
+    ("shell_environment_policy.inherit", "danger-full-access"),
+    ("shell_environment_policy.inherit", "never\nmodel=bad"),
+    ("approval_policy", "on-request"),
+    ("approval_policy", "on-failure"),
+    ("approval_policy", "untrusted"),
+])
+def test_protocol2_refuses_prohibited_codex_config_before_dispatch(world, capsys, key, value):
+    (world.root / "work").mkdir()
+    code, _doc, err = call(
+        world, capsys, model="luna", mode="workspace", working_dir="work",
+        codex_config={key: value},
+    )
+    assert code == 4 and err["error"]["kind"] == "configuration"
+    assert world.runner_calls == 0
+
+
+def test_protocol2_refuses_images_on_non_image_adapter_before_dispatch(world, capsys):
+    (world.root / "picture.png").write_bytes(b"png")
+    code, _doc, err = call(world, capsys, model="deepseek", images=["picture.png"])
+    assert code == 4 and err["error"]["kind"] == "mode"
+    assert world.runner_calls == 0
+
+
+def test_codex_inherit_is_refused_in_text_only_mode(world, capsys):
+    code, _doc, err = call(
+        world, capsys, model="luna",
+        codex_config={"shell_environment_policy.inherit": "core"},
+    )
+    assert code == 4 and err["error"]["kind"] == "configuration"
+    assert world.runner_calls == 0
+
+
+def test_codex_config_refuses_an_unsafe_effective_row_sandbox(world, capsys):
+    document = {**_DOC, "catalog": [dict(row) for row in _DOC["catalog"]]}
+    luna = next(row for row in document["catalog"] if row["id"] == "luna")
+    luna["request_defaults"] = {"extras": {"sandbox": "danger-full-access"}}
+    pm.write_project_models(document, project_root=str(world.root))
+    code, _doc, err = call(
+        world, capsys, model="luna", mode="workspace", working_dir="work",
+        codex_config={"approval_policy": "never"},
+    )
+    assert code == 4 and err["error"]["kind"] == "configuration"
+    assert world.runner_calls == 0
+
+
+def test_codex_image_is_attached_and_watch_scope_is_reported(world, capsys):
+    allow()
+    work = world.root / "work"
+    work.mkdir()
+    (work / "input.png").write_bytes(b"png")
+    (work / "unlisted.txt").write_text("keep", encoding="utf-8")
+    world.codex_writes = {"result.txt": "done"}
+    code, doc, err = call(
+        world, capsys, model="luna", mode="workspace", working_dir="work",
+        images=["input.png"], watch_files=["result.txt"],
+    )
+    assert code == 0, err
+    argv = world.codex[-1]
+    assert argv[argv.index("-i") + 1] == str(work / "input.png")
+    assert doc["manifest"] == {"scope": "watch", "watched_paths": ["result.txt"]}
+    assert [item["path"] for item in doc["files"]] == ["result.txt"]
+
+
 def test_codex_structured_output_under_a_schema(world, capsys):
     allow()
     world.codex_answer = json.dumps({"summary": "done"})

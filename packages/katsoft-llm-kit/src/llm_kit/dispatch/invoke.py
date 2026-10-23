@@ -22,7 +22,7 @@ spawned:
    and, when the request opted in to the optional consent layer (``consent``),
    refuse it unless that policy allows its class -- BEFORE any scan, argv or
    runner call;
-7. for ``workspace``, scan the directory; run the call; scan again.
+7. for ``workspace``, take the selected filesystem snapshot; run the call; take it again.
 
 The cost class comes from :func:`llm_kit.registry.cost.classify`, the rule the
 ``allow`` filter of ``declaration.describe`` applies, and the policy from
@@ -40,6 +40,7 @@ itself runs, and nothing here reads or creates a path under ``~/.claude``.
 from __future__ import annotations
 
 import os
+import stat
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -73,6 +74,7 @@ from llm_kit.completion.invoke_protocol import (
     STATUS_FAILED,
     InvokeRefusal,
     InvokeRequest,
+    parse_codex_config,
     cost_block,
     effort_block,
     result_document,
@@ -140,6 +142,64 @@ def _confine_directory(root: Path, name: str) -> Path:
     if not lexical.is_dir():
         raise InvokeRefusal(KIND_PATH, f"working_dir {name!r} does not exist as a directory under {root}")
     return lexical
+
+
+def _confine_regular_file(root: Path, name: str) -> Path:
+    """Resolve an existing regular file beneath root without following symlinks."""
+    relative = Path(name)
+    parts = relative.parts
+    cursor = root.joinpath(*parts)
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    no_follow_flag = getattr(os, "O_NOFOLLOW", 0)
+    if os.open not in os.supports_dir_fd:
+        checked = root
+        for index, part in enumerate(parts):
+            checked = checked / part
+            try:
+                mode = checked.lstat().st_mode
+            except OSError as exc:
+                raise InvokeRefusal(KIND_PATH, f"image {name!r} is not an existing regular file: {exc}") from None
+            if stat.S_ISLNK(mode):
+                raise InvokeRefusal(KIND_PATH, f"image {name!r} passes through a symbolic link")
+            if index < len(parts) - 1 and not stat.S_ISDIR(mode):
+                raise InvokeRefusal(KIND_PATH, f"image {name!r} has a non-directory parent")
+        if not stat.S_ISREG(mode):
+            raise InvokeRefusal(KIND_PATH, f"image {name!r} is not a regular file")
+        try:
+            descriptor = os.open(checked, os.O_RDONLY | no_follow_flag)
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise InvokeRefusal(KIND_PATH, f"image {name!r} is not a regular file")
+            finally:
+                os.close(descriptor)
+        except InvokeRefusal:
+            raise
+        except OSError as exc:
+            raise InvokeRefusal(KIND_PATH, f"image {name!r} cannot be opened safely: {exc}") from None
+        return checked
+    root_fd = os.open(root, os.O_RDONLY | directory_flag | no_follow_flag)
+    parent_fd = root_fd
+    descriptor = -1
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | directory_flag | no_follow_flag, dir_fd=parent_fd)
+            if parent_fd != root_fd:
+                os.close(parent_fd)
+            parent_fd = next_fd
+        descriptor = os.open(parts[-1], os.O_RDONLY | no_follow_flag, dir_fd=parent_fd)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise InvokeRefusal(KIND_PATH, f"image {name!r} is not a regular file")
+    except InvokeRefusal:
+        raise
+    except OSError as exc:
+        raise InvokeRefusal(KIND_PATH, f"image {name!r} cannot be opened safely: {exc}") from None
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if parent_fd != root_fd:
+            os.close(parent_fd)
+        os.close(root_fd)
+    return cursor
 
 
 def _model_verified(requested: str, reported: Optional[str]) -> bool:
@@ -246,6 +306,30 @@ def invoke(
     except (EndpointResolveError, ModelResolveError, EndpointRegistryError) as exc:
         raise InvokeRefusal(KIND_CONFIGURATION, str(exc)) from None
     backend = selection.backend
+    row_extras = dict((row.get("request_defaults") or {}).get("extras") or {})
+    row_codex_config = parse_codex_config(row_extras.get("codex_config"), what="request_defaults.extras.codex_config")
+    effective_codex_config = {**row_codex_config, **dict(request.codex_config)}
+    backend_name = getattr(backend, "name", None)
+    row_codex_config_given = "codex_config" in row_extras and row_extras["codex_config"] is not None
+    if (request.codex_config_given or row_codex_config_given) and backend_name != "codex-cli":
+        raise InvokeRefusal(KIND_CONFIGURATION, "codex_config is supported only by the Codex adapter")
+    if request.images and backend_name != "codex-cli":
+        raise InvokeRefusal(KIND_MODE, f"{backend_name or 'this adapter'} does not support image input")
+    if backend_name == "codex-cli":
+        effective_sandbox = row_extras.get("sandbox", "workspace-write")
+        if not isinstance(effective_sandbox, str) or effective_sandbox not in ("read-only", "workspace-write"):
+            raise InvokeRefusal(
+                KIND_CONFIGURATION,
+                f"effective Codex sandbox {effective_sandbox!r} must be read-only or workspace-write",
+            )
+        if (
+            request.mode != MODE_WORKSPACE
+            and "shell_environment_policy.inherit" in effective_codex_config
+        ):
+            raise InvokeRefusal(
+                KIND_CONFIGURATION,
+                "shell_environment_policy.inherit cannot be used in Codex text-only mode",
+            )
     record = getattr(selection, "capabilities", None) or getattr(backend, "capabilities", None)
     if record is not None:
         try:
@@ -256,9 +340,12 @@ def invoke(
         raise InvokeRefusal(KIND_MODE, f"{getattr(backend, 'name', 'this backend')} advertises no call modes; nothing was dispatched")
 
     # 5. options, working directory, contract, effort delivery -----------------
+    adapter_extras = {key: value for key, value in row_extras.items() if key != "codex_config"}
+    if effective_codex_config:
+        adapter_extras["__llm_kit_codex_config"] = effective_codex_config
     options = BackendOptions(
         effort=requested_effort,
-        extras=dict((row.get("request_defaults") or {}).get("extras") or {}),
+        extras=adapter_extras,
         output_contract=request.output_contract,
         log_prefix=f"[{selection.endpoint}]",
     )
@@ -270,6 +357,10 @@ def invoke(
     if request.mode == MODE_WORKSPACE:
         workdir = _confine_directory(root, request.working_dir or "")
         options = replace(options, cwd=workdir)
+    image_root = workdir or root
+    image_paths = tuple(str(_confine_regular_file(image_root, name)) for name in request.images)
+    if image_paths:
+        options = replace(options, extras={**dict(options.extras), "__llm_kit_image_paths": image_paths})
     if request.output_contract is not None and record is not None:
         try:
             prepare_contract(record, options)
@@ -324,12 +415,20 @@ def invoke(
         except ValueError as exc:
             raise InvokeRefusal(KIND_MODE, str(exc)) from None
         backend, options = armed.backend, armed.options
+    if getattr(backend, "text_only", False) and "shell_environment_policy.inherit" in effective_codex_config:
+        raise InvokeRefusal(
+            KIND_CONFIGURATION,
+            "shell_environment_policy.inherit cannot be used in Codex text-only mode",
+        )
 
     # 7. the call, with receipts ----------------------------------------------
     before: Optional[Mapping[str, FileRecord]] = None
+    watched_paths: Optional[Tuple[str, ...]] = None
     if workdir is not None:
+        if request.watch_files is not None:
+            watched_paths = tuple(sorted(set(request.watch_files) | set(request.expect_files)))
         try:
-            before = scan(workdir)
+            before = scan(workdir, watched_paths)
         except OSError as exc:
             raise InvokeRefusal(KIND_PATH, f"cannot scan working_dir before the call: {exc}") from None
 
@@ -355,7 +454,7 @@ def invoke(
     files: Optional[list] = None
     if workdir is not None and before is not None:
         try:
-            files = diff(before, scan(workdir))
+            files = diff(before, scan(workdir, watched_paths))
         except OSError as exc:
             if failure is None:
                 failure = {"code": CODE_WORKSPACE_SCAN_FAILED, "message": f"cannot scan working_dir after the call: {exc}"}
@@ -411,6 +510,11 @@ def invoke(
             error=failure,
             halt=halt_info,
             params=params,
+            manifest=(
+                {"scope": "watch", "watched_paths": list(watched_paths)}
+                if watched_paths is not None
+                else ({"scope": "all"} if workdir is not None else None)
+            ),
         ),
         outcome,
     )

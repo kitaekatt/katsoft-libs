@@ -26,9 +26,11 @@ distribution is `"package"`: the contracts come from `katsoft-contracts`.
 marketplace's shared library, imports in the same environment. With it, the
 features that need it (the Codex adapter, claudx propagation, skill context,
 the code-review lane) work and the model registry reads the layered config.
-Without it, those features raise `UnsupportedInPackageMode`, Codex
-reachability uses a PATH check, and the model registry reads the shipped
-defaults; point `MODEL_ENDPOINTS_REGISTRY` at a registry file to change them.
+Without it, features that require the shared library raise
+`UnsupportedInPackageMode`, Codex reachability uses a PATH check, and the model
+registry reads the shipped defaults; point `MODEL_ENDPOINTS_REGISTRY` at a
+registry file to change them. The Codex adapter itself works in package mode
+and does not require Claude Code, bootstrap or plugins-kit.
 
 Do not install this distribution into an environment that also holds a
 path-linked copy of the `llm_kit` source tree.
@@ -66,3 +68,48 @@ llm-kit consent set [--scope NAME] --local|--subscription|--metered on|off
 The source lives in the plugins-kit repository (`packages/katsoft-llm-kit/src/llm_kit`).
 Releases are tagged `katsoft-llm-kit-v<version>` in the repository named by the
 `Source` project URL.
+
+## Protocol 2 workspace requests
+
+Protocol 2 accepts optional `images`, `codex_config` and `watch_files` fields.
+`images` is a list of relative paths to existing regular files without symlink
+components. Codex attaches them to the initial prompt with `-i`; adapters without
+image input refuse the request. In workspace mode paths are relative to
+`working_dir`; in completion mode they are relative to `project_root`.
+
+`codex_config` is a closed object. It accepts
+`"shell_environment_policy.inherit": "none"` or `"core"`, and
+`"approval_policy": "never"`. Each field is optional, and omitted fields emit
+no configuration override. Request values override the matching row default in
+`request_defaults.extras.codex_config`. The effective Codex sandbox must be
+`read-only` or `workspace-write` when these options are used. Other keys and
+values are refused; callers cannot pass raw `-c` text through the request.
+
+`watch_files` is an optional, non-empty list of normalized relative POSIX paths
+in workspace mode. The receipt hashes the union of this list and `expect_files`
+by direct file lookup. The result reports `manifest.scope: "watch"` and the
+paths it checked. This scope does not detect writes to unlisted files. Deletions
+are not reported in either `all` or `watch` scope. Omitting `watch_files` keeps
+the full-tree receipt and reports `manifest.scope: "all"`.
+
+Keep `.llm-kit/models.yaml` in the consumer's own worktree, set
+`project_root` to that worktree, and use `watch_files` for a focused receipt.
+For isolated work, prepare a separate project root with its own model file and
+endpoint configuration, then point the request at that root. For example:
+
+```json
+{
+  "protocol": 2,
+  "project_root": "scratch-run",
+  "file": ".llm-kit/models.yaml",
+  "model": "writer",
+  "prompt": "Create the requested files",
+  "mode": "workspace",
+  "working_dir": ".",
+  "watch_files": ["result.md"]
+}
+```
+
+`working_dir` must be the project root or an existing descendant directory,
+with no symlink components. The library does not add an external writable
+directory to Codex.
