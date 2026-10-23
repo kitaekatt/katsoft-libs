@@ -17,7 +17,7 @@ no consent. Codex and Claude models are never blocked.
 - "(5) off by default makes sense, but I want to be cognizent of how do users discover a config layer exists."
 - "we should use local as the term instead of free or maybe endpoints" / "might as well name it well"
 - "(8) you should be able to override it if you want to like say \"for this usage is disabled\". Essentially you can restrict at the thing as well." / "we should provide how to do that"
-- Earlier: "codex and claude models shouldn't be blocked." Library goal: "conceptually we want the libraries to be usable by someone who isn't using an AI harness. ... claude usage isn't required to use the libraries."
+- 2026-10-23: "codex and claude models shouldn't be blocked." Library goal: "conceptually we want the libraries to be usable by someone who isn't using an AI harness. ... claude usage isn't required to use the libraries."
 
 ## 2. Design (amended form)
 

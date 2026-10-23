@@ -320,7 +320,7 @@ User rulings (2026-10-23, verbatim):
 
 > this principle should be durable
 
-Operative rule: katsoft-* libraries enforce no consent gate on calls a caller's code makes. Cost-class classification may be reported as information. This section supersedes any statement that the library refuses a call without consent.
+Operative rule: katsoft-* libraries enforce no consent gate on calls a caller's code makes. Cost-class classification may be reported as information. This section supersedes any statement that the library refuses a call without consent. Callers may opt into the library's optional consent layer; its design is docs/planning/shared-lib-packaging/consent-design.md.
 
 ## Python, bootstrap, marketplace, and guard changes
 
