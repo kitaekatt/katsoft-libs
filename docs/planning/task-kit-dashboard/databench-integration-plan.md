@@ -852,8 +852,8 @@ into the working-tree label file with `fold_labels`, writes it atomically under 
 retires the adopted entries from the overlay, and never stages, commits or pushes (D11). It sits in
 U4, not U5, because it needs only the store primitives above and no git process, and because it must
 work with `publish.labels` off and a Q3 "no", where U5's publisher returns SKIPPED; the unit adds
-the command to `databench:docs/markup-design.md` as D27 and to the README. Checks: a child process
-`python -m databench.cli <fixture repo> generate --label-destination overlay --runner <fake
+the command to `databench:docs/markup-design.md` as D27 and to the README. Checks: a child
+`databench ... generate ...` process for `<fixture repo> --label-destination overlay --runner <fake
 llm-kit>` leaves the tracked file's bytes and mtime unchanged and `git status --porcelain` empty,
 and the overlay holds the labels (revert: stop forwarding the option in `FileSummaries`: the tracked
 file is written, red); the option on a root with no `content_markup:` block writes its cache and no
@@ -1017,7 +1017,7 @@ started once per due phase, and the fake task-kit records one invocation with ea
 once and each task repository reported once (revert: select per root: duplicates, red); the REAL index-pages phase
 runs across two roots: a fixture of two development roots holding leaf repositories with local bare
 origins (a leaf needs no model call, the clean-machine run of the databench notes), one repository
-reachable through both roots, and a child `python -m databench.cli generate --repository ...`
+reachable through both roots, and a child `databench generate --repository ...` process
 leaves exactly one index-pages run record and one push per repository (revert: have `IndexPagesPhase`
 treat the multi-repository scope as one dev root: it is handed one base with another root's names and
 fails, red), with a second test recording the `index_pages_cli.main` argv per member; the existing
