@@ -81,9 +81,8 @@ image input refuse the request. In workspace mode paths are relative to
 `"shell_environment_policy.inherit": "none"` or `"core"`, and
 `"approval_policy": "never"`. Each field is optional, and omitted fields emit
 no configuration override. Request values override the matching row default in
-`request_defaults.extras.codex_config`. The effective Codex sandbox must be
-`read-only` or `workspace-write` when these options are used. Other keys and
-values are refused; callers cannot pass raw `-c` text through the request.
+`request_defaults.extras.codex_config`. Every Codex protocol 2 call requires the effective sandbox to be
+`read-only` or `workspace-write`. Other keys and values are refused; callers cannot pass raw `-c` text through the request.
 
 `watch_files` is an optional, non-empty list of normalized relative POSIX paths
 in workspace mode. The receipt hashes the union of this list and `expect_files`

@@ -302,8 +302,8 @@ hosts, ports or `/v1/models`. An invalid value is noted, treated as false, and
 the entry (even the default) is kept. `billing.mode` (`unmetered` or
 `provider-reported`) is separate and entry-local: `unmetered` is an explicit USD
 zero, `provider-reported` declares native `usage.cost` is USD, omission declares
-neither; `billing.owner: self` (optional) adds the ownership claim that `local` needs. `key_env`
-stays independent of all of them. The keys surface in the `models endpoints` JSON (`frontdoor`,
+neither; `billing.owner: self` (optional) adds the ownership claim that `local`
+needs. `key_env` stays independent of all of them. The keys surface in the `models endpoints` JSON (`frontdoor`,
 and `billing` with `owner` when set; a harness entry's `endpoint`) and in
 `llm_kit.registry.models.resolve_endpoint()` (`frontdoor`, `billing_mode`).
 

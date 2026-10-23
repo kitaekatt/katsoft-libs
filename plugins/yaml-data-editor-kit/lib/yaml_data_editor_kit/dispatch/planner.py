@@ -117,7 +117,7 @@ class AgenticCommentPlanner(MechanicalCommentPlanner):
         except (TypeError, ValueError, OverflowError):
             return mechanical
         selected = route(mock=self.backend) if self.backend is not None else route()
-        model = routed_model(self.policy.model.strip(), backend_name=selected.name).strip()
+        model = routed_model(self.policy.model.strip(), backend_name=selected.name, mock=self.backend).strip()
         if not model and selected.name == "mock":
             model = "mock-model"
         if not model:

@@ -1223,6 +1223,7 @@ def routed_model(
     *,
     backend_name: Optional[str] = None,
     openrouter: Optional[Any] = None,
+    mock: Optional[Any] = None,
     output_contract: Optional[Any] = None,
     models: "Optional[Sequence[str]]" = None,
     project_root: Optional[str] = None,
@@ -1238,19 +1239,23 @@ def routed_model(
     entry cannot run an OpenRouter slug, and an empty request defers to the
     declaration).
 
-    With no explicit declaration, an explicitly supplied ``openrouter``
-    instance (as for :func:`route`) is preserved and never raises: that
-    backend runs ``requested_model``. With neither a declaration nor a
+    A supplied ``mock`` wins first, as in :func:`route`: it runs
+    ``requested_model``. With no explicit declaration, an explicitly supplied
+    ``openrouter`` instance (as for :func:`route`) is preserved and never
+    raises: that backend runs ``requested_model``. With neither a declaration nor a
     supplied backend, the configured default declaration selects the entry,
     and when there is none this raises ``ConfigurationError`` rather than
     returning an implicit OpenRouter model. ``backend_name`` does not
     select anything: it is accepted for call-site compatibility and ignored.
-    The returned id is what lands on ``LLMResponse.model`` and therefore on audit records.
+    The returned id is what lands on ``LLMResponse.model`` and therefore on
+    audit records.
 
-    Pass the same ``models``, ``openrouter`` and ``output_contract`` given to
+    Pass the same ``models``, ``openrouter``, ``mock`` and ``output_contract`` given to
     :func:`route`: a contract can select a different entry, and the model
     must be that entry's.
     """
+    if mock is not None:
+        return requested_model
     _refuse_removed_routing_env(models)
     names = declared_model_names(models)
     if names is None and openrouter is not None:

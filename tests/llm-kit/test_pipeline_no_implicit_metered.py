@@ -92,3 +92,11 @@ def test_routed_model_without_declaration_or_backend_still_fails(monkeypatch):
 
     with pytest.raises(backends.platform.ConfigurationError, match="default_endpoint"):
         backends.routed_model("vendor/model-x")
+
+
+def test_routed_model_for_injected_mock_works_without_a_declaration(monkeypatch):
+    backends = _no_default(monkeypatch)
+    mock = backends.MockBackend()
+
+    assert backends.route(mock=mock) is mock
+    assert backends.routed_model("slug/model", mock=mock) == "slug/model"

@@ -124,8 +124,9 @@ for an in-session caller:
   command the line names. Native Agent-tool (Claude) entries take their class from the
   session environment (a billing-diverting variable such as `ANTHROPIC_API_KEY` makes them
   `metered`, otherwise `subscription`) and are never probed; codex entries take the codex
-  CLI's authentication state. Without llm-kit, or with an unreadable consent file, the
-  render says the scope was not applied and shows no cost class.
+  CLI's authentication state. Without llm-kit, or when its describe() fails, the
+  render says the scope was not applied and shows no cost class. An unreadable consent
+  file fails closed: the render shows no routing rows and names the file to fix.
 - Entries with a pace reading (quota remaining divided by window remaining) are re-sorted,
   highest pace first; entries without one keep their declared places. The first usable entry
   is marked `[default]`, and an entry matching `--self` is marked `[author]`.
