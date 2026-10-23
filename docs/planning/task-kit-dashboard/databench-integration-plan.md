@@ -762,7 +762,7 @@ of the waves: `generate_cli.py` U4, U3b, then U7; `service_cli.py` U1, U8, U5; `
 | U10 release | none, except `generation.py` and its defaults test for the one `PUBLISH_LABELS_DEFAULT` line when Q3 is answered after U5 has run (verification and publication otherwise) | all | none |
 
 Before the user answers anything, every unit but U3b (and the U7 and U10 that follow it) can
-proceed; U3b waits for Q2 and Q4. Q3 gates no unit: it sets the shipped default of `publish.labels` (a constant in
+proceed; U3b is unblocked (Q2 and Q4 answered yes, 2026-10-23). Q3 gates no unit and is answered no (`publish.labels` ships OFF): it sets the shipped default of `publish.labels` (a constant in
 `generation.py`, off in U1; a yes flips it in U5 when the answer exists by the time U5 starts, otherwise
 in U10, which owns only that line and its defaults test for that case, in one commit). Option chosen over making U7's dependency on
 U5 conditional, because a conditional dependency leaves U7 with a branch that a "no" never
@@ -1182,6 +1182,7 @@ repository's index pages stale"; that overstated it.
   M7-U3b. The service and a hand run take the same path, so one rule holds. [Yes: the same filter,
   and a refused operation prints which class to enable in the settings; a second rule for hand runs
   would need a second switch.]
+  **Answered (Q2).** User, 2026-10-23, verbatim: "Agree with 1-4 explain 5". Decision: yes; the consent filter applies to a hand-run `generate` and `markup-refresh`. U3b is unblocked by Q2.
 - **Q3. May databench push label commits to an opted-in repository's base branch unattended?** Gates
   no unit. A `content_markup:` block opts a root into tracked storage, D11 says databench never
   pushes, and index pages pushing their output is not a ruling for this. The publisher pushes only from a checkout that is on origin's default branch, not to the current
@@ -1191,9 +1192,11 @@ repository's index pages stale"; that overstated it.
   touching only the label file; a rejected push keeps the overlay and shows in "Last runs". On a
   no, labels stay in the overlay, visible on this machine, and `databench markup-adopt` folds them
   into the working-tree file for the owner's own commit, as in M6.]
+  **Answered (Q3).** User, 2026-10-23, verbatim: "Agree with 1-4 explain 5". Decision: agreed with the recommendation "No for now; it ships off until you say yes"; `publish.labels` ships OFF and U5's default stays OFF.
 - **Q4. Does consent replace the `harnesses:` switch in `generate.yaml`?** Gates M7-U3b. With
   llm-kit 1.0.0 both harness adapters have a text-only mode, and the usage class already gates them.
   [Yes: drop the switch (v2 file); a v1 file is read with a note.]
+  **Answered (Q4).** User, 2026-10-23, verbatim: "Agree with 1-4 explain 5". Decision: yes; consent replaces the `harnesses:` switch (v2 file; a v1 file is read with a note). U3b is unblocked by Q4.
 - **Q5. How much task-answer work may the service start?** Does not gate; M7-U6 ships the defaults.
   Each hourly cycle answers at most 4 tasks per task repository (every pending question of each),
   stops after 30 minutes, and uses only the consented classes. [Those defaults; the 95 pending
