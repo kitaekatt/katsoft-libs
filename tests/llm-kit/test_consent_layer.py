@@ -301,7 +301,7 @@ def test_the_request_schema_describes_the_consent_field():
 _REGISTRY = """\
 default: lan
 models:
-  lan: {base_url: http://lan.invalid/v1, model: m-lan, billing: {mode: unmetered}}
+  lan: {base_url: http://lan.invalid/v1, model: m-lan, billing: {mode: unmetered, owner: self}}
   paid: {base_url: http://paid.invalid/v1, model: m-paid}
   cl: {harness: claude, model: opus, tier: 2, family: alpha}
 """

@@ -68,6 +68,8 @@ from .model_endpoints import (
     effort_delivery,
     harness_entry_message,
     parse_billing_mode,
+    parse_billing_owner,
+    parse_harness_endpoint,
     parse_classification_fields,
     parse_effort_style,
     parse_frontdoor,
@@ -563,6 +565,13 @@ def _config_model_entry(
             tier=tier,
             family=family,
             conserve_usage=_config_conserve(ep_name, ep),
+            endpoint=parse_harness_endpoint(
+                ep,
+                source="layered model config",
+                entry_id=ep_name,
+                harness=_config_required_str(ep_name, ep, kind=kind, key="harness"),
+                notes=notes if notes is not None else [],
+            ),
         )
 
     if "model" not in ep:
@@ -587,6 +596,12 @@ def _config_model_entry(
         conserve_usage=_config_conserve(ep_name, ep),
         frontdoor=_config_frontdoor(ep_name, ep, notes),
         billing_mode=_config_billing_mode(ep_name, ep, notes),
+        billing_owner=parse_billing_owner(
+            ep,
+            source="layered model config",
+            entry_id=ep_name,
+            notes=notes if notes is not None else [],
+        ),
         effort_style=effort_style,
         effort_style_declared=effort_style_declared,
     )

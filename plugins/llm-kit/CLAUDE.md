@@ -302,8 +302,9 @@ hosts, ports or `/v1/models`. An invalid value is noted, treated as false, and
 the entry (even the default) is kept. `billing.mode` (`unmetered` or
 `provider-reported`) is separate and entry-local: `unmetered` is an explicit USD
 zero, `provider-reported` declares native `usage.cost` is USD, omission declares
-neither. `key_env` stays independent of both. Both keys surface in the
-`models endpoints` JSON (`frontdoor`, and `billing` when set) and in
+neither; `billing.owner: self` (optional) adds the ownership claim that `local` needs. `key_env`
+stays independent of all of them. The keys surface in the `models endpoints` JSON (`frontdoor`,
+and `billing` with `owner` when set; a harness entry's `endpoint`) and in
 `llm_kit.registry.models.resolve_endpoint()` (`frontdoor`, `billing_mode`).
 
 **A usage pool is DECLARED or defaulted, never derived from the model.** An entry
@@ -1150,9 +1151,14 @@ catalog row carries `cost` as `{class, reason}`, and a protocol 2 response carri
 Classification fails closed, so an entry that cannot be shown to be `local` or `subscription` is
 `metered`; the name says billing is paid or unverified, never that a charge occurred.
 
-- **`local`**: a transport whose `billing.mode` is `unmetered`, and a front-door entry whose every
-  tier (the transports with the same `routing.group`) is unmetered. The front door's own `billing`
-  does not count, and a front door with no tiers is `metered`.
+- **`local`**: a transport whose registry entry declares `billing: {mode: unmetered, owner: self}`,
+  and a front-door entry whose every tier (the transports with the same `routing.group`) does.
+  `billing.mode: unmetered` states marginal cost, not ownership (a provider free tier is unmetered
+  too), so an unmetered entry without `owner: self` is `metered` (billing unverified). The front
+  door's own `billing` does not count, and a front door with no tiers is `metered`. A harness
+  entry other than claude and codex that declares `endpoint: <transport entry id>` takes that
+  entry's class (a front door counts every tier); an `endpoint` that is missing or not a transport
+  is `metered`, and its reason names it. Without an `endpoint` an opencode entry is `metered`.
 - **`subscription`**: a `claude` or `codex` harness running on a subscription session pool. Its
   authentication is probed, never assumed (`llm_kit.adapters.harness_auth`):
   - `claude`: any billing-diverting variable set and non-empty (`ANTHROPIC_API_KEY`,

@@ -171,6 +171,7 @@ def T(entry_id, unmetered=False):
     return EndpointEntry(
         id=entry_id, base_url=f"http://{entry_id}.invalid/v1", model=f"{entry_id}-model",
         billing_mode="unmetered" if unmetered else None,
+        billing_owner="self" if unmetered else None,
     )
 
 

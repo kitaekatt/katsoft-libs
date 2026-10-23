@@ -404,12 +404,18 @@ def _entry_json(entry: Any) -> dict[str, Any]:
     result = {"kind": entry.kind, "model": entry.model, "name": entry.name}
     if entry.kind == "harness":
         result.update({"harness": entry.harness, "effort": entry.effort})
+        endpoint = getattr(entry, "endpoint", None)
+        if endpoint is not None:
+            result["endpoint"] = endpoint
     else:
         result.update({"base_url": entry.base_url, "key_env": entry.key_env})
         result["frontdoor"] = bool(getattr(entry, "frontdoor", False))
         billing_mode = getattr(entry, "billing_mode", None)
         if billing_mode is not None:
             result["billing"] = {"mode": billing_mode}
+            billing_owner = getattr(entry, "billing_owner", None)
+            if billing_owner is not None:
+                result["billing"]["owner"] = billing_owner
         # The declared default and whether a direct call can deliver it; the
         # openrouter family record keeps `effort` dropped for an endpoint
         # nothing is known about, so this is the per-endpoint half.

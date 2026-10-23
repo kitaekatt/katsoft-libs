@@ -114,7 +114,7 @@ def _parser() -> argparse.ArgumentParser:
     show.add_argument("--json", action="store_true", help="Print one JSON object.")
     setter = sub.add_parser("set", help="Change the policy; a flag not given keeps its value.")
     setter.add_argument("--scope", help="Change the named scope instead of the global policy (a scope can only restrict).")
-    setter.add_argument("--local", choices=("on", "off"), help="Allow local (unmetered local transport) operations.")
+    setter.add_argument("--local", choices=("on", "off"), help="Allow local (declared unmetered and self-owned endpoint) operations.")
     setter.add_argument("--subscription", choices=("on", "off"), help="Allow subscription (claude or codex session pool) operations.")
     setter.add_argument("--metered", choices=("on", "off"), help="Allow metered (paid or unverified billing) operations.")
     return parser

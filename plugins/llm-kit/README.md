@@ -56,7 +56,7 @@ that a charge occurred.
 
 | Class | Meaning |
 |---|---|
-| `local` | A transport with `billing.mode` `unmetered`, or a front door whose every tier is unmetered (a front door with no tiers is `metered`). |
+| `local` | A transport declared `billing: {mode: unmetered, owner: self}`, a front door whose every tier is, or an opencode harness entry whose `endpoint` names one (a front door with no tiers is `metered`; `unmetered` without `owner: self` is `metered`, because the billing mode states cost, not who owns the hardware). |
 | `subscription` | A `claude` or `codex` harness on a subscription session pool. |
 | `metered` | Everything else: a metered transport, an undeclared entry, any other harness, or a harness whose authentication is metered or unknown. |
 

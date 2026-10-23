@@ -918,6 +918,17 @@ models:
     frontdoor: true             # strict boolean; omitted means false
     billing:
       mode: unmetered           # or provider-reported; omitted declares neither
+      owner: self               # optional; the hardware is yours (see below)
+```
+
+An opencode harness entry names the transport entry it runs on:
+
+```yaml
+models:
+  qwen38-5090-harness:
+    harness: opencode
+    model: qwen5090-local/qwen38-5090x   # opaque; passed verbatim to opencode
+    endpoint: qwen38-5090                # a transport entry id; optional
 ```
 
 - `frontdoor: true` says only that `base_url` is a front
@@ -929,8 +940,20 @@ models:
   `provider-reported` declares that the endpoint's native `usage.cost` is USD.
   An invalid `billing` value is noted and ignored. A front-door group entry
   does not carry `unmetered`; the serving deployment decides.
-- Both appear in the `endpoints` JSON (`frontdoor`, and `billing` when set) and
-  in `resolve_endpoint()` (`frontdoor`, `billing_mode`).
+- `billing.owner: self` is your statement that the endpoint runs on hardware you
+  own. The cost class `local` needs it together with `mode: unmetered`; an
+  unmetered entry without it classifies `metered` (billing unverified). The only
+  accepted value is `self`; an invalid one is noted and ignored.
+- `endpoint:` on a harness entry (any harness except `claude` and `codex`, whose
+  class follows their authentication) gives the entry the cost class of that
+  transport entry; a front door counts every tier. A non-string value is a
+  registry error. An id that is missing from the merged entries, or that names
+  a harness entry, classifies `metered` with a reason naming it. The reference
+  asserts that the harness's own provider configuration points there; nothing
+  verifies it.
+- `frontdoor` and `billing` (with `owner` when set) appear in the `endpoints`
+  JSON, `endpoint` appears on a harness entry that declares one, and
+  `resolve_endpoint()` returns `frontdoor` and `billing_mode`.
 
 #### Reported cost
 

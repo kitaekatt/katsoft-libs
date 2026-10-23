@@ -29,12 +29,13 @@ from llm_kit.registry.model_endpoints import (
 )
 
 
-def transport(eid, *, billing=None, group=None, frontdoor=False, model="m"):
+def transport(eid, *, billing=None, owner=None, group=None, frontdoor=False, model="m"):
     return EndpointEntry(
         id=eid,
         base_url="http://h/v1",
         model=model,
         billing_mode=billing,
+        billing_owner=owner,
         frontdoor=frontdoor,
         routing=RoutingConfig(group=group) if group else None,
     )
@@ -94,7 +95,7 @@ def test_harness_name_case():
 def test_frontdoor_all_tiers():
     door = transport("door", billing="unmetered", frontdoor=True, model="g")
     metered_tier = transport("t2", group="g")  # no billing declared
-    free_tier = transport("t1", billing="unmetered", group="g")
+    free_tier = transport("t1", billing="unmetered", owner="self", group="g")
     entries = {e.id: e for e in (door, free_tier, metered_tier)}
     verdict = classify(door, entries=entries)
     assert verdict.cost_class == METERED  # the entry's own billing does not count
@@ -116,7 +117,7 @@ def test_frontdoor_no_tiers_is_metered():
 
 
 def test_plain_transport():
-    assert cost_class(transport("a", billing="unmetered")) == LOCAL
+    assert cost_class(transport("a", billing="unmetered", owner="self")) == LOCAL
     assert cost_class(transport("a")) == METERED
     assert cost_class(transport("a", billing="provider-reported")) == METERED
 
@@ -209,7 +210,7 @@ def test_a_metered_reason_does_not_claim_a_charge_occurred():
 
 def test_every_verdict_carries_a_reason():
     verdicts = [
-        classify(transport("a", billing="unmetered")),
+        classify(transport("a", billing="unmetered", owner="self")),
         classify(harness("h", "codex"), harness_auth={"codex": auth(SUBSCRIPTION, "chatgpt login")}),
         classify(None),
     ]

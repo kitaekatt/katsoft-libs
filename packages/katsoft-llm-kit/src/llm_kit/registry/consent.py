@@ -7,8 +7,9 @@ may choose to apply. Nothing here is consulted unless a caller opts in -- protoc
 request field ``consent``, ``llm-kit models describe --consent``, or the API call
 :func:`policy`. A caller may instead build its own layer and ignore this one.
 
-Classes: ``local`` (unmetered local transports), ``subscription`` (a harness on a
-subscription session pool) and ``metered`` (paid or unverified billing).
+Classes: ``local`` (a transport declared unmetered AND self-owned, or a harness running on
+one), ``subscription`` (a harness on a subscription session pool) and ``metered`` (paid or
+unverified billing).
 
 Policy
 ------
