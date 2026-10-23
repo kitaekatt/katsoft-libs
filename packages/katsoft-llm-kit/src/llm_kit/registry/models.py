@@ -85,7 +85,6 @@ DEFAULT_ENDPOINT_NAME = "openrouter"
 # ``defaultCheap`` so it inherits the top-level registry below -- that is what
 # preserves back-compat for existing top-level-only config.yaml files.
 DEFAULT_MODEL_CONFIG = {
-    "default_endpoint": "openrouter",
     "endpoints": {
         "openrouter": {
             "base_url": "https://openrouter.ai/api/v1",
@@ -356,9 +355,8 @@ def default_declaration(
 ) -> list:
     """The default model declaration: ``default_endpoint`` read as a declaration.
 
-    Shipped, this is ``["openrouter"]``: one transport entry whose own
-    ``default`` / ``defaultCheap`` selectors pick the model, so a caller that
-    names no model keeps the meaning ``default_endpoint`` always had. It may
+    The shipped baseline has no default declaration. A user or project may
+    deliberately set ``default_endpoint`` to one or more registry ids. It may
     be written as a list of registry ids. Structural validation is
     ``bootstrap_lib.model_declaration.parse`` (a ``DeclarationError`` for an
     empty or duplicated list); whether an id resolves is decided at dispatch.
@@ -367,7 +365,10 @@ def default_declaration(
     from .declaration_syntax import _model_declaration  # noqa: PLC0415
 
     cfg = config if config is not None else load_model_config(project_root=project_root)
-    return _model_declaration().parse(_default_endpoint_value(cfg))
+    value = cfg.get("default_endpoint")
+    if value is None or value == "":
+        return []
+    return _model_declaration().parse(value)
 
 
 def is_model_alias(
