@@ -1,8 +1,9 @@
 # databench integration plan: a modular databench with a tasks module (2026-10-22)
 
 Status: plan only (units `revise-databench-plan-modules` and `fix-databench-plan-xcheck`,
-2026-10-22; the second applies a codex/sol cross-check of `b7e92e26`). No code changed. This
-revision replaces the stage plan committed as `adced200` (stages S2 to S6 and a consent-default
+2026-10-22; the second applies a codex/sol cross-check of `b7e92e26`). No code changed. M7 was re-planned on
+2026-10-22 against databench `b526cab` and task-kit 0.17.0 (its section states the code facts).
+This revision replaces the stage plan committed as `adced200` (stages S2 to S6 and a consent-default
 stage); section 9 says what was dropped. Code facts are as of plugins-kit dev `adced200`
 (task-kit 0.13.0, llm-kit 0.4.0) and databench `902d6ef`. plugins-kit paths are
 repository-relative; databench paths start with `databench:`.
@@ -120,11 +121,11 @@ disabled module is never imported (eagerly, lazily or by literal `importlib`).
 
 | Part | Files (databench `src/databench/`) | Why |
 |---|---|---|
-| core: host | `cli.py` (front door), `server.py` (app shell), `modules_registry.py` (added), `module_manifest.py` (added), `path_sources.py`, `generation.py`, `llm_gateway.py`, `service.py`, `background.py` (added in M1 or M7) | runs the process and loads enabled modules |
+| core: host | `cli.py` (front door), `server.py` (app shell), `modules_registry.py` (added), `module_manifest.py` (added), `path_sources.py`, `llm_gateway.py`, `generation.py` (added in M7-U1), `service_cli.py` (added in M7-U1), `background.py` (added in M7-U7) | runs the process and loads enabled modules |
 | core: workspace | `projects.py`, `dev_roots.py` (+ `dev_roots.yaml`), `roots.py`, `filesystem.py` (root resolution, exact spelling, reads), `paths.py`, `ignore_rules.py`, `path_walk.py`, `store.py`, `system_viewer.py`, `workspace_scope.py` (added in M1: which repositories `generate` covers) | every module resolves projects, paths and repositories the same way |
 | core: access | `remote_access.py` | one access policy |
 | core: comments | `comments.py`, `comment_locations.py` | ruling (2) |
-| core: file summaries | `markup.py` (label store, work list, generation through `llm-kit jobs`), `generate_config.py`, `generate_cli.py` (the `generate` front door over core's and the modules' generation phases) | ruling (1); the html module's run state already shares markup's cache root and lock |
+| core: file summaries | `markup.py` (label store, work list, generation through `llm-kit jobs`), `label_publisher.py` (added in M7-U5), `generate_config.py`, `generate_cli.py` (the `generate` front door over core's and the modules' generation phases) | ruling (1); the html module's run state already shares markup's cache root and lock |
 | core: raw read | the raw route and its CSP contract | explorer's viewers and html's page viewer both read raw |
 | explorer | `entities.py`, `entity_edit.py`, `explorer_module.py` (added); browse, tree, context and raw-write routes; entity CLI operations; entity declarations, loaded through explorer's root loader; viewer components | browsing and editing |
 | html | every `index_pages*.py`, `index_pages_refs/`, `assets/`, `html_module.py` (added) | index pages |
@@ -208,7 +209,7 @@ contributor, and no web view (its page viewer is used inside explorer's file vie
 | 4 | M4 Web module split | databench | M2 | none in behavior; a disabled module's web code is no longer downloaded | module files sit in `web/src/modules/`, but the shell still imports them, held by the web allowlist |
 | 5 | M5 Task answers | plugins-kit (task-kit), databench, claude-settings | M2 | the detail lenses show orientation and decisions answers with answerer, as-of commit and a stale marker; `task.py answers refresh` | answers refreshed by hand or by `task review` |
 | 6 | M6 Shared file summaries | databench | M1 | file summaries tracked in `.databench/`, shared through git | summaries shared; nothing regenerates in the background |
-| 7 | M7 Generation service | databench, plugins-kit (task-kit hook), claude-settings | M1, M5, M6 | an always-on service; settings panel with regeneration (on by default, type drop-down, all types by default), usage (on by default) and spend (off by default); summaries, index pages and task answers stay fresh | (end of planned work) |
+| 7 | M7 Generation service | databench, plugins-kit (task-kit hook), claude-settings | M1, M5, M6 (landed); M7-U0 gates U4 and U5 | the always-on server runs the generation phases; a settings panel with regeneration (on by default, type drop-down, all types selected), usage (on by default) and spend (off by default); unattended label runs publish through a private worktree; `databench ensure` and a task-kit hook start the server | (end of planned work) |
 | 8 | M8 Running work on tasks (deferred stub) | -- | a user need (q3) | -- | -- |
 
 M1 carries the whole backend extraction of explorer and html, because the tasks module must ship
@@ -677,7 +678,7 @@ checks with these changes:
   CLASSES] [--batch N] [--stop-file PATH] [--deadline-s N]` (kind `answers-pass`) and `task-kit
   answers status --format json --protocol N`, under the export's stdout, stderr, exit-code and
   error-code rules (M2). A stop file ends the pass between phases.
-- **U6** (service) becomes M7's `task-answers` operation; **U8** (dashboard UI) becomes M5-U8.
+- **U6** (service) becomes M7-U6 (the `task-answers` phase) and M7-U7 (the loop); **U8** (dashboard UI) becomes M5-U8.
 - **M5-U8 answers in the tasks module** (databench web; after U2 is published). Owns the lens
   components in `databench:web/src/modules/tasks/`: Orient shows the orientation answer, Decide
   the decisions with their stated defaults, Trace the task-record commits and activity; each
@@ -686,59 +687,248 @@ checks with these changes:
 
 ### M6 Shared file summaries
 
-The databench task `shared-generated-content`, items `design-amendment` and `tracked-label-store`:
-summaries move from `~/.cache/databench/markup/<key>/labels.json` into `.databench/`. Owns
-`databench:src/databench/markup.py` (core) and `databench:docs/markup-design.md`. It keeps
-`_cache_root` and `_file_lock` and their meaning, because the fingerprinted `index_pages_cli.py`
-imports them. M7's file-summary operation runs by default on more than one machine only after
-this lands, otherwise every machine pays for the same summaries.
+**Landed (databench `2a300be..b526cab`; status BUILT in `databench:docs/markup-design.md`, "V4
+amendment"):** summaries of a root whose `content_markup:` block is present live in
+`.databench/markup-labels.jsonl`; `_cache_root` and `_file_lock` keep their meaning, so no
+fingerprinted file changed. D11 there: databench never stages, commits or pushes the file. The
+amendment's "Prerequisite for M7's multi-machine default" (an overlay plus a publisher in a private
+worktree) is M7-U0, U4 and U5.
 
 ### M7 Generation service (core)
 
-**M7-U1 settings and consent.** Owns `databench:src/databench/generation.py` (added):
-`<config root>/databench/generation.json` `{"schema": 1, "regeneration": {"enabled": bool,
-"types": [operation ids]}, "consent": {"usage": bool, "spend": bool}, "updated_at": ...}`. Absent
-file: regeneration on with every registered type (q6, "It all is by default"); usage on and
-spend off ("databench ships with usage on spend off").
-`GET` and `PUT /api/v1/generation-settings` (write header; local clients only). A core settings
-panel holds the regeneration toggle, the type drop-down (operations of enabled modules) and the
-usage and spend checkboxes with the providers they send text to. `generate.yaml` v2 drops
-`harnesses`; a v1 file's harness keys are ignored with a note. Checks: absent file yields the
-shipped defaults; a remote `PUT` is refused.
+Re-planned 2026-10-22 against what shipped (databench `b526cab`, task-kit 0.17.0, katsoft-llm-kit
+1.0.0). Nothing of M7 is built. The user's words that bind it are in section 1 and are not
+restated here: "databench ships with usage on spend off", "It all is by default" (regeneration
+types), task-kit "entirely functional as it is today without the dashboard running", and no spend
+control in the tasks view ("we have databench to configure spend"). Section 8 holds the questions.
 
-**M7-U2 consent applied through llm-kit.** Owns `databench:src/databench/llm_gateway.py`
-(`filter_models(ids, allowed) -> Filtered(usable, switched_off)`, one `llm-kit models describe
-<ids> --caller process --allow <classes> --json` per operation pass) and its call sites in
-`generate_cli.py` and `markup.py`; `databench:.claude/bootstrap.json` raises llm-kit's
-`min_version` to 0.4.0 (the first with `--allow`), with distinct absent and too-old messages.
-The html operation receives already-filtered phase lists from `generate_cli`, so no fingerprinted
-file changes. An operation whose list filters to empty is skipped with a status line, not exit 2.
-llm-kit is not changed.
+**What shipped that changes the plan.**
+- Databench starts as a detached background server (`cli.py` `_start_detached`,
+  `--stop`, `--status`, `--restart`, log at `server_log_path(port)`; the server names its pid in
+  `/api/v1/instance`). The earlier `databench service ensure|stop|status|run` family, psutil and a
+  second identity protocol are dropped: the server is the service, and M7 adds an `ensure`
+  operation, the loop inside the server, and settings.
+- Databench runs from its own venv on the released packages (`6baf09b`, `3975519`, `d6ccdfd`):
+  `pyproject.toml` pins `katsoft-llm-kit[sdk,jobs,config]==1.0.0` and `katsoft-contracts==1.0.0`;
+  `llm_gateway.resolve_llm_kit` is the `llm-kit` console script beside `sys.executable`;
+  `.claude/bootstrap.json` keeps only the task-kit plugin ref (`min_version` 0.17.0). No llm-kit
+  floor is raised and no bootstrap manifest edit is needed.
+- M6 landed (`2a300be..b526cab`): `.databench/markup-labels.jsonl` for roots whose
+  `content_markup:` block is present. D11 of `databench:docs/markup-design.md`: databench never
+  commits it, and the "Prerequisite for M7's multi-machine default" gates M7-U7 (below).
+- task-kit 0.17.0 has no dashboard and serves `task-kit answers refresh|status|prune`; the pass
+  commits and publishes its own answer files, so tasks need no publisher.
 
-**M7-U3 service lifecycle.** Owns `databench:src/databench/service.py` (added), `cli.py`
-(`databench service ensure|stop|status|run [--json]`; bare `databench` ensures the service and
-opens the browser; `--dev` stays foreground), `databench:pyproject.toml` (psutil),
-`databench:tests/test_service.py`. Identity, stop protocol and checks as in the previous
-revision's S3-U1 (adapted from task-kit's `procspawn` and `procstamp` design).
+**Shape.** Core gains `generation.py` (settings), `service_cli.py` (`generation` and `ensure`
+operations), `label_publisher.py` and `background.py`; the tasks module gains a generation phase.
+The loop runs each selected phase of each enabled module as a child process of the server,
+`<this interpreter> -m databench.cli <dev root> generate --skip <every other phase>`, so a phase
+is killable, its output goes to the server log, and `generate`'s own checks, scope selection and
+consent filter (M7-U3) are the only code path, by hand or by service. A regeneration type id is a
+phase id (`file-summaries`, `index-pages`, `task-answers`). Fingerprint rule (section 6): no added
+file is named `index_pages*.py`, and no unit edits a fingerprinted file; each unit's verification
+runs the verifier.
 
-**M7-U4 background loop.** Owns `databench:src/databench/background.py` (added) and the startup
-wiring in `server.py` (markup launch stderr to the service log, replacing DEVNULL at
-`server.py:676-681`). Its operations are M1's generation phases, and a regeneration type id is a
-phase id. It runs each selected phase of each enabled module: file summaries
-(core), index pages (html; per repository after its origin HEAD moves, at most once per 24 h),
-task answers (tasks; `task-kit answers refresh --format json --protocol N --allow <databench
-consent> --stop-file <service dir>/stop`). Checks: regeneration off runs nothing; a deselected type does
-not run; a disabled module's operation is never registered.
+**Units** (owns / depends). Waves: W1 U0 and U1; W2 U3, U4 and U6; W3 U2 and U5; W4 U7 and U8; W5
+U9; W6 U10. Units in one wave share no file; `service_cli.py` is edited by U1, then U5, then U8.
 
-**M7-U5 triggers and wording.** Owns `plugins/task-kit/hooks/hooks.json` and
-`plugins/task-kit/hooks/sessionstart/databench-ensure.sh` (async `startup`, `resume`, `clear`;
-runs `databench service ensure` when on PATH; absent or failing databench logs one line and exits
-0), `tests/task-kit/test_databench_ensure_hook.py`; claude-settings `USER-PREFERENCES.md`
-insight `generated_index_pages` (the regeneration switch and its types are the user's discretion;
-agents do not regenerate by hand).
+| Unit | Owns | Depends |
+|---|---|---|
+| U0 publisher design | `databench:docs/markup-design.md` ("V5 amendment") | none |
+| U1 settings store and CLI | `generation.py`, `service_cli.py`, settings routes in `server.py`, one dispatch line in `cli.py` | none |
+| U2 settings panel | `web/src/settings.tsx` (+ tests), route in `main.tsx`, `routes.ts` | U1, U3 |
+| U3 consent applied | `llm_gateway.py`, `generate_cli.py`, `generate_config.py`, the `markup-refresh` branch of `cli.py`, a providers route in `server.py` | U1 |
+| U4 label overlay | `markup.py` | U0 |
+| U5 label publisher | `label_publisher.py`, the `labels publish` operation in `service_cli.py` | U0, U4 |
+| U6 task-answers phase | `tasks_host.py`, `tasks_module.py` | U1 |
+| U7 background loop | `background.py`, startup and shutdown wiring in `server.py`, status route, "Last runs" block in `settings.tsx` | U1, U3, U5, U6 |
+| U8 ensure | `service_cli.py` (`ensure`) | U1, U5 (same file), and the concurrent session's `cli.py` background tests landed |
+| U9 hook and wording | `plugins/task-kit/hooks/`, task-kit version and README, claude-settings `USER-PREFERENCES.md` | U8 |
+| U10 release | none (verification and publication) | all |
 
-**M7-U6 release.** Windows smoke over ssh (detached service survives the starting session; stop
-works) or ship with the gap stated; git-code-review; databench push; `publish.py --only task-kit`.
+Every check below names the revert that must turn it red.
+
+**M7-U0 publisher design.** Docs only: a "V5 amendment: the label publisher" in
+`databench:docs/markup-design.md`, which supersedes D11 for service runs and keeps it for hand runs.
+It decides, each with a premise mark: (1) the overlay: `<user cache>/databench/markup/<key>/overlay.jsonl`
+in D3's format (`serialize_labels` / `parse_labels` unchanged), written by service runs only; (2) the
+read view: tracked file under overlay, the winner per path by D5's rule; (3) draining: the publisher
+fetches, takes the origin base tip's copy of the label file, folds the overlay entries into it (D5
+duplicate rule), and drops each overlay entry whose line the tip already holds, so the overlay is
+stateless and a second machine's identical fold is a no-op; (4) the publisher works in a private
+detached worktree of the fetched base tip, commits only the label file, pushes fast-forward only,
+retries once after a fetch, keeps the overlay on any failure, and removes the worktree in a
+`finally` (no kept worktree and no salvage: the overlay is the durable state); (5) repositories:
+tracked-mode roots with an `origin` and an attached HEAD; (6) the checkout, its index and its tracked
+file are never read for the fold and never written; (7) where the shared logic duplicates
+`index_pages_worktree` helpers (`base_branch`, `has_origin`, `_git`), the copy lives in
+`label_publisher.py` and joins the batch of section 6.5. Checks: the doc-consistency tests stay
+green; ASCII; the fingerprint verifier reports unchanged.
+
+**M7-U1 settings store and CLI.** `generation.py` owns `<config root>/databench/generation.json`
+`{"schema": 1, "regeneration": {"enabled": bool, "disabled_types": [phase ids]}, "consent":
+{"usage": bool, "spend": bool}, "updated_at": ...}`; it records the DESELECTED types, as
+`modules.json` schema 2 records the disabled modules, so a phase added later is on ("It all is by
+default"). An absent file yields regeneration on, no disabled type, usage on, spend off. Strict:
+unknown keys, wrong types and a different schema are loud errors naming the file. Interface:
+`load() -> GenerationSettings`, `save(settings)`, `consent_classes(settings) -> frozenset`
+(always contains `free`), `selected_phases(settings, registered_ids) -> tuple`, and
+`stop_file_path()` (read from the environment variable the loop sets, else None).
+`GET` and `PUT /api/v1/generation-settings` (write-intent header; the PUT is local-only under
+`remote_access`; the GET lists `types: [{id, title, module}]` from the host's registered phases).
+`databench generation show|set [--regeneration on|off] [--type ID on|off]... [--usage on|off]
+[--spend on|off]` in `service_cli.py`. Checks: an absent file yields the shipped defaults (revert
+`DEFAULTS` to usage off: red); a remote PUT is refused (revert the local-only decoration: red); a
+PUT without the header is refused (revert `write=True`: red); a deselected type of a disabled module
+survives a save; a type added after a save is selected.
+
+**M7-U2 settings panel.** A core shell page (`web/src/settings.tsx`, reached from the header): the
+regeneration toggle, the type drop-down (every registered phase, all selected), and the usage and
+spend checkboxes, each listing the model ids and providers it would let generation use (from U3's
+providers route). It writes through U1's PUT. Checks: vitest for each control and for an unselected
+type round trip (revert the payload mapping: red); the browser gate of M2-U4 (desktop and Pixel 7)
+over a fixture server; the tasks view still has no spend or regeneration control (the existing
+module test).
+
+**M7-U3 consent applied through llm-kit.** `llm_gateway.filter_models(ids, allowed) -> Filtered(usable,
+switched_off)` runs one `llm-kit models describe <ids> --caller process --allow <classes> --json`
+per operation pass through the console script beside `sys.executable`. Both shapes of llm-kit 1.0.0
+are read: a usable target answers on stdout with `rendered_entries` and `switched_off`; no usable
+target writes `{"error": {"dispositions": [...]}}` to stderr with stdout empty and exit 1, and a
+disposition of `"switched-off"` is a consent outcome while any other disposition (an unknown id) is a
+loud error. `generate_cli.main` filters the `models` dict once, from `generation.consent_classes`,
+before any phase runs, so the html module's phases receive filtered lists and no fingerprinted file
+changes; the `markup-refresh` operation filters the endpoint list it is given (the path the server's
+on-open refresh uses). A list that filters to empty skips its operation with a status line naming
+the class to enable, exit 0, not 2. `generate_config.py` drops the user-facing `harnesses:` switch
+(v2): a harness endpoint is runnable when `kit_text_only_adapters` lists its adapter and its cost
+class is consented; a v1 file's `harnesses` keys are read, ignored, and noted. `generate` gains
+`--require-config` (exit 2 when a dev root has no `.databench/config.yaml`, instead of writing one;
+the loop passes it). A providers route (`GET /api/v1/generation-providers`) classifies the ids in
+`generate.yaml` by cost class for U2. llm-kit is not changed and databench never reads llm-kit's
+consent file (q1). Checks, with a fake `llm-kit` following the 1.0.0 shapes: partition keeps
+declared order; the all-off stderr shape yields an empty `usable` and exit 0 (revert: treat nonzero
+as failure: red); an unknown id raises (revert: treat every disposition as switched off: red); the
+argv carries `--allow free,usage` for the shipped defaults (revert: omit the flag: red); a spend-only
+list under spend off never starts the runner (the fake runner records zero calls); a source guard
+fails if `src/databench` imports `llm_kit.registry.consent` (revert: add the import: red). One smoke
+test runs the real console script on ids it declares; it asserts the partition shape only, because
+a harness endpoint's class comes from the machine's auth probe (on the machine that ran the probe, a `luna` entry
+reported "codex on subscription auth" as usage).
+
+**M7-U4 label overlay.** `markup.py` gains a store destination `overlay` for tracked-mode roots:
+accepts and run state write the overlay file of M7-U0 and never the tracked file; the D8 read view
+shows overlay over tracked by the D5 winner; hand runs keep destination `tracked-file` (D11
+unchanged). The `markup-refresh` and `markup-accept` contract carries `--label-destination`. Checks:
+an overlay accept leaves the tracked file's bytes and mtime unchanged and `git status --porcelain`
+empty (revert: write the tracked file: red); the read view returns the overlay label when its
+`generated_at` is later and the tracked one when earlier (revert: tracked always wins: red); the
+existing `tests/test_markup*.py` suites pass unmodified; the fingerprint verifier reports unchanged
+(`_cache_root` and `_file_lock` keep their meaning, D13).
+
+**M7-U5 label publisher.** `label_publisher.py`: `publish(root) -> PublishResult` per U0 (fetch, fold,
+commit only the label file, push, drain), and `databench labels publish [DIR]` for a hand run and for
+the loop. Checks over a bare-origin fixture: the pushed commit changes exactly the label file
+(revert: `git add -A`: red); the checkout's working tree, index and a dirty tracked label file are
+byte-identical before and after (revert: fold into the checkout: red); no worktree remains after
+success and after an injected push failure (revert: remove the `finally`: red); a rejected push
+fetches and retries once, then keeps the overlay and reports (revert: force the push: red); a second
+publisher with the same overlay makes no commit (revert: skip the tip comparison: a duplicate commit,
+red); a root with no origin is skipped with a line.
+
+**M7-U6 task-answers phase.** `tasks_host.py` gains `answers_refresh(parents, allow, stop_file,
+deadline_s, batch)` running `task-kit answers refresh --format json --protocol N` under the module's
+negotiation (a task-kit older than 0.17.0 maps to `task_kit_too_old`, as `export` does) with a
+timeout of the deadline plus a grace, and a payload check of `kind: answers-pass`. `tasks_module.py`
+registers the `task-answers` phase: `--parent` is `development_parents()` (task discovery follows the
+dev roots, not `generate`'s targets), `--allow` is U1's `consent_classes`, `--stop-file` is
+`stop_file_path()` when the loop set it. Its recap counts answered, failed and unpublished from the
+payload; a repository `refused` by llm-kit absent or too old is a recap line, not an exit 1. Checks
+with a fake `task-kit`: the argv carries `--allow free,usage` under the defaults and the parents from
+`dev_roots.yaml` (revert: omit `--allow`, which would fall back to llm-kit's consent: red); a stop
+file ends the fake mid-pass and the phase reports `stopped` (revert: do not pass `--stop-file`: red);
+with the tasks module disabled the phase is not registered and `generate --skip task-answers` notes
+it; the module-isolation and import-lint tests stay green.
+
+**M7-U7 background loop.** `background.py` owns the loop thread started on server startup when
+`generation.load().regeneration.enabled`, replacing nothing of the on-open refresh in `create_app`
+(`launch_refresh`, whose `DEVNULL` output stays: it serves the on-open request). Each cycle, per
+selected phase whose minimum interval has elapsed (file-summaries and task-answers 1 h,
+index-pages 24 h; constants in this file), per existing dev root: run the child `generate` of the
+Shape paragraph with `--require-config`, the stop-file variable in its environment, and stdout and
+stderr appended to the server log; then `label_publisher` for tracked-mode roots after
+file-summaries, with child runs using `--label-destination overlay`. State (last start, end, status,
+recap per phase) is `<user cache>/databench/service/state.json`, served by `GET
+/api/v1/generation-status`, shown as a "Last runs" block in the panel. Shutdown: the app's shutdown
+hook creates the stop file, waits up to 30 s for the child, then terminates it; on Windows `--stop`
+uses `taskkill /T /F`, so the child dies without the grace (the answers pass commits per question
+and the overlay is durable, so nothing is lost but the question in flight). Checks: regeneration off
+starts no thread and runs nothing (revert: ignore `enabled`: red); a deselected type is not run
+(revert: ignore `disabled_types`: red); a disabled module's phase is never run; the interval holds
+a phase back (revert: ignore the clock: red); the stop file reaches a fake long child and the
+shutdown waits for it; a dev root without a config is skipped with a status line and nothing is
+written there (revert: drop `--require-config`: red); a failing phase does not stop the next.
+
+**M7-U8 ensure.** `databench ensure` in `service_cli.py`: exit 0 and print nothing when a Databench
+server answers on the port or regeneration is off; otherwise start the detached server of
+`_start_detached` with no browser, from a working directory that is not a project (the first
+development root), and exit 0 once it answers. It never opens a browser, never takes a port from
+another program (a foreign listener is exit 1 with a line), and does not duplicate the lifecycle code
+of `cli.py` (it reuses `_probe_instance` and the detached-start helper of `cli.py`; if that helper cannot be
+imported without the CLI parser, the unit first moves it to a core file). Checks: two concurrent `ensure` calls
+leave exactly one server (revert: start without probing: two children, one exits non-zero, red);
+regeneration off starts nothing (revert: skip the settings read: red); the command opens no browser.
+
+**M7-U9 hook and wording.** `plugins/task-kit/hooks/hooks.json` adds a `startup` matcher and a second
+command, `hooks/sessionstart/databench-ensure.sh`, to `startup`, `resume` and `clear` (async; the
+existing `session-start.sh` entries for `resume` and `clear` stay). The script exits 0 on every path:
+`databench` absent from PATH is silent, a failing `databench ensure` appends one line to the
+task-kit data directory log, as `session-start.sh` does, and any other `source` does nothing. The
+opinion is a trigger only; databench's `regeneration.enabled` is the user's switch
+(`docs/reference/plugin-opinion-razor.md`, OP seam by detection plus a databench setting). task-kit
+0.18.0 and README. claude-settings `USER-PREFERENCES.md` insight `generated_index_pages` extends to
+file summaries and task answers: regeneration follows the user's setting, and agents neither
+refresh by hand nor report staleness. Checks (`tests/task-kit/test_databench_ensure_hook.py`, a fake
+`databench` on PATH recording argv): `ensure` is called for `startup`, `resume` and `clear`
+(revert the `startup` matcher: red); not called for another source; an absent `databench` exits 0
+with no log line; a failing one exits 0 and logs once (revert: propagate the status: red); the
+existing hook tests pass.
+
+**M7-U10 release.** The databench Python suite, the web tests and typecheck, and the fingerprint
+verifier against the M7 base; a Windows smoke over ssh (the detached server survives the starting
+session, `ensure` is idempotent, `--stop` ends the child) or release with the gap stated;
+`git-kit:git-code-review` on the task-kit and plugins-kit changes and the applicable Markdown lane on
+the claude-settings edit; databench push; `publish.py --only task-kit` (pre-approved for task-kit in
+the task folder) then `bootstrap run`. Exercise on this machine: `databench ensure`, the panel, one
+`labels publish` against a throwaway origin, and the first `task-answers` pass, which under the
+shipped defaults sends the 95 pending questions to usage-class models.
+
+#### Premise outcomes (M7 re-plan, 2026-10-22)
+
+**[E]** = read or run by this unit; **[H]** = hypothesis with the check that settles it.
+
+| Premise | Outcome | Evidence or check |
+|---|---|---|
+| task-kit 0.17.0 has the answers commands, kind `answers-pass`, `--allow`, `--stop-file`, `--deadline-s`, and no dashboard | [E] | `plugin.json` version 0.17.0; `task-export-protocol.md` "Answers commands" lines 133-201; README "task-kit has no dashboard of its own" |
+| The answers pass commits and publishes its own files | [E] | protocol text: "publish when something is pending or unpublished"; so tasks need no publisher |
+| Databench reaches llm-kit as a pinned package, not through bootstrap | [E] | `pyproject.toml` pins; `.claude/bootstrap.json` lists only `plugins-kit:task-kit` 0.17.0; `llm_gateway.venv_llm_kit` |
+| `models describe --allow` exists in the pinned llm-kit | [E] | ran `llm-kit models describe --help` in the databench venv (1.0.0): "--allow ALLOW ... free, usage, spend" |
+| No usable target answers on stderr with stdout empty, exit 1; usable answers on stdout with `switched_off` | [E] | ran both shapes against `luna` and `qwen38-5090`; commit `3975519` message |
+| A harness endpoint's cost class depends on the machine's auth probe | [E] | `luna` disposition detail: "codex on subscription auth" |
+| Both harness adapters have a text-only mode in 1.0.0 | [E] | `kit_text_only_adapters()` returned `['claude-cli', 'codex-cli']` |
+| Detached start, `--stop`, `--status`, `--restart`, a server log and a pid in `/api/v1/instance` exist | [E] | `cli.py` `_start_detached`, `_probe_instance`, `server_log_path`, `_stop_running_instance`; first committed in `500fced` (bundled with the label-store commit) |
+| The tests for that background mode are not committed | [E], blocking for U8 | `git status` in databench: untracked `tests/test_cli_background.py`, modified `tests/test_cli.py`, `tests/test_cli_view.py`, `tests/test_remote_access.py` belong to a concurrent session; U8 starts after they land |
+| The server's on-open refresh launches a detached `markup-refresh` with `DEVNULL` output, only for a root that declares an endpoint | [E] | `server.py` `launch_refresh` and the `startup` handler; the earlier plan's `server.py:676-681` is stale |
+| M6 landed; D11 says databench never commits the label file; the publisher is a stated prerequisite for default-on multi-machine runs | [E] | `markup-design.md` "V4 amendment" status BUILT, D11, "Prerequisite for M7's multi-machine default" |
+| task-kit's `hooks.json` has `resume` and `clear` only, both running `session-start.sh` | [E] | file read; U9 adds `startup` and a second command |
+| The `generated_index_pages` insight exists in claude-settings `USER-PREFERENCES.md` | [E] | file read (Insights block) |
+| Task discovery follows `--parent` directories whose children are projects, so the phase uses dev roots, not `generate`'s targets | [E] | `task-export-protocol.md` line 22; `tasks_module.development_parents` |
+| `generate` writes a dev root's `.databench/config.yaml` when absent | [E] | `generate_cli` docstring and `ensure_dev_root_config`; U3's `--require-config` exists for the service |
+| Two concurrent `databench` starts leave one server (the loser fails to bind and exits non-zero) | [H] | settled by U8's concurrency check |
+| A hook's working directory is a poor default root for the server | [H] | U8 starts from the first development root; the check reads `/api/v1/instance` `default_root` |
+| Windows keeps a detached server alive after the starting shell exits | [H] | `_start_detached` uses `DETACHED_PROCESS`; settled by U10's smoke |
+| Pushing label commits to an origin's base branch is accepted by the user's remotes | [H] | per repository; U5 reports a rejected push and keeps the overlay; see Q3 |
+| A 24 h minimum interval per phase, with the index-pages runner's own skip key, bounds cost | [H] | the runner skips unchanged origins (section 6); U7 records last runs so the interval is visible |
 
 ### M8 Running work on tasks (deferred stub)
 
@@ -820,6 +1010,18 @@ repository's index pages stale"; that overstated it.
   the runtime database, run directories and `server.json` (2.1 MB on this Mac). Delete it?
   [No: leave it in place and name its path in the release notes; delete only on your word.]
 
+- **Q2. Does the consent apply to a hand-run `databench generate` and `markup-refresh`?** The
+  service and a hand run take the same path, so one rule holds. [Yes: the same filter, and a
+  refused operation prints which class to enable in the settings; a second rule for hand runs would
+  need a second switch.]
+- **Q3. May the label publisher push to an opted-in repository's base branch unattended?** Index
+  pages already push their output there; the repository's own `content_markup:` block is the
+  opt-in. [Yes: base branch, fast-forward only, one commit touching only the label file; a rejected
+  push keeps the overlay and shows in "Last runs".]
+- **Q4. Does consent replace the `harnesses:` switch in `generate.yaml`?** With llm-kit 1.0.0 both
+  harness adapters have a text-only mode, and the usage class already gates them. [Yes: drop the
+  switch (v2 file); a v1 file is read with a note.]
+
 ## 9. Decisions this plan makes, and what it dropped
 
 Decided on the user's behalf:
@@ -827,7 +1029,8 @@ Decided on the user's behalf:
 - File summaries, comments, raw read, store, system open and the workspace files are core;
   browse, tree, raw write and entities are explorer.
 - databench applies its consent by pre-filtering through `llm-kit models describe --allow`, so
-  llm-kit does not change; databench's llm-kit floor becomes 0.4.0.
+  llm-kit does not change; the pinned katsoft-llm-kit 1.0.0 carries `--allow`, so databench's
+  llm-kit floor does not move.
 - Regeneration and consent share one machine-written `generation.json`; `generate.yaml` stays
   hand-edited model lists.
 - All three modules are enabled by default; the Python lint allowlist is emptied in M1 and
@@ -844,8 +1047,14 @@ Decided on the user's behalf:
 - The repositories `generate` covers are core (`workspace_scope`, M1-U7); each module adds a
   generation phase, which `databench generate` and M7's service both run.
 - `modules.json` records the disabled set (schema 2, M2-U2), so a module added later is on.
-- Index pages in the background run per repository after its origin HEAD moves, at most once per
-  24 h.
+- The loop runs each phase as a child `generate` process with a minimum interval per phase (file
+  summaries and task answers 1 h, index pages 24 h); the index-pages runner's own skip key keeps an
+  unchanged repository cheap (section 6).
+- The server is the service: M7 reuses databench's detached start, `--stop` and `--status` and adds
+  `ensure`; the earlier `service` verb family and psutil are dropped.
+- Regeneration settings record the deselected types, so a phase added later is on.
+- Unattended file summaries of a tracked-mode root write a per-user overlay and a publisher folds
+  it into the origin tip in a private worktree (M7-U0); hand runs keep D11.
 
 Dropped from `adced200`: stage SC (llm-kit default flip and migration of task-kit, workflow-kit
 and other plugins-kit callers; q1 scopes consent to databench); the remote-access question (q5);
