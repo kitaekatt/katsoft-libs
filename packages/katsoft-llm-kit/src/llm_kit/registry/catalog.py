@@ -16,6 +16,11 @@ probing a provider or reading any user cache:
   all. A menu is the model's vendor menu; an endpoint that resolves no effort
   style (the shipped ``openrouter`` record until it declares one) would drop it,
   and a note names the remedy.
+- ``selections`` are the tracked file's selections, as stored (the defaults).
+  ``resolved_selections`` layers the personal file over them and reports, per
+  key, ``{effective, default, source}`` (``source`` is ``default`` or
+  ``override``); ``local`` names that file. Read ``resolved_selections`` for
+  what a call should use.
 - ``modes`` come from the adapter family's advertisement, passed in by the
   caller (the registry cannot import adapters).
 - ``cost.class`` is the registry classification. A claude or codex harness is
@@ -37,9 +42,11 @@ from .model_endpoints import HARNESS_KIND
 from .model_profiles import MENU_NONE
 from .project_models import (
     EndpointInfo,
+    LocalOverrides,
     ProjectModels,
     _Endpoints,
     library_effort_menu_with_source,
+    resolve_selections,
 )
 
 SCHEMA = "llm-kit.model-catalog/v1"
@@ -97,8 +104,12 @@ def build_catalog(
     modes_by_adapter: Mapping[str, Sequence[str]],
     consent: Optional[Consent] = None,
     harness_auth: Optional[Mapping[str, HarnessAuth]] = None,
+    local: Optional[LocalOverrides] = None,
 ) -> dict:
     """The ``llm-kit.model-catalog/v1`` document for a validated project file.
+
+    ``local`` is the validated personal layer (``project_models.read_local_overrides``);
+    without it every selection resolves to its default and no ``local`` block is emitted.
 
     ``modes_by_adapter`` maps an adapter family name (see :func:`adapter_of`) to
     its call modes; a family missing from it raises ``KeyError``. ``consent``
@@ -156,7 +167,12 @@ def build_catalog(
         "sha256": project.sha256,
         "models": rows,
         "selections": {key: dict(value) for key, value in project.document["selections"].items()},
+        "resolved_selections": resolve_selections(
+            project.document["selections"], local.selections if local is not None else {}
+        ),
     }
+    if local is not None:
+        result["local"] = {"path": local.path, "present": local.present, "sha256": local.sha256}
     if consent is not None:
         result["consent"] = {"usage": consent.usage, "spend": consent.spend, "source": consent.source}
         if consent.note:

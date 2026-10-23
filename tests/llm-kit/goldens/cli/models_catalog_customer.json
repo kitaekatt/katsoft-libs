@@ -14,6 +14,11 @@
         "spend": false,
         "usage": false
       },
+      "local": {
+        "path": ".llm-kit/models.local.yaml",
+        "present": false,
+        "sha256": null
+      },
       "models": [
         {
           "adapter": "codex-cli",
@@ -251,6 +256,41 @@
         "consent: no consent file (<T>/home/.config/llm-kit/consent.json); only free models are allowed; run `llm-kit consent set --usage on` to allow usage-billed models"
       ],
       "path": ".llm-kit/models.yaml",
+      "resolved_selections": {
+        "art": {
+          "default": {
+            "effort": "none",
+            "model": "deepseek-flash"
+          },
+          "effective": {
+            "effort": "none",
+            "model": "deepseek-flash"
+          },
+          "source": "default"
+        },
+        "build": {
+          "default": {
+            "effort": null,
+            "model": "sol"
+          },
+          "effective": {
+            "effort": null,
+            "model": "sol"
+          },
+          "source": "default"
+        },
+        "draft.generate.primary": {
+          "default": {
+            "effort": "high",
+            "model": "luna"
+          },
+          "effective": {
+            "effort": "high",
+            "model": "luna"
+          },
+          "source": "default"
+        }
+      },
       "schema": "llm-kit.model-catalog/v1",
       "selections": {
         "art": {

@@ -60,6 +60,18 @@ def project_problems(venv, tmp_path, via="script") -> list[str]:
             if view["sha256"] != out["sha256"] or view["path"] != ".llm-kit/models.yaml":
                 problems.append(f"show disagrees with write: {view['path']} {view['sha256']}")
         step("stale", [*base, "write", "--input", "-", "--if-match", "0" * 64], 2, json.dumps(_DOC))
+        local = step(
+            "local override",
+            [*base, "write", "--layer", "local", "--key", "k.one", "--model", "first", "--effort", "low"], 0,
+        )
+        if local is not None:
+            view = json.loads(step("show with override", [*base, "show"], 0).stdout)
+            got = view["resolved_selections"]["k.one"]
+            if got["source"] != "override" or got["effective"]["effort"] != "low":
+                problems.append(f"local override did not win: {got}")
+            if json.loads(local.stdout)["path"] != ".llm-kit/models.local.yaml":
+                problems.append("the personal file is not beside the project file")
+            step("clear", [*base, "clear", "--key", "k.one"], 0)
     step("escape", [*base, "write", "--file", "../elsewhere.yaml", "--input", "-"], 2, json.dumps(_DOC))
     if (tmp_path / "elsewhere.yaml").exists():
         problems.append("a path outside the project root was written")
@@ -72,6 +84,7 @@ def project_problems(venv, tmp_path, via="script") -> list[str]:
 def test_project_file_runs_from_a_plain_install(closure_venv, tmp_path, via):
     assert project_problems(closure_venv, tmp_path, via) == []
     assert (tmp_path / "work" / ".llm-kit" / "models.yaml").is_file()
+    assert not (tmp_path / "work" / ".llm-kit" / "models.local.yaml").exists()  # cleared when empty
 
 
 def test_project_file_names_the_extra_when_pyyaml_is_absent(base_venv, tmp_path):

@@ -35,6 +35,11 @@ in the fixed order id/label/endpoint/model/efforts/request_defaults, every
 free-form mapping (``selections``, ``extras``) sorted by key. Comments are not
 round-tripped. The digest of a file is the SHA-256 of its bytes as stored.
 
+A second, personal layer sits beside the file: ``<file-stem>.local.yaml``
+(default ``.llm-kit/models.local.yaml``), ``{version: 1, selections: {...}}``,
+meant to be untracked. Its entries override the tracked selections per key; see
+"The personal layer" below. The library never edits ``.gitignore``.
+
 ``write`` is optimistic: ``if_match`` compares the digest and the replacement
 follows, with no lock between the two. A concurrent writer in that window wins
 silently; callers that need more serialize their own writes.
@@ -51,7 +56,7 @@ import stat
 import uuid
 from urllib.parse import urlsplit
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Optional
 
 from .effort import EFFORT_KEY, TEMPLATE_KEY, style_effort_menu
@@ -75,7 +80,15 @@ CODE_SYMLINK = "symlink"
 CODE_MISSING = "missing"
 CODE_DEPENDENCY = "dependency"
 
+# The personal layer: ``<file-stem>.local.yaml`` beside the project file.
+LOCAL_SUFFIX = ".local.yaml"
+LAYER_TRACKED = "tracked"
+LAYER_LOCAL = "local"
+SOURCE_DEFAULT = "default"
+SOURCE_OVERRIDE = "override"
+
 _TOP_KEYS = ("version", "catalog", "selections")
+_LOCAL_TOP_KEYS = ("version", "selections")
 _ROW_KEYS = ("id", "label", "endpoint", "model", "efforts", "request_defaults")
 _ROW_REQUIRED = ("id", "label", "endpoint", "model")
 _SELECTION_KEYS = ("model", "effort")
@@ -441,31 +454,12 @@ def _efforts(value: Any, where: str, menu: "tuple[str, ...]", endpoint: str, mod
     return out
 
 
-def validate_document(
-    data: Any,
-    *,
-    project_root: Optional[str] = None,
-    menu_for: Optional[EffortMenuResolver] = None,
-) -> dict:
-    """Validate ``data`` and return its normalized, canonical-order copy.
-
-    Raises :class:`ProjectModelsError` (``invalid``) naming the first problem,
-    with a path such as ``catalog[1].efforts[0]``. Nothing is written.
-    ``menu_for`` replaces :func:`library_effort_menu` (the exact-model seam).
-    """
-    _import_yaml()  # the registry and the canonical form both need it: name the extra first
-    menu_of = menu_for or library_effort_menu
-    top = _mapping(data, "document", _TOP_KEYS)
-    version = top.get("version")
-    if "version" not in top:
-        raise _invalid("version", "is required")
-    if not isinstance(version, int) or isinstance(version, bool) or version != FILE_VERSION:
-        raise _invalid("version", f"must be {FILE_VERSION}, not {version!r}")
-
-    catalog_in = top.get("catalog", [])
+def _validate_catalog(
+    catalog_in: Any, endpoints: "_Endpoints", menu_of: EffortMenuResolver
+) -> "tuple[list[dict], dict[str, tuple[str, ...]], dict[str, Optional[list[str]]]]":
+    """``(rows, menus, efforts_of)``: the normalized catalogue and each row's library menu and declared efforts."""
     if not isinstance(catalog_in, (list, tuple)):
         raise _invalid("catalog", f"must be a list, not {type(catalog_in).__name__}")
-    endpoints = _Endpoints(project_root)
     rows: list[dict] = []
     menus: dict[str, "tuple[str, ...]"] = {}
     efforts_of: dict[str, Optional[list[str]]] = {}
@@ -500,8 +494,15 @@ def validate_document(
         menus[row_id] = menu
         efforts_of[row_id] = efforts
         rows.append(out)
+    return rows, menus, efforts_of
 
-    selections_in = top.get("selections", {})
+
+def _validate_selections(
+    selections_in: Any,
+    menus: "Mapping[str, tuple[str, ...]]",
+    efforts_of: "Mapping[str, Optional[list[str]]]",
+) -> "dict[str, dict]":
+    """The key-sorted normalized selections; each must name a catalog id and an accepted effort."""
     if not isinstance(selections_in, Mapping):
         raise _invalid("selections", f"must be a mapping, not {type(selections_in).__name__}")
     selections: dict[str, dict] = {}
@@ -531,10 +532,36 @@ def validate_document(
                     f"{effort!r} is not accepted for {target!r} (accepted: {list(allowed)})",
                 )
         selections[key] = {"model": target, "effort": effort}
+    return {key: selections[key] for key in sorted(selections)}
+
+
+def validate_document(
+    data: Any,
+    *,
+    project_root: Optional[str] = None,
+    menu_for: Optional[EffortMenuResolver] = None,
+) -> dict:
+    """Validate ``data`` and return its normalized, canonical-order copy.
+
+    Raises :class:`ProjectModelsError` (``invalid``) naming the first problem,
+    with a path such as ``catalog[1].efforts[0]``. Nothing is written.
+    ``menu_for`` replaces :func:`library_effort_menu` (the exact-model seam).
+    """
+    _import_yaml()  # the registry and the canonical form both need it: name the extra first
+    menu_of = menu_for or library_effort_menu
+    top = _mapping(data, "document", _TOP_KEYS)
+    version = top.get("version")
+    if "version" not in top:
+        raise _invalid("version", "is required")
+    if not isinstance(version, int) or isinstance(version, bool) or version != FILE_VERSION:
+        raise _invalid("version", f"must be {FILE_VERSION}, not {version!r}")
+
+    rows, menus, efforts_of = _validate_catalog(top.get("catalog", []), _Endpoints(project_root), menu_of)
+    selections = _validate_selections(top.get("selections", {}), menus, efforts_of)
     return {
         "version": FILE_VERSION,
         "catalog": rows,
-        "selections": {key: selections[key] for key in sorted(selections)},
+        "selections": selections,
     }
 
 
@@ -694,6 +721,18 @@ class WriteResult:
         }
 
 
+def _read_tracked(
+    project_file: ProjectFile, menu_for: Optional[EffortMenuResolver] = None
+) -> ProjectModels:
+    data = _read_existing(project_file)
+    if data is None:
+        raise ProjectModelsError(CODE_MISSING, f"{project_file.relative} does not exist under {project_file.root}")
+    document = validate_document(
+        parse_yaml_document(data), project_root=str(project_file.root), menu_for=menu_for
+    )
+    return ProjectModels(project_file.relative, digest(data), document)
+
+
 def read_project_models(
     *,
     project_root: Optional[str] = None,
@@ -703,16 +742,10 @@ def read_project_models(
     """Read, strictly parse and validate the stored file.
 
     Raises ``missing`` when it does not exist and ``invalid`` when it fails
-    validation; a file that cannot be shown is never silently repaired.
+    validation; a file that cannot be shown is never silently repaired. The
+    personal layer is not read here; see :func:`read_resolved_models`.
     """
-    project_file = resolve_project_file(project_root, file)
-    data = _read_existing(project_file)
-    if data is None:
-        raise ProjectModelsError(CODE_MISSING, f"{project_file.relative} does not exist under {project_file.root}")
-    document = validate_document(
-        parse_yaml_document(data), project_root=str(project_file.root), menu_for=menu_for
-    )
-    return ProjectModels(project_file.relative, digest(data), document)
+    return _read_tracked(resolve_project_file(project_root, file), menu_for)
 
 
 def validate_project_models(
@@ -731,6 +764,15 @@ def validate_project_models(
         len(normalized["catalog"]),
         len(normalized["selections"]),
     )
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "posix":
+        directory = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
 
 def _atomic_write(path: Path, data: bytes, mode: Optional[int]) -> None:
@@ -754,12 +796,23 @@ def _atomic_write(path: Path, data: bytes, mode: Optional[int]) -> None:
         except FileNotFoundError:
             pass
         raise
-    if os.name == "posix":
-        directory = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+    _fsync_directory(path.parent)
+
+
+def _check_if_match(project_file: ProjectFile, existing: Optional[bytes], if_match: Optional[str]) -> None:
+    """Refuse a write whose ``if_match`` digest does not match the stored bytes."""
+    if if_match is None:
+        return
+    if not _SHA256.fullmatch(if_match):
+        raise _invalid("if_match", "must be a lowercase 64-character SHA-256 hex digest")
+    if existing is None:
+        raise ProjectModelsError(
+            CODE_STALE, f"{project_file.relative} does not exist, so it cannot match {if_match}"
+        )
+    if digest(existing) != if_match:
+        raise ProjectModelsError(
+            CODE_STALE, f"{project_file.relative} changed: stored digest is {digest(existing)}, not {if_match}"
+        )
 
 
 def write_project_models(
@@ -782,17 +835,7 @@ def write_project_models(
     normalized = validate_document(document, project_root=str(project_file.root), menu_for=menu_for)
     data = render_yaml(normalized)
     existing = _read_existing(project_file)
-    if if_match is not None:
-        if not _SHA256.fullmatch(if_match):
-            raise _invalid("if_match", "must be a lowercase 64-character SHA-256 hex digest")
-        if existing is None:
-            raise ProjectModelsError(
-                CODE_STALE, f"{project_file.relative} does not exist, so it cannot match {if_match}"
-            )
-        if digest(existing) != if_match:
-            raise ProjectModelsError(
-                CODE_STALE, f"{project_file.relative} changed: stored digest is {digest(existing)}, not {if_match}"
-            )
+    _check_if_match(project_file, existing, if_match)
     result = WriteResult(
         project_file.relative, digest(data), existing != data,
         len(normalized["catalog"]), len(normalized["selections"]),
@@ -806,3 +849,371 @@ def write_project_models(
         mode = stat.S_IMODE(project_file.path.lstat().st_mode)
     _atomic_write(project_file.path, data, mode)
     return result
+
+
+# ---------------------------------------------------------------------------
+# The personal layer: overrides beside the tracked file
+# ---------------------------------------------------------------------------
+#
+# ``<file-stem>.local.yaml`` (default ``.llm-kit/models.local.yaml``) holds
+#
+#     version: 1
+#     selections:
+#       draft.generate.primary: {model: luna, effort: low}
+#
+# and is meant to be untracked. This library never edits ``.gitignore``; that
+# is the consumer's call. Each key in the local file wins over the same key in
+# the tracked file's ``selections``; a key only the local file names is an
+# override with no default. The local file is validated exactly as the tracked
+# one is, against the TRACKED catalogue (it carries none of its own), and every
+# error names the local file. An override equal to the tracked default is not
+# stored: a write drops it, and a file left with no override is deleted.
+
+
+def local_file_name(relative: str) -> str:
+    """The root-relative POSIX name of the personal layer for the tracked file ``relative``."""
+    path = PurePosixPath(relative)
+    return path.with_name(path.stem + LOCAL_SUFFIX).as_posix()
+
+
+def resolve_local_file(project_file: ProjectFile) -> ProjectFile:
+    """The confined personal-layer file beside ``project_file`` (same confinement rules). Touches nothing."""
+    return resolve_project_file(str(project_file.root), local_file_name(project_file.relative))
+
+
+def _name_local(local_file: ProjectFile, exc: ProjectModelsError) -> ProjectModelsError:
+    if exc.code != CODE_INVALID:
+        return exc
+    return ProjectModelsError(exc.code, f"{local_file.relative}: {exc}")
+
+
+def validate_local_document(
+    data: Any,
+    tracked: ProjectModels,
+    local_file: ProjectFile,
+    *,
+    menu_for: Optional[EffortMenuResolver] = None,
+) -> dict:
+    """Validate a personal-layer document against ``tracked``'s catalogue; return its normalized copy.
+
+    Same model and effort checks as the tracked file's selections. A refusal
+    is a ``ProjectModelsError`` (``invalid``) whose message starts with the
+    local file's name.
+    """
+    try:
+        _import_yaml()
+        top = _mapping(data, "document", _LOCAL_TOP_KEYS)
+        if "version" not in top:
+            raise _invalid("version", "is required")
+        version = top["version"]
+        if not isinstance(version, int) or isinstance(version, bool) or version != FILE_VERSION:
+            raise _invalid("version", f"must be {FILE_VERSION}, not {version!r}")
+        _rows, menus, efforts_of = _validate_catalog(
+            tracked.document["catalog"], _Endpoints(str(local_file.root)), menu_for or library_effort_menu
+        )
+        selections = _validate_selections(top.get("selections", {}), menus, efforts_of)
+    except ProjectModelsError as exc:
+        raise _name_local(local_file, exc) from None
+    return {"version": FILE_VERSION, "selections": selections}
+
+
+def render_local_yaml(document: Mapping) -> bytes:
+    """The canonical bytes of an already-validated personal-layer document."""
+    yaml = _import_yaml()
+    dumper = _yaml_types()[1]
+    text = yaml.dump(
+        {"version": document["version"], "selections": document["selections"]},
+        Dumper=dumper,
+        sort_keys=False,
+        default_flow_style=False,
+        indent=2,
+        allow_unicode=True,
+        width=1_000_000,
+    )
+    return text.encode("utf-8")
+
+
+def resolve_selections(
+    defaults: Mapping[str, Mapping], overrides: Mapping[str, Mapping]
+) -> "dict[str, dict]":
+    """Per selection key: ``{"effective", "default", "source"}``, sorted by key.
+
+    ``effective`` is the override when the local layer names the key with a
+    value that differs from the default, else the default; ``default`` is the
+    tracked selection, or ``None`` for a key only the local layer names;
+    ``source`` is ``override`` when the effective value comes from the local
+    layer, else ``default``. An entry equal to the default is no override.
+    """
+    out: dict[str, dict] = {}
+    for key in sorted(set(defaults) | set(overrides)):
+        default = dict(defaults[key]) if key in defaults else None
+        local = dict(overrides[key]) if key in overrides else None
+        if local is not None and local != default:
+            out[key] = {"effective": local, "default": default, "source": SOURCE_OVERRIDE}
+        else:
+            out[key] = {"effective": default, "default": default, "source": SOURCE_DEFAULT}
+    return out
+
+
+@dataclass(frozen=True)
+class LocalOverrides:
+    """The personal layer as stored: its name, whether it exists, its digest and its overrides."""
+
+    path: str
+    present: bool
+    sha256: Optional[str]
+    selections: "dict[str, dict]"
+
+    def to_json(self) -> dict:
+        return {
+            "path": self.path,
+            "present": self.present,
+            "sha256": self.sha256,
+            "selections": self.selections,
+        }
+
+
+@dataclass(frozen=True)
+class ResolvedModels:
+    """The tracked file, the personal layer over it, and the per-selection resolution."""
+
+    project: ProjectModels
+    local: LocalOverrides
+    selections: "dict[str, dict]"
+
+    def to_json(self) -> dict:
+        out = self.project.to_json()
+        out["local"] = self.local.to_json()
+        out["resolved_selections"] = self.selections
+        return out
+
+
+def _read_local(
+    tracked: ProjectModels, local_file: ProjectFile, menu_for: Optional[EffortMenuResolver]
+) -> LocalOverrides:
+    data = _read_existing(local_file)
+    if data is None:
+        return LocalOverrides(local_file.relative, False, None, {})
+    try:
+        parsed = parse_yaml_document(data)
+    except ProjectModelsError as exc:
+        raise _name_local(local_file, exc) from None
+    document = validate_local_document(parsed, tracked, local_file, menu_for=menu_for)
+    return LocalOverrides(local_file.relative, True, digest(data), document["selections"])
+
+
+def read_local_overrides(
+    tracked: ProjectModels,
+    *,
+    project_root: Optional[str] = None,
+    file: Optional[str] = None,
+    menu_for: Optional[EffortMenuResolver] = None,
+) -> LocalOverrides:
+    """Read and validate the personal layer for ``tracked``; an absent file is no overrides."""
+    local_file = resolve_local_file(resolve_project_file(project_root, file))
+    return _read_local(tracked, local_file, menu_for)
+
+
+def resolve_models(tracked: ProjectModels, local: LocalOverrides) -> ResolvedModels:
+    """Layer ``local`` over ``tracked``."""
+    return ResolvedModels(
+        tracked, local, resolve_selections(tracked.document["selections"], local.selections)
+    )
+
+
+def read_resolved_models(
+    *,
+    project_root: Optional[str] = None,
+    file: Optional[str] = None,
+    menu_for: Optional[EffortMenuResolver] = None,
+) -> ResolvedModels:
+    """Read the tracked file and the personal layer over it, both validated."""
+    project_file = resolve_project_file(project_root, file)
+    tracked = _read_tracked(project_file, menu_for)
+    local = _read_local(tracked, resolve_local_file(project_file), menu_for)
+    return resolve_models(tracked, local)
+
+
+@dataclass(frozen=True)
+class LocalValidation:
+    """A personal-layer document that passed validation, and the digest ``write`` would store.
+
+    ``canonical_sha256`` is ``None`` when nothing would be stored (no override
+    survives), in which case a write deletes the file.
+    """
+
+    path: str
+    canonical_sha256: Optional[str]
+    selections: int
+    dropped_defaults: "list[str]"
+
+    def to_json(self) -> dict:
+        return {
+            "schema": SCHEMA,
+            "layer": LAYER_LOCAL,
+            "valid": True,
+            "path": self.path,
+            "canonical_sha256": self.canonical_sha256,
+            "selections": self.selections,
+            "dropped_defaults": self.dropped_defaults,
+        }
+
+
+@dataclass(frozen=True)
+class LocalWriteResult:
+    """A completed personal-layer write or clear.
+
+    ``sha256`` is the stored digest, ``None`` when no file is stored;
+    ``deleted`` is true when the write removed the file because no override
+    remained; ``dropped_defaults`` lists keys not stored because they equal the
+    tracked default.
+    """
+
+    path: str
+    sha256: Optional[str]
+    changed: bool
+    deleted: bool
+    selections: int
+    dropped_defaults: "list[str]"
+
+    def to_json(self) -> dict:
+        return {
+            "schema": SCHEMA,
+            "layer": LAYER_LOCAL,
+            "path": self.path,
+            "sha256": self.sha256,
+            "changed": self.changed,
+            "deleted": self.deleted,
+            "selections": self.selections,
+            "dropped_defaults": self.dropped_defaults,
+        }
+
+
+def _tidy_local(
+    document: Any,
+    project_root: Optional[str],
+    file: Optional[str],
+    menu_for: Optional[EffortMenuResolver],
+) -> "tuple[ProjectFile, dict, dict, list[str]]":
+    """``(local_file, kept, normalized, dropped)``: validated, with default-equal entries removed."""
+    project_file = resolve_project_file(project_root, file)
+    tracked = _read_tracked(project_file, menu_for)
+    local_file = resolve_local_file(project_file)
+    normalized = validate_local_document(document, tracked, local_file, menu_for=menu_for)
+    defaults = tracked.document["selections"]
+    kept = {k: v for k, v in normalized["selections"].items() if defaults.get(k) != v}
+    dropped = sorted(set(normalized["selections"]) - set(kept))
+    return local_file, {"version": FILE_VERSION, "selections": kept}, normalized, dropped
+
+
+def validate_local_overrides(
+    document: Any,
+    *,
+    project_root: Optional[str] = None,
+    file: Optional[str] = None,
+    menu_for: Optional[EffortMenuResolver] = None,
+) -> LocalValidation:
+    """Validate a personal-layer ``document`` against the tracked file; nothing is written."""
+    local_file, kept, _normalized, dropped = _tidy_local(document, project_root, file, menu_for)
+    stored = digest(render_local_yaml(kept)) if kept["selections"] else None
+    return LocalValidation(local_file.relative, stored, len(kept["selections"]), dropped)
+
+
+def write_local_overrides(
+    document: Any,
+    *,
+    project_root: Optional[str] = None,
+    file: Optional[str] = None,
+    if_match: Optional[str] = None,
+    menu_for: Optional[EffortMenuResolver] = None,
+) -> LocalWriteResult:
+    """Validate ``document`` and store the personal layer atomically, replacing it whole.
+
+    Entries equal to the tracked default are dropped; when no override
+    remains, the file is deleted (or stays absent). ``if_match`` is the
+    ``sha256`` of the stored personal file, as for the tracked file. Every
+    refusal happens before the file or its directory is touched.
+    """
+    local_file, kept, _normalized, dropped = _tidy_local(document, project_root, file, menu_for)
+    existing = _read_existing(local_file)
+    _check_if_match(local_file, existing, if_match)
+    count = len(kept["selections"])
+    if not count:
+        if existing is None:
+            return LocalWriteResult(local_file.relative, None, False, False, 0, dropped)
+        local_file.path.unlink()
+        _fsync_directory(local_file.path.parent)
+        return LocalWriteResult(local_file.relative, None, True, True, 0, dropped)
+    data = render_local_yaml(kept)
+    result = LocalWriteResult(local_file.relative, digest(data), existing != data, False, count, dropped)
+    if existing == data:
+        return result
+    mode: Optional[int] = None
+    if existing is None:
+        local_file.path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        mode = stat.S_IMODE(local_file.path.lstat().st_mode)
+    _atomic_write(local_file.path, data, mode)
+    return result
+
+
+def set_local_override(
+    key: str,
+    model: str,
+    effort: Optional[str] = None,
+    *,
+    project_root: Optional[str] = None,
+    file: Optional[str] = None,
+    if_match: Optional[str] = None,
+    menu_for: Optional[EffortMenuResolver] = None,
+) -> LocalWriteResult:
+    """Set one override (``effort`` None omits the effort); equal to the default, it clears the key."""
+    project_file = resolve_project_file(project_root, file)
+    tracked = _read_tracked(project_file, menu_for)
+    current = _read_local(tracked, resolve_local_file(project_file), menu_for).selections
+    current[key] = {"model": model, "effort": effort}
+    return write_local_overrides(
+        {"version": FILE_VERSION, "selections": current},
+        project_root=project_root, file=file, if_match=if_match, menu_for=menu_for,
+    )
+
+
+def clear_local_override(
+    key: str,
+    *,
+    project_root: Optional[str] = None,
+    file: Optional[str] = None,
+    if_match: Optional[str] = None,
+    menu_for: Optional[EffortMenuResolver] = None,
+) -> LocalWriteResult:
+    """Remove one override; the file is deleted when none remains.
+
+    The stored file is read structurally, not validated whole, so a stale
+    override (for example one naming a model the tracked catalogue dropped) can
+    be cleared; the entries that remain are still validated before anything is
+    written. A key the file does not hold changes nothing.
+    """
+    project_file = resolve_project_file(project_root, file)
+    tracked = _read_tracked(project_file, menu_for)
+    local_file = resolve_local_file(project_file)
+    data = _read_existing(local_file)
+    if data is None:
+        _check_if_match(local_file, None, if_match)
+        return LocalWriteResult(local_file.relative, None, False, False, 0, [])
+    try:
+        parsed = parse_yaml_document(data)
+        if not isinstance(parsed, Mapping) or not isinstance(parsed.get("selections", {}), Mapping):
+            raise _invalid("document", "must be a mapping with a selections mapping")
+    except ProjectModelsError as exc:
+        raise _name_local(local_file, exc) from None
+    selections = dict(parsed.get("selections", {}))
+    if key not in selections:
+        _check_if_match(local_file, data, if_match)
+        return LocalWriteResult(
+            local_file.relative, digest(data), False, False, len(selections), []
+        )
+    del selections[key]
+    return write_local_overrides(
+        {"version": FILE_VERSION, "selections": selections},
+        project_root=project_root, file=file, if_match=if_match, menu_for=menu_for,
+    )

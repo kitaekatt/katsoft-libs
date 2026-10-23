@@ -85,3 +85,52 @@ def test_project_write_escape(env, root):
     got = env("project_write_escape", _argv("write", root, "--file", "../elsewhere.yaml", "--input", "-"),
               stdin=json.dumps(_DOC))
     assert got["exit"] == 2 and not (root.parent / "elsewhere.yaml").exists()
+
+
+def _put_local(root, **selections):
+    argv = _argv("write", root, "--layer", "local", "--input", "-")
+    return argv, json.dumps({"version": 1, "selections": selections})
+
+
+def test_project_write_local(env, root):
+    env("project_write_ok", _argv("write", root, "--input", "-"), stdin=json.dumps(_DOC))
+    argv, body = _put_local(root, first={"model": "b", "effort": "low"})
+    got = env("project_write_local", argv, stdin=body)
+    assert got["exit"] == 0 and (root / ".llm-kit" / "models.local.yaml").is_file()
+
+
+def test_project_show_with_an_override(env, root):
+    env("project_write_ok", _argv("write", root, "--input", "-"), stdin=json.dumps(_DOC))
+    argv, body = _put_local(root, first={"model": "b", "effort": "low"}, third={"model": "a"})
+    env("project_write_local_two", argv, stdin=body)
+    got = env("project_show_override", _argv("show", root))
+    assert got["exit"] == 0 and got["stderr"] == ""
+
+
+def test_project_validate_local(env, root):
+    env("project_write_ok", _argv("write", root, "--input", "-"), stdin=json.dumps(_DOC))
+    _argv_unused, body = _put_local(root, first={"model": "b", "effort": "high"})
+    got = env("project_validate_local", _argv("validate", root, "--layer", "local", "--input", "-"), stdin=body)
+    assert got["exit"] == 0 and not (root / ".llm-kit" / "models.local.yaml").exists()
+
+
+def test_project_write_local_key(env, root):
+    env("project_write_ok", _argv("write", root, "--input", "-"), stdin=json.dumps(_DOC))
+    got = env("project_write_local_key",
+              _argv("write", root, "--layer", "local", "--key", "first", "--model", "b", "--effort", "low"))
+    assert got["exit"] == 0 and got["stdout"]["json"]["changed"] is True
+
+
+def test_project_clear(env, root):
+    env("project_write_ok", _argv("write", root, "--input", "-"), stdin=json.dumps(_DOC))
+    argv, body = _put_local(root, first={"model": "b", "effort": "low"})
+    env("project_write_local", argv, stdin=body)
+    got = env("project_clear", _argv("clear", root, "--key", "first"))
+    assert got["exit"] == 0 and not (root / ".llm-kit" / "models.local.yaml").exists()
+
+
+def test_project_write_local_invalid_effort(env, root):
+    env("project_write_ok", _argv("write", root, "--input", "-"), stdin=json.dumps(_DOC))
+    got = env("project_write_local_invalid_effort",
+              _argv("write", root, "--layer", "local", "--key", "first", "--model", "b", "--effort", "none"))
+    assert got["exit"] == 2 and not (root / ".llm-kit" / "models.local.yaml").exists()

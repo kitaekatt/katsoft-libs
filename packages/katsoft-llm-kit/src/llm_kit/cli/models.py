@@ -5,10 +5,14 @@ Carries the legacy ``endpoints``, ``probe``, ``usage``, ``record-halt``,
 ``probe`` keeps its three-way exit code (0 reachable, 1 unreachable, 5 could not
 check, 2 an endpoint name that does not resolve).
 
-``project show|validate|write`` operate on the tracked project model file
-(``llm_kit.registry.project_models``): a refusal prints one JSON ``error``
-object (``kind`` ``project-models``, a ``code``, a ``message``) on stderr and
-exits 2; nothing is written on a refusal.
+``project show|validate|write|clear`` operate on the tracked project model file
+(``llm_kit.registry.project_models``) and, with ``--layer local`` (``clear``
+always), on the personal override file beside it (``<file-stem>.local.yaml``,
+meant to be untracked; the library never edits ``.gitignore``): a refusal prints
+one JSON ``error`` object (``kind`` ``project-models``, a ``code``, a
+``message``) on stderr and exits 2; nothing is written on a refusal. ``show``
+and ``catalog`` report each selection as ``{effective, default, source}`` under
+``resolved_selections``.
 
 ``catalog`` reads that file and prints the ordered model catalogue
 (``llm_kit.registry.catalog``) as one JSON document: the project's order, its
@@ -466,17 +470,51 @@ def _read_project_input() -> Any:
     return project_models.parse_json_document(sys.stdin.read())
 
 
+def _project_input_required(args: argparse.Namespace) -> Any:
+    if args.input is None:
+        raise project_models.ProjectModelsError(
+            project_models.CODE_INVALID, "--input - is required (or --key and --model with --layer local)"
+        )
+    return _read_project_input()
+
+
 def _cmd_project(args: argparse.Namespace) -> int:
-    """``models project show|validate|write``; a refusal is a JSON error on stderr, exit 2."""
+    """``models project show|validate|write|clear``; a refusal is a JSON error on stderr, exit 2."""
     where = {"project_root": args.project_root, "file": args.file}
+    local = getattr(args, "layer", project_models.LAYER_TRACKED) == project_models.LAYER_LOCAL
     try:
         if args.project_cmd == "show":
-            result: Any = project_models.read_project_models(**where)
+            result: Any = project_models.read_resolved_models(**where)
+        elif args.project_cmd == "clear":
+            result = project_models.clear_local_override(args.key, if_match=args.if_match, **where)
         elif args.project_cmd == "validate":
-            result = project_models.validate_project_models(_read_project_input(), **where)
+            if local:
+                result = project_models.validate_local_overrides(_read_project_input(), **where)
+            else:
+                result = project_models.validate_project_models(_read_project_input(), **where)
+        elif local and args.key is not None:
+            if args.model is None or args.input is not None:
+                raise project_models.ProjectModelsError(
+                    project_models.CODE_INVALID, "--key needs --model and cannot be combined with --input"
+                )
+            result = project_models.set_local_override(
+                args.key, args.model, args.effort, if_match=args.if_match, **where
+            )
+        elif local:
+            if args.model is not None or args.effort is not None:
+                raise project_models.ProjectModelsError(
+                    project_models.CODE_INVALID, "--model and --effort need --key"
+                )
+            result = project_models.write_local_overrides(
+                _project_input_required(args), if_match=args.if_match, **where
+            )
         else:
+            if args.key is not None or args.model is not None or args.effort is not None:
+                raise project_models.ProjectModelsError(
+                    project_models.CODE_INVALID, "--key, --model and --effort need --layer local"
+                )
             result = project_models.write_project_models(
-                _read_project_input(), if_match=args.if_match, **where
+                _project_input_required(args), if_match=args.if_match, **where
             )
     except project_models.ProjectModelsError as exc:
         _json({"error": exc.to_json()}, stream=sys.stderr)
@@ -489,9 +527,10 @@ def _cmd_catalog(args: argparse.Namespace) -> int:
     """``models catalog``: the project's ordered catalogue; a refusal is a JSON error, exit 2."""
     modes = {name: cap.call_modes for name, cap in adapter_capabilities().items()}
     try:
-        project = project_models.read_project_models(
+        resolved = project_models.read_resolved_models(
             project_root=args.project_root, file=args.file
         )
+        project = resolved.project
         harness_auth = None
         if args.probe_auth:
             from llm_kit.adapters.harness_auth import probe_harness_auth  # noqa: PLC0415
@@ -513,6 +552,7 @@ def _cmd_catalog(args: argparse.Namespace) -> int:
             modes_by_adapter=modes,
             consent=load_consent(),
             harness_auth=harness_auth,
+            local=resolved.local,
         )
     except project_models.ProjectModelsError as exc:
         _json({"error": exc.to_json()}, stream=sys.stderr)
@@ -532,6 +572,22 @@ def _add_project_file_args(parser: argparse.ArgumentParser) -> None:
             f"The project model file, relative to the root or an absolute path beneath "
             f"it (default {project_models.DEFAULT_FILE}). Symlinks and paths that leave "
             "the root are refused."
+        ),
+    )
+
+
+_IF_MATCH_HELP = "Refuse unless the stored file still has this sha256 (from `project show`)."
+
+
+def _add_layer_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--layer",
+        choices=(project_models.LAYER_TRACKED, project_models.LAYER_LOCAL),
+        default=project_models.LAYER_TRACKED,
+        help=(
+            "tracked (default): the project file. local: the personal override file beside it "
+            "(<file-stem>.local.yaml), validated against the tracked catalogue; an override equal "
+            "to the tracked default is dropped. The library does not edit .gitignore."
         ),
     )
 
@@ -648,17 +704,25 @@ def _parser() -> argparse.ArgumentParser:
     )
     project = sub.add_parser(
         "project",
-        help="Show, validate or write the tracked project model file (catalogue and selections).",
+        help=(
+            "Show, validate, write or clear the project model file (catalogue and selections) "
+            "and the personal override file beside it."
+        ),
     )
     project_sub = project.add_subparsers(dest="project_cmd", required=True)
     show = project_sub.add_parser(
-        "show", help="Print the stored file as JSON with its sha256 (the --if-match value)."
+        "show",
+        help=(
+            "Print the stored file as JSON with its sha256 (the --if-match value), the personal "
+            "override file, and per selection {effective, default, source}."
+        ),
     )
     _add_project_file_args(show)
     validate = project_sub.add_parser(
         "validate", help="Validate a JSON document from stdin; nothing is written."
     )
     _add_project_file_args(validate)
+    _add_layer_arg(validate)
     validate.add_argument(
         "--input", required=True, choices=("-",), help="`-`: read the JSON document from stdin."
     )
@@ -666,14 +730,27 @@ def _parser() -> argparse.ArgumentParser:
         "write", help="Validate a JSON document from stdin and store it atomically as canonical YAML."
     )
     _add_project_file_args(write)
+    _add_layer_arg(write)
+    write.add_argument("--input", choices=("-",), help="`-`: read the JSON document from stdin.")
     write.add_argument(
-        "--input", required=True, choices=("-",), help="`-`: read the JSON document from stdin."
+        "--key",
+        help="With --layer local: set this one override (needs --model) instead of replacing the file.",
     )
+    write.add_argument("--model", help="With --key: the catalogue id to select.")
     write.add_argument(
-        "--if-match",
-        metavar="SHA256",
-        help="Refuse unless the stored file still has this sha256 (from `project show`).",
+        "--effort", help="With --key: the effort to select; omitted, the override selects no effort (null)."
     )
+    write.add_argument("--if-match", metavar="SHA256", help=_IF_MATCH_HELP)
+    clear = project_sub.add_parser(
+        "clear",
+        help=(
+            "Remove one personal override; the personal file is deleted when none remains. "
+            "The tracked file is never touched."
+        ),
+    )
+    _add_project_file_args(clear)
+    clear.add_argument("--key", required=True, help="The selection key whose override to remove.")
+    clear.add_argument("--if-match", metavar="SHA256", help=_IF_MATCH_HELP)
     return parser
 
 

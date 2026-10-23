@@ -307,11 +307,13 @@ def test_the_python_api_matches_the_cli(project, capsys, monkeypatch):
     from llm_kit.adapters.capabilities import adapter_capabilities
     from llm_kit.registry.consent import load_consent
 
+    tracked = pm.read_project_models(project_root=str(project))
     built = catalog_mod.build_catalog(
-        pm.read_project_models(project_root=str(project)),
+        tracked,
         project_root=str(project),
         modes_by_adapter={n: c.call_modes for n, c in adapter_capabilities().items()},
         consent=load_consent(),
+        local=pm.read_local_overrides(tracked, project_root=str(project)),
     )
     _out, got = _catalog(capsys, monkeypatch, project)
     assert json.loads(json.dumps(built)) == got
@@ -338,3 +340,20 @@ def test_catalog_golden(project, capsys, tmp_path, monkeypatch):
         "stderr": _form(cap.err, tmp_path),
     }
     _check("models_catalog_customer", observed)
+
+
+def test_catalog_golden_with_an_override(project, capsys, tmp_path, monkeypatch):
+    pm.set_local_override("draft.generate.primary", "luna", "low", project_root=str(project))
+    capsys.readouterr()
+    code = cli.main(["models", "catalog", "--project-root", str(project)])
+    cap = capsys.readouterr()
+    observed = {
+        "argv": ["models", "catalog", "--project-root", "<T>/proj"],
+        "exit": code,
+        "stdout": _form(cap.out, tmp_path),
+        "stderr": _form(cap.err, tmp_path),
+    }
+    _check("models_catalog_override", observed)
+    got = json.loads(cap.out)
+    assert got["resolved_selections"]["draft.generate.primary"]["source"] == "override"
+    assert got["selections"]["draft.generate.primary"]["effort"] == "high"
