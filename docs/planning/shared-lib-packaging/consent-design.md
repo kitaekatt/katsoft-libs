@@ -101,4 +101,4 @@ machine, so no conflict arises here.
 Order: L1 first; L2 and L3 after L1 (independent of each other); L4, L5, L6 after L1
 and L2; L7 last.
 
-**L1 gate:** done. The user approved removing the unconditional refusal; only opted-in requests are checked.
+**L1 gate:** done (user approval 2026-10-23). The user approved removing the unconditional refusal; only opted-in requests are checked.
