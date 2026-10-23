@@ -64,8 +64,9 @@ inline. Invoke every line, then follow the dispatch directive.
 
 The gate remains in the capability record because it must run before this
 reference is loaded. Do not pass `hand-off` to task.py: it is not a CLI verb
-and is also the task type name. The only script operations are update and
-sessions release.
+and is also the task type name. The script operations are update and
+sessions release, plus sessions publish when the release reports
+`not published`.
 
 ### Step 2: rotate and update
 
