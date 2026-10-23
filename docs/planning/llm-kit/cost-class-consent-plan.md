@@ -1,3 +1,5 @@
+Superseded by docs/planning/shared-lib-packaging/consent-design.md
+
 # llm-kit cost classes and per-machine consent (S1) -- plan
 
 Status: plan revision 2 by opus 2026-10-21 after a codex/sol cross-check (verdict UNSOUND on revision 1); source design docs/planning/task-kit-dashboard/databench-integration-review.md.

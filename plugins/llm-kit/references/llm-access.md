@@ -819,7 +819,7 @@ read. None of them names a harness.
 |---|---|---|
 | `.env` | user API keys, one `KEY=VALUE` per line | `LLM_KIT_ENV_FILE` |
 | `model-endpoints.yaml` | the endpoint registry | `MODEL_ENDPOINTS_REGISTRY` |
-| `consent.json` | per-machine consent to the `usage` and `spend` cost classes | `LLM_KIT_CONSENT_FILE` |
+| `consent.json` | the optional consent layer's policy for the `local`, `subscription` and `metered` cost classes, with per-scope restrictions | `LLM_KIT_CONSENT_FILE` |
 
 An override names one explicit file and replaces the location. For the registry,
 a missing override file is an error; a missing neutral file is the normal
@@ -871,7 +871,7 @@ deliver an effort, its call modes and its cost class.
 `llm-kit completion complete --request-file -` with `"protocol": 2` then runs one
 call from a row or selection: the library resolves the endpoint and exact model,
 holds the effort to the row's menu, refuses a mode the adapter does not serve, and
-enforces the per-machine consent before anything is spawned. Codex serves
+applies the optional consent layer, when the request opts in, before anything is spawned. Codex serves
 `workspace` calls, which run in a confined `working_dir` and report the files
 written; Codex needs the `codex` executable and nothing from `bootstrap_lib`, so a venv that
 installs only `katsoft-llm-kit` can run it. The request
