@@ -10,8 +10,8 @@
       "install": "auto"
     }
   ],
+  "requires_bootstrap": "0.160.0",
   "shared_lib_imports": [
-    "llm_kit",
     "bootstrap_lib"
   ],
   "venv": {

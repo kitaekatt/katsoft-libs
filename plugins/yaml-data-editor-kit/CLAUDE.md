@@ -69,8 +69,8 @@ framework dependency.
   inline-only and raises `BackgroundStagesRequiredError` for background
   requests. Finalize writes only the `machine` layer and preserves human,
   sourced, and metadata values. This is the only package that imports
-  llm-kit, and `bootstrap.json` carries the matching plugin and
-  shared-library declarations.
+  llm-kit, and `pyproject.toml` declares the `katsoft-llm-kit` package it
+  imports (extras config, sdk, pipeline) beside `katsoft-contracts`.
 - `editor/` -- the web surface, which this kit does NOT build. **Databench**
   owns it: a separate local web workbench that browses and edits a project's
   data files, including the safe-write path that puts bytes on disk. This kit

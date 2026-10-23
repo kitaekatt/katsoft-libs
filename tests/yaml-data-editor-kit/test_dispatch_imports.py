@@ -110,7 +110,7 @@ def test_nested_module_not_found_is_not_relabelled_as_missing_llm_kit() -> None:
             import yaml_data_editor_kit.dispatch
         except ModuleNotFoundError as exc:
             assert exc.name == "llm_kit.pipeline.artifacts.freshness.hashing"
-            assert "shared library" not in str(exc).lower()
+            assert "katsoft-llm-kit" not in str(exc).lower()
         else:
             raise AssertionError("dispatch import did not fail")
         """,

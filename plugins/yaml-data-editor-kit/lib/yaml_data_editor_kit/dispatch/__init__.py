@@ -8,7 +8,7 @@ from .request import (
     load_request,
 )
 
-# Every module below reaches the llm_kit shared library. A consumer whose
+# Every module below reaches the llm_kit library (the katsoft-llm-kit package). A consumer whose
 # venv lacks it gets one actionable message naming the remedy, rather than a bare
 # ImportError from whichever submodule happened to be imported first. A nested
 # ModuleNotFoundError raised from inside llm_kit is a different fault and
@@ -53,7 +53,7 @@ except ImportError as exc:
     ).startswith("No module named 'llm_kit'"):
         raise
     raise ModuleNotFoundError(
-        "yaml-data-editor-kit dispatch requires the llm_kit shared library; "
+        "yaml-data-editor-kit dispatch requires the llm_kit library (katsoft-llm-kit); "
         "run the bootstrap dependency convergence action",
         name="llm_kit",
     ) from exc
