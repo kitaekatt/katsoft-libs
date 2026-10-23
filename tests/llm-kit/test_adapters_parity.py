@@ -145,6 +145,13 @@ _MASKED_FIELDS = frozenset({"wall_ms", "started_at", "ended_at"})
 _FINAL_ONLY_FIELDS = frozenset({
     "call_modes", "reported_model", "estimated_cost_usd", "estimated_cost_source", "reasoning_tokens",
 })
+# Declared difference (cost-class metadata): the final EndpointEntry carries ``billing_owner`` and
+# ``endpoint``, consumed only by llm_kit.registry.cost; the frozen legacy one has neither. Scoped to
+# the class, because ``endpoint`` is an ordinary field name elsewhere.
+_FINAL_ONLY_CLASS_FIELDS = {"EndpointEntry": frozenset({"billing_owner", "endpoint"})}
+_FINAL_ONLY_CLASS_PARAMS = {
+    "EndpointEntry": (", billing_owner: 'Optional[str]' = None", ", endpoint: 'Optional[str]' = None"),
+}
 _CALL_MODES_PARAM = ", call_modes: 'Tuple[str, ...]' = ('completion',)"
 # The final LLMResponse also carries ``reasoning_tokens`` (the reasoning share of ``output_tokens``,
 # filled by the codex transport from its --json usage events); the frozen legacy one has no such field.
@@ -196,8 +203,9 @@ def norm(value):
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         value = claude_contract_to_final(value)  # llm-kit delivers a claude contract natively
         out = {"__type__": type(value).__name__}
+        skipped = _FINAL_ONLY_CLASS_FIELDS.get(type(value).__name__, frozenset())
         for f in dataclasses.fields(value):
-            if f.name in _FINAL_ONLY_FIELDS:
+            if f.name in _FINAL_ONLY_FIELDS or f.name in skipped:
                 continue
             item = getattr(value, f.name)
             out[f.name] = "<masked>" if f.name in _MASKED_FIELDS else norm(item)
@@ -397,8 +405,10 @@ _SIG_PREFIX = re.compile(r"llm_scripting_kit\.|llm_kit\.[a-z_]+\.")
 _FN_ADDR = re.compile(r"<function (\w+) at 0x[0-9a-fA-F]+>")
 
 
-def _sig(fn) -> str:
+def _sig(fn, owner: str = "") -> str:
     text = _without_final_only_params(_SIG_PREFIX.sub("X.", str(inspect.signature(fn))))
+    for param in _FINAL_ONLY_CLASS_PARAMS.get(owner, ()):
+        text = text.replace(param, "")
     # Deliberate: codex_backend names Budget through registry.conserve.
     text = text.replace("usage_budget.Budget", "conserve.Budget")
     return _FN_ADDR.sub(r"<function \1>", text)
@@ -413,6 +423,7 @@ def _simple(value) -> bool:
 def shape(value):
     """Comparable description of one module-level name."""
     if isinstance(value, type):
+        class_skipped = _FINAL_ONLY_CLASS_FIELDS.get(value.__name__, frozenset())
         out = {
             "kind": "class",
             "name": value.__name__,
@@ -431,17 +442,17 @@ def shape(value):
                     f.default if f.default is not dataclasses.MISSING and _simple(f.default) else "<d>",
                 )
                 for f in dataclasses.fields(value)
-                if f.name not in _FINAL_ONLY_FIELDS
+                if f.name not in _FINAL_ONLY_FIELDS and f.name not in class_skipped
             ]
         for key, item in vars(value).items():
             if key.startswith("__") and key.endswith("__") and key not in ("__init__", "__call__"):
                 continue
-            if dataclasses.is_dataclass(value) and key in _FINAL_ONLY_FIELDS:
+            if dataclasses.is_dataclass(value) and (key in _FINAL_ONLY_FIELDS or key in class_skipped):
                 continue
             raw = item.__func__ if isinstance(item, (staticmethod, classmethod)) else item
             if inspect.isfunction(raw):
                 with contextlib.suppress(ValueError, TypeError):
-                    out["methods"][key] = _sig(raw)
+                    out["methods"][key] = _sig(raw, value.__name__)
             elif isinstance(item, property):
                 out["methods"][key] = "<property>"
             elif _simple(item):

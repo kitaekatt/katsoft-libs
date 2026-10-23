@@ -607,6 +607,10 @@
         "llm-scripting-kit/test_model_resolve.py::TestShippedHarnessEntries::test_shipped_harness_entries_are_discoverable_by_kind": {
           "mirror_status": "skipped",
           "reason": "The legacy test pins the shipped sol and luna model ids gpt-5.6-sol and gpt-5.6-luna. llm-kit ships the current Codex catalogue ids gpt-6.1-sol and gpt-6-luna (measured 2026-10-23, llm_kit.registry.model_profiles); the shipped ids are pinned by tests/llm-kit/test_model_profiles.py::test_shipped_codex_defaults_name_measured_current_models."
+        },
+        "llm-scripting-kit/test_model_resolve.py::TestDefaultDeclaration::test_shipped_default_is_the_one_entry_openrouter_declaration": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test pins the shipped default declaration to ['openrouter']. llm-kit ships no default model declaration (L3): default_declaration() on the shipped baseline is []. Pinned by tests/llm-kit/test_registry_parity.py::test_shipped_default_endpoint_is_a_declared_difference."
         }
       }
     },

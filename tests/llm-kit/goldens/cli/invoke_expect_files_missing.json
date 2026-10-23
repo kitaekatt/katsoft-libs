@@ -32,6 +32,9 @@
         "message": "expected file(s) are not regular files in working_dir: poster.png"
       },
       "files": [],
+      "manifest": {
+        "scope": "all"
+      },
       "mode": "workspace",
       "output": {
         "structured": null,
