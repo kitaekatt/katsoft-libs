@@ -36,7 +36,8 @@ if ! command -v databench >/dev/null 2>&1; then
     exit 0
 fi
 
-databench ensure >/dev/null 2>&1
+mkdir -p "$_DATA_DIR/sessions" 2>/dev/null
+databench ensure >/dev/null 2>>"$_LOG"
 _STATUS=$?
 if [ "$_STATUS" -ne 0 ]; then
     _log "databench-ensure.sh: databench ensure exited $_STATUS"

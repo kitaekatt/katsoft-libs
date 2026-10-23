@@ -26,7 +26,13 @@ def hook_input(source: str) -> str:
     return json.dumps({"hook_event_name": "SessionStart", "source": source})
 
 
-def make_tools(path: Path, *, marker: Path | None = None, status: int = 0) -> Path:
+def make_tools(
+    path: Path,
+    *,
+    marker: Path | None = None,
+    status: int = 0,
+    stderr_line: str | None = None,
+) -> Path:
     path.mkdir()
     for name in ("cat", "date", "mkdir", "sed", "tr"):
         resolved = shutil.which(name)
@@ -37,7 +43,8 @@ def make_tools(path: Path, *, marker: Path | None = None, status: int = 0) -> Pa
         databench.write_text(
             "#!/bin/sh\n"
             f"printf '%s\\n' \"$*\" >> {shlex.quote(str(marker))}\n"
-            f"exit {status}\n",
+            + (f"printf '%s\\n' {shlex.quote(stderr_line)} >&2\n" if stderr_line is not None else "")
+            + f"exit {status}\n",
             encoding="utf-8",
         )
         databench.chmod(databench.stat().st_mode | stat.S_IXUSR)
@@ -131,6 +138,21 @@ def test_failing_databench_exits_zero_and_logs_one_line(tmp_path: Path):
     lines = log_lines(tmp_path / "data")
     assert len(lines) == 1
     assert lines[0].endswith(" databench-ensure.sh: databench ensure exited 7")
+
+
+@posix_only
+def test_databench_stderr_is_appended_to_log(tmp_path: Path):
+    marker = tmp_path / "calls"
+    tools = make_tools(
+        tmp_path / "tools",
+        marker=marker,
+        status=1,
+        stderr_line="databench failed to ensure service",
+    )
+    done = run_hook(SCRIPT, "startup", path=tools, data_root=tmp_path / "data")
+    assert done.returncode == 0
+    assert done.stdout == "" and done.stderr == ""
+    assert "databench failed to ensure service" in log_lines(tmp_path / "data")
 
 
 @posix_only
