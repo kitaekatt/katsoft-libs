@@ -257,6 +257,7 @@ capability_skill:
           action: "Run `bash \"${CLAUDE_PLUGIN_ROOT}/bin/task-kit\"` (what typing `task-kit` in a terminal does once bootstrap has put it on PATH). It runs `databench --view tasks`, which serves databench's tasks view over task-kit's export. Report the command's exit status and its output, or its stderr when it fails."
       gotchas:
         - "task-kit no longer has a dashboard of its own. When databench is not on PATH, bare `task-kit` exits 1 and says databench provides the task view; relay that message as printed and do not install databench unasked. What databench shows and how it reads tasks: references/dashboard.md."
+        - "The async SessionStart hook in `hooks/hooks.json` calls `databench ensure` on startup, resume and clear; it opens no browser, and Databench's `regeneration.enabled` setting controls whether the server starts."
         - "`task-kit stop [--force]` stops a dashboard server an earlier task-kit version started, and refuses while that server has jobs running unless `--force`. Relay its message as printed; do not delete the server record or kill a process to get past a refusal."
     - id: queue
       keywords: [queue, queued work, queue this, queue it, queue up, add to the queue, put in the queue, run unattended, do this when you can]
