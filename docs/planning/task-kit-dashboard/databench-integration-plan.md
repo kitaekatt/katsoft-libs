@@ -946,7 +946,10 @@ user's action), and the launched `markup-refresh` is consent-filtered by U3b. Ea
 selects once for the whole machine: every existing development root's repositories through
 `workspace_scope` (its config read when present, never written: `select` gains `write_config=False`,
 and a root with no config contributes every unique repository, as `generate` would after writing
-one), then `select_union` removes a repository seen through two roots (same resolved path) and a
+one; a root that holds no primary checkout, which `workspace_scope` refuses with a `ScopeError`,
+is detected first with `find_repositories` and contributes zero members, writes nothing and gets a
+status line, while an invalid `.databench/config.yaml` or `dev_roots.yaml` still raises and fails
+the cycle, recorded in "Last runs"), then `select_union` removes a repository seen through two roots (same resolved path) and a
 second checkout of one origin, by the same one-copy-per-origin rule. Then, per selected phase
 whose minimum interval has elapsed (file-summaries and task-answers 1 h, index-pages 24 h;
 constants in this file), it runs one child `generate --repository R ...` over that deduplicated list
@@ -987,7 +990,11 @@ leaves exactly one index-pages run record and one push per repository (revert: h
 treat the multi-repository scope as one dev root: it is handed one base with another root's names and
 fails, red), with a second test recording the `index_pages_cli.main` argv per member; the existing
 `tests/test_workspace_scope_parity.py` and `tests/test_html_module.py` pass unmodified and the
-fingerprint verifier reports unchanged; a root with
+fingerprint verifier reports unchanged; one empty development root (no
+primary checkout) plus one valid root select the valid root's repositories, create no file in the
+empty root and run the phases (revert: let `ScopeError` propagate: the cycle aborts, red), while an
+invalid config in the valid root fails the cycle with the file named (revert: swallow the error:
+red); a root with
 no config is selected and no config file appears (revert: use the writing `select`: red); a tracked-mode root's
 cycle leaves its tracked file untouched (revert: drop `--label-destination overlay`: red); a failing
 phase does not stop the next.
@@ -1053,6 +1060,7 @@ pending questions drain over several hourly cycles, not in the first pass.
 | Pushing label commits to an origin's base branch is accepted by the user's remotes | [H], Q3 sets only the default | per repository; also unknown: branch protection on each opted-in remote; U5 reports a rejected push and keeps the overlay |
 | A `Scope` holds one mode and one base, and `IndexPagesPhase.run` treats every non-repository scope as one dev root (`index_pages_cli` over that single base plus target names) | [E] | `workspace_scope.Scope` (`mode`, `base`); `html_module.IndexPagesPhase.run`, so a cycle-wide list needs the explicit scope of U7 |
 | Running each member through `repository_index_argv` covers what a dev-root run covers (shared settings, exclusions, one copy per origin) | [H] | settled by U7's real-phase test across two roots and the parity suite |
+| `workspace_scope` raises on a development root with no primary checkout | [E] | `_checkouts_inside` raises `ScopeError` when `find_repositories(base)` is empty, and `resolve_scope` does the same; U7's cycle selection tests emptiness first |
 | Minimum intervals bound the cost: 1 h for file summaries and task answers, 24 h for index pages | [H], incomplete | the index-pages runner's skip key covers index pages only (section 6); file summaries and task answers have no equivalent evidence, so U7 records per-phase duration and U6 states its batch and deadline |
 
 ### M8 Running work on tasks (deferred stub)
