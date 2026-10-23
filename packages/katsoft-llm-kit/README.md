@@ -33,6 +33,29 @@ defaults; point `MODEL_ENDPOINTS_REGISTRY` at a registry file to change them.
 Do not install this distribution into an environment that also holds a
 path-linked copy of the `llm_kit` source tree.
 
+## Consent
+
+The library makes no model calls of its own: the code that uses it does, so the library gates
+nothing on a caller's behalf. Every model entry is classified `local`, `subscription` or
+`metered` (paid or unverified billing), and the class and the reason for it are always reported
+(`llm-kit models catalog`, `models describe`, and protocol 2 responses).
+
+An optional consent layer applies a policy you configure. It is off by default, and you may
+build your own policy instead. To opt in, pass `--consent [--consent-scope NAME]` to
+`llm-kit models describe`, send `"consent": true` or `"consent": {"scope": "NAME"}` in a
+protocol 2 request, or call `llm_kit.registry.consent.policy(scope=None)`. To apply your own
+filter instead, pass `--allow local,subscription` (not combinable with `--consent`).
+
+With the layer applied and no file, `local` and `subscription` are on and `metered` is off.
+One file, `$XDG_CONFIG_HOME/llm-kit/consent.json` (`~/.config/llm-kit/consent.json` by
+default; `LLM_KIT_CONSENT_FILE` overrides), holds the global policy and optional named scopes.
+A scope can only restrict the global policy; a class the scope omits inherits.
+
+```
+llm-kit consent show [--scope NAME] [--json]
+llm-kit consent set [--scope NAME] --local|--subscription|--metered on|off
+```
+
 ## Source
 
 The source lives in the plugins-kit repository (`packages/katsoft-llm-kit/src/llm_kit`).

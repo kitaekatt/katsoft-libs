@@ -18,13 +18,18 @@ spawned:
 4. build the backend and refuse a mode its adapter does not honor
    (:func:`~llm_kit.completion.capabilities.require_call_mode`);
 5. confine ``working_dir`` and refuse a contract the adapter cannot deliver;
-6. classify the cost of the entry and refuse it unless the per-machine consent
-   allows its class -- BEFORE any scan, argv or runner call;
+6. classify the cost of the entry (always, and always reported with its reason)
+   and, when the request opted in to the optional consent layer (``consent``),
+   refuse it unless that policy allows its class -- BEFORE any scan, argv or
+   runner call;
 7. for ``workspace``, scan the directory; run the call; scan again.
 
 The cost class comes from :func:`llm_kit.registry.cost.classify`, the rule the
-``allow`` filter of ``declaration.describe`` applies, and the allowed set from
-:func:`llm_kit.registry.consent.load_consent`. This path does not go through
+``allow`` filter of ``declaration.describe`` applies, and the policy from
+:func:`llm_kit.registry.consent.policy`. The consent layer is optional: a request
+without the ``consent`` field does not opt in (the
+single ``UNCONDITIONAL_CONSENT`` branch still applies the global policy to such a
+request). This path does not go through
 ``describe``: that ranks a declaration and probes reachability, and a project
 selection names exactly one entry, so a probe would only add a network or
 process call that the real call answers anyway.
@@ -77,7 +82,7 @@ from llm_kit.completion.requirements import arm_call
 from llm_kit.completion.types import BackendOptions, LLMResponse
 from llm_kit.completion.workspace_manifest import FileRecord, check_expected, diff, scan
 from llm_kit.registry import project_models
-from llm_kit.registry.consent import Consent, load_consent
+from llm_kit.registry import consent as consent_store
 from llm_kit.registry.cost import COST_CLASSES, HarnessAuth, classify
 from llm_kit.registry.model_endpoints import EndpointRegistryError
 from llm_kit.registry.models import (
@@ -92,9 +97,14 @@ OUTCOME_COMPLETED = "completed"
 OUTCOME_FAILED = "failed"
 OUTCOME_HALTED = "halted"
 
-_COST_FLAG = {"usage": "--usage on", "spend": "--spend on"}
+#: Whether a request WITHOUT the ``consent`` field is still held to the global consent policy (the refusal
+#: the optional layer replaces). The user's explicit yes is required to set this to False.
+UNCONDITIONAL_CONSENT = True
 
 HarnessProbe = Callable[[str, Path], Optional[HarnessAuth]]
+
+#: ``(scope) -> Policy``: how the consent layer's policy is read; injectable for tests.
+PolicyLoader = Callable[[Optional[str]], consent_store.Policy]
 
 
 @dataclass(frozen=True)
@@ -150,13 +160,14 @@ def invoke(
     *,
     default_project_root: Optional[str],
     backend_factory: Callable[..., Any],
-    consent: Optional[Consent] = None,
+    policy_loader: Optional[PolicyLoader] = None,
     harness_probe: Optional[HarnessProbe] = None,
 ) -> InvokeOutcome:
     """Run one protocol 2 call; see the module docstring for the order and the refusals.
 
     ``backend_factory`` is :func:`llm_kit.dispatch.factory.create_backend` (or a
-    call-time lookup of it); ``consent`` defaults to the machine's consent;
+    call-time lookup of it); ``policy_loader`` reads the consent layer's policy
+    for a scope and defaults to :func:`llm_kit.registry.consent.policy`;
     ``harness_probe`` answers ``(harness, cwd) -> HarnessAuth`` and defaults to
     :func:`llm_kit.adapters.harness_auth.probe_harness_auth`.
     """
@@ -289,14 +300,20 @@ def invoke(
     cost_class = verdict.cost_class
     if cost_class not in COST_CLASSES:  # classify's contract; a new class must be handled, not allowed
         raise InvokeRefusal(KIND_CONSENT, f"unrecognised cost class {cost_class!r}")
-    loaded = consent if consent is not None else load_consent()
-    if cost_class not in loaded.allowed:
-        raise InvokeRefusal(
-            KIND_CONSENT,
-            f"{row['endpoint']!r} is a {cost_class} entry ({verdict.reason}) and the machine's consent "
-            f"does not allow {cost_class} calls ({loaded.path}); run `llm-kit consent set "
-            f"{_COST_FLAG.get(cost_class, '--' + cost_class + ' on')}` to allow them; nothing was dispatched",
-        )
+    load_policy = policy_loader or consent_store.policy
+    opted_in = request.consent is not None
+    # UNCONDITIONAL REFUSAL (pending the user's decision to remove it): a request that did not opt in is
+    # still held to the global policy. Removing it is setting UNCONDITIONAL_CONSENT to False here.
+    unconditional = UNCONDITIONAL_CONSENT and not opted_in
+    consent_report: Dict[str, Any] = {
+        "opted_in": opted_in,
+        "applied": opted_in or unconditional,
+        "scope": request.consent.scope if request.consent is not None else None,
+    }
+    if request.consent is not None:
+        _refuse_unless_allowed(load_policy, request.consent.scope, cost_class, verdict.reason, row["endpoint"])
+    elif unconditional:
+        _unconditional_consent_refusal(load_policy, cost_class, verdict.reason, row["endpoint"])
 
     # arm the controls a plain completion relies on (no file writes, no shell, no subagents)
     if request.mode != MODE_WORKSPACE and record is not None:
@@ -362,6 +379,7 @@ def invoke(
     }
     cost = cost_block(
         cost_class,
+        reason=verdict.reason,
         usd=getattr(response, "reported_cost_usd", None),
         usd_source=getattr(response, "reported_cost_source", None),
         estimated_usd=getattr(response, "estimated_cost_usd", None),
@@ -389,12 +407,68 @@ def invoke(
             files=files,
             usage=usage_block(response, wall_ms),
             cost=cost,
+            consent=consent_report,
             error=failure,
             halt=halt_info,
             params=params,
         ),
         outcome,
     )
+
+
+def _refuse_unless_allowed(
+    load_policy: PolicyLoader, scope: Optional[str], cost_class: str, reason: str, endpoint: str
+) -> None:
+    """Enforce the consent layer the request opted in to.
+
+    Raises a ``consent`` refusal naming the class, the scope and the exact
+    ``llm-kit consent set`` command, or a ``configuration`` refusal when the
+    consent file cannot be read or is malformed; returns when the class is allowed.
+    """
+    try:
+        policy = load_policy(scope)
+    except (consent_store.ConsentConfigError, OSError, ValueError) as exc:
+        raise InvokeRefusal(
+            KIND_CONFIGURATION, f"the request opted in to the consent layer, and it is misconfigured: {exc}"
+        ) from None
+    if not policy.allows(cost_class):
+        raise InvokeRefusal(
+            KIND_CONSENT,
+            f"{endpoint!r} is a {cost_class} entry ({reason}) and {policy.refusal(cost_class)}; "
+            "nothing was dispatched",
+        )
+
+
+def _unconditional_consent_refusal(load_policy: PolicyLoader, cost_class: str, reason: str, endpoint: str) -> None:
+    """The refusal a request without the ``consent`` field still gets (the behaviour the optional layer replaces).
+
+    It keeps the semantics of the per-machine consent that preceded the layer:
+    ``local`` is always allowed; ``subscription`` and ``metered`` only when the
+    consent file's global policy states the class ``true`` (an absent file, an
+    unstated class, or a file that cannot be read or is malformed allows
+    local only). Kept until the user decides to remove it
+    (``UNCONDITIONAL_CONSENT``); removal is deleting this function and its call.
+    """
+    if cost_class == consent_store.LOCAL:
+        return
+    problem = ""
+    allowed = False
+    command = consent_store.set_command(cost_class)
+    try:
+        policy = load_policy(None)
+        state = policy.classes[cost_class]
+        allowed = state.allowed and state.provenance != consent_store.FROM_DEFAULT
+        where = str(policy.path)
+    except (consent_store.ConsentConfigError, OSError, ValueError) as exc:
+        problem = f" ({exc})"
+        where = "the consent file"
+    if not allowed:
+        raise InvokeRefusal(
+            KIND_CONSENT,
+            f"{endpoint!r} is a {cost_class} entry ({reason}) and the machine's consent does not allow "
+            f"{cost_class} calls ({where}){problem}; run `{command}` to allow them, or send "
+            "\"consent\": true to apply the optional consent layer instead; nothing was dispatched",
+        )
 
 
 def _error_from_response(response: LLMResponse, fallback: str) -> Dict[str, Any]:

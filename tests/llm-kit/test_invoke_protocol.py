@@ -161,8 +161,9 @@ def world(home, tmp_path, monkeypatch):  # noqa: F811
     return w
 
 
-def allow(*, usage: bool = True, spend: bool = True) -> None:
-    consent_mod.save_consent(usage=usage, spend=spend)
+def allow(*, subscription: bool = True, metered: bool = True) -> None:
+    """Write the machine's consent file (the global policy a request without the consent field is held to)."""
+    consent_mod.update_config({"subscription": subscription, "metered": metered})
 
 
 def call(world: World, capsys, **request: Any):
@@ -193,9 +194,11 @@ def test_openrouter_completion_result_shape(world, capsys):
     assert doc["usage"]["cache_hit_tokens"] == 4 and isinstance(doc["usage"]["wall_ms"], int)
     # an unmarked endpoint's native usage.cost is an ESTIMATE; the authoritative amount is unknown, not zero
     assert doc["cost"] == {
-        "class": "spend", "usd": None, "source": None,
+        "class": "metered", "reason": "no registry entry: billing undeclared",
+        "usd": None, "source": None,
         "estimated_usd": 0.0007, "estimated_source": "openrouter.usage.cost",
     }
+    assert doc["consent"] == {"opted_in": False, "applied": True, "scope": None}
     assert "files" not in doc
     assert doc["params"]["forwarded"] == ["extras.provider"]  # the row's request default reached the request, unvalidated
     assert world.http[0]["extra_body"] == {"provider": {"sort": "latency"}, "reasoning_effort": "max"}
@@ -255,7 +258,8 @@ def test_claude_completion_result_and_estimated_cost(world, capsys):
     assert resolved["effort"] == {"requested": None, "sent": None, "source": "none"}
     # the CLI's total_cost_usd is not pricing: it is only ever an estimate with a named source
     assert doc["cost"] == {
-        "class": "usage", "usd": None, "source": None,
+        "class": "subscription", "reason": "claude on subscription auth: fake subscription",
+        "usd": None, "source": None,
         "estimated_usd": 0.0123, "estimated_source": "claude-cli.total_cost_usd",
     }
     argv = world.claude[0]
@@ -282,7 +286,7 @@ def test_codex_completion_arms_text_only_and_reports_no_served_model(world, caps
     assert resolved["reported_model"] is None and resolved["model_verified"] is False  # codex states none
     assert resolved["effort"] == {"requested": "high", "sent": "high", "source": "selection"}
     assert doc["usage"]["total_tokens"] == 1234
-    assert doc["cost"]["class"] == "usage" and doc["cost"]["usd"] is None
+    assert doc["cost"]["class"] == "subscription" and doc["cost"]["usd"] is None
     assert world.codex[0][-2:] == ["debug", "models"]  # text-only mode read the catalogue first
     exec_argv = world.codex[1]
     assert "model_reasoning_effort=high" in exec_argv and "read-only" in exec_argv
@@ -448,33 +452,39 @@ def test_expect_files_must_be_relative_and_beneath_the_directory(world, capsys, 
 # --- consent --------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("selection,needs", [("art", "spend"), ("chat", "usage"), ("draft.generate.primary", "usage")])
-def test_consent_is_enforced_before_any_runner_call(world, capsys, selection, needs):
-    """Red on revert: remove the consent check in dispatch/invoke.py and the fake transports are called."""
+@pytest.mark.parametrize(
+    "selection,needs", [("art", "metered"), ("chat", "subscription"), ("draft.generate.primary", "subscription")]
+)
+def test_a_request_without_the_consent_field_is_still_held_to_the_global_policy(world, capsys, selection, needs):
+    """The unconditional refusal (UNCONDITIONAL_CONSENT) is kept until the user decides to remove it.
+
+    Red on revert: set dispatch.invoke.UNCONDITIONAL_CONSENT to False and the fake transports are called.
+    """
     code, doc, err = call(world, capsys, selection=selection)
     assert code == 4 and doc is None
     assert err["error"]["kind"] == "consent"
-    assert f"--{needs} on" in err["error"]["message"] and "nothing was dispatched" in err["error"]["message"]
+    message = err["error"]["message"]
+    assert f"llm-kit consent set --{needs} on" in message and "nothing was dispatched" in message
     assert world.runner_calls == 0  # no http request, no claude or codex process
 
 
 def test_consent_is_per_cost_class(world, capsys):
-    allow(usage=True, spend=False)
+    allow(subscription=True, metered=False)
     assert call(world, capsys, selection="chat")[0] == 0
     assert call(world, capsys, selection="art")[0] == 4
-    allow(usage=False, spend=True)
+    allow(subscription=False, metered=True)
     assert call(world, capsys, selection="art")[0] == 0
     assert call(world, capsys, selection="chat")[0] == 4
 
 
-def test_a_harness_on_metered_auth_is_a_spend_entry(world, capsys, monkeypatch):
-    allow(usage=True, spend=False)
+def test_a_harness_on_metered_auth_is_a_metered_entry(world, capsys, monkeypatch):
+    allow(subscription=True, metered=False)
     monkeypatch.setattr(
         harness_auth, "probe_harness_auth",
         lambda harnesses, env=None, *, cwd: {h.lower(): cost.HarnessAuth(cost.METERED, "ANTHROPIC_API_KEY is set") for h in harnesses},
     )
     code, _doc, err = call(world, capsys, selection="chat")
-    assert code == 4 and err["error"]["kind"] == "consent" and "spend" in err["error"]["message"]
+    assert code == 4 and err["error"]["kind"] == "consent" and "metered" in err["error"]["message"]
     assert world.runner_calls == 0
 
 
@@ -482,15 +492,17 @@ def test_the_consent_override_file_is_honoured(world, capsys, monkeypatch, tmp_p
     chosen = tmp_path / "my-consent.json"
     monkeypatch.setenv("LLM_KIT_CONSENT_FILE", str(chosen))
     assert call(world, capsys, selection="art")[0] == 4
-    consent_mod.save_consent(usage=False, spend=True)
+    consent_mod.update_config({"subscription": False, "metered": True})
     assert chosen.is_file() and call(world, capsys, selection="art")[0] == 0
 
 
 def test_a_legacy_consent_file_still_allows_the_call(world, home, capsys):  # noqa: F811
     legacy = home / ".claude/plugins/data/plugins-kit/llm-kit/consent.json"
-    write(legacy, json.dumps({"schema": 1, "usage": True, "spend": False, "updated_at": "x"}))
+    write(legacy, json.dumps({
+        "schema": 2, "local": True, "subscription": True, "metered": False, "scopes": {}, "updated_at": "x",
+    }))
     assert call(world, capsys, selection="chat")[0] == 0
-    assert call(world, capsys, selection="art")[0] == 4  # the legacy file allows usage only
+    assert call(world, capsys, selection="art")[0] == 4  # the legacy file allows subscription only
     assert not (home / ".config").exists()  # reading it created no neutral file
 
 
@@ -564,7 +576,7 @@ def test_a_classified_halt_exits_3_with_the_halt_object(world, capsys):
     assert doc["status"] == "failed" and doc["error"]["code"] == "rate_limit"
     assert doc["halt"] == {"kind": "rate_limit"}
     assert doc["output"] is None and doc["usage"]["input_tokens"] is None  # nothing was reported, nothing is invented
-    assert doc["cost"]["usd"] is None and doc["cost"]["class"] == "usage"
+    assert doc["cost"]["usd"] is None and doc["cost"]["class"] == "subscription"
 
 
 def test_an_ordinary_failure_exits_1(world, capsys):
@@ -600,7 +612,7 @@ def test_a_session_of_calls_under_an_empty_home_creates_and_opens_nothing_under_
     """
     _Audit.opened.clear()
     _Audit.armed = True
-    assert run(cli.main, ["consent", "set", "--usage", "on", "--spend", "on"], capsys).code == 0
+    assert run(cli.main, ["consent", "set", "--subscription", "on", "--metered", "on"], capsys).code == 0
     (world.root / "work").mkdir()
     for request in (
         {"selection": "art"}, {"selection": "chat"}, {"selection": "draft.generate.primary"},
@@ -630,7 +642,7 @@ def test_the_real_cli_in_a_subprocess_with_an_empty_home_touches_no_claude_path(
         "seen = []\n"
         "sys.addaudithook(lambda e, a: seen.append(os.fsdecode(a[0])) if e == 'open' and isinstance(a[0], (str, bytes, os.PathLike)) else None)\n"
         "import llm_kit.cli as cli\n"
-        "codes = [cli.main(a) for a in (['consent', 'set', '--usage', 'on'], ['consent', 'show', '--json'],\n"
+        "codes = [cli.main(a) for a in (['consent', 'set', '--subscription', 'on'], ['consent', 'show', '--json'],\n"
         "         ['account', 'set-key', '--key', 'k', '--no-validate'], ['account', 'which'])]\n"
         "print('CODES', codes)\n"
         "print('CLAUDE', [p for p in seen if '/.claude' in p])\n",

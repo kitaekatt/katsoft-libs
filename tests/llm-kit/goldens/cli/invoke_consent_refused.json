@@ -10,7 +10,7 @@
     "json": {
       "error": {
         "kind": "consent",
-        "message": "'openrouter' is a spend entry (no registry entry: billing undeclared) and the machine's consent does not allow spend calls (<T>/home/.config/llm-kit/consent.json); run `llm-kit consent set --spend on` to allow them; nothing was dispatched"
+        "message": "'openrouter' is a metered entry (no registry entry: billing undeclared) and the machine's consent does not allow metered calls (<T>/home/.config/llm-kit/consent.json); run `llm-kit consent set --metered on` to allow them, or send \"consent\": true to apply the optional consent layer instead; nothing was dispatched"
       },
       "protocol": 2
     }

@@ -9,10 +9,16 @@
   "stderr": "",
   "stdout": {
     "json": {
+      "consent": {
+        "applied": true,
+        "opted_in": false,
+        "scope": null
+      },
       "cost": {
-        "class": "spend",
+        "class": "metered",
         "estimated_source": "openrouter.usage.cost",
         "estimated_usd": 0.0007,
+        "reason": "no registry entry: billing undeclared",
         "source": null,
         "usd": null
       },

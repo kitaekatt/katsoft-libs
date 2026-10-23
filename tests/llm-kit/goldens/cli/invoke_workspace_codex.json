@@ -14,10 +14,16 @@
   "stderr": "",
   "stdout": {
     "json": {
+      "consent": {
+        "applied": true,
+        "opted_in": false,
+        "scope": null
+      },
       "cost": {
-        "class": "usage",
+        "class": "subscription",
         "estimated_source": null,
         "estimated_usd": null,
+        "reason": "codex on subscription auth: fake subscription",
         "source": null,
         "usd": null
       },

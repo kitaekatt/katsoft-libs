@@ -28,6 +28,15 @@ of ``selection`` or ``model``):
 ``effort``       explicit effort, or ``null`` to send none; absent means the selection's
 ``max_tokens``   output token cap, a positive integer
 ``timeout_s``    per-call wall-clock cap in seconds, a positive number
+``consent``      opt in to the optional consent layer (``llm-kit consent``): omitted or
+                 ``false`` = the layer is not used; ``true`` = the global policy;
+                 ``{"scope": "<non-empty name>"}`` = that scope's policy over the global
+                 one. Anything else is a ``protocol`` refusal. When present, a class the
+                 policy does not allow is refused (``consent``, naming the class, the
+                 scope and the exact ``llm-kit consent set`` command) before anything is
+                 spawned. There is no per-call allow list in protocol 2, so ``consent``
+                 cannot be combined with one; an ``allow`` key is an unknown key
+                 (``protocol`` refusal)
 
 Every refusal here is an :class:`InvokeRefusal`: it happens BEFORE anything is
 spawned, so retrying the same bytes cannot help, and the CLI reports it with the
@@ -93,6 +102,7 @@ _REQUEST_KEYS = (
     "effort",
     "max_tokens",
     "timeout_s",
+    "consent",
 )
 
 
@@ -122,6 +132,43 @@ class InvokeRequest:
     effort: Optional[str]
     max_tokens: Optional[int]
     timeout_s: Optional[float]
+    consent: Optional["ConsentRequest"] = None
+
+
+@dataclass(frozen=True)
+class ConsentRequest:
+    """The caller opted in to the consent layer; ``scope`` None means the global policy."""
+
+    scope: Optional[str] = None
+
+
+def parse_consent_field(payload: Mapping[str, Any]) -> Optional[ConsentRequest]:
+    """The request's ``consent`` field: None (layer not used), or the opt-in; :class:`InvokeRefusal` (protocol) if malformed."""
+    if "consent" not in payload:
+        return None
+    value = payload["consent"]
+    if value is None or value is False:
+        return None
+    if value is True:
+        return ConsentRequest()
+    if isinstance(value, Mapping):
+        extra = sorted(str(k) for k in value if k != "scope")
+        if extra or "scope" not in value:
+            raise InvokeRefusal(
+                KIND_PROTOCOL,
+                "consent must be true, false or {\"scope\": \"<name>\"}; "
+                + (f"unknown key(s) {', '.join(extra)}" if extra else "the object has no \"scope\""),
+            )
+        scope = value["scope"]
+        if not isinstance(scope, str) or not scope.strip() or scope != scope.strip():
+            raise InvokeRefusal(
+                KIND_PROTOCOL, f"consent scope must be a non-empty string without surrounding whitespace, got {scope!r}"
+            )
+        return ConsentRequest(scope=scope)
+    raise InvokeRefusal(
+        KIND_PROTOCOL,
+        f"consent must be true, false or {{\"scope\": \"<name>\"}}, got {type(value).__name__}",
+    )
 
 
 def _text(mapping: Mapping[str, Any], key: str, *, required: bool = False) -> Optional[str]:
@@ -220,6 +267,7 @@ def parse_invoke_request(payload: Any) -> InvokeRequest:
         effort=effort,
         max_tokens=max_tokens,
         timeout_s=timeout_s,
+        consent=parse_consent_field(payload),
     )
 
 
@@ -236,12 +284,16 @@ def effort_block(requested: Optional[str], sent: Optional[str], source: str) -> 
 def cost_block(
     cost_class: Optional[str],
     *,
+    reason: str,
     usd: Optional[float],
     usd_source: Optional[str],
     estimated_usd: Optional[float],
     estimated_source: Optional[str],
 ) -> Dict[str, Any]:
-    """The cost class, the AUTHORITATIVE USD (null when unknown) and the separate estimate.
+    """The cost class and its reason, the AUTHORITATIVE USD (null when unknown) and the separate estimate.
+
+    The class and the reason are information, reported whether or not the caller
+    opted in to the consent layer.
 
     ``usd`` is a provider- or registry-reported amount; ``estimated_usd`` is a
     backend figure that is not authoritative pricing, with its own source label.
@@ -249,6 +301,7 @@ def cost_block(
     """
     return {
         "class": cost_class,
+        "reason": reason,
         "usd": usd,
         "source": usd_source,
         "estimated_usd": estimated_usd,
@@ -274,6 +327,7 @@ def result_document(
     files: Optional[List[FileRecord]],
     usage: Mapping[str, Any],
     cost: Mapping[str, Any],
+    consent: Optional[Mapping[str, Any]] = None,
     error: Optional[Mapping[str, Any]] = None,
     halt: Optional[Mapping[str, Any]] = None,
     params: Optional[Mapping[str, Any]] = None,
@@ -297,6 +351,8 @@ def result_document(
         "usage": dict(usage),
         "cost": dict(cost),
     }
+    if consent is not None:
+        document["consent"] = dict(consent)
     if files is not None:
         document["files"] = [record.to_json() for record in files]
     if params is not None:
@@ -332,11 +388,24 @@ def describe_invoke_schema() -> Dict[str, Any]:
             "effort": "string or null, optional; absent means the selection's effort, null sends none",
             "max_tokens": "integer >= 1, optional",
             "timeout_s": "number > 0, optional",
+            "consent": (
+                "optional; omitted or false = the optional consent layer is not used, true = the global "
+                "policy, {\"scope\": \"<non-empty name>\"} = that scope's policy; anything else is refused "
+                "(protocol). When present a class the policy does not allow is refused (consent) naming the "
+                "class, the scope and the `llm-kit consent set` command"
+            ),
         },
         "result": {
             "status": f"{STATUS_COMPLETED} or {STATUS_FAILED}",
             "files": "workspace only: [{path, size, sha256}] created or modified under working_dir",
-            "cost": "{class, usd, source, estimated_usd, estimated_source}; usd null means unknown, never zero",
+            "cost": (
+                "{class, reason, usd, source, estimated_usd, estimated_source}; the class and its reason are "
+                "always reported; usd null means unknown, never zero"
+            ),
+            "consent": (
+                "{opted_in, applied, scope}: whether the request sent the consent field, and whether a "
+                "consent policy was applied to the call"
+            ),
         },
         "exit_codes": {
             "0": "completed",
@@ -349,6 +418,7 @@ def describe_invoke_schema() -> Dict[str, Any]:
 
 __all__ = [
     "CODE_EXPECTED_FILES_MISSING",
+    "ConsentRequest",
     "CODE_WORKSPACE_SCAN_FAILED",
     "EFFORT_FROM_NONE",
     "EFFORT_FROM_REQUEST",
@@ -374,6 +444,7 @@ __all__ = [
     "cost_block",
     "describe_invoke_schema",
     "effort_block",
+    "parse_consent_field",
     "parse_invoke_request",
     "refusal_envelope",
     "result_document",

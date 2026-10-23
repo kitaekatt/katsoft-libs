@@ -27,10 +27,14 @@ probing a provider or reading any user cache:
   what a call should use.
 - ``modes`` come from the adapter family's advertisement, passed in by the
   caller (the registry cannot import adapters).
-- ``cost.class`` is the registry classification. A claude or codex harness is
-  ``usage`` only on subscription auth, which is learned by asking the CLI, so
-  without a ``harness_auth`` mapping the class is ``null`` rather than a guess
-  and ``allowed`` is ``null`` with it.
+- ``cost`` is ``{class, reason}``: the registry classification, always reported
+  with its reason and independent of any consent. A claude or codex harness is
+  ``subscription`` only on subscription auth, which is learned by asking the CLI,
+  so without a ``harness_auth`` mapping the class is ``null`` (the reason says why)
+  rather than a guess.
+- ``consent`` is the discovery note of the optional consent layer
+  (:func:`llm_kit.registry.consent.discovery_note`): the catalogue never applies a
+  policy, so ``in_use`` is false.
 
 Stdlib only beyond the registry; no ``bootstrap_lib``, no plugin path, and no
 read of ``~/.codex``, ``~/.claude`` or the network.
@@ -39,7 +43,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional, Sequence
 
-from .consent import Consent
+from .consent import discovery_note
 from .cost import HarnessAuth, classify
 from .effort import DELIVERING_STYLES
 from .model_endpoints import HARNESS_KIND
@@ -90,18 +94,15 @@ def _cost(
     entry: Any,
     entries: Mapping[str, Any],
     harness_auth: Optional[Mapping[str, HarnessAuth]],
-    consent: Optional[Consent],
 ) -> dict:
     harness = (info.harness or "").lower()
     if harness in _AUTH_DEPENDENT and harness_auth is None:
         return {
             "class": None,
-            "allowed": None,
             "reason": f"{harness} cost class depends on its authentication, which was not probed",
         }
     verdict = classify(entry, entries=entries, harness_auth=harness_auth)
-    allowed = None if consent is None else verdict.cost_class in consent.allowed
-    return {"class": verdict.cost_class, "allowed": allowed, "reason": verdict.reason}
+    return {"class": verdict.cost_class, "reason": verdict.reason}
 
 
 def build_catalog(
@@ -109,7 +110,6 @@ def build_catalog(
     *,
     project_root: Optional[str],
     modes_by_adapter: Mapping[str, Sequence[str]],
-    consent: Optional[Consent] = None,
     harness_auth: Optional[Mapping[str, HarnessAuth]] = None,
     local: Optional[LocalOverrides] = None,
 ) -> dict:
@@ -119,9 +119,9 @@ def build_catalog(
     without it every selection resolves to its default and no ``local`` block is emitted.
 
     ``modes_by_adapter`` maps an adapter family name (see :func:`adapter_of`) to
-    its call modes; a family missing from it raises ``KeyError``. ``consent``
-    and ``harness_auth`` are optional: without them ``cost.allowed`` (and the
-    harness cost class) is ``null`` instead of a guess.
+    its call modes; a family missing from it raises ``KeyError``. ``harness_auth``
+    is optional: without it a claude or codex row's cost class is ``null`` instead
+    of a guess.
     """
     endpoints = _Endpoints(project_root)
     notes: list[str] = list(endpoints.notes())
@@ -165,7 +165,7 @@ def build_catalog(
             "effort_source": effort_source,
             "effort_delivery": delivery,
             "modes": list(modes_by_adapter[adapter]),
-            "cost": _cost(info, entry, endpoints.entries(), harness_auth, consent),
+            "cost": _cost(info, entry, endpoints.entries(), harness_auth),
         }
         if "request_defaults" in row:
             item["request_defaults"] = row["request_defaults"]
@@ -182,10 +182,7 @@ def build_catalog(
     }
     if local is not None:
         result["local"] = {"path": local.path, "present": local.present, "sha256": local.sha256}
-    if consent is not None:
-        result["consent"] = {"usage": consent.usage, "spend": consent.spend, "source": consent.source}
-        if consent.note:
-            notes.append(consent.note)
+    result["consent"] = discovery_note()
     result["notes"] = notes
     return result
 
