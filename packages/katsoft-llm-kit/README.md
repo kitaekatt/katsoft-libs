@@ -40,8 +40,13 @@ nothing on a caller's behalf. Every model entry is classified `local`, `subscrip
 `metered` (paid or unverified billing), and the class and the reason for it are always reported
 (`llm-kit models catalog`, `models describe`, and protocol 2 responses).
 
-An optional consent layer applies a policy you configure. It is off by default, and you may
-build your own policy instead. To opt in, pass `--consent [--consent-scope NAME]` to
+One departure from the design below: while `UNCONDITIONAL_CONSENT` is set
+(`llm_kit/dispatch/invoke.py`), a protocol 2 request that sends no `consent` field is refused for
+a `subscription` or `metered` entry unless the global consent file states that class `true`;
+`local` is always allowed. Setting the constant to `False` removes that refusal.
+
+Apart from that refusal, the optional consent layer applies a policy you configure only when you
+opt in, and you may build your own policy instead. To opt in, pass `--consent [--consent-scope NAME]` to
 `llm-kit models describe`, send `"consent": true` or `"consent": {"scope": "NAME"}` in a
 protocol 2 request, or call `llm_kit.registry.consent.policy(scope=None)`. To apply your own
 filter instead, pass `--allow local,subscription` (not combinable with `--consent`).

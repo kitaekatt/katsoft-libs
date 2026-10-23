@@ -70,9 +70,12 @@ otherwise `claude auth status` must report `authMethod` `claude.ai` and `apiProv
 provider `openai`, ChatGPT auth and no stored API key. A probe that cannot run, times out or
 returns an unrecognized report is unknown, which counts as `metered`.
 
-The library makes no model calls of its own; the caller's code makes them, so the library
-gates nothing on a caller's behalf. The consent layer is optional and off by default: it
-applies only when a caller opts in, and a caller may build its own policy instead. Opt in
+The library makes no model calls of its own; the caller's code makes them. Classification and
+the consent layer are designed as follows, with one departure: while `UNCONDITIONAL_CONSENT` is
+set (`llm_kit/dispatch/invoke.py`), a protocol 2 request that sends no `consent` field is
+refused for a `subscription` or `metered` entry unless the global consent file states that
+class `true`; `local` is always allowed. Apart from that refusal, the consent layer is optional
+and applies only when a caller opts in, and a caller may build its own policy instead. Opt in
 with `--consent [--consent-scope NAME]` on `models describe`, with the protocol 2 request
 field `"consent": true` (global policy) or `"consent": {"scope": "NAME"}`, or with
 `llm_kit.registry.consent.policy(scope=None)`. An explicit caller-owned `--allow <classes>`
@@ -82,8 +85,8 @@ When the layer is applied and there is no consent file, the policy is `local` on
 `subscription` on, `metered` off, with provenance `default`; reading creates nothing. The
 file is `$XDG_CONFIG_HOME/llm-kit/consent.json` (`$HOME/.config/llm-kit/consent.json` when
 `XDG_CONFIG_HOME` is unset or not absolute), or the file `LLM_KIT_CONSENT_FILE` names, which
-replaces the location for reads and writes. When the neutral file does not exist, the file an
-earlier release kept at `~/.claude/plugins/data/plugins-kit/llm-kit/consent.json` is read; a
+replaces the location for reads and writes. When the neutral file does not exist, the legacy
+file `~/.claude/plugins/data/plugins-kit/llm-kit/consent.json` is read; a
 write always targets the neutral file (or the override) and carries the legacy values across,
 after which the neutral file wins. The file is `{schema: 2, local, subscription, metered,
 scopes, updated_at}`. The global classes are a ceiling; a scope may only restrict, and an
@@ -101,10 +104,8 @@ or probed. `llm-kit models catalog` and `models describe` print a structured `co
 that the layer is optional and how to opt in; each catalog row carries `cost` as
 `{class, reason}`.
 
-Current behavior, pending removal: a protocol 2 request that sends no `consent` field is
-still refused for a `subscription` or `metered` entry unless the global consent file states
-that class `true` (`local` is always allowed); this transitional refusal is not part of the
-design and goes away once the user approves its removal.
+The `UNCONDITIONAL_CONSENT` refusal described above is not part of the layer's design; setting
+that constant to `False` removes it, and that change needs the user's explicit approval.
 
 ## Project model file
 

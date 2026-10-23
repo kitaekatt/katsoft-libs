@@ -389,8 +389,8 @@ unknown key is refused. `consent` opts in to the optional consent layer: omitted
 means the layer is not used, `true` applies the global policy, and `{"scope": "<name>"}`
 applies that scope's restrictions over the global policy. The name must be a non-empty
 string without surrounding whitespace, and any other value is a `protocol` refusal. Protocol 2
-has no per-call allow list, so an `allow` key is an unknown key. `mode` is `completion` (default) or `workspace`; there is no image or
-build mode, and a caller that writes files names the files in `expect_files`. A
+has no per-call allow list, so an `allow` key is an unknown key. `mode` is `completion`
+(default) or `workspace`; there is no image or build mode, and a caller that writes files names the files in `expect_files`. A
 `workspace` call needs a `working_dir` beneath the project root, which the library
 scans before and after the call; a call whose `expect_files` are not all regular files
 afterwards is reported failed, not completed. Only an adapter that lists `workspace` in
@@ -402,10 +402,10 @@ the output contract, the effort's wire delivery (what the endpoint can put on th
 and consent (only when
 the request opted in with `consent`: the entry's cost class must be allowed by the effective
 consent policy, and a refusal names the class, the scope and the `llm-kit consent set` command;
-an unreadable or malformed consent file is a `configuration` refusal in that case only). A
-request that sends no `consent` field is, as current behavior pending removal, still refused
-for a `subscription` or `metered` entry unless the global consent file states that class
-`true` (`local` is always allowed); that refusal is transitional, not part of the design. A refusal exits 4
+an unreadable or malformed consent file is a `configuration` refusal in that case only). While
+`UNCONDITIONAL_CONSENT` is set in `llm_kit/dispatch/invoke.py`, a request that sends no `consent`
+field is refused for a `subscription` or `metered` entry unless the global consent file states
+that class `true` (`local` is always allowed); that refusal is outside the layer's design. A refusal exits 4
 with `{"protocol": 2, "error": {"kind", "message"}}` on stderr; `kind` is one of
 `protocol`, `project-file`, `selection`, `effort`, `mode`, `path`, `contract`,
 `consent` and `configuration`. A call that ran exits 0 when completed, 1 when failed

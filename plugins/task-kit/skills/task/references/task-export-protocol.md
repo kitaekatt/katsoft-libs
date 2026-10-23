@@ -112,8 +112,9 @@ Answers (`tasks[].answers`):
   machine-local.
 - `answerer` is `{kind: "model" | "script", entry?, name?, tier?, effort?,
   attempts: [{entry, outcome}]}`: a model answer names its endpoint entry, cost
-  tier and effort; a script answer names the script. `tier` is the cost class (`local`,
-  `subscription`, `metered`; a record written before the class rename may hold `free`, `usage` or `spend`). `as_of` is
+  class and effort; a script answer names the script. `tier` is the cost class (`local`,
+  `subscription`, `metered`); it holds the value written, and the legacy values `free`, `usage` and `spend`
+  are not translated. `as_of` is
   `{task_commit?, code_commit?}`, the commits whose content the answer
   describes. `fingerprint` is the inputs fingerprint a model answer stored,
   null for a script answer.
