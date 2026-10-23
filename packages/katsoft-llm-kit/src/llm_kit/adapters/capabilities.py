@@ -497,8 +497,9 @@ CLAUDE_CAPABILITIES = Capabilities(
 
 # -- codex-cli -------------------------------------------------------------
 #
-# CodexCliBackend delegates argv construction to bootstrap_lib.codex, in a
-# DIFFERENT plugin. Two consequences the records must respect: the effort menu
+# CodexCliBackend delegates argv construction to codex_command, a SEPARATE
+# module the capability records do not derive from. Two consequences the
+# records must respect: the effort menu
 # validated on CodexAdapter is bypassed on this path, and network=False emits
 # nothing at all rather than a deny.
 

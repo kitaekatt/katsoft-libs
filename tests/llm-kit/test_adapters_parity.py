@@ -440,10 +440,13 @@ def assert_same_surface(legacy_mod, final_mod, *, only_legacy=(), only_final=())
 _SURFACE_CASES = [
     ("acap", (), ()),
     ("profile", (), ()),
-    ("harness", (), ()),
+    ("harness", (), ("codex_command",)),
     ("runner", (), ()),
     ("backends", (), ()),
-    ("codex", ("usage_budget",), ("conserve", "usage_sources")),
+    # The final backend delegates to llm_kit.adapters.codex_command directly, so
+    # the legacy probe constant, probe function and its signature import are gone.
+    ("codex", ("IGNORE_USER_CONFIG_BOOTSTRAP", "_codex_argv_builder", "inspect", "usage_budget"),
+     ("codex_command", "conserve", "usage_sources")),
     ("opencode", (), ()),
     ("account", (), ()),
     ("client", (), ()),
@@ -696,8 +699,9 @@ def test_codex_adapter_builds_the_same_argv(par, tmp_path):
     assert result["relative_cwd"][0] == "raise"
 
 
-def test_codex_adapter_bootstrap_edges(par, tmp_path, monkeypatch):
-    import bootstrap_lib.codex as bcodex
+def test_codex_adapter_detection_goes_through_the_canonical_module(par, tmp_path, monkeypatch):
+    """Both sides detect through llm_kit.adapters.codex_command (legacy via the alias)."""
+    from llm_kit.adapters import codex_command
 
     root = tmp_path / "root"
     root.mkdir()
@@ -707,24 +711,21 @@ def test_codex_adapter_bootstrap_edges(par, tmp_path, monkeypatch):
         calls.append("detect")
         return types.SimpleNamespace(available=len(calls) % 2 == 1)
 
-    monkeypatch.setattr(bcodex, "detect_codex", fake_detect)
+    monkeypatch.setattr(codex_command, "detect_codex", fake_detect)
 
     def scenario(S):
         calls.clear()
         adapter = S.harness.CodexAdapter(argv_prefix=("codex",))
         entry = _harness_entry(S)
-        out = {"first": adapter.is_available(), "second": adapter.is_available()}
-        # REQUIRED edge: bootstrap_lib.codex absent means no argv and no detection.
-        with monkeypatch.context() as m:
-            m.setitem(sys.modules, "bootstrap_lib.codex", None)
-            out["argv_without_bootstrap"] = outcome(adapter.build_argv, entry, root, prompt="p")
-            out["available_without_bootstrap"] = outcome(adapter.is_available)
-        return out
+        return {
+            "first": adapter.is_available(),
+            "second": adapter.is_available(),
+            "argv": outcome(adapter.build_argv, entry, root, prompt="p"),
+        }
 
     result = par(scenario)
     assert result["first"] is True and result["second"] is False
-    assert result["argv_without_bootstrap"][0] == "raise"
-    assert result["available_without_bootstrap"][0] == "raise"
+    assert result["argv"][0] == "ok"
 
 
 def test_opencode_adapter_builds_the_same_argv(par, tmp_path, monkeypatch):
@@ -1444,8 +1445,7 @@ def test_codex_token_total_and_prompt_folding(par):
             )],
             "compose": [S.codex.compose_prompt("sys", "user"), S.codex.compose_prompt("", "user"),
                         S.codex.compose_prompt("sys", "")],
-            "constants": [S.codex.PROMPT_SEPARATOR, S.codex.CODEX_EXTRA_KEYS,
-                          S.codex.IGNORE_USER_CONFIG_BOOTSTRAP],
+            "constants": [S.codex.PROMPT_SEPARATOR, S.codex.CODEX_EXTRA_KEYS],
         }
 
     result = par(scenario)
@@ -1615,20 +1615,13 @@ def test_codex_text_only_mode(par, tmp_path, monkeypatch):
     assert result["prefix_resolved"]["res"][0] == "ok"
 
 
-def test_codex_bootstrap_edges(par, tmp_path, monkeypatch):
-    """REQUIRED edge (the argv builder) and REFUSE edge (text-only needs ignore_user_config)."""
-    import bootstrap_lib.codex as bcodex
+def test_codex_backend_builds_through_the_canonical_module(par, tmp_path, monkeypatch):
+    """Plain and text-only calls build through codex_command on both sides.
 
-    real_builder = bcodex.build_codex_exec_argv
-
-    def old_builder(*, root, model=None, effort=None, output_file=None, add_dirs=(), sandbox="workspace-write",
-                    network=True, output_schema=None, argv_prefix=None, scratch_dir=None,
-                    json_events=False, extra_config=()):
-        return real_builder(root=root, model=model, effort=effort, output_file=output_file,
-                            add_dirs=add_dirs, sandbox=sandbox, network=network,
-                            output_schema=output_schema, argv_prefix=argv_prefix,
-                            scratch_dir=scratch_dir, json_events=json_events, extra_config=extra_config)
-
+    The legacy backend reaches the same module through the bootstrap_lib.codex
+    alias; the final backend imports it directly. The builder accepts
+    ``ignore_user_config``, so text-only mode runs and no version probe exists.
+    """
     catalog = json.dumps({"models": [{"slug": "gpt-x"}]})
 
     def scenario(S):
@@ -1638,22 +1631,14 @@ def test_codex_bootstrap_edges(par, tmp_path, monkeypatch):
             backend = S.codex.CodexCliBackend(argv_prefix=("codex",), runner=runner, **backend_kwargs)
             out[key] = {"res": outcome(backend.complete, "SYS", "USER", model="gpt-x"), "calls": runner.calls}
 
-        with monkeypatch.context() as m:
-            m.setitem(sys.modules, "bootstrap_lib.codex", None)
-            run("absent", _CodexRunner())
-            run("absent_text_only", _CodexRunner(catalog=(catalog, "", 0)), text_only=True)
-        with monkeypatch.context() as m:
-            m.setattr(bcodex, "build_codex_exec_argv", old_builder)
-            run("old_plain_ok", _CodexRunner())
-            run("old_text_only_refused", _CodexRunner(catalog=(catalog, "", 0)), text_only=True)
+        run("plain", _CodexRunner())
+        run("text_only", _CodexRunner(catalog=(catalog, "", 0)), text_only=True)
         return out
 
     result = par(scenario)
-    for key in ("absent", "absent_text_only"):
-        assert result[key]["res"][0] == "raise" and "RuntimeError" in result[key]["res"][1], key
-        assert "bootstrap_lib.codex is not importable" in result[key]["res"][2], key
-    assert result["old_plain_ok"]["res"][0] == "ok"
-    assert "ignore_user_config" in result["old_text_only_refused"]["res"][2]
+    assert result["plain"]["res"][0] == "ok"
+    assert result["text_only"]["res"][0] == "ok"
+    assert "--ignore-user-config" in result["text_only"]["calls"][-1]["cmd"]
 
 
 # --------------------------------------------------------------------------

@@ -489,14 +489,21 @@
     {
       "path": "tests/llm-scripting-kit/test_harness_adapters.py",
       "disposition": "rewrite",
-      "reason": "Re-pointed at llm-kit's final module names: module names inside subprocess/exec code strings, import statements, plugins/<kit> path to plugins/llm-kit.",
+      "reason": "Re-pointed at llm-kit's final module names: skips injected on declared-difference tests, module names inside subprocess/exec code strings, import statements, plugins/<kit> path to plugins/llm-kit; 1 declared difference(s) below.",
       "rewrite_classes": [
         "code-string",
+        "declared-skip",
         "import",
         "path-package-src"
       ],
       "collection_count": 12,
-      "baseline_failures": []
+      "baseline_failures": [],
+      "declared_differences": {
+        "llm-scripting-kit/test_harness_adapters.py::test_codex_module_imports_without_bootstrap_and_fails_only_on_dispatch": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test asserts Codex dispatch FAILS without bootstrap_lib. llm_kit.adapters.codex_command owns Codex command construction and imports no bootstrap_lib, so the same dispatch succeeds; the final behavior is pinned by tests/llm-kit/test_runtime_mode.py::test_package_mode_codex_adapter_detects_and_builds_without_bootstrap_lib."
+        }
+      }
     },
     {
       "path": "tests/llm-scripting-kit/test_llm_scripting_cli.py",
@@ -580,12 +587,19 @@
     {
       "path": "tests/llm-scripting-kit/test_reachability.py",
       "disposition": "rewrite",
-      "reason": "Re-pointed at llm-kit's final module names: import statements.",
+      "reason": "Re-pointed at llm-kit's final module names: skips injected on declared-difference tests, import statements; 1 declared difference(s) below.",
       "rewrite_classes": [
+        "declared-skip",
         "import"
       ],
       "collection_count": 45,
-      "baseline_failures": []
+      "baseline_failures": [],
+      "declared_differences": {
+        "llm-scripting-kit/test_reachability.py::TestCheckHarnessCodexFallback::test_falls_back_and_reports_unreachable_when_codex_truly_absent": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test pins the PATH-probe fallback taken when bootstrap_lib.codex does not import. The final reachability check detects Codex through llm_kit.adapters.codex_command with no fallback, and that detector caches its verdict for the process, so a patched-out shutil.which no longer changes the answer after an earlier test; the final detection paths are pinned by tests/llm-kit/test_dispatch_parity.py::test_reachability_harness_paths."
+        }
+      }
     },
     {
       "path": "tests/llm-scripting-kit/test_readme_exit_code_summary.py",
@@ -723,12 +737,23 @@
     {
       "path": "tests/llm-scripting-kit/test_text_only_codex.py",
       "disposition": "rewrite",
-      "reason": "Re-pointed at llm-kit's final module names: import statements.",
+      "reason": "Re-pointed at llm-kit's final module names: skips injected on declared-difference tests, import statements; 2 declared difference(s) below.",
       "rewrite_classes": [
+        "declared-skip",
         "import"
       ],
       "collection_count": 14,
-      "baseline_failures": []
+      "baseline_failures": [],
+      "declared_differences": {
+        "llm-scripting-kit/test_text_only_codex.py::test_a_bootstrap_without_ignore_user_config_is_diagnosed_not_a_type_error": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test patches bootstrap_lib.codex.build_codex_exec_argv with a builder that lacks ignore_user_config and expects a diagnosed refusal. The final backend calls llm_kit.adapters.codex_command.build_codex_exec_argv, which always has the keyword, so it carries no version probe and the patched alias is never called."
+        },
+        "llm-scripting-kit/test_text_only_codex.py::test_an_absent_bootstrap_codex_module_names_install_not_update": {
+          "mirror_status": "skipped",
+          "reason": "The legacy test blocks bootstrap_lib.codex and expects a RuntimeError naming the bootstrap install. The final backend does not import bootstrap_lib.codex, so there is no such failure to name; an absent or old distribution is refused where it is imported (tests/bootstrap/test_codex_alias.py)."
+        }
+      }
     },
     {
       "path": "tests/llm-scripting-kit/test_text_only_mode.py",

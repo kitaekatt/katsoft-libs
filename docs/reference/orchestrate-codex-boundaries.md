@@ -11,7 +11,7 @@ The two look like one fact stated twice and are not. orchestration.yaml
 describes a `codex exec` command the ORCHESTRATOR types and runs itself,
 rendered through CodexAdapter.build_argv; CODEX_CAPABILITIES describes what
 CodexCliBackend emits through the COMPLETION SEAM. They are siblings
-converging only at bootstrap_lib.codex.build_codex_exec_argv, which is the
+converging only at llm_kit.adapters.codex_command.build_codex_exec_argv, which is the
 single source of the argv CONSTRUCTION CODE. Scope that precisely: the
 construction is deduplicated, the argv SPELLINGS are not. Fourteen flags are
 restated as string literals across up to five files (`codex exec`,
@@ -76,10 +76,11 @@ orchestrate DOES consume llm-scripting-kit -- orchestration_guidance.py
 imports it and calls discover_model_entries, and orchestration.yaml states
 that every routing name without the `agent:` prefix resolves against it.
 EXECUTION: orchestrate does NOT go through the completion seam
-(CodexCliBackend), but it is NOT independent of bootstrap_lib.codex --
+(CodexCliBackend), but it is NOT independent of llm_kit.adapters.codex_command --
 orchestration_guidance.py's adapter_command_text_provider resolves a harness
 adapter via llm_scripting_kit.resolve_harness_adapter and calls
-CodexAdapter.build_argv, which calls bootstrap_lib.codex.build_codex_exec_argv.
+CodexAdapter.build_argv, which calls llm_kit.adapters.codex_command.build_codex_exec_argv
+(`bootstrap_lib.codex` is an exact alias of that module).
 The literal `command:` string in orchestration.yaml's backends record is the
 DISCLOSED FALLBACK (_command_fallback), reached only when llm_scripting_kit
 is unavailable, version-skewed, or the adapter raises, and it appends a note

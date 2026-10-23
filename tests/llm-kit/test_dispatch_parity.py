@@ -1066,16 +1066,24 @@ def test_reachability_harness_paths(par):
                              ("slow", "/bin/claude-slow"), ("gone", "/bin/claude-gone")):
             with mock.patch.object(s.reach.shutil, "which", lambda name, which=which: which):
                 out[f"claude_{label}"] = outcome(lambda: s.reach.check_harness("claude", timeout=3))
-        with mock.patch.object(s.reach.shutil, "which", lambda name: "/bin/codex-ok"), \
-                mock.patch.dict(sys.modules, {"bootstrap_lib.codex": None}):
-            out["codex_fallback"] = outcome(lambda: s.reach.check_harness("codex"))
-        with mock.patch.object(s.reach.shutil, "which", lambda name: None), \
-                mock.patch.dict(sys.modules, {"bootstrap_lib.codex": None}):
+        # Both sides detect through the one canonical module (the legacy library
+        # reaches it through the bootstrap_lib.codex alias), so each case starts
+        # from a cleared detection cache.
+        from llm_kit.adapters import codex_command  # noqa: PLC0415
+
+        codex_command.reset_detection_cache()
+        with mock.patch.object(s.reach.shutil, "which", lambda name: "/bin/codex-ok"):
+            out["codex_found"] = outcome(lambda: s.reach.check_harness("codex"))
+        codex_command.reset_detection_cache()
+        with mock.patch.object(s.reach.shutil, "which", lambda name: None):
             out["codex_missing"] = outcome(lambda: s.reach.check_harness("codex"))
-        fake_codex = types.ModuleType("bootstrap_lib.codex")
-        fake_codex.detect_codex = lambda timeout: types.SimpleNamespace(available=True, reason="codex 9.9")
-        with mock.patch.dict(sys.modules, {"bootstrap_lib.codex": fake_codex}):
+        codex_command.reset_detection_cache()
+        with mock.patch.object(
+            codex_command, "detect_codex",
+            lambda timeout: types.SimpleNamespace(available=True, reason="codex 9.9"),
+        ):
             out["codex_detected"] = outcome(lambda: s.reach.check_harness("codex"))
+        codex_command.reset_detection_cache()
         for label, prefix in (("opencode_found", ["/bin/oc-ok"]), ("opencode_missing", None)):
             with mock.patch.object(s.reach, "resolve_opencode_cli", lambda prefix=prefix: prefix):
                 out[label] = outcome(lambda: s.reach.check_harness("opencode"))
