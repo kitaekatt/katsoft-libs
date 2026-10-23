@@ -54,6 +54,8 @@ def test_every_profile_cites_its_source_and_day():
         ("claude", "claude-fable-5-1", LOW_TO_MAX),
         ("claude", "claude-opus-4-6", ("low", "medium", "high", "max")),
         ("openrouter", "deepseek/deepseek-v4.1-flash", ("none", "low", "high", "max")),
+        ("openrouter", "google/gemini-3.8-flash", ("low", "medium", "high")),
+        ("openrouter", "z-ai/glm-5.3", ("low", "high", "max")),
     ],
 )
 def test_the_measured_menus(route, model, menu):

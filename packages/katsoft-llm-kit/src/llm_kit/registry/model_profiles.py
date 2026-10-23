@@ -157,6 +157,26 @@ PROFILES: "tuple[ModelProfile, ...]" = (
         "vendor default effort is high; the endpoint must resolve an effort_style "
         "(top-level) for an effort to be sent",
     ),
+    # Reasoning is mandatory for both models below (no ``none``); the vendor
+    # lists three efforts each, unordered, stored low to high.
+    ModelProfile(
+        ROUTE_OPENROUTER,
+        "google/gemini-3.8-flash",
+        ("low", "medium", "high"),
+        SOURCE_OPENROUTER,
+        _MEASURED_ON,
+        "reasoning is mandatory; vendor default effort is medium; the endpoint must "
+        "resolve an effort_style (top-level) for an effort to be sent",
+    ),
+    ModelProfile(
+        ROUTE_OPENROUTER,
+        "z-ai/glm-5.3",
+        ("low", "high", "max"),
+        SOURCE_OPENROUTER,
+        _MEASURED_ON,
+        "reasoning is mandatory; vendor default effort is max; the endpoint must "
+        "resolve an effort_style (top-level) for an effort to be sent",
+    ),
 )
 
 _INDEX = {(profile.route, profile.model): profile for profile in PROFILES}
