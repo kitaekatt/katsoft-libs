@@ -12,6 +12,10 @@ probing a provider or reading any user cache:
   the library knows for that EXACT model (``model_profiles``), and
   ``effort_source`` says which. A harness model the library has not measured
   has an empty menu and the row says so in ``notes``.
+- A row with NO effort dial reports ``"efforts": []`` (an empty list, never a missing
+  key): either the library's measured profile for that exact model has an empty menu
+  (``effort_source`` ``library-model``) or the project file declares ``efforts: []``
+  (``effort_source`` ``project-no-effort``). Any effort for it is refused.
 - ``effort_delivery`` says whether the endpoint can put an effort on the wire at
   all. A menu is the model's vendor menu; an endpoint that resolves no effort
   style (the shipped ``openrouter`` record until it declares one) would drop it,
@@ -59,6 +63,9 @@ ADAPTER_BY_HARNESS = {
     "opencode": "opencode-cli",
 }
 TRANSPORT_ADAPTER = "openrouter"
+
+#: ``effort_source`` of a row whose project file declares ``efforts: []`` (no effort dial).
+EFFORT_SOURCE_PROJECT_NONE = "project-no-effort"
 
 #: Harnesses whose cost class depends on how the CLI is authenticated.
 _AUTH_DEPENDENT = ("claude", "codex")
@@ -126,7 +133,9 @@ def build_catalog(
         adapter = adapter_of(info)
         menu, menu_source = library_effort_menu_with_source(info, row["model"])
         declared = row.get("efforts")
-        if menu_source == MENU_NONE:
+        if declared is not None and not declared:
+            effort_source = EFFORT_SOURCE_PROJECT_NONE
+        elif menu_source == MENU_NONE:
             effort_source = MENU_NONE
         elif declared is not None:
             effort_source = f"{menu_source}+project-subset"

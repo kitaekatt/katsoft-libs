@@ -307,7 +307,7 @@ def test_a_schema_the_adapter_cannot_deliver_is_refused_before_the_runner(world,
 
 def test_the_response_carries_the_reported_model_and_estimate_fields():
     names = [f.name for f in dataclasses.fields(LLMResponse)]
-    assert names[-5:] == ["output_contract", "skill_context", "reported_model", "estimated_cost_usd", "estimated_cost_source"]
+    assert names[-6:] == ["output_contract", "skill_context", "reported_model", "estimated_cost_usd", "estimated_cost_source", "reasoning_tokens"]
     blank = LLMResponse(text="t", model="m")
     assert (blank.reported_model, blank.estimated_cost_usd, blank.estimated_cost_source) == (None, None, None)
 

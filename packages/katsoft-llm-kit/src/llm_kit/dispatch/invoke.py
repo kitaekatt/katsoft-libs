@@ -8,7 +8,10 @@ every step before the call can refuse; a refusal is an
 spawned:
 
 1. read and validate the project model file, confined to the project root;
-2. resolve the selection or row to its endpoint and exact wire model;
+2. resolve the selection or row to its endpoint and exact wire model; a
+   ``selection`` is read through the personal layer (``<stem>.local.yaml``
+   beside the tracked file), which wins per key over the tracked default, and
+   a refusal that comes from that file names it;
 3. hold the effort to the row's narrowed, exact-model menu (an explicit request
    effort overrides the selection's and is revalidated) and refuse an effort the
    endpoint cannot put on the wire;
@@ -173,11 +176,19 @@ def invoke(
     # 2. selection / row ------------------------------------------------------
     selected_effort: Optional[str] = None
     if request.selection is not None:
-        chosen = document["selections"].get(request.selection)
+        try:
+            local = project_models.read_local_overrides(stored, project_root=root_arg, file=request.file)
+        except project_models.ProjectModelsError as exc:
+            # an invalid layer is a selection problem (its message names the local file); a path problem is a file problem
+            kind = KIND_SELECTION if exc.code == project_models.CODE_INVALID else KIND_PROJECT_FILE
+            raise InvokeRefusal(kind, f"{exc.code}: {exc}") from None
+        resolved_selections = project_models.resolve_models(stored, local).selections
+        chosen = (resolved_selections.get(request.selection) or {}).get("effective")
         if chosen is None:
-            known = ", ".join(sorted(document["selections"])) or "<none>"
+            known = ", ".join(resolved_selections) or "<none>"
             raise InvokeRefusal(
-                KIND_SELECTION, f"selection {request.selection!r} is not in {stored.path} (known: {known})"
+                KIND_SELECTION,
+                f"selection {request.selection!r} is in neither {stored.path} nor {local.path} (known: {known})",
             )
         row_id = chosen["model"]
         selected_effort = chosen.get("effort")
@@ -203,10 +214,18 @@ def invoke(
         menu = tuple(project_models.library_effort_menu(info, row["model"]))
         allowed = tuple(row["efforts"]) if "efforts" in row else menu
         if requested_effort not in allowed:
+            no_dial = not allowed and (
+                "efforts" in row or project_models.exact_effort_menu(info.route, row["model"]) == ()
+            )
+            none_text = (
+                "none -- this model has no effort dial; send null"
+                if no_dial
+                else "none -- the library has no measured effort menu for this model; send null"
+            )
             raise InvokeRefusal(
                 KIND_EFFORT,
                 f"effort {requested_effort!r} is not accepted for {row_id!r} (accepted: "
-                f"{', '.join(allowed) or 'none -- the library has no measured effort menu for this model; send null'}); "
+                f"{', '.join(allowed) or none_text}); "
                 "nothing was dispatched",
             )
 

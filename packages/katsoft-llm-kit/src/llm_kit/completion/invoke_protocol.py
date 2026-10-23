@@ -258,7 +258,7 @@ def cost_block(
 
 def usage_block(response: Any, wall_ms: int) -> Dict[str, Any]:
     """Token usage as the backend reported it; every count is null when no response exists."""
-    keys = ("input_tokens", "output_tokens", "cache_hit_tokens", "total_tokens")
+    keys = ("input_tokens", "output_tokens", "cache_hit_tokens", "reasoning_tokens", "total_tokens")
     block: Dict[str, Any] = {key: (getattr(response, key, None) if response is not None else None) for key in keys}
     block["wall_ms"] = int(getattr(response, "wall_ms", 0) or wall_ms) if response is not None else int(wall_ms)
     return block

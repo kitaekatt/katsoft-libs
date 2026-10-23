@@ -57,6 +57,7 @@
         "cache_hit_tokens": 0,
         "input_tokens": 0,
         "output_tokens": 0,
+        "reasoning_tokens": 0,
         "total_tokens": 1234,
         "wall_ms": "<ms>"
       }

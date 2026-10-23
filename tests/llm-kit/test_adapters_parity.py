@@ -36,6 +36,13 @@ Deliberate differences, each pinned by name:
 * ``swapper.ProcessNotFound`` / ``InspectionIndeterminate`` / ``SwapperError``
   (and the EXIT_* constants) are defined in the leaf ``adapters._swapper_errors``
   (no swapper <-> _swapper_process cycle) and re-exported by ``swapper``;
+* the final codex completion backend passes ``--json`` (usage events) and reads
+  ``input_tokens``, ``cache_hit_tokens``, ``output_tokens``, ``total_tokens`` and
+  ``reasoning_tokens`` from them; the legacy backend does neither. The recording
+  runner drops ``--json`` from the argv it records so the rest of the argv is
+  still compared on both sides, ``reasoning_tokens`` is a final-only
+  ``LLMResponse`` field, and ``tests/llm-kit/test_codex_usage_json.py`` pins the
+  final side (``--json`` present, counts parsed);
 * messages name llm-kit where the legacy text named llm-scripting-kit or one of
   its bare verbs: ``final_wording.RENAMES`` pins each by name and
   ``test_final_messages.py`` proves each against the live legacy and final
@@ -135,13 +142,18 @@ _MASKED_FIELDS = frozenset({"wall_ms", "started_at", "ended_at"})
 # test below pins the final side's values.
 # The final LLMResponse also carries ``reported_model`` and the ``estimated_cost_*`` pair (a
 # downstream-reported model id and a non-authoritative cost figure); the frozen legacy one has neither.
-_FINAL_ONLY_FIELDS = frozenset({"call_modes", "reported_model", "estimated_cost_usd", "estimated_cost_source"})
+_FINAL_ONLY_FIELDS = frozenset({
+    "call_modes", "reported_model", "estimated_cost_usd", "estimated_cost_source", "reasoning_tokens",
+})
 _CALL_MODES_PARAM = ", call_modes: 'Tuple[str, ...]' = ('completion',)"
+# The final LLMResponse also carries ``reasoning_tokens`` (the reasoning share of ``output_tokens``,
+# filled by the codex transport from its --json usage events); the frozen legacy one has no such field.
 # LLMResponse's final-only trailing parameters (see _FINAL_ONLY_FIELDS).
 _RESPONSE_EXTRA_PARAMS = (
     ", reported_model: 'Optional[str]' = None",
     ", estimated_cost_usd: 'Optional[float]' = None",
     ", estimated_cost_source: 'Optional[str]' = None",
+    ", reasoning_tokens: 'int' = 0",
 )
 
 
@@ -468,7 +480,11 @@ def assert_same_surface(legacy_mod, final_mod, *, only_legacy=(), only_final=())
 _SURFACE_CASES = [
     ("acap", (), ("MODE_COMPLETION", "MODE_WORKSPACE")),
     ("profile", (), ()),
-    ("harness", (), ("check_effort", "codex_command")),
+    # Legacy-only: the legacy modules reach Codex through ``bootstrap_lib.codex`` and carry the
+    # message and requirement constants for an interpreter whose katsoft-llm-kit is absent or old;
+    # the final modules import ``codex_command`` directly and have nothing to be absent.
+    ("harness", ("LLM_KIT_CODEX_MIN", "LLM_KIT_CODEX_REQUIREMENT", "_codex_unavailable", "codex_import_failure"),
+     ("check_effort", "codex_command")),
     ("runner", (), ()),
     # Final-only: the Claude effort check (check_effort over the harness-wide menu) and the
     # estimated-cost labels / reported-model reader that fill LLMResponse's final-only fields.
@@ -477,8 +493,10 @@ _SURFACE_CASES = [
                       "check_effort")),
     # The final backend delegates to llm_kit.adapters.codex_command directly, so
     # the legacy probe constant, probe function and its signature import are gone.
-    ("codex", ("IGNORE_USER_CONFIG_BOOTSTRAP", "_codex_argv_builder", "inspect", "usage_budget"),
-     ("CODEX_EFFORT_ORDER", "CODEX_HARNESS", "check_effort", "codex_command", "conserve", "usage_sources")),
+    ("codex", ("IGNORE_USER_CONFIG_BOOTSTRAP", "_codex_argv_builder", "codex_import_failure", "inspect",
+               "usage_budget"),
+     ("CODEX_EFFORT_ORDER", "CODEX_HARNESS", "check_effort", "codex_command", "conserve", "usage_sources",
+      "CodexUsage", "_usage_count", "parse_codex_usage_events")),
     ("opencode", (), ()),
     ("account", (), ()),
     ("client", (), ()),
@@ -1422,7 +1440,9 @@ class _CodexRunner:
         self.calls = []
 
     def __call__(self, cmd, request, cwd, **kwargs):
-        record = {"cmd": list(cmd), "request": request, "cwd": str(cwd), "kwargs": pre(dict(kwargs))}
+        # Declared difference: the final backend adds --json (see the module docstring).
+        record = {"cmd": [part for part in cmd if part != "--json"], "request": request, "cwd": str(cwd),
+                  "kwargs": pre(dict(kwargs))}
         if "--output-schema" in cmd:
             record["schema_file"] = Path(cmd[cmd.index("--output-schema") + 1]).read_text(encoding="ascii")
         if "-c" in cmd:
