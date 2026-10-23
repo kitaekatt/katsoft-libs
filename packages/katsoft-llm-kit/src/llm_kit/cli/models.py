@@ -4,6 +4,11 @@ Carries the legacy ``endpoints``, ``probe``, ``usage``, ``record-halt``,
 ``describe``, ``seats``, ``models`` (here ``list``) and ``resolve`` verbs.
 ``probe`` keeps its three-way exit code (0 reachable, 1 unreachable, 5 could not
 check, 2 an endpoint name that does not resolve).
+
+``project show|validate|write`` operate on the tracked project model file
+(``llm_kit.registry.project_models``): a refusal prints one JSON ``error``
+object (``kind`` ``project-models``, a ``code``, a ``message``) on stderr and
+exits 2; nothing is written on a refusal.
 """
 from __future__ import annotations
 
@@ -45,6 +50,7 @@ from llm_kit.dispatch.reachability import (
     check_many,
 )
 from llm_kit.dispatch.seats import discover_seats
+from llm_kit.registry import project_models
 from llm_kit.registry.effort import remap_effort
 from llm_kit.registry.models import (
     EndpointResolveError,
@@ -450,6 +456,45 @@ def _cmd_resolve(
     return EXIT_OK
 
 
+def _read_project_input() -> Any:
+    """The JSON document from stdin (``--input -``), parsed strictly."""
+    return project_models.parse_json_document(sys.stdin.read())
+
+
+def _cmd_project(args: argparse.Namespace) -> int:
+    """``models project show|validate|write``; a refusal is a JSON error on stderr, exit 2."""
+    where = {"project_root": args.project_root, "file": args.file}
+    try:
+        if args.project_cmd == "show":
+            result: Any = project_models.read_project_models(**where)
+        elif args.project_cmd == "validate":
+            result = project_models.validate_project_models(_read_project_input(), **where)
+        else:
+            result = project_models.write_project_models(
+                _read_project_input(), if_match=args.if_match, **where
+            )
+    except project_models.ProjectModelsError as exc:
+        _json({"error": exc.to_json()}, stream=sys.stderr)
+        return EXIT_USAGE
+    _json(result.to_json())
+    return EXIT_OK
+
+
+def _add_project_file_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--project-root",
+        help="The project root the file is confined to (default: the current directory).",
+    )
+    parser.add_argument(
+        "--file",
+        help=(
+            f"The project model file, relative to the root or an absolute path beneath "
+            f"it (default {project_models.DEFAULT_FILE}). Symlinks and paths that leave "
+            "the root are refused."
+        ),
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="llm-kit models",
@@ -544,6 +589,34 @@ def _parser() -> argparse.ArgumentParser:
     _add_project_arg(resolve)
     resolve.add_argument("--model")
     resolve.add_argument("--cheap", action="store_true")
+    project = sub.add_parser(
+        "project",
+        help="Show, validate or write the tracked project model file (catalogue and selections).",
+    )
+    project_sub = project.add_subparsers(dest="project_cmd", required=True)
+    show = project_sub.add_parser(
+        "show", help="Print the stored file as JSON with its sha256 (the --if-match value)."
+    )
+    _add_project_file_args(show)
+    validate = project_sub.add_parser(
+        "validate", help="Validate a JSON document from stdin; nothing is written."
+    )
+    _add_project_file_args(validate)
+    validate.add_argument(
+        "--input", required=True, choices=("-",), help="`-`: read the JSON document from stdin."
+    )
+    write = project_sub.add_parser(
+        "write", help="Validate a JSON document from stdin and store it atomically as canonical YAML."
+    )
+    _add_project_file_args(write)
+    write.add_argument(
+        "--input", required=True, choices=("-",), help="`-`: read the JSON document from stdin."
+    )
+    write.add_argument(
+        "--if-match",
+        metavar="SHA256",
+        help="Refuse unless the stored file still has this sha256 (from `project show`).",
+    )
     return parser
 
 
@@ -566,6 +639,8 @@ def run(argv: Sequence[str]) -> int:
             return _cmd_seats(args.self_ref, args.json, args.project_root, args.timeout)
         if args.cmd == "list":
             return _cmd_models(args.endpoint, args.project_root)
+        if args.cmd == "project":
+            return _cmd_project(args)
         if args.cmd == "resolve":
             return _cmd_resolve(
                 _declared_models(args), args.model, args.cheap, args.project_root,

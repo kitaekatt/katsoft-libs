@@ -1,0 +1,24 @@
+{
+  "argv": [
+    "models",
+    "project",
+    "write",
+    "--project-root",
+    "<T>/proj",
+    "--input",
+    "-",
+    "--if-match",
+    "0000000000000000000000000000000000000000000000000000000000000000"
+  ],
+  "exit": 2,
+  "stderr": {
+    "json": {
+      "error": {
+        "code": "stale",
+        "kind": "project-models",
+        "message": ".llm-kit/models.yaml changed: stored digest is 7f9a12ba16c7766fd32c60c99696cc3fa09024102fe1efe8bf51aa48fcaaf0cc, not 0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  },
+  "stdout": ""
+}
