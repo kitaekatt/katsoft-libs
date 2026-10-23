@@ -59,10 +59,11 @@ None`) so the provider's own mode-dependent default applies. When
 applies. Pass either flag to override its value.
 
 Run the runner with **workflow-kit's own venv python** -- bootstrap provisions it
-with `openai` (declared) and links `llm_kit` onto it (declared via
-`shared_lib_imports`). llm-kit is REQUIRED for a model declaration and for a
-schema-typed artifact: when it is absent or too old, the runner, the checker
-and the compiler refuse (exit 2, or a compile error) with a message that names
+with `llm_kit` (the `katsoft-llm-kit[config,sdk]` package declared in
+`pyproject.toml`, which brings `openai`) and links `bootstrap_lib` onto it
+(`shared_lib_imports` names `bootstrap_lib` only). llm-kit is REQUIRED for a model
+declaration and for a schema-typed artifact: when it is absent, the runner, the
+checker and the compiler refuse (exit 2, or a compile error) with a message that names
 the repair, and never fall back to another provider. The API key is resolved the llm-kit way; run
 `"${CLAUDE_BOOTSTRAP_DATA_ROOT:-$HOME/.claude/plugins/data}"/plugins-kit/llm-kit/.venv/bin/llm-kit account set-key`
 (Windows: "${CLAUDE_BOOTSTRAP_DATA_ROOT:-$HOME/.claude/plugins/data}"/plugins-kit/llm-kit/.venv/Scripts/llm-kit.exe account set-key) once to provision it.
