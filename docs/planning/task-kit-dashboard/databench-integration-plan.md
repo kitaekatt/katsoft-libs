@@ -743,20 +743,20 @@ committed state, never from a working tree it shares.
 **Units** (owns / depends / gate). Waves: W1 U0, U1, U6a; W2 U3a, U4, U6, U8; W3 U2, U3b, U5; W4
 U7; W5 U9; W6 U10. Units in one wave share no file. Files with more than one owner run in the order
 of the waves: `generate_cli.py` U4, U3b, then U7; `service_cli.py` U1, U8, U5; `server.py` U1, U3a, U7;
-`cli.py` U1, U4, U3b, U8; `generation.py` U1 then U5 or U10 (one default); `workspace_scope.py`, `html_module.py` and `modules_registry.py` U7.
+`cli.py` U1, U4, U3b, U8; `generation.py` U1 then U5 or U10 (one default); `filesystem.py` U5 only; `workspace_scope.py`, `html_module.py` and `modules_registry.py` U7.
 
 | Unit | Owns | Depends | Gate |
 |---|---|---|---|
-| U0 publisher design | `databench:docs/markup-design.md` ("V5 amendment") | none | none; records the publisher as taking effect only where `publish.labels` is on |
+| U0 publisher design | `databench:docs/markup-design.md` ("V5 amendment", landed in `8cbd486`) | none | none |
 | U1 settings store and CLI | `generation.py`, `service_cli.py`, settings routes in `server.py`, one dispatch line in `cli.py` | none | none |
 | U6a task-kit scoped answers | `plugins/task-kit` (`answers_cli.py`, discovery, protocol doc, README, tests), task-kit 0.18.0 | none | none |
 | U3a consent gateway | `llm_gateway.py`, the providers route in `server.py` | U1 | none |
-| U4 label overlay, end to end | `markup.py`, `generate_cli.py` (`--label-destination`), the `markup-refresh` and `markup-accept` arguments in `cli.py` | U0 | none |
+| U4 label overlay, end to end | `markup.py`, `generate_cli.py` (`--label-destination`), the `markup-refresh`, `markup-accept` and `markup-adopt` operations in `cli.py`, `databench:docs/markup-design.md` (D27), README | U0 (landed) | none |
 | U6 task-answers phase | `tasks_host.py`, `tasks_module.py`, `.claude/bootstrap.json` (`min_version` 0.18.0) | U1, U6a published | none |
 | U8 ensure | `service_cli.py` (`ensure`), the detached-start helper of `cli.py` | U1 | none |
 | U2 settings panel | `web/src/settings.tsx` (+ tests), route in `main.tsx`, `routes.ts` | U1, U3a | none |
 | U3b consent call sites | `generate_cli.py` (filter), `generate_config.py`, the `markup-refresh` filter in `cli.py` | U3a, U4 | Q2 and Q4 answered |
-| U5 label publisher | `label_publisher.py`, the `labels publish` operation, the `publish.labels` default in `generation.py` | U0, U4, U8 (file order) | none; built for either Q3 answer |
+| U5 label publisher | `label_publisher.py`, the `labels publish` operation in `service_cli.py`, `filesystem.py` (one public alias, only if the test needs it), the `publish.labels` default in `generation.py` | U0, U4, U8 (file order) | none; built for either Q3 answer |
 | U7 background loop | `background.py`, `workspace_scope.py` (cycle selection, the multi-repository scope), `generate_cli.py` (`--repository`), `html_module.py` (the index-pages phase for that scope), `modules_registry.py` (the contract's docstring only), startup and shutdown wiring and the on-open gate in `server.py`, status route, "Last runs" block in `settings.tsx` | U1, U2, U3b, U4, U5, U6 | none |
 | U9 hook and wording | `plugins/task-kit/hooks/`, task-kit 0.19.0, README, claude-settings `USER-PREFERENCES.md` | U8 | none |
 | U10 release | none, except `generation.py` and its defaults test for the one `PUBLISH_LABELS_DEFAULT` line when Q3 is answered after U5 has run (verification and publication otherwise) | all | none |
@@ -771,23 +771,13 @@ answers. Q5 (the answers budget) does not gate: U6 ships the stated defaults.
 
 Every check below names the revert that must turn it red.
 
-**M7-U0 publisher design.** Docs only: a "V5 amendment: the label publisher" in
-`databench:docs/markup-design.md`, which supersedes D11 for service runs whose `publish.labels` is on
-and keeps it for hand runs. It decides, each with a premise mark: (1) the overlay:
-`<user cache>/databench/markup/<key>/overlay.jsonl` in D3's format (`serialize_labels` /
-`parse_labels` unchanged), written by service runs only, and useful with no publisher; (2) the read
-view: tracked file under overlay, the winner per path by D5's rule; (3) draining: the publisher
-fetches, takes the origin base tip's copy of the label file, folds the overlay entries into it (D5
-duplicate rule), and drops each overlay entry whose line the tip already holds, so the overlay is
-stateless and a second machine's identical fold is a no-op; (4) the publisher works in a private
-detached worktree of the fetched base tip, commits only the label file, pushes fast-forward only,
-retries once after a fetch, keeps the overlay on any failure, and removes the worktree in a
-`finally` (no kept worktree and no salvage: the overlay is the durable state); (5) repositories:
-tracked-mode roots with an `origin` and an attached HEAD; (6) the checkout, its index and its tracked
-file are never read for the fold and never written; (7) where the shared logic duplicates
-`index_pages_worktree` helpers (`base_branch`, `has_origin`, `_git`), the copy lives in
-`label_publisher.py` and joins the batch of section 6.5. Checks: the doc-consistency tests stay
-green; ASCII; the fingerprint verifier reports unchanged.
+**M7-U0 publisher design (landed: databench `8cbd486`).** The "V5 amendment: the label overlay and
+the label publisher" in `databench:docs/markup-design.md`, decisions D14 to D26 and the interfaces
+the units build against. It supersedes D11 for service runs only: hand runs keep D11, the service
+writes the overlay (D14 to D17), and one component, the publisher, may commit and push under four
+gates (D18 to D23): `publish.labels` on, a tracked-mode root, an `origin` with an attached HEAD, and
+a checkout on origin's default branch. Its private worktree and the copied helpers follow D24 and
+D25. U4 and U5 build to it; this plan restates none of its rules beyond the interfaces below.
 
 **M7-U1 settings store and CLI.** `generation.py` owns `<config root>/databench/generation.json`
 `{"schema": 1, "regeneration": {"enabled": bool, "disabled_types": [phase ids]}, "consent":
@@ -844,19 +834,41 @@ script on ids it declares and asserts the partition shape only, because a harnes
 comes from the machine's auth probe (on the machine that ran the probe, a `luna` entry reported
 "codex on subscription auth" as usage).
 
-**M7-U4 label overlay, end to end.** One unit owns the whole path so no half exists: `markup.py`
-gains a store destination `overlay` for tracked-mode roots (accepts and run state write the overlay
-file of M7-U0 and never the tracked file; the D8 read view shows overlay over tracked by the D5
-winner); `generate_cli.py` gains `--label-destination {tracked-file,overlay}` (default
-`tracked-file`, D11 unchanged for hand runs), which `FileSummaries` passes to `markup.enqueue_root`
-and `markup_refresh`; the `markup-refresh` and `markup-accept` operations in `cli.py` carry the same
-argument, so the accept contract emitted for a run names the destination. Checks: a child process
+**M7-U4 label overlay, end to end.** One unit owns the whole path so no half exists, to V5's
+interfaces: `markup.py` gains `LABEL_DESTINATION_TRACKED_FILE` and `LABEL_DESTINATION_OVERLAY`,
+`MarkupStore.label_overlay_path` (never `overlay_path`, which keeps its meaning as the read-only
+tracked file shown over a cache-mode root's labels), `label_overlay_path(root_path, cache_dir=None)`,
+`read_label_overlay`, `pick_label` (extracted from `parse_labels`, behavior-preserving, and the one
+function the loader's duplicate rule, the read view and the fold use), `fold_labels`,
+`retire_label_overlay` and `store_for(root, cache_dir=None, *, tracked=None,
+destination="tracked-file")`. Accepts and run state of a tracked-mode root write the overlay under
+destination `overlay`, the D10 cache import retargets to the overlay under that destination (D17),
+and the combined view shows the winner per path (D16). `generate_cli.py` gains
+`--label-destination {tracked-file,overlay}` (default `tracked-file`, so a hand run keeps D11),
+which `FileSummaries` passes to `markup.enqueue_root` and `markup_refresh`; the `markup-refresh` and
+`markup-accept` operations in `cli.py` carry the same option, so the accept contract a run emits
+names its destination. U4 also owns the hand fold: `databench [DIR] markup-adopt` folds the overlay
+into the working-tree label file with `fold_labels`, writes it atomically under `labels.lock`,
+retires the adopted entries from the overlay, and never stages, commits or pushes (D11). It sits in
+U4, not U5, because it needs only the store primitives above and no git process, and because it must
+work with `publish.labels` off and a Q3 "no", where U5's publisher returns SKIPPED; the unit adds
+the command to `databench:docs/markup-design.md` as D27 and to the README. Checks: a child process
 `python -m databench.cli <fixture repo> generate --label-destination overlay --runner <fake
 llm-kit>` leaves the tracked file's bytes and mtime unchanged and `git status --porcelain` empty,
 and the overlay holds the labels (revert: stop forwarding the option in `FileSummaries`: the tracked
-file is written, red); the read view returns the overlay label when its `generated_at` is later and
-the tracked one when earlier (revert: tracked always wins: red); the default destination still
-writes the tracked file; the existing `tests/test_markup*.py` and `tests/test_generate_cli.py` pass
+file is written, red); the option on a root with no `content_markup:` block writes its cache and no
+overlay (revert: honor the destination everywhere: red); the D10 import under `overlay` writes the
+overlay and not the tracked file (revert: import into the tracked file: red); the read view returns
+the overlay label when its `generated_at` is later and the tracked one when earlier (revert:
+tracked always wins: red); `mutate` under one destination never writes the other file (revert:
+write both: red); `pick_label` is the function `parse_labels` uses for duplicates, shown by a direct
+comparison test with a tie-break case (revert: a local copy with a different tie-break: red);
+`overlay_path` keeps its meaning, shown by the existing cache-mode suites passing unmodified
+(revert: reuse the name for the new file: they go red); `markup-adopt` leaves the working-tree file
+holding the fold, `git status --porcelain` naming only the label file, `git diff --cached` empty and
+no new commit (revert: add a stage or commit: red), drains the adopted overlay entries, and a second
+run writes nothing (bytes and mtime); a conflicted tracked file is refused with exit 2 (revert:
+fold into it: red); the existing `tests/test_markup*.py` and `tests/test_generate_cli.py` pass
 unmodified; the fingerprint verifier reports unchanged (`_cache_root` and `_file_lock` keep their
 meaning, D13).
 
@@ -923,16 +935,33 @@ the filter in `main`: red); the `markup-refresh` operation filters too (revert: 
 list exits 0 with the status line (revert: exit 2: red); a v1 file with `harnesses: {claude: true}`
 loads with a note.
 
-**M7-U5 label publisher.** `label_publisher.py`: `publish(root) -> PublishResult` per U0 (fetch,
-fold, commit only the label file, push, drain), and `databench labels publish [DIR]` for a hand run
-and for the loop; it runs only when `publish.labels` is on (off unless the Q3 ruling flipped its default). Checks over a bare-origin fixture: the pushed commit changes
-exactly the label file (revert: `git add -A`: red); the checkout's working tree, index and a dirty
-tracked label file are byte-identical before and after (revert: fold into the checkout: red); no
-worktree remains after success and after an injected push failure (revert: remove the `finally`:
-red); a rejected push fetches and retries once, then keeps the overlay and reports (revert: force
-the push: red); a second publisher with the same overlay makes no commit (revert: skip the tip
-comparison: a duplicate commit, red); `publish.labels` off pushes nothing (revert: ignore the
-setting: red); a root with no origin is skipped with a line.
+**M7-U5 label publisher.** `label_publisher.py` to V5's interface: `publish(root_path, *,
+settings=None) -> PublishResult(outcome, code, message, branch, base_sha, commit, added, updated,
+retired, attempts)` (gates D18, fold D19, commit D20, push D21, outcomes D23, worktree D24), and
+`databench labels publish [DIR]`, which prints the D23 line and exits 0 for PUBLISHED, NOTHING and
+SKIPPED, 1 for REFUSED and NOT_PUSHED, 2 for a usage error. It runs only when `publish.labels` is on
+(off unless the Q3 ruling flipped its default), and only from a checkout on origin's default branch.
+The unit reads the tip's `content_markup:` block through `filesystem._load_configuration` pointed
+at the worktree; the premise that it accepts a worktree directory as it stands is settled by a test,
+and if it needs a public name U5 owns `filesystem.py` (not fingerprinted) for that one alias,
+`load_root_configuration(directory)`, while the alternative, calling the private name from `label_publisher.py` (core to core, so no
+import-lint edge), is taken instead when the test passes without an alias. Checks over a
+bare-origin fixture, the V5 list: a checkout on a feature branch pushes nothing and reports
+`not-on-base` (revert: push to the checkout's upstream: red); a block present in the checkout and
+absent at the tip reports `opt-in-not-on-origin` (revert: read the checkout's config: red); a tip
+label file with conflict markers is REFUSED `tip-file-invalid` and the overlay is unchanged (revert:
+skip the parse error: red); an ignored label path is REFUSED (revert: skip the check: red); the
+pushed commit changes exactly the label file (revert: `git add -A`: red); the checkout's working
+tree, index and a dirty tracked label file are byte-identical before and after (revert: fold into
+the checkout: red); the `push` argv has none of the force spellings (revert: add `--force`: red); a
+competing commit for a neighbouring path pushed between fetch and push makes the second attempt
+land a commit holding both (revert: rebase instead of re-fold: a conflict, red); an entry older
+than the tip's record retires with no commit (revert: always overwrite: red); an entry added to the
+overlay during the publish survives retirement (revert: rewrite the overlay from the snapshot:
+red); no worktree remains after success, after an injected push failure and after a killed run's
+leftover (revert: remove the `finally`: red); a second publisher with the same overlay makes no
+commit; `publish.labels` off runs no git process (the runner fake records zero calls; revert:
+ignore the setting: red); a root with no origin is SKIPPED with a line.
 
 **M7-U7 background loop.** `background.py` owns the loop thread. Every server starts the thread when
 `generation.load().regeneration.enabled`; a machine-wide lease decides which server runs phases: the
@@ -967,8 +996,11 @@ repository mode that already shares a parent dev root's settings and exclusions,
 The run uses `--label-destination overlay`, the stop-file variable in its
 environment, and stdout and stderr appended to the server log; so each repository, and each task
 repository behind the `task-answers` pass, runs once per phase per cycle however many roots reach
-it. Then `label_publisher` for tracked-mode roots after
-file-summaries when `publish.labels` is on. State (last start, end, status, recap, duration per
+it. Then it runs `databench labels publish DIR` as a child process for each tracked-mode repository of
+the cycle after the file-summaries phase, whether or not that phase was due (the command returns
+SKIPPED `publish-off` without a git process while the setting is off, and an empty overlay costs
+none), and records the largest exit code as the publisher's status: REFUSED and NOT_PUSHED are a
+failed run in "Last runs", SKIPPED is a recap line. State (last start, end, status, recap, duration per
 phase) is `<user cache>/databench/service/state.json`, served by `GET /api/v1/generation-status`,
 shown as a "Last runs" block in the panel. Shutdown: the app's shutdown hook creates the stop file,
 waits up to 30 s for the child, then terminates it; on Windows `--stop` uses `taskkill /T /F`, so the
@@ -1061,6 +1093,9 @@ pending questions drain over several hourly cycles, not in the first pass.
 | A `Scope` holds one mode and one base, and `IndexPagesPhase.run` treats every non-repository scope as one dev root (`index_pages_cli` over that single base plus target names) | [E] | `workspace_scope.Scope` (`mode`, `base`); `html_module.IndexPagesPhase.run`, so a cycle-wide list needs the explicit scope of U7 |
 | Running each member through `repository_index_argv` covers what a dev-root run covers (shared settings, exclusions, one copy per origin) | [H] | settled by U7's real-phase test across two roots and the parity suite |
 | `workspace_scope` raises on a development root with no primary checkout | [E] | `_checkouts_inside` raises `ScopeError` when `find_repositories(base)` is empty, and `resolve_scope` does the same; U7's cycle selection tests emptiness first |
+| V5 (D14 to D26) specifies the overlay, the publisher's gates, fold, push rules and interfaces | [E] | databench `8cbd486`, `docs/markup-design.md` "V5 amendment" read in full; its hand-sharing question (the toggle versus a fold command) is answered here by `markup-adopt` in U4 |
+| `MarkupStore.overlay_path` already means the read-only tracked file over a cache-mode root's labels, so the new file needs `label_overlay_path` | [E] | V5 "Vocabulary" and premises |
+| `filesystem._load_configuration` accepts the private worktree directory without change | [H] | settled by U5's test; a public alias in `filesystem.py` only if it fails |
 | Minimum intervals bound the cost: 1 h for file summaries and task answers, 24 h for index pages | [H], incomplete | the index-pages runner's skip key covers index pages only (section 6); file summaries and task answers have no equivalent evidence, so U7 records per-phase duration and U6 states its batch and deadline |
 
 ### M8 Running work on tasks (deferred stub)
@@ -1149,10 +1184,13 @@ repository's index pages stale"; that overstated it.
   would need a second switch.]
 - **Q3. May databench push label commits to an opted-in repository's base branch unattended?** Gates
   no unit. A `content_markup:` block opts a root into tracked storage, D11 says databench never
-  pushes, and index pages pushing their output is not a ruling for this. The answer sets only the shipped
-  default of the `publish.labels` checkbox; the publisher is built either way. [Yes, default on: base branch, fast-forward only, one
-  commit touching only the label file; a rejected push keeps the overlay and shows in "Last runs".
-  On a no, labels stay in the overlay, visible on this machine and shared by hand as in M6.]
+  pushes, and index pages pushing their output is not a ruling for this. The publisher pushes only from a checkout that is on origin's default branch, not to the current
+  branch's upstream as index pages does; a checkout on another branch keeps its overlay and prints a
+  line. The answer sets only the shipped default of the `publish.labels` checkbox; the publisher is
+  built either way. [Yes, default on: origin's default branch, fast-forward only, one commit
+  touching only the label file; a rejected push keeps the overlay and shows in "Last runs". On a
+  no, labels stay in the overlay, visible on this machine, and `databench markup-adopt` folds them
+  into the working-tree file for the owner's own commit, as in M6.]
 - **Q4. Does consent replace the `harnesses:` switch in `generate.yaml`?** Gates M7-U3b. With
   llm-kit 1.0.0 both harness adapters have a text-only mode, and the usage class already gates them.
   [Yes: drop the switch (v2 file); a v1 file is read with a note.]
@@ -1195,6 +1233,8 @@ Decided on the user's behalf:
   unchanged repository cheap (section 6).
 - The server is the service: M7 reuses databench's detached start, `--stop` and `--status` and adds
   `ensure`; the earlier `service` verb family and psutil are dropped.
+- The publisher pushes only from a checkout on origin's default branch (V5 D18), not to the current
+  branch's upstream; a hand fold, `markup-adopt`, serves an owner who keeps `publish.labels` off.
 - Regeneration settings record the deselected types, so a phase added later is on.
 - Unattended file summaries of a tracked-mode root write a per-user overlay and a publisher folds
   it into the origin tip in a private worktree (M7-U0); hand runs keep D11.
