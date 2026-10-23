@@ -202,9 +202,11 @@ if section 2 or section 4 finds a subprocess call. If it does:
 
 Planned, not shipped: `dev/tasks/shared-lib-packaging/plan-draft-end-state.md` unit C4
 removes `shared_libs` from the llm-kit plugin's `bootstrap.json`, so bootstrap stops
-publishing `llm_kit` into `~/.claude/plugins/data/<marketplace>/_shared_libs/llm_kit`. It
-waits on the user's decision D1 (section 5 of that draft). Its status is UNVERIFIED here;
-check the shared-lib-packaging task log before relying on either timing.
+publishing `llm_kit` into `~/.claude/plugins/data/<marketplace>/_shared_libs/llm_kit`. The
+retirement is decided (D1 option (a); `dev/tasks/shared-lib-packaging/sol-ruling-end-state.md`,
+cross-check answer 4) and planned as unit C4 in the final combined publish (P3 merged with P4).
+It has not shipped; whether it has shipped is UNVERIFIED here, so check the
+shared-lib-packaging task log for the publish before relying on either timing.
 
 What follows once C4 ships:
 - A fresh machine that installs llm-kit afterwards has no shared-lib `llm_kit`. A
