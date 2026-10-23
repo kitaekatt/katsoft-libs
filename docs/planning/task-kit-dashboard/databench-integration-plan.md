@@ -728,7 +728,7 @@ databench to configure spend"). Section 8 holds the questions and says which uni
 phase. Every phase covers the `Scope` and `targets` it is given (`GenerationPhase.run`;
 `workspace_scope`). The loop runs each selected phase of each enabled module as a child process of
 the server, `<this interpreter> -m databench.cli generate --repository R ... --skip <every other phase>` over
-the cycle's deduplicated repositories (U7), so
+the cycle's deduplicated repositories (U7; the explicit multi-repository scope below), so
 a phase is killable, its output goes to the server log, and `generate`'s own checks, scope selection
 and consent filter are the only code path, by hand or by service. A regeneration type id is a phase
 id (`file-summaries`, `index-pages`, `task-answers`). Fingerprint rule (section 6): no added file is
@@ -743,7 +743,7 @@ committed state, never from a working tree it shares.
 **Units** (owns / depends / gate). Waves: W1 U0, U1, U6a; W2 U3a, U4, U6, U8; W3 U2, U3b, U5; W4
 U7; W5 U9; W6 U10. Units in one wave share no file. Files with more than one owner run in the order
 of the waves: `generate_cli.py` U4, U3b, then U7; `service_cli.py` U1, U8, U5; `server.py` U1, U3a, U7;
-`cli.py` U1, U4, U3b, U8; `generation.py` U1 then U5 or U10 (one default); `workspace_scope.py` U7.
+`cli.py` U1, U4, U3b, U8; `generation.py` U1 then U5 or U10 (one default); `workspace_scope.py`, `html_module.py` and `modules_registry.py` U7.
 
 | Unit | Owns | Depends | Gate |
 |---|---|---|---|
@@ -757,14 +757,14 @@ of the waves: `generate_cli.py` U4, U3b, then U7; `service_cli.py` U1, U8, U5; `
 | U2 settings panel | `web/src/settings.tsx` (+ tests), route in `main.tsx`, `routes.ts` | U1, U3a | none |
 | U3b consent call sites | `generate_cli.py` (filter), `generate_config.py`, the `markup-refresh` filter in `cli.py` | U3a, U4 | Q2 and Q4 answered |
 | U5 label publisher | `label_publisher.py`, the `labels publish` operation, the `publish.labels` default in `generation.py` | U0, U4, U8 (file order) | none; built for either Q3 answer |
-| U7 background loop | `background.py`, `workspace_scope.py` (cycle selection), `generate_cli.py` (`--repository`), startup and shutdown wiring and the on-open gate in `server.py`, status route, "Last runs" block in `settings.tsx` | U1, U2, U3b, U4, U5, U6 | none |
+| U7 background loop | `background.py`, `workspace_scope.py` (cycle selection, the multi-repository scope), `generate_cli.py` (`--repository`), `html_module.py` (the index-pages phase for that scope), `modules_registry.py` (the contract's docstring only), startup and shutdown wiring and the on-open gate in `server.py`, status route, "Last runs" block in `settings.tsx` | U1, U2, U3b, U4, U5, U6 | none |
 | U9 hook and wording | `plugins/task-kit/hooks/`, task-kit 0.19.0, README, claude-settings `USER-PREFERENCES.md` | U8 | none |
-| U10 release | none (verification and publication) | all | none |
+| U10 release | none, except `generation.py` and its defaults test for the one `PUBLISH_LABELS_DEFAULT` line when Q3 is answered after U5 has run (verification and publication otherwise) | all | none |
 
 Before the user answers anything, every unit but U3b (and the U7 and U10 that follow it) can
 proceed; U3b waits for Q2 and Q4. Q3 gates no unit: it sets the shipped default of `publish.labels` (a constant in
-`generation.py`, off in U1; a yes flips it in the first unit that runs after the answer, U5 or
-else U10, with the defaults test in the same commit). Option chosen over making U7's dependency on
+`generation.py`, off in U1; a yes flips it in U5 when the answer exists by the time U5 starts, otherwise
+in U10, which owns only that line and its defaults test for that case, in one commit). Option chosen over making U7's dependency on
 U5 conditional, because a conditional dependency leaves U7 with a branch that a "no" never
 exercises, while a publisher that is built and off by default has one path to test for both
 answers. Q5 (the answers budget) does not gate: U6 ships the stated defaults.
@@ -950,8 +950,18 @@ one), then `select_union` removes a repository seen through two roots (same reso
 second checkout of one origin, by the same one-copy-per-origin rule. Then, per selected phase
 whose minimum interval has elapsed (file-summaries and task-answers 1 h, index-pages 24 h;
 constants in this file), it runs one child `generate --repository R ...` over that deduplicated list
-(`generate` gains a repeatable `--repository`, a scope of explicit primary checkouts that reads and
-writes no dev-root config), with `--label-destination overlay`, the stop-file variable in its
+(`generate` gains a repeatable `--repository`: a scope of explicit primary checkouts that reads and
+writes no dev-root config). That scope is a third `Scope` mode, `MODE_REPOSITORIES`, with a
+`members` field (a tuple of name and path pairs; `base` is the first member's parent and no phase
+reads it for this mode), built by `workspace_scope.repositories_scope(paths)` and answered by
+`select` with exactly those members. A phase receives the complete list once in `targets`: the
+tasks phase passes every member as `--project` in one invocation, file summaries builds one root per
+member, and `IndexPagesPhase.run` (in `html_module.py`, which is not fingerprinted) handles the new
+mode by running each member that has an origin through `repository_index_argv(member)`, the argv of
+repository mode that already shares a parent dev root's settings and exclusions, one
+`index_pages_cli.main` call per member and the largest status as the result; the dev-root branch
+(one base plus `--repo` names) stays for dev-root scope, and no `index_pages_cli.py` edit is made.
+The run uses `--label-destination overlay`, the stop-file variable in its
 environment, and stdout and stderr appended to the server log; so each repository, and each task
 repository behind the `task-answers` pass, runs once per phase per cycle however many roots reach
 it. Then `label_publisher` for tracked-mode roots after
@@ -969,7 +979,15 @@ never run; the interval holds a phase back (revert: ignore the clock: red); the 
 fake long child and the shutdown waits for it; two overlapping development roots (one nested in the
 other, and a second checkout of one origin) yield each repository once, the fake `generate` is
 started once per due phase, and the fake task-kit records one invocation with each `--project`
-once and each task repository reported once (revert: select per root: duplicates, red); a root with
+once and each task repository reported once (revert: select per root: duplicates, red); the REAL index-pages phase
+runs across two roots: a fixture of two development roots holding leaf repositories with local bare
+origins (a leaf needs no model call, the clean-machine run of the databench notes), one repository
+reachable through both roots, and a child `python -m databench.cli generate --repository ...`
+leaves exactly one index-pages run record and one push per repository (revert: have `IndexPagesPhase`
+treat the multi-repository scope as one dev root: it is handed one base with another root's names and
+fails, red), with a second test recording the `index_pages_cli.main` argv per member; the existing
+`tests/test_workspace_scope_parity.py` and `tests/test_html_module.py` pass unmodified and the
+fingerprint verifier reports unchanged; a root with
 no config is selected and no config file appears (revert: use the writing `select`: red); a tracked-mode root's
 cycle leaves its tracked file untouched (revert: drop `--label-destination overlay`: red); a failing
 phase does not stop the next.
@@ -1033,6 +1051,8 @@ pending questions drain over several hourly cycles, not in the first pass.
 | A hook's working directory is a poor default root for the server | [H], rationale not evidence | U8 starts from the first development root; its check reads `/api/v1/instance` `default_root` |
 | Windows keeps a detached server alive after the starting shell exits | [H], Windows-only | `_start_detached` uses `DETACHED_PROCESS`; no evidence on this Mac; settled only by U10's smoke over ssh |
 | Pushing label commits to an origin's base branch is accepted by the user's remotes | [H], Q3 sets only the default | per repository; also unknown: branch protection on each opted-in remote; U5 reports a rejected push and keeps the overlay |
+| A `Scope` holds one mode and one base, and `IndexPagesPhase.run` treats every non-repository scope as one dev root (`index_pages_cli` over that single base plus target names) | [E] | `workspace_scope.Scope` (`mode`, `base`); `html_module.IndexPagesPhase.run`, so a cycle-wide list needs the explicit scope of U7 |
+| Running each member through `repository_index_argv` covers what a dev-root run covers (shared settings, exclusions, one copy per origin) | [H] | settled by U7's real-phase test across two roots and the parity suite |
 | Minimum intervals bound the cost: 1 h for file summaries and task answers, 24 h for index pages | [H], incomplete | the index-pages runner's skip key covers index pages only (section 6); file summaries and task answers have no equivalent evidence, so U7 records per-phase duration and U6 states its batch and deadline |
 
 ### M8 Running work on tasks (deferred stub)
