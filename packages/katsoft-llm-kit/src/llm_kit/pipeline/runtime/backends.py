@@ -1222,54 +1222,48 @@ def routed_model(
     requested_model: str,
     *,
     backend_name: Optional[str] = None,
+    openrouter: Optional[Any] = None,
     output_contract: Optional[Any] = None,
     models: "Optional[Sequence[str]]" = None,
     project_root: Optional[str] = None,
 ) -> str:
     """Resolve the model a routed call should run, truthfully.
 
-    When :data:`MODELS_ENV` is set, ``backend_name`` is ignored in favour of
-    the declaration's resolved entry. If that entry is ``openrouter`` and the
-    caller requested a model (non-empty ``requested_model``), the request
-    wins: an OpenRouter slug is meaningful to that transport and the caller
-    chose it explicitly. Otherwise the entry's own concrete model IS the
-    truthful answer (Y1: a CLI or endpoint entry cannot run an OpenRouter
-    slug, and an empty request defers to the declaration).
+    When :data:`MODELS_ENV` (or ``models``) is set, ``backend_name`` is
+    ignored in favour of the declaration's resolved entry. If that entry is
+    ``openrouter`` and the caller requested a model (non-empty
+    ``requested_model``), the request wins: an OpenRouter slug is meaningful
+    to that transport and the caller chose it explicitly. Otherwise the
+    entry's own concrete model IS the truthful answer (Y1: a CLI or endpoint
+    entry cannot run an OpenRouter slug, and an empty request defers to the
+    declaration).
 
-    With no explicit declaration, the configured default declaration selects
-    the entry. With neither, this raises ``ConfigurationError`` rather than
-    returning an implicit OpenRouter model. A ``model-endpoint`` backend runs
-    the registry default entry's own model, because an OpenRouter-style slug
-    means nothing to that server. The returned id is what lands on
-    ``LLMResponse.model`` and therefore on audit records.
+    With no explicit declaration, an explicitly supplied ``openrouter``
+    instance (as for :func:`route`) is preserved and never raises: that
+    backend runs ``requested_model``. With neither a declaration nor a
+    supplied backend, the configured default declaration selects the entry,
+    and when there is none this raises ``ConfigurationError`` rather than
+    returning an implicit OpenRouter model. ``backend_name`` does not
+    select anything: it is accepted for call-site compatibility and ignored.
+    The returned id is what lands on ``LLMResponse.model`` and therefore on audit records.
 
-    Pass the same ``models`` and ``output_contract`` given to :func:`route`: a contract can
-    select a different entry, and the model must be that entry's.
+    Pass the same ``models``, ``openrouter`` and ``output_contract`` given to
+    :func:`route`: a contract can select a different entry, and the model
+    must be that entry's.
     """
     _refuse_removed_routing_env(models)
     names = declared_model_names(models)
+    if names is None and openrouter is not None:
+        return requested_model
     if names is None:
         project_root = project_root or os.getcwd()
         names = _configured_default_names(project_root)
-    if names is not None:
-        entry = _resolve_declared_entry(
-            output_contract=output_contract, models=names, project_root=project_root
-        )
-        if entry.id == "openrouter" and requested_model:
-            return requested_model
-        return entry.model or requested_model
-    if backend_name == "model-endpoint":
-        try:
-            from llm_kit.registry.models import resolve_model  # noqa: PLC0415
-
-            return resolve_model(
-                None, endpoint=ModelEndpointBackend()._entry_id()
-            )
-        except Exception as exc:  # noqa: BLE001 -- truthful fallback beats a guess
-            if _is_harness_refusal(exc):
-                raise
-            return requested_model
-    return requested_model
+    entry = _resolve_declared_entry(
+        output_contract=output_contract, models=names, project_root=project_root
+    )
+    if entry.id == "openrouter" and requested_model:
+        return requested_model
+    return entry.model or requested_model
 
 
 __all__ = [

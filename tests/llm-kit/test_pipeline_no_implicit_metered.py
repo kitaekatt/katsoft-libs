@@ -65,3 +65,30 @@ def test_explicitly_supplied_backend_still_works_without_a_default(monkeypatch):
     supplied = backends.OpenRouterBackend()
 
     assert backends.route(openrouter=supplied) is supplied
+
+
+def _no_default(monkeypatch):
+    from llm_kit.pipeline.runtime import backends
+    from llm_kit.registry import models
+
+    monkeypatch.delenv(backends.MODELS_ENV, raising=False)
+    monkeypatch.setattr(models, "load_model_config", lambda project_root=None: {
+        **copy.deepcopy(models.DEFAULT_MODEL_CONFIG),
+        "default_endpoint": None,
+    })
+    return backends
+
+
+def test_routed_model_for_supplied_backend_works_without_a_declaration(monkeypatch):
+    backends = _no_default(monkeypatch)
+    supplied = backends.OpenRouterBackend()
+
+    assert backends.route(openrouter=supplied) is supplied
+    assert backends.routed_model("vendor/model-x", openrouter=supplied) == "vendor/model-x"
+
+
+def test_routed_model_without_declaration_or_backend_still_fails(monkeypatch):
+    backends = _no_default(monkeypatch)
+
+    with pytest.raises(backends.platform.ConfigurationError, match="default_endpoint"):
+        backends.routed_model("vendor/model-x")
