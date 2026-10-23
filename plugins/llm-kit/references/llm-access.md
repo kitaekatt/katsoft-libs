@@ -190,11 +190,9 @@ a completion, ever** -- verification costs zero LLM tokens:
   This establishes the harness is *invocable*, not that a completion would
   succeed -- a real completion would spawn an agent and cost real time (and,
   for a subscription CLI, real quota), so it is never attempted. `codex-cli`
-  prefers `bootstrap_lib`'s cached detector when that optional shared lib is
-  importable, and falls back to the identical PATH + `--version` check the
-  other two harnesses use when it is not -- the absence of an optional
-  dependency of the library's own is not evidence about whether codex
-  itself is installed and working.
+  uses `llm_kit.adapters.codex_command.detect_codex`, the process-cached
+  detector the Codex backend and harness adapter also use, with or without
+  `bootstrap_lib`; the other two harnesses use the PATH + `--version` check.
 
 #### Three-state status, not a bool
 

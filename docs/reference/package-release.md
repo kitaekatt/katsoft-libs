@@ -144,7 +144,8 @@ plugin documents (Codex in package mode, the project model file and
 overrides and the neutral user paths), so the plugin's floor is 1.3;
 `tests/llm-kit/test_dist_metadata_parity.py` holds the requirement to the
 extras the distribution offers). The released ledger holds 1.0.0 through
-1.2.1; the package's `pyproject.toml` version 1.3.0 is the pending release, and
+1.2.1; the package's `pyproject.toml` declares version 1.3.0, which has no entry in
+`packages/released.json`, and
 `awesome-kit`, `llm-scripting-kit`, `content-pipeline-kit`, `job-kit` and the
 llm-kit plugin require `katsoft-llm-kit>=1.3,<2`, so `publish.py` releases the
 package before or with them:
@@ -178,7 +179,7 @@ Package mode (`llm_kit._runtime.mode() == "package"`, set by the hook-written
   adapter all use `llm_kit.adapters.codex_command`, with or without
   `bootstrap_lib`. Without the fleet, the model registry reads the shipped
   defaults and the registry file is `MODEL_ENDPOINTS_REGISTRY` when set, else
-  `$XDG_CONFIG_HOME/llm-kit/model-endpoints.yaml` (user ruling 2026-10-22); the single policy point is
+  `$XDG_CONFIG_HOME/llm-kit/model-endpoints.yaml` (`~/.config/llm-kit/` when it is unset or not absolute; user ruling 2026-10-22); the single policy point is
   `registry.models.package_mode_model_config`. With the fleet, the model
   registry reads the layered config (fleet, machine and project layers). The
   wheel's off-fleet closure is unchanged: `tests/packaging` blocks

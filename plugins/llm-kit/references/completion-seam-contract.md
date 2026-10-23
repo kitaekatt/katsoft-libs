@@ -39,8 +39,9 @@ once and pinned by tests:
   menu of the exact model over its route (`gpt-6-luna` stops at `max`,
   `gpt-6.1-sol` also takes `ultra`, no Codex or Claude CLI model takes `none`, one
   OpenRouter model takes `none` and another does not). `CodexCliBackend`,
-  `CodexAdapter`, `ClaudeCliBackend` and the project model file all call it, so no
-  path bypasses it. A model without a measured profile falls back to the
+  `CodexAdapter` and `ClaudeCliBackend` call it, so no backend path bypasses it; the
+  project model file shares the menu table (`exact_effort_menu`,
+  `library_effort_menu_with_source`) but does not call the validator. A model without a measured profile falls back to the
   harness-wide menu, and the Codex record advertises no effort `values` because
   the menu belongs to the model, not to the adapter: `llm-kit models catalog`
   reports it per row.
@@ -392,8 +393,9 @@ afterwards is reported failed, not completed. Only an adapter that lists `worksp
 `Capabilities.call_modes` serves it (Codex does; transports and the Claude CLI do not).
 
 The call refuses, before anything is spawned, in this order: the project file, the
-selection, the effort (held to the exact-model menu, then to what the endpoint can put
-on the wire), the mode, the working directory and output contract, and consent (the
+selection, the effort (held to the exact-model menu), the mode, the working directory,
+the output contract, the effort's wire delivery (what the endpoint can put on the wire),
+and consent (the
 entry's cost class must be allowed by the per-machine consent file). A refusal exits 4
 with `{"protocol": 2, "error": {"kind", "message"}}` on stderr; `kind` is one of
 `protocol`, `project-file`, `selection`, `effort`, `mode`, `path`, `contract`,

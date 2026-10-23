@@ -263,8 +263,9 @@ day it was taken, and nothing at runtime reads `~/.codex`, `~/.claude` or the ne
 an install with no AI harness sees the same menus. `gpt-6-luna` stops at `max`,
 `gpt-6.1-sol` also takes `ultra`, no Codex or Claude CLI model takes `none`, and an
 OpenRouter model takes `none` only where its vendor lists it. `check_effort` is the one
-validator: `CodexCliBackend`, `CodexAdapter`, `ClaudeCliBackend` and the project model
-file all call it, so no dispatch path bypasses a menu. A model with no profile has no
+validator: `CodexCliBackend`, `CodexAdapter` and `ClaudeCliBackend` call it, so no
+backend path bypasses a menu; the project model file shares the menu table
+(`exact_effort_menu`, `library_effort_menu_with_source`) but does not call the validator. A model with no profile has no
 exact menu and the library invents none: it falls back to the harness-wide order, and a
 project row for it declares no `efforts` and selects a null effort. A new model enters by
 adding a measured profile (with its source and date), never by widening a harness table.
