@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 import json
 import errno
@@ -34,6 +35,7 @@ from ._supervisor_process import ProcessIdentity
 SCHEMA = 1
 TERMINAL_STATES = frozenset({"finished", "cancelled", "timeout", "refused"})
 POLL_S = 0.02
+_READ_DEADLINE: ContextVar[float | None] = ContextVar("supervisor_read_deadline", default=None)
 
 
 class SupervisorError(RuntimeError):
@@ -164,15 +166,47 @@ def _supported() -> None:
         raise SupervisorUnsupported(str(exc)) from exc
 
 
-def _read(path: Path) -> dict[str, Any] | None:
+@contextmanager
+def _state_reads_until(deadline: float) -> Iterator[None]:
+    outer = _READ_DEADLINE.get()
+    token = _READ_DEADLINE.set(min(deadline, outer) if outer is not None else deadline)
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as exc:
-        raise SupervisorError(f"Cannot read supervised state {path}: {exc}") from exc
+        yield
+    finally:
+        _READ_DEADLINE.reset(token)
+
+
+def _read(path: Path, *, handle: ProcessHandle | None = None) -> dict[str, Any] | None:
+    # Native Windows can briefly deny an open during atomic publication. Keep
+    # that uncertainty bounded by both one second and the caller's wait budget.
+    retry_until = time.monotonic() + 1.0
+    outer = _READ_DEADLINE.get()
+    if outer is not None:
+        retry_until = min(retry_until, outer)
+    denied = False
+    while True:
+        try:
+            text = path.read_text(encoding="utf-8")
+            break
+        except FileNotFoundError as exc:
+            if denied:
+                raise SupervisorError(f"Supervised state disappeared after a read denial: {path}", handle=handle) from exc
+            return None
+        except PermissionError as exc:
+            remaining = retry_until - time.monotonic()
+            if os.name == "nt" and exc.errno == errno.EACCES and remaining > 0:
+                denied = True
+                time.sleep(min(POLL_S, remaining))
+                continue
+            raise SupervisorError(f"Cannot read supervised state {path}: {exc}", handle=handle) from exc
+        except (OSError, ValueError) as exc:
+            raise SupervisorError(f"Cannot read supervised state {path}: {exc}", handle=handle) from exc
+    try:
+        document = json.loads(text)
+    except ValueError as exc:
+        raise SupervisorError(f"Cannot read supervised state {path}: {exc}", handle=handle) from exc
     if not isinstance(document, dict) or document.get("schema") != SCHEMA:
-        raise SupervisorError(f"Unsupported or malformed supervised state: {path}")
+        raise SupervisorError(f"Unsupported or malformed supervised state: {path}", handle=handle)
     return document
 
 
@@ -188,8 +222,9 @@ def _lock(path: Path, *, blocking: bool = True) -> Iterator[None]:
     with path.open("a+b") as stream:
         if os.name == "nt":
             import msvcrt
-            stream.seek(0)
-            if stream.read(1) == b"":
+            # Windows byte-range locks also deny reads. Check metadata before
+            # locking instead of reading a byte another owner can hold.
+            if os.fstat(stream.fileno()).st_size == 0:
                 stream.write(b"0")
                 stream.flush()
             stream.seek(0)
@@ -220,7 +255,7 @@ def _lock(path: Path, *, blocking: bool = True) -> Iterator[None]:
 
 def _load(handle: ProcessHandle | Path) -> tuple[ProcessHandle, JobProcessSpec]:
     directory = handle.run_dir if isinstance(handle, ProcessHandle) else _absolute(handle, "run_dir")
-    intent = _read(directory / "intent.json")
+    intent = _read(directory / "intent.json", handle=handle if isinstance(handle, ProcessHandle) else None)
     if intent is None:
         raise SupervisorError(f"No supervised dispatch intent: {directory}")
     found = ProcessHandle(directory, intent["nonce"])
@@ -233,7 +268,7 @@ def _load(handle: ProcessHandle | Path) -> tuple[ProcessHandle, JobProcessSpec]:
 
 
 def _record(handle: ProcessHandle, filename: str) -> dict[str, Any] | None:
-    value = _read(handle.run_dir / filename)
+    value = _read(handle.run_dir / filename, handle=handle)
     if value is not None and value.get("nonce") != handle.nonce:
         raise SupervisorError(f"Supervised {filename} nonce does not match", handle=handle)
     return value
@@ -253,7 +288,7 @@ def _tree(handle: ProcessHandle) -> tuple[ProcessIdentity | None, list[ProcessId
 def _release(handle: ProcessHandle, spec: JobProcessSpec) -> None:
     assert spec.lease_path is not None
     with _lock(_lease_lock_path(spec)):
-        lease = _read(spec.lease_path)
+        lease = _read(spec.lease_path, handle=handle)
         if lease is None or lease.get("nonce") != handle.nonce:
             raise SupervisorError("Cannot release a different supervised lease", handle=handle)
         _write(spec.lease_path, {**lease, "released": True})
@@ -268,7 +303,7 @@ def _lease_lock_path(spec: JobProcessSpec) -> Path:
 
 def _verify_lease(handle: ProcessHandle, spec: JobProcessSpec) -> None:
     assert spec.lease_path is not None
-    lease = _read(spec.lease_path)
+    lease = _read(spec.lease_path, handle=handle)
     if lease is None or lease.get("nonce") != handle.nonce or lease.get("released") is not False:
         raise SupervisorError("Supervised lease is no longer owned", handle=handle)
 
@@ -314,10 +349,11 @@ def start(spec: JobProcessSpec, *, startup_timeout_s: float = 10.0) -> ProcessHa
         _release(handle, spec)
         raise SupervisorError(str(exc), handle=handle) from exc
     deadline = time.monotonic() + startup_timeout_s
-    while time.monotonic() < deadline:
-        if _record(handle, "go.json") is not None or _record(handle, "result.json") is not None:
-            return handle
-        time.sleep(POLL_S)
+    with _state_reads_until(deadline):
+        while time.monotonic() < deadline:
+            if _record(handle, "go.json") is not None or _record(handle, "result.json") is not None:
+                return handle
+            time.sleep(POLL_S)
     _write(spec.run_dir / "cancel.json", {"nonce": handle.nonce, "reason": "startup handshake timed out"})
     raise SupervisorError("Supervisor dispatch handshake timed out; cancellation requested", handle=handle)
 
@@ -364,17 +400,18 @@ def _finish_ledger(handle: ProcessHandle, spec: JobProcessSpec, reason: str) -> 
         return {"returncode": None, "error": str(exc)}
     deadline = time.monotonic() + min(10.0, spec.cancel_timeout_s)
     ident = None
-    while time.monotonic() < deadline:
-        record = _record(handle, "finalizer.json")
-        launched = processes.identity(child.pid)
-        if record is not None and launched is not None:
-            candidate = ProcessIdentity.from_dict(record["process"])
-            if candidate == launched or candidate in processes.descendants(launched):
-                ident = candidate
+    with _state_reads_until(deadline):
+        while time.monotonic() < deadline:
+            record = _record(handle, "finalizer.json")
+            launched = processes.identity(child.pid)
+            if record is not None and launched is not None:
+                candidate = ProcessIdentity.from_dict(record["process"])
+                if candidate == launched or candidate in processes.descendants(launched):
+                    ident = candidate
+                    break
+            if child.poll() is not None:
                 break
-        if child.poll() is not None:
-            break
-        time.sleep(POLL_S)
+            time.sleep(POLL_S)
     if ident is None:
         launched = processes.identity(child.pid)
         survivors = processes.stop(launched, [], spec.grace_s)
@@ -434,7 +471,7 @@ def adopt(handle: ProcessHandle | Path) -> ProcessStatus:
             if result is not None and result["state"] in TERMINAL_STATES and not status.survivors:
                 # A supervisor may die after its receipt but before lease release.
                 assert spec.lease_path is not None
-                lease = _read(spec.lease_path)
+                lease = _read(spec.lease_path, handle=handle)
                 if lease is not None and lease.get("nonce") == handle.nonce and not lease.get("released"):
                     _release(handle, spec)
                 return inspect(handle)
@@ -454,17 +491,18 @@ def adopt(handle: ProcessHandle | Path) -> ProcessStatus:
     except OSError as exc:
         raise SupervisorError(f"Cannot launch recovery supervisor: {exc}", handle=handle) from exc
     deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline:
-        status = inspect(handle)
-        if status.state in TERMINAL_STATES and not status.alive:
-            return status
-        # A failed finalizer is also a settled recovery outcome, with its lease
-        # retained. The supervisor's exit is the proof no finalizer still runs.
-        runner = _record(handle, "runner.json")
-        if status.result is not None and runner is not None and runner != previous_owner and not status.alive:
-            return status
-        time.sleep(POLL_S)
-    return inspect(handle)
+    with _state_reads_until(deadline):
+        while time.monotonic() < deadline:
+            status = inspect(handle)
+            if status.state in TERMINAL_STATES and not status.alive:
+                return status
+            # A failed finalizer is also a settled recovery outcome, with its lease
+            # retained. The supervisor's exit is the proof no finalizer still runs.
+            runner = _record(handle, "runner.json")
+            if status.result is not None and runner is not None and runner != previous_owner and not status.alive:
+                return status
+            time.sleep(POLL_S)
+        return inspect(handle)
 
 
 def cancel(handle: ProcessHandle | Path, reason: str, *, wait_s: float = 10.0) -> ProcessStatus:
@@ -479,15 +517,16 @@ def cancel(handle: ProcessHandle | Path, reason: str, *, wait_s: float = 10.0) -
     _verify_lease(handle, spec)
     _write(handle.run_dir / "cancel.json", {"nonce": handle.nonce, "reason": reason.strip()})
     deadline = time.monotonic() + wait_s
-    while time.monotonic() < deadline:
-        status = inspect(handle)
-        if status.state in TERMINAL_STATES and not status.alive:
-            return status
-        if _record(handle, "runner.json") is None or not status.alive:
-            return adopt(handle)
-        if status.state == "indeterminate":
-            return adopt(handle)
-        time.sleep(POLL_S)
+    with _state_reads_until(deadline):
+        while time.monotonic() < deadline:
+            status = inspect(handle)
+            if status.state in TERMINAL_STATES and not status.alive:
+                return status
+            if _record(handle, "runner.json") is None or not status.alive:
+                return adopt(handle)
+            if status.state == "indeterminate":
+                return adopt(handle)
+            time.sleep(POLL_S)
     return status
 
 

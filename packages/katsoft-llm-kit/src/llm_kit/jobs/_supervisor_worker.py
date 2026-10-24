@@ -6,23 +6,26 @@ executing the caller's argv. This closes the spawn-to-identity crash window.
 
 from __future__ import annotations
 
-import argparse
-import os
 from pathlib import Path
-import subprocess
 import sys
-import time
-from typing import Any
 
 # Running this exact file keeps the launching interpreter and package source
 # together, including in a source-tree test. No PATH or site installation changes.
 if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    # Replace the script directory: jobs/select.py must not shadow the native
+    # stdlib select module when cold imports reach socket/selectors on Windows.
+    sys.path[0] = str(Path(__file__).resolve().parents[2])
+
+import argparse
+import os
+import subprocess
+import time
+from typing import Any
 
 from llm_kit.jobs import _supervisor_process as processes
 from llm_kit.jobs.supervisor import (
     JobProcessSpec, ProcessHandle, SupervisorError, _load, _lock, _record, _settle,
-    _spawn_options, _tree, _verify_lease, _write,
+    _spawn_options, _state_reads_until, _tree, _verify_lease, _write,
 )
 
 
@@ -41,15 +44,16 @@ def _child(handle: ProcessHandle, spec: JobProcessSpec, *, finalizer: bool = Fal
     _write(handle.run_dir / ("finalizer.json" if finalizer else "child.json"),
            {"nonce": handle.nonce, "process": me.to_dict()})
     deadline = time.monotonic() + HANDSHAKE_S
-    while True:
-        go = _record(handle, "finalizer-go.json" if finalizer else "go.json")
-        if go is not None and (not finalizer or go.get("process") == me.to_dict()):
-            break
-        if processes.live(owner) is None or (not finalizer and _record(handle, "cancel.json") is not None):
-            return 75
-        if time.monotonic() >= deadline:
-            return 76
-        time.sleep(POLL_S)
+    with _state_reads_until(deadline):
+        while True:
+            go = _record(handle, "finalizer-go.json" if finalizer else "go.json")
+            if go is not None and (not finalizer or go.get("process") == me.to_dict()):
+                break
+            if processes.live(owner) is None or (not finalizer and _record(handle, "cancel.json") is not None):
+                return 75
+            if time.monotonic() >= deadline:
+                return 76
+            time.sleep(POLL_S)
     if processes.live(owner) is None or (not finalizer and _record(handle, "cancel.json") is not None):
         return 75
     _verify_lease(handle, spec)
@@ -59,7 +63,11 @@ def _child(handle: ProcessHandle, spec: JobProcessSpec, *, finalizer: bool = Fal
     if os.name == "nt":
         # Windows exec creates a successor rather than replacing this process.
         # Retain the recorded ancestor until that successor has exited.
-        return subprocess.call(command, env=env, **_spawn_options(detached=False))
+        # CREATE_NO_WINDOW does not preserve these redirected handles unless
+        # they are supplied explicitly to the successor's startup information.
+        return subprocess.call(command, env=env, stdin=subprocess.DEVNULL,
+                               stdout=sys.stdout, stderr=sys.stderr,
+                               **_spawn_options(detached=False))
     os.execvpe(command[0], command, env)
     raise AssertionError("execvpe returned")
 
@@ -85,21 +93,22 @@ def _run(handle: ProcessHandle, spec: JobProcessSpec) -> int:
                                      **_spawn_options(detached=True))
             handshake_deadline = time.monotonic() + HANDSHAKE_S
             child_ident = None
-            while time.monotonic() < handshake_deadline:
-                record = _record(handle, "child.json")
-                if record is not None:
-                    candidate = processes.ProcessIdentity.from_dict(record["process"])
-                    # Windows venv Python can have a launcher in front of the
-                    # interpreter. The recorded child must be it or its descendant.
-                    launched = processes.identity(child.pid)
-                    related = launched is not None and (
-                        candidate == launched or candidate in processes.descendants(launched))
-                    if related and processes.live(candidate) is not None:
-                        child_ident = candidate
+            with _state_reads_until(handshake_deadline):
+                while time.monotonic() < handshake_deadline:
+                    record = _record(handle, "child.json")
+                    if record is not None:
+                        candidate = processes.ProcessIdentity.from_dict(record["process"])
+                        # Windows venv Python can have a launcher in front of the
+                        # interpreter. The recorded child must be it or its descendant.
+                        launched = processes.identity(child.pid)
+                        related = launched is not None and (
+                            candidate == launched or candidate in processes.descendants(launched))
+                        if related and processes.live(candidate) is not None:
+                            child_ident = candidate
+                            break
+                    if child.poll() is not None:
                         break
-                if child.poll() is not None:
-                    break
-                time.sleep(POLL_S)
+                    time.sleep(POLL_S)
             if child_ident is None:
                 # The launched shim has not been authorized to execute argv.
                 launched = processes.identity(child.pid)
@@ -121,7 +130,8 @@ def _run(handle: ProcessHandle, spec: JobProcessSpec) -> int:
                     seen.update(fresh)
                     _write(handle.run_dir / "tree.json", {"nonce": handle.nonce,
                                                           "members": [p.to_dict() for p in seen.values()]})
-                request = _record(handle, "cancel.json")
+                with _state_reads_until(started + spec.timeout_s):
+                    request = _record(handle, "cancel.json")
                 if request is not None:
                     state, detail = "cancelled", request["reason"]
                     break
