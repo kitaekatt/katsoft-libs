@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from typing import Callable
+from typing import Any, Callable
 
 import psutil
 import pytest
@@ -47,6 +47,14 @@ def finished(handle: ProcessHandle) -> supervisor.ProcessStatus | None:
     return status if not status.alive and status.result is not None else None
 
 
+def test_worker_cold_start_does_not_shadow_stdlib_select(tmp_path: Path) -> None:
+    worker = Path(supervisor.__file__).with_name("_supervisor_worker.py")
+    result = subprocess.run([sys.executable, str(worker), "--help"], cwd=tmp_path,
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout
+
+
 def test_spec_and_handle_json_roundtrip_and_immutable_environment(tmp_path: Path) -> None:
     environment = {"TEST_VALUE": "initial"}
     value = spec(tmp_path, "pass", env=environment)
@@ -66,12 +74,14 @@ def test_spec_and_handle_json_roundtrip_and_immutable_environment(tmp_path: Path
 
 
 def test_real_launch_logs_and_terminal_json(tmp_path: Path, handles: list[ProcessHandle]) -> None:
-    handle = supervisor.start(spec(tmp_path, "import os; print(os.environ['SUPERVISOR_TEST'])", env={"SUPERVISOR_TEST": "ok"}))
+    handle = supervisor.start(spec(tmp_path, "import os,sys; print(os.environ['SUPERVISOR_TEST']); print('diagnostic',file=sys.stderr)",
+                                   env={"SUPERVISOR_TEST": "ok"}))
     handles.append(handle)
     status = eventually(lambda: finished(handle))
     assert status.state == "finished"
     assert status.returncode == 0
     assert status.stdout_path.read_text().strip() == "ok"
+    assert status.stderr_path.read_text().strip() == "diagnostic"
     assert json.loads(json.dumps(status.to_dict()))["handle"] == handle.to_dict()
     assert json.loads((handle.run_dir / "lease.json").read_text())["released"] is True
     assert (handle.run_dir / "go.json").is_file()
@@ -229,25 +239,117 @@ def test_torn_state_never_means_absent(tmp_path: Path) -> None:
         supervisor.inspect(value.run_dir)
 
 
+def _exclusive_windows_read(path: Path) -> tuple[Any, int]:
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                  wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.CreateFileW(str(path), 0x80000000, 0, None, 3, 0x80, None)
+    assert handle != ctypes.c_void_p(-1).value, ctypes.get_last_error()
+    return kernel, handle
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows exclusive file sharing")
+@pytest.mark.parametrize("disappear", [False, True])
+def test_state_read_sharing_denial_stays_uncertain_until_readable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                               disappear: bool) -> None:
+    path = tmp_path / "state.json"
+    supervisor._write(path, {"value": "observed"})
+    kernel, held = _exclusive_windows_read(path)
+    original = Path.read_text
+    denied = False
+    closed = False
+
+    def observed_read(candidate: Path, *args: Any, **kwargs: Any) -> str:
+        nonlocal denied, closed
+        try:
+            return original(candidate, *args, **kwargs)
+        except PermissionError:
+            if candidate == path and not denied:
+                denied = True
+                assert kernel.CloseHandle(held)
+                closed = True
+                if disappear:
+                    path.unlink()
+            raise
+
+    monkeypatch.setattr(Path, "read_text", observed_read)
+    try:
+        if disappear:
+            with pytest.raises(SupervisorError, match="disappeared after"):
+                supervisor._read(path)
+        else:
+            assert supervisor._read(path)["value"] == "observed"
+        assert denied
+    finally:
+        if not closed:
+            kernel.CloseHandle(held)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows exclusive file sharing")
+def test_persistent_state_denial_respects_startup_deadline_and_retains_lease(tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch, handles: list[ProcessHandle]) -> None:
+    value = spec(tmp_path, "raise AssertionError('must not dispatch')")
+    locked: list[tuple[Any, int]] = []
+
+    def publish_locked_go(*args: Any, **kwargs: Any) -> None:
+        intent = json.loads((value.run_dir / "intent.json").read_text())
+        path = value.run_dir / "go.json"
+        supervisor._write(path, {"nonce": intent["nonce"]})
+        locked.append(_exclusive_windows_read(path))
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(supervisor.subprocess, "Popen", publish_locked_go)
+            started = time.monotonic()
+            with pytest.raises(SupervisorError, match="Cannot read") as caught:
+                supervisor.start(value, startup_timeout_s=0.05)
+            elapsed = time.monotonic() - started
+        assert caught.value.handle is not None
+        handles.append(caught.value.handle)
+        assert elapsed < 0.5, elapsed
+        assert json.loads(value.lease_path.read_text())["released"] is False
+        assert not (value.run_dir / "runner.json").exists()
+    finally:
+        for kernel, held in locked:
+            kernel.CloseHandle(held)
+
+
 def test_manager_death_does_not_end_detached_owner(tmp_path: Path, handles: list[ProcessHandle]) -> None:
     handle_file = tmp_path / "handle.json"
+    manager_file = tmp_path / "manager.json"
     value = spec(tmp_path, "import time; time.sleep(60)")
     source_root = str(Path(supervisor.__file__).parents[2])
     manager_code = (
-        "import sys,json,time; from pathlib import Path; sys.path.insert(0,%r); "
+        "import sys,json,time,os,psutil; from pathlib import Path; sys.path.insert(0,%r); "
+        "Path(%r).write_text(json.dumps({'pid':os.getpid(),'create_time':psutil.Process().create_time()})); "
         "from llm_kit.jobs.supervisor import JobProcessSpec,start; "
         "h=start(JobProcessSpec.from_dict(json.loads(%r))); Path(%r).write_text(json.dumps(h.to_dict())); time.sleep(60)"
-    ) % (source_root, json.dumps(value.to_dict()), str(handle_file))
+    ) % (source_root, str(manager_file), json.dumps(value.to_dict()), str(handle_file))
     manager = subprocess.Popen([sys.executable, "-c", manager_code])
     try:
         eventually(handle_file.exists)
         handle = ProcessHandle.from_dict(json.loads(handle_file.read_text()))
         handles.append(handle)
-        manager.kill()
+        actual = processes.ProcessIdentity.from_dict(json.loads(manager_file.read_text()))
+        live_manager = processes.live(actual)
+        assert live_manager is not None
+        live_manager.kill()
+        live_manager.wait(timeout=5)
         manager.wait(timeout=5)
+        assert processes.live(actual) is None
         assert supervisor.adopt(handle).alive
         assert supervisor.cancel(handle, "manager restarted").state == "cancelled"
     finally:
+        if manager_file.exists():
+            actual = processes.ProcessIdentity.from_dict(json.loads(manager_file.read_text()))
+            live_manager = processes.live(actual)
+            if live_manager is not None:
+                live_manager.kill()
+                live_manager.wait(timeout=5)
         if manager.poll() is None:
             manager.kill()
             manager.wait(timeout=5)
