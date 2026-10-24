@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from collections.abc import Mapping
 from typing import NamedTuple
 
 _LSK = "plugins/llm-scripting-kit/lib/llm_scripting_kit/"
@@ -114,7 +115,20 @@ CODEX_NETWORK_ENABLE_NOTE_LEGACY = (
     "there is deliberately no network-disable control: false emits "
     "NOTHING, and the absence of a flag is not a control"
 )
+CODEX_NETWORK_ENABLE_NOTE_FINAL = "true explicitly enables network access in the workspace-write sandbox"
+CODEX_NETWORK_PARAM_EMITS_LEGACY = "-c sandbox_workspace_write.network_access=true"
+CODEX_NETWORK_PARAM_EMITS_FINAL = "-c sandbox_workspace_write.network_access=true|false"
 CODEX_NETWORK_DISABLE_EMITS_FINAL = "-c sandbox_workspace_write.network_access=false"
+#: llm-kit also lets a request deny Codex's native subagents (``extras.native_subagents="deny"``,
+#: the ``native-subagents-deny`` control); the frozen legacy record advertises neither the
+#: parameter nor the control, so they are final-only additions to the legacy record.
+CODEX_NATIVE_SUBAGENTS_EMITS_FINAL = (
+    "-c agents.enabled=false -c features.multi_agent=false -c features.multi_agent_v2=false"
+)
+CODEX_NATIVE_SUBAGENTS_CONTROL_NOTE_FINAL = (
+    "reports the emitted deny configuration; actual harness behavior requires version-specific proof"
+)
+CODEX_NATIVE_SUBAGENTS_PARAM_NOTE_FINAL = "only deny is supported; other supplied values refuse before dispatch"
 CODEX_NETWORK_DISABLE_NOTE_FINAL = (
     "emitted only under -s workspace-write, the one mode that reads "
     "the key; it overrides a network_access=true in the user's "
@@ -123,13 +137,42 @@ CODEX_NETWORK_DISABLE_NOTE_FINAL = (
 )
 
 
+def codex_params_to_final(params):
+    """A legacy codex ``{name: ParamCapability}`` mapping in llm-kit's form; anything else unchanged.
+
+    States ``extras.network`` as emitting ``true|false`` and lists the final-only
+    ``extras.native_subagents`` parameter right after it (the serialized order). Recognised by
+    the legacy ``extras.network`` emission, so it is idempotent.
+    """
+    network = params.get("extras.network") if isinstance(params, Mapping) else None
+    if network is None or getattr(network, "emits", None) != CODEX_NETWORK_PARAM_EMITS_LEGACY:
+        return params
+    out = {}
+    for name, param in params.items():
+        if name == "extras.network":
+            out[name] = dataclasses.replace(param, emits=CODEX_NETWORK_PARAM_EMITS_FINAL)
+            out["extras.native_subagents"] = dataclasses.replace(
+                param,
+                type="string",
+                values=("deny",),
+                default=None,
+                emits=CODEX_NATIVE_SUBAGENTS_EMITS_FINAL,
+                note=CODEX_NATIVE_SUBAGENTS_PARAM_NOTE_FINAL,
+            )
+        else:
+            out[name] = param
+    return out
+
+
 def codex_network_to_final(value):
     """A legacy codex-cli ``Capabilities`` record in llm-kit's network-off form.
 
-    Drops the legacy ``network-enable`` note and inserts the ``network-disable``
-    control after it. Recognised by the legacy note, so it is idempotent and a
-    final record passes through unchanged. The ``extras.network`` parameter note
-    is a text difference, named in ``RENAMES``.
+    Drops the legacy ``network-enable`` note (llm-kit states what true does instead), inserts
+    the ``network-disable`` control after it and then the final-only ``native-subagents-deny``
+    control, states the ``extras.network`` parameter's emission as ``true|false`` and adds the
+    final-only ``extras.native_subagents`` parameter. Recognised by the legacy note, so it is
+    idempotent and a final record passes through unchanged. The ``extras.network`` parameter
+    note is a text difference, named in ``RENAMES``.
     """
     controls = getattr(value, "execution_controls", None)
     if not (dataclasses.is_dataclass(value) and not isinstance(value, type) and controls):
@@ -139,27 +182,53 @@ def codex_network_to_final(value):
     for control in controls:
         if getattr(control, "id", None) == "network-enable" and control.note == CODEX_NETWORK_ENABLE_NOTE_LEGACY:
             changed = True
-            out.append(dataclasses.replace(control, note=""))
+            out.append(dataclasses.replace(control, note=CODEX_NETWORK_ENABLE_NOTE_FINAL))
+            disable = dataclasses.replace(
+                control,
+                id="network-disable",
+                emits=CODEX_NETWORK_DISABLE_EMITS_FINAL,
+                effect="deny",
+                when_value="false",
+                note=CODEX_NETWORK_DISABLE_NOTE_FINAL,
+            )
+            out.append(disable)
             out.append(
                 dataclasses.replace(
-                    control,
-                    id="network-disable",
-                    emits=CODEX_NETWORK_DISABLE_EMITS_FINAL,
-                    effect="deny",
-                    when_value="false",
-                    note=CODEX_NETWORK_DISABLE_NOTE_FINAL,
+                    disable,
+                    id="native-subagents-deny",
+                    emits=CODEX_NATIVE_SUBAGENTS_EMITS_FINAL,
+                    effect="disable",
+                    subjects=("subagent-spawn",),
+                    parameter="extras.native_subagents",
+                    when_value="deny",
+                    note=CODEX_NATIVE_SUBAGENTS_CONTROL_NOTE_FINAL,
                 )
             )
         else:
             out.append(control)
-    return dataclasses.replace(value, execution_controls=tuple(out)) if changed else value
+    if not changed:
+        return value
+    params = codex_params_to_final(getattr(value, "params", None) or {})
+    return dataclasses.replace(value, execution_controls=tuple(out), params=params)
+
+
+#: The tuple of extras keys the Codex backend accepts: llm-kit adds ``native_subagents`` (the
+#: ``extras.native_subagents`` parameter above) before ``output_schema``.
+CODEX_EXTRA_KEYS_LEGACY = ["scratch_dir", "add_dirs", "sandbox", "network", "output_schema"]
+CODEX_EXTRA_KEYS_FINAL = ["scratch_dir", "add_dirs", "sandbox", "network", "native_subagents", "output_schema"]
+
+
+def codex_extra_keys_to_final(items):
+    """The normalised legacy ``CODEX_EXTRA_KEYS`` items in llm-kit's form; anything else unchanged."""
+    return list(CODEX_EXTRA_KEYS_FINAL) if list(items) == CODEX_EXTRA_KEYS_LEGACY else items
 
 
 def codex_network_json_to_final(value):
     """``value`` (parsed JSON) with every legacy codex ``execution_controls`` list in llm-kit's form.
 
     The dict twin of :func:`codex_network_to_final`, for a CLI document that carries the
-    serialized records. Recognised by the legacy ``network-enable`` note; idempotent.
+    serialized records (controls and the sibling ``params``). Recognised by the legacy
+    ``network-enable`` note; idempotent.
     """
     if isinstance(value, dict):
         value = {k: codex_network_json_to_final(v) for k, v in value.items()}
@@ -173,18 +242,47 @@ def codex_network_json_to_final(value):
             for c in controls:
                 if isinstance(c, dict) and c.get("id") == "network-enable" \
                         and c.get("note") == CODEX_NETWORK_ENABLE_NOTE_LEGACY:
-                    out.append({k: v for k, v in c.items() if k != "note"})
-                    out.append({
-                        **{k: v for k, v in c.items() if k != "note"},
+                    bare = {k: v for k, v in c.items() if k != "note"}
+                    disable = {
+                        **bare,
                         "id": "network-disable",
                         "emits": CODEX_NETWORK_DISABLE_EMITS_FINAL,
                         "effect": "deny",
                         "when_value": "false",
                         "note": CODEX_NETWORK_DISABLE_NOTE_FINAL,
+                    }
+                    out.append({**bare, "note": CODEX_NETWORK_ENABLE_NOTE_FINAL})
+                    out.append(disable)
+                    out.append({
+                        **disable,
+                        "id": "native-subagents-deny",
+                        "emits": CODEX_NATIVE_SUBAGENTS_EMITS_FINAL,
+                        "effect": "disable",
+                        "subjects": ["subagent-spawn"],
+                        "parameter": "extras.native_subagents",
+                        "when_value": "deny",
+                        "note": CODEX_NATIVE_SUBAGENTS_CONTROL_NOTE_FINAL,
                     })
                 else:
                     out.append(c)
             value["execution_controls"] = out
+            params = value.get("params")
+            if isinstance(params, dict) and isinstance(params.get("extras.network"), dict) \
+                    and params["extras.network"].get("emits") == CODEX_NETWORK_PARAM_EMITS_LEGACY:
+                rebuilt = {}
+                for name, param in params.items():
+                    if name == "extras.network":
+                        rebuilt[name] = {**param, "emits": CODEX_NETWORK_PARAM_EMITS_FINAL}
+                        rebuilt["extras.native_subagents"] = {
+                            "type": "string",
+                            "handling": param.get("handling", "mapped"),
+                            "values": ["deny"],
+                            "emits": CODEX_NATIVE_SUBAGENTS_EMITS_FINAL,
+                            "note": CODEX_NATIVE_SUBAGENTS_PARAM_NOTE_FINAL,
+                        }
+                    else:
+                        rebuilt[name] = param
+                value["params"] = rebuilt
         return value
     if isinstance(value, list):
         return [codex_network_json_to_final(v) for v in value]

@@ -74,7 +74,14 @@ from unittest import mock
 import pytest
 
 from test_cli_harness import shipped_openrouter_without_style  # noqa: F401 -- fixture
-from final_wording import claude_contract_to_final, codex_network_to_final, max_tokens_default_to_final, to_final
+from final_wording import (
+    claude_contract_to_final,
+    codex_extra_keys_to_final,
+    codex_network_to_final,
+    codex_params_to_final,
+    max_tokens_default_to_final,
+    to_final,
+)
 
 _REPO = Path(__file__).resolve().parents[2]
 _LEGACY_LIB = _REPO / "plugins" / "llm-scripting-kit" / "lib"
@@ -215,9 +222,12 @@ def norm(value):
             out[f.name] = "<masked>" if f.name in _MASKED_FIELDS else norm(item)
         return out
     if isinstance(value, Mapping):
+        value = codex_params_to_final(value)  # the codex parameter table in llm-kit's form
         return ("map", type(value).__name__, [(norm(k), norm(v)) for k, v in value.items()])
     if isinstance(value, (list, tuple)):
-        return (type(value).__name__, _drop_setting_sources([norm(v) for v in value]))
+        items = _drop_setting_sources([norm(v) for v in value])
+        # llm-kit's codex backend also accepts extras.native_subagents (final_wording)
+        return (type(value).__name__, codex_extra_keys_to_final(items))
     if isinstance(value, (set, frozenset)):
         return (type(value).__name__, sorted((norm(v) for v in value), key=repr))
     if isinstance(value, Path):

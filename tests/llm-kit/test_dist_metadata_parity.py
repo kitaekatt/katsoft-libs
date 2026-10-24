@@ -94,7 +94,7 @@ def test_the_requirement_asks_for_every_extra_the_distribution_offers(plugin, di
 
 
 def test_the_floor_is_a_version_the_distribution_can_satisfy(plugin, dist):
-    """The floor (1.6) is the release carrying the surface the plugin documents; the distribution is at or past it, below the cap."""
+    """The floor (1.6) carries the documented surface (output cap, supervisor API); the distribution satisfies it below the cap."""
     from bootstrap_lib.venv_check import parse_restricted_requirement
 
     _name, floor, cap = parse_restricted_requirement(_requirement(plugin, "katsoft-llm-kit"))
