@@ -56,6 +56,9 @@ Capabilities report these emitted controls. Callers still need version-specific 
 ## Scoped job denials
 
 From version 1.7.1, a Claude job can deny `Agent,Task` without disabling its ordinary tools.
+This source expands canonical `subagent-spawn` denial to name `Workflow` and `SendMessage`.
+Claude Code 2.1.310 exposes workflow agent creation and stopped-agent resumption through these tools.
+Scheduling tools such as `CronCreate` and `ScheduleWakeup` are separate caller policy; they are not child-agent aliases.
 Broad write or shell denial requirements still select text-only mode.
 A scoped rule such as `Bash(git push --force*)` keeps its original argument filter.
 Scoped rules and unknown tool names require a literal `disallowed-tools` control and matching response provenance.

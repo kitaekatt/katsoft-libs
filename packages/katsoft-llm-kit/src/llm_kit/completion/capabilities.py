@@ -109,7 +109,7 @@ _TOOL_SUBJECTS = {
         {"write", "edit", "multiedit", "notebookedit", "patch", "apply_patch"}
     ),
     SHELL_EXEC: frozenset({"bash", "shell", "run", "execute"}),
-    SUBAGENT_SPAWN: frozenset({"task", "agent", "subagent"}),
+    SUBAGENT_SPAWN: frozenset({"task", "agent", "subagent", "workflow", "sendmessage"}),
 }
 
 
@@ -121,7 +121,7 @@ _TOOL_SUBJECTS = {
 DENY_TOOL_NAMES = {
     FILESYSTEM_WRITE: ("Write", "Edit", "MultiEdit", "NotebookEdit"),
     SHELL_EXEC: ("Bash",),
-    SUBAGENT_SPAWN: ("Task", "Agent"),
+    SUBAGENT_SPAWN: ("Task", "Agent", "Workflow", "SendMessage"),
 }
 
 

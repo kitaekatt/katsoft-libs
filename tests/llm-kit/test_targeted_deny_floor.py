@@ -11,7 +11,10 @@ import pytest
 
 from llm_kit.adapters.backends import ClaudeCliBackend
 from llm_kit.adapters.capabilities import CLAUDE_CAPABILITIES, CODEX_CAPABILITIES
-from llm_kit.completion.capabilities import FILESYSTEM_WRITE, SHELL_EXEC, SUBAGENT_SPAWN
+from llm_kit.completion.capabilities import (
+    DENY_TOOL_NAMES, FILESYSTEM_WRITE, SHELL_EXEC, SUBAGENT_SPAWN,
+    subjects_for_disallowed_tools,
+)
 from llm_kit.completion.requirements import arm_call, match_capabilities, required_guarantees
 from llm_kit.completion.types import BackendOptions
 from llm_kit.completion.types import LLMResponse
@@ -20,6 +23,26 @@ from llm_kit.jobs import run as jobs
 from llm_kit.jobs.model import Contract, Job, Prompt
 
 FLOOR = "Bash(git push --force*),Bash(git reset --hard*),Agent,Task"
+
+
+@pytest.mark.parametrize("name", ["Workflow", "workflow", "SendMessage", "sendmessage"])
+def test_current_claude_agent_tools_have_only_child_subject(name: str) -> None:
+    assert subjects_for_disallowed_tools(name) == frozenset({SUBAGENT_SPAWN})
+
+
+@pytest.mark.parametrize("name", ["CronCreate", "ScheduleWakeup", "RemoteTrigger", "ListAgents"])
+def test_scheduling_and_inspection_tools_are_not_child_aliases(name: str) -> None:
+    assert subjects_for_disallowed_tools(name) == frozenset()
+
+
+def test_child_guarantee_denies_spawn_and_resume_channels_without_disabling_tools() -> None:
+    original = "Bash(git  push *),Agent,Task"
+    armed = arm_call(ClaudeCliBackend(executable="claude"), BackendOptions(disallowed_tools=original),
+                     {"guarantees": [SUBAGENT_SPAWN]})
+    assert DENY_TOOL_NAMES[SUBAGENT_SPAWN] == ("Task", "Agent", "Workflow", "SendMessage")
+    assert armed.options.disallowed_tools == original + " Workflow SendMessage"
+    assert not armed.backend.text_only
+    assert armed.controls == ("disallowed-tools",)
 
 
 def job(root: Path) -> Job:
@@ -36,7 +59,7 @@ def test_child_only_guarantee_keeps_normal_claude_tools() -> None:
     armed = arm_call(backend, BackendOptions(disallowed_tools=original), {"guarantees": [SUBAGENT_SPAWN]})
     response = armed.backend.complete("system", "work", model="opus", options=armed.options)
     assert "--tools" not in calls[0]
-    assert calls[0][calls[0].index("--disallowedTools") + 1] == original
+    assert calls[0][calls[0].index("--disallowedTools") + 1] == original + " Workflow SendMessage"
     assert armed.backend.text_only is False
     assert armed.controls == ("disallowed-tools",)
     assert "disallowed-tools" in response.execution_controls_applied
@@ -55,7 +78,7 @@ def test_child_only_arming_adds_missing_names_without_rewriting_patterns() -> No
 def test_lowercase_alias_keeps_prefix_and_adds_exact_canonical_names() -> None:
     armed = arm_call(ClaudeCliBackend(executable="claude"), BackendOptions(disallowed_tools="task"),
                      {"guarantees": [SUBAGENT_SPAWN]})
-    assert armed.options.disallowed_tools == "task Task Agent"
+    assert armed.options.disallowed_tools == "task Task Agent Workflow SendMessage"
 
 
 @pytest.mark.parametrize("subjects", [[FILESYSTEM_WRITE], [SHELL_EXEC], [FILESYSTEM_WRITE, SUBAGENT_SPAWN],
@@ -156,7 +179,8 @@ def test_real_jobs_argv_retains_tools_and_requires_literal_delivery(tmp_path: Pa
                              backend_factory=factory, capabilities_provider=lambda: {"claude-cli": CLAUDE_CAPABILITIES})
     assert len(calls) == 1
     assert "--tools" not in calls[0]
-    assert calls[0][calls[0].index("--disallowedTools") + 1] == floor
+    expected = floor + " Workflow SendMessage" if floor == FLOOR else floor
+    assert calls[0][calls[0].index("--disallowedTools") + 1] == expected
     if reported:
         assert snapshot.jobs[0].state.value == "accepted"
         assert artifact.read_text() == "real task tools retained"
