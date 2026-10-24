@@ -66,18 +66,17 @@ def _scrub(value: Any, tmp: PurePath) -> Any:
         return [_scrub(v, tmp) for v in value]
     if isinstance(value, str):
         for prefix in (str(tmp), tmp.as_posix()):
-            if value.startswith(prefix):
-                return "<T>" + value[len(prefix):].replace("\\", "/")
-        return value.replace(tmp.as_posix(), "<T>").replace(str(tmp), "<T>")
+            pattern = re.escape(prefix) + r'''(?P<suffix>(?:[\\/][^\s'"<>]*)?)'''
+            value = re.sub(pattern, lambda match: "<T>" + match["suffix"].replace("\\", "/"), value)
+        return value
     return value
 
 
-def _form(text: str, tmp: Path) -> Any:
+def _form(text: str, tmp: PurePath) -> Any:
     """Parsed JSON (one object, or a list of JSON lines) when the text is JSON, else text."""
-    text = text.replace(tmp.as_posix(), "<T>").replace(str(tmp), "<T>")
     stripped = text.strip()
     if not stripped:
-        return text
+        return _scrub(text, tmp)
     try:
         return {"json": _scrub(json.loads(stripped), tmp)}
     except json.JSONDecodeError:
@@ -85,7 +84,7 @@ def _form(text: str, tmp: Path) -> Any:
     try:
         return {"json_lines": [_scrub(json.loads(l), tmp) for l in stripped.splitlines()]}
     except json.JSONDecodeError:
-        return text
+        return _scrub(text, tmp)
 
 
 def _check(name: str, observed: dict) -> None:
@@ -130,6 +129,11 @@ def test_windows_temporary_paths_have_portable_golden_values() -> None:
     tmp = PureWindowsPath(r"C:\scratch\case")
     assert _scrub([r"C:\scratch\case\nested\schema.json"], tmp) == ["<T>/nested/schema.json"]
     assert _scrub(r"\d+", tmp) == r"\d+"
+    message = r"outside root C:\scratch\case\proj; pattern \d+"
+    assert _form(json.dumps({"message": message}), tmp) == {
+        "json": {"message": r"outside root <T>/proj; pattern \d+"}}
+    assert _form(json.dumps({"project_root": str(tmp / "proj")}), tmp) == {
+        "json": {"project_root": "<T>/proj"}}
 
 
 @pytest.fixture()

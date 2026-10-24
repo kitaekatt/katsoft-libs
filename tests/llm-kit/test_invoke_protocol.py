@@ -29,7 +29,7 @@ from llm_kit.dispatch import factory
 from llm_kit.registry import consent as consent_mod
 from llm_kit.registry import cost, project_models as pm
 from llm_kit.registry.effort import HarnessAdapterError
-from test_cli_goldens import _check, _form
+from test_cli_goldens import _check, _form, _scrub
 from test_cli_harness import home, run, write  # noqa: F401 -- home is a fixture
 
 _DOC = {
@@ -778,7 +778,7 @@ def _golden(world, name: str, capsys, tmp_path: Path, **request: Any) -> dict:
     payload = {"protocol": 2, "project_root": str(world.root), "prompt": "do it", **request}
     out = run(cli.main, ["completion", "complete", "--request-file", "-"], capsys,
               stdin=json.dumps(payload), monkeypatch=world.monkeypatch)
-    shown = json.loads(json.dumps(payload).replace(str(world.root), "<T>/proj"))
+    shown = _scrub(payload, tmp_path)
     observed = {"request": shown, "exit": out.code, "stdout": _form(out.out, tmp_path), "stderr": _form(out.err, tmp_path)}
     _check(name, observed)
     return observed

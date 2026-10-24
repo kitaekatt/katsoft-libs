@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import stat
+import sys
 import zipfile
 from pathlib import Path
 
@@ -455,32 +456,42 @@ def test_source_refuses_a_missing_optional_fleet_feature():
 
 #: A stand-in `codex`: answers --version, drains stdin, and writes the `-o` file
 #: according to FAKE_CODEX_MODE (answer: text, empty: an empty file, none: no file).
-_FAKE_CODEX = """#!/bin/sh
-if [ "$1" = "--version" ]; then echo "codex-cli 9.9.9"; exit 0; fi
-out=""
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = "-o" ]; then out="$2"; shift; fi
-  shift
-done
-cat >/dev/null
-case "$FAKE_CODEX_MODE" in
-  answer) printf '%s' "fake codex answer" > "$out" ;;
-  empty) : > "$out" ;;
-  none) ;;
-esac
-exit 0
+_FAKE_CODEX = """import os
+import sys
+from pathlib import Path
+
+if sys.argv[1:] == ["--version"]:
+    print("codex-cli 9.9.9")
+    raise SystemExit(0)
+out = Path(sys.argv[sys.argv.index("-o") + 1])
+sys.stdin.read()
+mode = os.environ["FAKE_CODEX_MODE"]
+if mode == "answer":
+    out.write_text("fake codex answer", encoding="utf-8")
+elif mode == "empty":
+    out.write_text("", encoding="utf-8")
 """
 
 
-def _fake_codex_env(tmp_path, mode):
+def _fake_codex_env(tmp_path: Path, mode: str) -> tuple[dict[str, str], Path]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    stub = bin_dir / "codex"
-    stub.write_text(_FAKE_CODEX, encoding="utf-8")
-    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    script = bin_dir / "fake_codex.py"
+    script.write_text(f"#!{sys.executable}\n" + _FAKE_CODEX, encoding="utf-8")
+    if os.name == "nt":
+        stub = bin_dir / "codex.cmd"
+        stub.write_text(f'@"{sys.executable}" "{script}" %*\n', encoding="utf-8")
+        env = {"PATH": f"{bin_dir}{os.pathsep}{Path(os.environ['SystemRoot']) / 'System32'}",
+               "PATHEXT": ".COM;.EXE;.BAT;.CMD"}
+    else:
+        stub = bin_dir / "codex"
+        script.rename(stub)
+        stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+        env = {"PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin"}
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
-    return {"PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin", "FAKE_CODEX_MODE": mode}, work
+    env["FAKE_CODEX_MODE"] = mode
+    return env, work
 
 
 _CODEX_CALL = (
@@ -540,16 +551,12 @@ def test_package_mode_codex_refuses_relative_paths_before_spawn(site, tmp_path):
 
 def test_reachability_codex_check_in_package_mode(site, tmp_path):
     """A real verdict from the canonical detector, with bootstrap_lib blocked."""
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    stub = bin_dir / "codex"
-    stub.write_text('#!/bin/sh\necho "codex-cli 9.9.9"\n', encoding="utf-8")
-    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    env, _ = _fake_codex_env(tmp_path, "answer")
     out = package(site, (
         "from llm_kit.dispatch import reachability\n"
         "r = reachability._check_codex(timeout=10.0)\n"
         "result = [r.status, r.checked, r.detail]"
-    ), env={"PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin"})
+    ), env=env)
     assert out["modules"] == []
     assert out["ok"] == ["reachable", "cli-version", "codex-cli 9.9.9"]
     absent = package(site, (
