@@ -216,13 +216,16 @@ _OPENROUTER_PARAMS = {
 _OPENROUTER_CONDITIONAL_PARAMS = {
     "effort": ParamCapability(
         type="string",
-        emits="reasoning_effort | chat_template_kwargs.reasoning_effort",
+        emits="reasoning_effort | chat_template_kwargs.reasoning_effort | reasoning",
         note=(
             "emitted only for a transport entry that resolves a delivering "
             "effort_style (entry effort_style, frontdoor: true, or a declared "
             "routing.effort_style); an effort already in extras (top-level or "
             "chat_template_kwargs) wins verbatim and an explicit null there "
-            "sends none; the ninfer style maps high to xhigh"
+            "sends none; the ninfer style maps high to xhigh; the opt-in "
+            "reasoning-object style sends reasoning={effort: value} (none sends "
+            "reasoning={enabled: false}) and lets a caller extras.reasoning object win "
+            "as a whole"
         ),
     ),
 }

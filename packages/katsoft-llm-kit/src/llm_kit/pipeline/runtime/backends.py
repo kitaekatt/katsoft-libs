@@ -836,7 +836,7 @@ class ModelEndpointBackend(_LazyDelegate):
 
         The declared value is the entry's ``reasoning_effort`` default, or None.
         The style is how a direct call to the entry delivers an effort
-        (``top-level``, ``ninfer``, ``chat_template_kwargs``), or None when it
+        (``top-level``, ``ninfer``, ``chat_template_kwargs``, ``reasoning-object``), or None when it
         delivers none; it comes from ``resolve_endpoint_profile``, the
         resolution the OpenAI-compatible adapter makes for the same entry, so
         the cache key cannot drift from the wire. Without the effort seam (see

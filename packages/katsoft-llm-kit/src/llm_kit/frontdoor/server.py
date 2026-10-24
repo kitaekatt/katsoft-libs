@@ -190,9 +190,10 @@ def _normalize_body(body: dict[str, Any], entry: EndpointEntry) -> tuple[dict[st
     forwarded = dict(body)
     user = forwarded.pop("user", None)
     forwarded["model"] = entry.model
-    effort = extract_effort(forwarded)
+    style = deployment_effort_style(entry)
+    effort = extract_effort(forwarded, style)
     if effort is not None:
-        place_effort(forwarded, effort, deployment_effort_style(entry))
+        place_effort(forwarded, effort, style)
     return forwarded, user
 
 
@@ -344,7 +345,11 @@ def create_app(
                     headers=_header_value(deployment.entry) if deployment is not None else {},
                 )
             deployment = await choose(group, excluded)
-            payload, user = _normalize_body(body, deployment.entry)
+            try:
+                payload, user = _normalize_body(body, deployment.entry)
+            except ValueError as exc:
+                _log(deployment, user, group, body, 400, started, None, None, stream, str(exc), log_path)
+                return JSONResponse(_error(str(exc)), status_code=400)
             deployment.in_flight += 1
             deployment.users.append(user)
             acquired = True

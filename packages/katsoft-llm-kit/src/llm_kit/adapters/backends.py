@@ -52,7 +52,7 @@ from .capabilities import (
     CLAUDE_CAPABILITIES,
     OPENROUTER_CAPABILITIES,
 )
-from llm_kit.registry.effort import OUTCOME_TRANSLATED, EffortPlan, plan_effort
+from llm_kit.registry.effort import OUTCOME_TRANSLATED, REASONING_KEY, EffortPlan, plan_effort
 from llm_kit.completion.capabilities import Capabilities
 from llm_kit.completion.contract import finalize_contract, prepare_contract
 from .endpoint_profile import (
@@ -220,11 +220,13 @@ class OpenRouterBackend:
     def effort_plan(self, options: Optional[BackendOptions] = None) -> EffortPlan:
         """What ``complete`` would put on the wire for effort, without calling.
 
-        The endpoint is resolved only when ``options.effort`` is set, so a call
-        without an effort reads no configuration here.
+        The endpoint is resolved only when ``options.effort`` or
+        ``extras["reasoning"]`` is set, so a call with neither reads no
+        configuration here.
         """
         opts = options or BackendOptions()
-        style = self.endpoint_profile().effort.style if opts.effort is not None else None
+        needs_style = opts.effort is not None or REASONING_KEY in opts.extras
+        style = self.endpoint_profile().effort.style if needs_style else None
         return plan_effort(opts.extras, opts.effort, style)
 
     def params_report(
@@ -240,8 +242,15 @@ class OpenRouterBackend:
         same truth a completed one would have.
         """
         opts = options or BackendOptions()
-        plan = plan if plan is not None else self.effort_plan(opts)
         dropped = derive_dropped_params(self.capabilities, opts)
+        if plan is None:
+            try:
+                plan = self.effort_plan(opts)
+            except ValueError:
+                # A refused effort object never reached the wire: report the
+                # failure that refused it (the caller sees that error) with
+                # nothing forwarded, instead of raising a second time here.
+                return dropped, ()
         if plan.outcome == OUTCOME_TRANSLATED:
             dropped = tuple(p for p in dropped if p != "effort")
         forwarded = tuple(
@@ -357,6 +366,9 @@ class OpenRouterBackend:
         # digest disagree is refused here. This record delivers skill context,
         # so a valid one yields a plan.
         skill_plan = prepare_skill_context(self.capabilities, opts)
+        # Validate effort-object shape and collisions before constructing a
+        # client, resolving a model, or dispatching a request.
+        plan = self.effort_plan(opts)
         client = self.client if self.client is not None else self._ensure_client()
         resolved_model = self._resolve_model(model)
 
@@ -417,7 +429,6 @@ class OpenRouterBackend:
             create_kwargs["temperature"] = opts.temperature
         if opts.timeout_s is not None:
             create_kwargs["timeout"] = opts.timeout_s
-        plan = self.effort_plan(opts)
         if plan.extra_body:
             # The generic escape hatch: anything the caller puts in `extras`
             # rides as TOP-LEVEL request parameters. Omitted entirely when

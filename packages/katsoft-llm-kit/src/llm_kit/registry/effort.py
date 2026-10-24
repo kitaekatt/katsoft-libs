@@ -8,6 +8,8 @@ values they accept. An *effort style* names one wire convention:
   none|low|medium|xhigh and it rejects ``high`` with a 400).
 - ``chat_template_kwargs``: ``{"chat_template_kwargs": {"reasoning_effort":
   <effort>}}`` (llama.cpp / mlx chat templates).
+- ``reasoning-object``: ``{"reasoning": {"effort": <effort>}}``. The
+  canonical ``none`` value sends ``{"reasoning": {"enabled": false}}``.
 - ``unsupported``: the endpoint takes no effort; nothing is emitted.
 
 One module owns the vocabulary so the front door (which translates effort
@@ -23,6 +25,7 @@ so a registry entry's menu resolves without the registry importing the adapters.
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
@@ -31,17 +34,20 @@ EFFORT_KEY = "reasoning_effort"
 
 #: The nested object the ``chat_template_kwargs`` style places the effort in.
 TEMPLATE_KEY = "chat_template_kwargs"
+#: The top-level object the ``reasoning-object`` style places the effort in.
+REASONING_KEY = "reasoning"
 
 TOP_LEVEL = "top-level"
 NINFER = "ninfer"
 CHAT_TEMPLATE_KWARGS = "chat_template_kwargs"
+REASONING_OBJECT = "reasoning-object"
 UNSUPPORTED = "unsupported"
 
 #: Every style the registry accepts.
-EFFORT_STYLES = (TOP_LEVEL, NINFER, CHAT_TEMPLATE_KWARGS, UNSUPPORTED)
+EFFORT_STYLES = (TOP_LEVEL, NINFER, CHAT_TEMPLATE_KWARGS, REASONING_OBJECT, UNSUPPORTED)
 
 #: The styles that put an effort on the wire.
-DELIVERING_STYLES = (TOP_LEVEL, NINFER, CHAT_TEMPLATE_KWARGS)
+DELIVERING_STYLES = (TOP_LEVEL, NINFER, CHAT_TEMPLATE_KWARGS, REASONING_OBJECT)
 
 #: Where a resolved style came from (``EffortDelivery.source``).
 SOURCE_ENDPOINT = "endpoint"
@@ -70,6 +76,8 @@ def _emits(style: Optional[str]) -> Optional[str]:
         return EFFORT_KEY
     if style == CHAT_TEMPLATE_KWARGS:
         return f"{TEMPLATE_KEY}.{EFFORT_KEY}"
+    if style == REASONING_OBJECT:
+        return REASONING_KEY
     return None
 
 
@@ -106,7 +114,7 @@ class EffortDelivery:
         return result
 
 
-def extract_effort(body: Dict[str, Any]) -> Optional[str]:
+def extract_effort(body: Dict[str, Any], style: Optional[str] = None) -> Optional[str]:
     """Remove and return the effort an INBOUND front-door body carries.
 
     Pops the top-level ``reasoning_effort`` (the key is removed even when its
@@ -116,7 +124,15 @@ def extract_effort(body: Dict[str, Any]) -> Optional[str]:
     nested object is never mutated. When both channels carry a value the
     top-level one is returned and the nested one is left in place -- the front
     door's long-standing wire behavior, preserved byte for byte.
+    For a ``reasoning-object`` target, an explicit raw ``reasoning`` object
+    overrides translation. The direct-call validation rules apply to that
+    object. Other target styles retain opaque object passthrough.
     """
+    if style == REASONING_OBJECT and REASONING_KEY in body:
+        plan = plan_effort(body, None, style)
+        body.clear()
+        body.update(plan.extra_body)
+        return None
     template = body.get(TEMPLATE_KEY)
     if isinstance(template, dict):
         body[TEMPLATE_KEY] = dict(template)
@@ -125,6 +141,12 @@ def extract_effort(body: Dict[str, Any]) -> Optional[str]:
         template = body.get(TEMPLATE_KEY)
         if isinstance(template, dict):
             effort = template.pop(EFFORT_KEY, None)
+    if style == REASONING_OBJECT:
+        # Preserve the inbound scalar precedence, but leave no duplicate
+        # scalar channel behind the single translated object.
+        template = body.get(TEMPLATE_KEY)
+        if isinstance(template, Mapping) and (EFFORT_KEY in template or (effort is not None and not template)):
+            _drop_nested(body, template)
     return effort
 
 
@@ -141,6 +163,10 @@ def place_effort(body: Dict[str, Any], effort: str, style: Optional[str]) -> Opt
     value = remap_effort(effort, style)
     if style in (TOP_LEVEL, NINFER):
         body[EFFORT_KEY] = value
+    elif style == REASONING_OBJECT:
+        if effort not in style_effort_menu(style):
+            raise ValueError(f"reasoning-object effort {effort!r} is not accepted")
+        body[REASONING_KEY] = {"enabled": False} if effort == "none" else {"effort": value}
     else:
         template = body.get(TEMPLATE_KEY)
         template = dict(template) if isinstance(template, dict) else {}
@@ -187,6 +213,15 @@ def plan_effort(
 
     Precedence, first match wins:
 
+    With the opt-in ``reasoning-object`` style, a caller ``extras["reasoning"]``
+    is checked FIRST and wins as a whole over the typed effort: a mapping is
+    copied intact (``outcome`` ``caller-extras``; ``exclude``, ``max_tokens`` and
+    any other member survive), ``None`` removes the object and sends nothing
+    (``suppressed``), and a non-mapping, or a mapping beside a non-null
+    ``reasoning_effort`` in either legacy channel, raises ``ValueError``. Under
+    every other style ``reasoning`` is an opaque extra and the rules below apply
+    unchanged.
+
     1. The caller's own extras name an effort, in either channel: top-level
        ``extras["reasoning_effort"]`` or nested
        ``extras["chat_template_kwargs"]["reasoning_effort"]``. The caller wins
@@ -211,6 +246,21 @@ def plan_effort(
     """
     body: Dict[str, Any] = dict(extras or {})
     template = body.get(TEMPLATE_KEY)
+    if style == REASONING_OBJECT and REASONING_KEY in body:
+        raw = body[REASONING_KEY]
+        if raw is not None and not isinstance(raw, Mapping):
+            raise ValueError("reasoning must be a mapping or null for reasoning-object")
+        nested_effort = template.get(EFFORT_KEY) if isinstance(template, Mapping) else None
+        if body.get(EFFORT_KEY) is not None or nested_effort is not None:
+            raise ValueError("reasoning cannot be combined with legacy reasoning_effort controls")
+        body.pop(EFFORT_KEY, None)
+        if isinstance(template, Mapping) and EFFORT_KEY in template:
+            _drop_nested(body, template)
+        if raw is None:
+            del body[REASONING_KEY]
+            return EffortPlan(body, None, OUTCOME_SUPPRESSED)
+        body[REASONING_KEY] = copy.deepcopy(dict(raw))
+        return EffortPlan(body, None, OUTCOME_CALLER_EXTRAS)
     has_top = EFFORT_KEY in body
     has_nested = isinstance(template, Mapping) and EFFORT_KEY in template
     if has_top or has_nested:
@@ -235,11 +285,13 @@ def plan_effort(
 
 #: The accepted effort values per delivering style, low to high. NInfer's menu
 #: is none|low|medium|xhigh and it rejects ``high`` with a 400; the other
-#: styles take the conventional low|medium|high.
+#: legacy styles take the conventional low|medium|high. The object style
+#: accepts the OpenRouter vocabulary; exact-model menus still restrict it.
 _MENUS: Dict[str, "tuple[str, ...]"] = {
     NINFER: ("none", "low", "medium", "xhigh"),
     TOP_LEVEL: ("low", "medium", "high"),
     CHAT_TEMPLATE_KWARGS: ("low", "medium", "high"),
+    REASONING_OBJECT: ("none", "minimal", "low", "medium", "high", "xhigh", "max"),
 }
 
 
@@ -355,9 +407,11 @@ __all__ = [
     "harness_effort_order",
     "EFFORT_KEY",
     "TEMPLATE_KEY",
+    "REASONING_KEY",
     "TOP_LEVEL",
     "NINFER",
     "CHAT_TEMPLATE_KWARGS",
+    "REASONING_OBJECT",
     "UNSUPPORTED",
     "EFFORT_STYLES",
     "DELIVERING_STYLES",

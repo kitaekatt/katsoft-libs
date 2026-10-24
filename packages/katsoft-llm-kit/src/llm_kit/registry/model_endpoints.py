@@ -42,7 +42,7 @@ the schema can grow additively)::
         context_window: <tokens>            # optional
         reasoning_effort: <effort>          # optional per-entry default
         effort_style: <style>               # optional; how THIS server takes an effort:
-                                            #   top-level | ninfer | chat_template_kwargs
+                                            #   top-level | ninfer | chat_template_kwargs | reasoning-object
                                             #   | unsupported (see "Effort delivery")
         key_env: <ENV VAR>                  # optional; omitted = keyless
         key_file: <path>                    # optional bare-value credential file
@@ -55,7 +55,7 @@ the schema can grow additively)::
           group: <front-door model name>
           order: 1                          # lower tiers fill first
           max_parallel: <int>               # omitted = uncapped
-          effort_style: top-level           # top-level | ninfer | chat_template_kwargs
+          effort_style: top-level           # top-level | ninfer | chat_template_kwargs | reasoning-object
                                             #   | unsupported; omitted = top-level
       <harness entry id>:
         harness: <harness name>             # required instead of base_url
@@ -89,7 +89,8 @@ uses the entry's ``effort_style`` when declared and otherwise
 ``routing.effort_style``, whose omission still means ``top-level``
 (:func:`deployment_effort_style`). ``load_endpoint_registry`` rejects a
 transport entry whose ``reasoning_effort`` has no deliverable style, and notes
-an entry whose two declared styles disagree.
+an entry whose two declared styles disagree. ``reasoning-object`` is opt-in
+only: no default or fall-through selects it.
 """
 
 from __future__ import annotations
@@ -219,7 +220,7 @@ class RoutingConfig:
     group: str
     order: int = 1
     max_parallel: Optional[int] = None
-    # top-level | ninfer (top-level, high->xhigh) | chat_template_kwargs | unsupported
+    # top-level | ninfer (top-level, high->xhigh) | chat_template_kwargs | reasoning-object | unsupported
     effort_style: Optional[str] = TOP_LEVEL
     effort_style_declared: bool = False
 
@@ -487,7 +488,7 @@ def effort_notes(entry: EndpointEntry, *, source: str) -> list[str]:
         raise EndpointRegistryError(
             f"{source}: entry '{entry.id}' declares reasoning_effort "
             f"'{entry.reasoning_effort}' but resolves no deliverable effort style; "
-            "declare an effort_style (top-level | ninfer | chat_template_kwargs), "
+            "declare an effort_style (top-level | ninfer | chat_template_kwargs | reasoning-object), "
             "or remove reasoning_effort (or set effort_style: unsupported and "
             "remove reasoning_effort)"
         )

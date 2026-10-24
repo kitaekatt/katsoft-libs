@@ -73,7 +73,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Optional
 
-from .effort import EFFORT_KEY, TEMPLATE_KEY, style_effort_menu
+from .effort import EFFORT_KEY, REASONING_KEY, REASONING_OBJECT, TEMPLATE_KEY, style_effort_menu
 from .model_profiles import (
     MENU_ENDPOINT_STYLE,
     MENU_EXACT_MODEL,
@@ -411,7 +411,12 @@ def _json_value(value: Any, where: str) -> Any:
     raise _invalid(where, f"must be JSON data, not {type(value).__name__}")
 
 
-def _request_defaults(value: Any, where: str) -> dict:
+def _request_defaults(value: Any, where: str, *, reasoning_reserved: bool = False) -> dict:
+    """Validate a row's request defaults.
+
+    ``reasoning_reserved`` is set for a ``reasoning-object`` endpoint only: there a
+    raw ``reasoning`` extra would override the selected effort and bypass the menu.
+    """
     defaults = _mapping(value, where, _DEFAULTS_KEYS)
     out: dict = {}
     if "extras" in defaults:
@@ -420,7 +425,7 @@ def _request_defaults(value: Any, where: str) -> dict:
             raise _invalid(f"{where}.extras", "must be a mapping")
         copy = _json_value(extras, f"{where}.extras")
         for key in copy:
-            if key in _RESERVED_EXTRAS:
+            if key in _RESERVED_EXTRAS or (reasoning_reserved and key == REASONING_KEY):
                 raise _invalid(
                     f"{where}.extras", f"{key!r} is reserved; set effort through efforts and selections"
                 )
@@ -511,7 +516,9 @@ def _validate_catalog(
             )
         if "request_defaults" in row:
             out["request_defaults"] = _request_defaults(
-                row["request_defaults"], f"{where}.request_defaults"
+                row["request_defaults"],
+                f"{where}.request_defaults",
+                reasoning_reserved=info.effort_style == REASONING_OBJECT,
             )
         menus[row_id] = menu
         efforts_of[row_id] = efforts

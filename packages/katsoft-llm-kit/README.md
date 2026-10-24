@@ -140,9 +140,32 @@ provider answered, the protocol 2 `error.finish_reason` is the provider's raw st
 `"length"` means the cap ended the answer. Full statement: `completion-seam-contract.md` in the
 plugin references.
 
+## Effort style `reasoning-object`
+
+An endpoint (or a front-door `routing`) may opt in with `effort_style: reasoning-object`
+to send an effort as the OpenRouter `reasoning` object. The default `top-level` style and
+every other style are unchanged; nothing selects the new style implicitly.
+
+- A typed effort `low|medium|high|minimal|xhigh|max` sends `{"reasoning": {"effort": value}}`;
+  `none` sends `{"reasoning": {"enabled": false}}`. An effort outside that vocabulary is refused
+  before any request. A typed effort of `None` sends nothing. An exact-model menu
+  (`llm-kit models catalog`) can still narrow what a model accepts.
+- A caller `extras["reasoning"]` wins as a whole over the typed effort. A mapping is sent
+  intact (`exclude`, `max_tokens` and other members included, and it is copied, not mutated);
+  `None` sends no `reasoning` at all; any other value, or a mapping beside a non-null
+  `reasoning_effort` (top-level or in `chat_template_kwargs`), is refused before any request.
+  This holds even when the typed effort is `None`.
+- The front door treats an incoming `reasoning` object as opaque and forwards it intact. An
+  incoming scalar `reasoning_effort` (top-level or in `chat_template_kwargs`) is translated to the
+  nested object. A malformed object or a scalar beside an object returns HTTP 400.
+- A project-file row on such an endpoint may not default `request_defaults.extras.reasoning`.
+
+This is offline wire support. The empty effort menu of models with no effort dial (for example
+MiMo) is unchanged until a live check shows the style works for them.
+
 ## Source
 
-The source lives in the plugins-kit repository (`packages/katsoft-llm-kit/src/llm_kit`).
+The source lives in the katsoft-libs repository (`packages/katsoft-llm-kit/src/llm_kit`).
 Releases are tagged `katsoft-llm-kit-v<version>` in the repository named by the
 `Source` project URL.
 
