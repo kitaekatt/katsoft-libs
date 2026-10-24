@@ -534,9 +534,14 @@ def test_package_mode_codex_adapter_detects_and_builds_without_bootstrap_lib(sit
         "adapter = CodexAdapter()\n"
         "entry = EndpointEntry(id='sol', base_url=None, model='gpt-x', kind='harness', harness='codex')\n"
         f"argv = adapter.build_argv(entry, {str(work)!r}, prompt='p')\n"
-        "result = [adapter.is_available(), argv[0].endswith('codex'), argv[1], argv[-1]]"
+        "result = [adapter.is_available(), argv]"
     ), env=env)
-    assert out["ok"] == [True, True, "exec", "-"], out
+    available, argv = out["ok"]
+    launcher = (["cmd", "/c", str(tmp_path / "bin" / "codex.cmd")] if os.name == "nt"
+                else [str(tmp_path / "bin" / "codex")])
+    assert available is True, out
+    assert argv[:len(launcher) + 1] == [*launcher, "exec"], out
+    assert argv[-1] == "-", out
     assert out["modules"] == []
 
 
