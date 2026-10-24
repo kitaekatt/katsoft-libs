@@ -511,3 +511,56 @@ def openrouter_style_to_legacy(value):
             return {**value, "effort_style": None, "effort_style_source": "none"}
         return {k: v for k, v in value.items() if k != "effort_style"}
     return value
+
+
+#: llm-kit sends NO output cap to an openrouter.ai endpoint when the caller names none, so the
+#: provider's own limit for the model applies (and a sent cap would narrow OpenRouter's provider
+#: routing); the frozen legacy ``BackendOptions`` defaults ``max_tokens`` to 4096 and always sends
+#: it. In llm-kit ``BackendOptions.max_tokens`` is ``Optional[int] = None``, the openrouter
+#: advertisement states the default as unset, and any non-openrouter OpenAI-compatible endpoint
+#: keeps 4096. An EXPLICIT value is sent unchanged on both sides, so a scenario that names its
+#: ``max_tokens`` is compared as it was.
+MAX_TOKENS_LEGACY_DEFAULT = 4096
+MAX_TOKENS_PARAM_NOTE_FINAL = (
+    "unset: omitted for an openrouter.ai endpoint, so the provider's own limit for the model "
+    "applies; any other OpenAI-compatible endpoint is sent 4096"
+)
+
+
+def max_tokens_default_to_final(value, *, params=True):
+    """A legacy ``BackendOptions`` / openrouter ``max_tokens`` ParamCapability in llm-kit's form.
+
+    Only the DEFAULT differs: a ``BackendOptions`` whose ``max_tokens`` is the legacy default
+    becomes unset, and the openrouter ``max_tokens`` parameter (dataclass or dict) states its
+    default as unset with llm-kit's note. Idempotent; anything else passes through.
+    """
+    if isinstance(value, dict):
+        if value.get("emits") == "max_tokens" and value.get("default") == MAX_TOKENS_LEGACY_DEFAULT:
+            # the serialized record leaves an unset default out
+            out = {k: v for k, v in value.items() if k != "default"}
+            out["note"] = MAX_TOKENS_PARAM_NOTE_FINAL
+            return out
+        return value
+    if not (dataclasses.is_dataclass(value) and not isinstance(value, type)):
+        return value
+    name = type(value).__name__
+    # ``CallAttempt`` is the pipeline's per-attempt record of the options a call carried.
+    if name in ("BackendOptions", "CallAttempt") and getattr(value, "max_tokens", None) == MAX_TOKENS_LEGACY_DEFAULT:
+        return dataclasses.replace(value, max_tokens=None)
+    if (
+        params
+        and name == "ParamCapability"
+        and getattr(value, "emits", None) == "max_tokens"
+        and getattr(value, "default", None) == MAX_TOKENS_LEGACY_DEFAULT
+    ):
+        return dataclasses.replace(value, default=None, note=MAX_TOKENS_PARAM_NOTE_FINAL)
+    return value
+
+
+def max_tokens_deep(value):
+    """``value`` (parsed JSON) with every legacy openrouter ``max_tokens`` parameter in llm-kit's form."""
+    if isinstance(value, dict):
+        return max_tokens_default_to_final({k: max_tokens_deep(v) for k, v in value.items()})
+    if isinstance(value, list):
+        return [max_tokens_deep(v) for v in value]
+    return value

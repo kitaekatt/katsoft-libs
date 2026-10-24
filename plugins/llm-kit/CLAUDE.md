@@ -400,7 +400,8 @@ believes it is clean will get burned:
   `system_prompt_mode` are claude-cli-only; `effort` reaches claude-cli, codex and
   opencode, and reaches OpenRouter only on a transport entry that resolves an
   `effort_style`; `cwd` reaches the three CLI backends and not OpenRouter, which is
-  why `cwd` is not a core param of this seam. `temperature` and `max_tokens` are
+  why `cwd` is not a core param of this seam. `temperature` and `max_tokens` (default unset;
+  cap rule: `references/completion-seam-contract.md`, "Output cap") are
   accepted and then dropped by all CLI backends -- dropped and REPORTED, not
   ignored. `skill_context` is read by all four and delivered by OpenRouter alone,
   as the leading block of its system message; the three CLI backends refuse it
