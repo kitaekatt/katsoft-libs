@@ -173,7 +173,14 @@ def load_config(path: Optional[Path] = None) -> ConsentConfig:
     target = Path(path) if path is not None else consent_read_path()
     try:
         raw = target.read_bytes()
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        # Windows reports ENOENT when an ancestor is a file, unlike POSIX's
+        # ENOTDIR. That is an invalid configuration path, not a missing policy.
+        for parent in target.parents:
+            if parent.is_file():
+                raise ConsentConfigError(
+                    f"consent file {target} cannot be read (ancestor {parent} is a file)"
+                ) from exc
         return ConsentConfig(globals_={}, scopes={}, source=SOURCE_DEFAULT, path=target)
     except OSError as exc:
         raise ConsentConfigError(f"consent file {target} cannot be read ({exc.__class__.__name__}: {exc})") from exc

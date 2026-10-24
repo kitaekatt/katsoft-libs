@@ -144,6 +144,24 @@ def test_parent_is_a_file_is_a_configuration_error(tmp_path):
         load_config(blocker / "consent.json")
 
 
+@pytest.mark.parametrize("depth", [0, 1])
+def test_missing_error_with_file_ancestor_is_configuration_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, depth: int,
+) -> None:
+    blocker = _write(tmp_path / "blocker", "x")
+    target = blocker / "consent.json" if depth == 0 else blocker / "sub" / "consent.json"
+    original = Path.read_bytes
+
+    def windows_missing(path: Path) -> bytes:
+        if path == target:
+            raise FileNotFoundError(2, "The system cannot find the path specified", str(path))
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", windows_missing)
+    with pytest.raises(ConsentConfigError, match="ancestor .* is a file"):
+        load_config(target)
+
+
 @pytest.mark.parametrize(
     "mutation,match",
     [

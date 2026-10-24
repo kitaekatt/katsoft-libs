@@ -412,9 +412,21 @@ def test_timed_out_ledger_finalizer_is_stopped_and_lease_retained(tmp_path: Path
     status = supervisor.cancel(handle, "test finalizer timeout")
     status = eventually(lambda: finished(handle))
     assert status.state == "indeterminate"
-    assert "timed out" in status.result["cancel"]["error"]
-    pid = int(marker.read_text())
-    assert not psutil.pid_exists(pid) or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    cancelled = status.result["cancel"]
+    assert cancelled.get("survivors", []) == []
+    if cancelled["error"] == "Ledger finalizer did not acknowledge dispatch":
+        assert not (handle.run_dir / "finalizer-go.json").exists()
+        assert not marker.exists()
+    else:
+        assert cancelled["error"] == "Ledger finalizer timed out"
+        assert (handle.run_dir / "finalizer-go.json").is_file()
+    identities = []
+    if (handle.run_dir / "finalizer.json").exists():
+        identities.append(json.loads((handle.run_dir / "finalizer.json").read_text())["process"]["pid"])
+    if marker.exists():
+        identities.append(int(marker.read_text()))
+    for pid in identities:
+        assert not psutil.pid_exists(pid) or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
     assert not status.alive
     assert json.loads(value.lease_path.read_text())["released"] is False
 

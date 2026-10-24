@@ -167,7 +167,10 @@ def run(body: str, paths: list, *, blocked: tuple = (), env: dict | None = None,
     """
     indented = "\n".join("    " + line for line in body.strip("\n").splitlines())
     script = _PRELUDE.format(body=indented)
-    child_env = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "/nonexistent")}
+    home = (env or {}).get("HOME", os.environ.get("HOME", "/nonexistent"))
+    child_env = {"PATH": os.environ.get("PATH", ""), "HOME": home, "USERPROFILE": home}
+    if os.name == "nt":
+        child_env["SystemRoot"] = os.environ["SystemRoot"]
     child_env.update(env or {})
     proc = subprocess.run(
         [sys.executable, "-I", "-c", script, json.dumps([str(p) for p in paths]), json.dumps(list(blocked))],

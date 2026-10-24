@@ -29,7 +29,7 @@ import json
 import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 from typing import Any, Optional
 
 import pytest
@@ -51,7 +51,7 @@ models:
 _TIME_KEYS = {"started_at", "ended_at"}
 
 
-def _scrub(value: Any, tmp: Path) -> Any:
+def _scrub(value: Any, tmp: PurePath) -> Any:
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
@@ -65,6 +65,9 @@ def _scrub(value: Any, tmp: Path) -> Any:
     if isinstance(value, list):
         return [_scrub(v, tmp) for v in value]
     if isinstance(value, str):
+        for prefix in (str(tmp), tmp.as_posix()):
+            if value.startswith(prefix):
+                return "<T>" + value[len(prefix):].replace("\\", "/")
         return value.replace(tmp.as_posix(), "<T>").replace(str(tmp), "<T>")
     return value
 
@@ -111,7 +114,7 @@ def env(home, tmp_path, monkeypatch, capsys):  # noqa: F811
         except SystemExit as exc:
             code = exc.code
         cap = capsys.readouterr()
-        shown = [a.replace(tmp_path.as_posix(), "<T>") for a in argv]
+        shown = [_scrub(a, tmp_path) for a in argv]
         observed = {"argv": shown, "exit": code, "stdout": _form(cap.out, tmp_path),
                     "stderr": _form(cap.err, tmp_path)}
         if name == "jobs_version":
@@ -121,6 +124,12 @@ def env(home, tmp_path, monkeypatch, capsys):  # noqa: F811
         return observed
 
     return invoke
+
+
+def test_windows_temporary_paths_have_portable_golden_values() -> None:
+    tmp = PureWindowsPath(r"C:\scratch\case")
+    assert _scrub([r"C:\scratch\case\nested\schema.json"], tmp) == ["<T>/nested/schema.json"]
+    assert _scrub(r"\d+", tmp) == r"\d+"
 
 
 @pytest.fixture()

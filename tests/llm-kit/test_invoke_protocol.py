@@ -298,7 +298,8 @@ def test_absent_codex_config_keeps_the_existing_workspace_argv(world, capsys):
     code, _doc, err = call(world, capsys, model="luna", mode="workspace", working_dir="work")
     argv = world.codex[-1]
     assert argv == [
-        "codex", "exec", "-s", "workspace-write", "-c",
+        "codex", "exec", "-s", "workspace-write",
+        *(["-c", 'windows.sandbox="unelevated"'] if os.name == "nt" else []), "-c",
         "sandbox_workspace_write.network_access=true", "-m", "gpt-6-luna", "-C",
         str((world.root / "work").resolve()), "-o", argv[argv.index("-o") + 1],
         "--json", "--skip-git-repo-check", "--color", "never", "-",
@@ -321,7 +322,10 @@ def test_codex_config_emits_only_requested_allowlisted_overrides(world, capsys, 
     )
     assert code == 0, err
     argv = world.codex[-1]
-    assert argv[argv.index("-c") + 1] == "sandbox_workspace_write.network_access=true"
+    configs = [argv[index + 1] for index, token in enumerate(argv[:-1]) if token == "-c"]
+    prefix = (['windows.sandbox="unelevated"'] if os.name == "nt" else []) + [
+        "sandbox_workspace_write.network_access=true"]
+    assert configs[:len(prefix)] == prefix
     assert f'shell_environment_policy.inherit="{inherit}"' in argv
     assert 'approval_policy="never"' in argv
     assert f'shell_environment_policy.inherit="{opposite}"' not in argv
