@@ -6,7 +6,7 @@ Deployment provenance is explicit, and source and installed copies must stay sep
     The source tree as a path-linked copy: a ``.pth`` file or ``sys.path`` entry
     puts ``src/llm_kit`` on the path, ``bootstrap_lib`` is linked the same way, and the
     shared contracts (``execution_event``, ``interrupt_contract``,
-    ``model_declaration``) are read from ``bootstrap_lib``. The committed
+    ``model_declaration``) are read from ``bootstrap_lib``. A legacy deployment's
     ``llm_kit/_deployment.py`` says ``MODE = "legacy"``.
 
 ``package``
