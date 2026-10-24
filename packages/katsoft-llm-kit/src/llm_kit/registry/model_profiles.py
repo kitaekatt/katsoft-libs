@@ -1,12 +1,12 @@
 """Measured, exact-model reasoning-effort menus.
 
-An effort menu is a fact about ONE model reached over ONE route, not about a
-harness or a wire convention. ``gpt-6-luna`` stops at ``max`` while
+An effort menu is a fact about ONE model reached over ONE route. A measured
+control can also require a specific wire style. ``gpt-6-luna`` stops at ``max`` while
 ``gpt-6.1-sol`` also takes ``ultra``; the Claude CLI takes no ``none``; one
 OpenRouter model takes ``none`` and another does not. This module is the single
-library-owned table of those menus. Four consumers share the one validator
-below, so no path can bypass it: catalogue writes and selection resolution
-(``project_models``), ``CodexAdapter`` and ``CodexCliBackend``.
+library-owned table of those menus. Catalogue writes and selection resolution
+use the effective menu. Harness adapters use the validator below. The direct
+OpenAI-compatible SDK seam remains an unvalidated escape hatch for model controls.
 
 The data is MEASURED AT BUILD TIME and shipped as data. Nothing here (or in any
 module of the library) reads a user cache, ``~/.codex``, ``~/.claude`` or the
@@ -15,7 +15,7 @@ same menus as a developer with every CLI installed. Each profile records where
 its menu came from and the day it was taken; a model that is not listed has NO
 exact menu, and the library invents none for it.
 
-Measurement sources (no model call was made for any of them):
+Measurement sources:
 
 ``codex-models-cache``
     The ``supported_reasoning_levels`` of each model in the Codex CLI's own
@@ -36,11 +36,14 @@ Measurement sources (no model call was made for any of them):
     for the model (a public, unauthenticated listing), taken 2026-10-23. The
     model also lists ``reasoning`` and ``reasoning_effort`` in
     ``supported_parameters``. The vendor's list is unordered; the menu is stored
-    low to high on the scale below. ``none`` is an explicit disable and appears
-    only where the vendor lists it. A model that lists ``reasoning`` but neither
-    ``reasoning_effort`` nor any ``supported_efforts`` has NO effort dial: its
-    profile has an empty menu (``no_effort_dial=True``), which is a measured
-    "send no effort", distinct from an unmeasured model (no profile at all).
+    low to high on the scale below. These menus use metadata, not model calls.
+
+``openrouter-live-probe``
+    MiMo on Novita, 2026-10-24: the same prompt with a 4096-token cap returned
+    0 reasoning tokens with ``reasoning.enabled=false`` and 596 with
+    ``reasoning.enabled=true``. This measures an off switch, not effort levels.
+    Its only typed effort is ``none``, and it requires ``reasoning-object``.
+    Other styles retain an empty menu. Omitted effort sends no control.
 
 Stdlib only; imports nothing outside ``registry``.
 """
@@ -50,7 +53,7 @@ from dataclasses import dataclass
 from typing import Iterable, Optional
 from urllib.parse import urlsplit
 
-from .effort import HarnessAdapterError
+from .effort import DELIVERING_STYLES, REASONING_OBJECT, HarnessAdapterError
 
 #: The routes a profile is keyed on. ``codex`` and ``claude`` are the registry
 #: harness names; ``openrouter`` is a transport whose base URL is openrouter.ai.
@@ -76,6 +79,7 @@ EFFORT_SCALE = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ult
 SOURCE_CODEX = "codex-models-cache"
 SOURCE_CLAUDE = "claude-code-model-table"
 SOURCE_OPENROUTER = "openrouter-models-api"
+SOURCE_OPENROUTER_LIVE = "openrouter-live-probe"
 
 #: How a catalogue row's menu was derived (``catalog`` reports it).
 MENU_EXACT_MODEL = "library-model"
@@ -85,7 +89,11 @@ MENU_NONE = "none"
 
 @dataclass(frozen=True)
 class ModelProfile:
-    """One measured exact-model effort menu (low to high) and its provenance."""
+    """One measured exact-model effort menu (low to high) and its provenance.
+
+    ``required_effort_style`` restricts the menu to that wire style. A missing
+    or different style resolves to an empty menu, not an unmeasured profile.
+    """
 
     route: str
     model: str
@@ -94,12 +102,17 @@ class ModelProfile:
     measured_on: str
     note: str = ""
     no_effort_dial: bool = False
+    required_effort_style: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.route not in ROUTES:
             raise ValueError(f"profile {self.model!r}: unknown route {self.route!r}")
         if not self.model:
             raise ValueError(f"profile {self.route}/{self.model!r}: model is required")
+        if self.required_effort_style is not None and self.required_effort_style not in DELIVERING_STYLES:
+            raise ValueError(
+                f"profile {self.route}/{self.model!r}: required_effort_style must be a delivering style"
+            )
         if bool(self.efforts) == self.no_effort_dial:
             raise ValueError(
                 f"profile {self.route}/{self.model!r}: efforts are required, or an empty menu "
@@ -125,6 +138,8 @@ class ModelProfile:
         }
         if self.note:
             result["note"] = self.note
+        if self.required_effort_style is not None:
+            result["required_effort_style"] = self.required_effort_style
         return result
 
 
@@ -197,17 +212,18 @@ PROFILES: "tuple[ModelProfile, ...]" = (
         "reasoning is mandatory; vendor default effort is max; the endpoint must "
         "resolve an effort_style (top-level) for an effort to be sent",
     ),
-    # No effort dial: the vendor lists ``reasoning`` and omits ``reasoning_effort``
-    # and ``supported_efforts``. A row for it must not inherit the endpoint's menu.
+    # The live probe measured only an off switch in the object channel. A
+    # legacy-style row must not inherit either this switch or the style menu.
     ModelProfile(
         ROUTE_OPENROUTER,
         "xiaomi/mimo-v2.6-pro",
-        (),
-        SOURCE_OPENROUTER,
-        _MEASURED_ON,
-        "no effort dial: the vendor lists reasoning but not reasoning_effort; any effort is "
-        "refused and none is sent",
-        no_effort_dial=True,
+        ("none",),
+        SOURCE_OPENROUTER_LIVE,
+        "2026-10-24",
+        "Novita live probe with the same prompt and 4096-token cap: enabled=false "
+        "returned 0 reasoning tokens; enabled=true returned 596. Only the off switch "
+        "is measured; no positive effort levels are declared",
+        required_effort_style=REASONING_OBJECT,
     ),
 )
 
@@ -223,10 +239,20 @@ def profile_for(route: Optional[str], model: Optional[str]) -> Optional[ModelPro
     return _INDEX.get((route, model))
 
 
-def exact_effort_menu(route: Optional[str], model: Optional[str]) -> "Optional[tuple[str, ...]]":
-    """The measured menu (low to high) for the exact model, or None when unmeasured."""
+def exact_effort_menu(
+    route: Optional[str], model: Optional[str], *, effort_style: Optional[str] = None
+) -> "Optional[tuple[str, ...]]":
+    """The effective exact-model menu, or None when unmeasured.
+
+    A style-scoped profile returns an empty menu for a different or omitted
+    style. The empty menu blocks fallback to a generic endpoint menu.
+    """
     profile = profile_for(route, model)
-    return None if profile is None else profile.efforts
+    if profile is None:
+        return None
+    if profile.required_effort_style is not None and profile.required_effort_style != effort_style:
+        return ()
+    return profile.efforts
 
 
 def check_effort(
@@ -236,6 +262,7 @@ def check_effort(
     model: Optional[str],
     fallback: "Optional[Iterable[str]]",
     subject: str,
+    effort_style: Optional[str] = None,
 ) -> None:
     """Refuse ``effort`` unless the exact-model menu (else ``fallback``) accepts it.
 
@@ -244,18 +271,26 @@ def check_effort(
     model with none falls back to ``fallback`` (the harness-wide menu the
     adapter already validated before profiles existed), and ``fallback`` None
     accepts any value. ``none`` is an explicit-disable wire value: it passes only
-    where the menu lists it. Raises :class:`HarnessAdapterError`.
+    where the effective menu lists it. ``effort_style`` must match a profile's
+    required style. Raises :class:`HarnessAdapterError`.
     """
     if effort is None:
         return
     profile = profile_for(route, model)
     if profile is not None:
-        if effort in profile.efforts:
+        menu = exact_effort_menu(route, model, effort_style=effort_style)
+        assert menu is not None  # The measured profile above exists.
+        if effort in menu:
             return
-        if not profile.efforts:
+        if not menu:
+            scope = (
+                f"the measured control requires effort_style={profile.required_effort_style!r}"
+                if profile.required_effort_style is not None
+                else "the model has no effort dial"
+            )
             raise HarnessAdapterError(
                 f"{subject} accepts no effort for model {model!r} ({profile.source}, measured "
-                f"{profile.measured_on}): the model has no effort dial; omit the effort (null)"
+                f"{profile.measured_on}): {scope}; omit the effort (null)"
             )
         hint = ""
         if effort == "none":
@@ -266,7 +301,7 @@ def check_effort(
         raise HarnessAdapterError(
             f"{subject} does not accept effort {effort!r} for model {model!r} "
             f"({profile.source}, measured {profile.measured_on}); "
-            f"accepted efforts: {'|'.join(profile.efforts)}{hint}"
+            f"accepted efforts: {'|'.join(menu)}{hint}"
         )
     if fallback is None:
         return
@@ -294,6 +329,7 @@ __all__ = [
     "SOURCE_CLAUDE",
     "SOURCE_CODEX",
     "SOURCE_OPENROUTER",
+    "SOURCE_OPENROUTER_LIVE",
     "check_effort",
     "exact_effort_menu",
     "profile_for",

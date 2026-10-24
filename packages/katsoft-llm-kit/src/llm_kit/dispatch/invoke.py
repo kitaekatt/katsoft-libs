@@ -292,7 +292,9 @@ def invoke(
         allowed = tuple(row["efforts"]) if "efforts" in row else menu
         if requested_effort not in allowed:
             no_dial = not allowed and (
-                "efforts" in row or project_models.exact_effort_menu(info.route, row["model"]) == ()
+                "efforts" in row or project_models.exact_effort_menu(
+                    info.route, row["model"], effort_style=info.effort_style
+                ) == ()
             )
             none_text = (
                 "none -- this model has no effort dial; send null"

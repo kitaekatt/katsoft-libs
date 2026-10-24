@@ -169,14 +169,15 @@ def library_effort_menu_with_source(
 
     EXACT-MODEL FIRST. A model with a measured profile
     (:mod:`llm_kit.registry.model_profiles`) takes that menu, for a harness
-    entry and for an openrouter.ai transport alike (``library-model``). A harness
+    entry and for an openrouter.ai transport alike (``library-model``). A profile
+    with a required wire style has an empty menu on other endpoint styles. A harness
     model with no profile has NO menu: the library does not invent one
     (``none``). A transport that resolves an effort style and has no profile
     takes that style's wire menu (``library-endpoint-style``); a transport with
     neither delivers no effort (``none``). An empty menu means a row may declare
     no ``efforts`` and a selection must carry a null effort.
     """
-    exact = exact_effort_menu(endpoint.route, model)
+    exact = exact_effort_menu(endpoint.route, model, effort_style=endpoint.effort_style)
     if exact is not None:
         return exact, MENU_EXACT_MODEL
     if endpoint.harness is not None:

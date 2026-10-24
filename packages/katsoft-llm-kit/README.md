@@ -160,8 +160,12 @@ every other style are unchanged; nothing selects the new style implicitly.
   nested object. A malformed object or a scalar beside an object returns HTTP 400.
 - A project-file row on such an endpoint may not default `request_defaults.extras.reasoning`.
 
-This is offline wire support. The empty effort menu of models with no effort dial (for example
-MiMo) is unchanged until a live check shows the style works for them.
+MiMo (`xiaomi/mimo-v2.6-pro`) exposes only the measured `none` control on a
+`reasoning-object` endpoint. Other styles expose an empty menu for that model.
+A live Novita probe on 2026-10-24 used the same prompt and a 4096-token cap.
+`reasoning.enabled=false` returned 0 reasoning tokens. `reasoning.enabled=true` returned 596.
+This evidence establishes an off switch. It does not establish positive effort levels.
+A typed effort of `None` omits the control and retains the provider's default behavior.
 
 ## Source
 

@@ -35,8 +35,9 @@ LOW_TO_ULTRA = LOW_TO_MAX + ("ultra",)
 def test_every_profile_cites_its_source_and_day():
     assert mp.PROFILES
     for profile in mp.PROFILES:
-        assert profile.source in (mp.SOURCE_CODEX, mp.SOURCE_CLAUDE, mp.SOURCE_OPENROUTER), profile
-        assert profile.measured_on == "2026-10-23", profile
+        assert profile.source in (mp.SOURCE_CODEX, mp.SOURCE_CLAUDE, mp.SOURCE_OPENROUTER, mp.SOURCE_OPENROUTER_LIVE), profile
+        expected_day = "2026-10-24" if profile.source == mp.SOURCE_OPENROUTER_LIVE else "2026-10-23"
+        assert profile.measured_on == expected_day, profile
         assert profile.route in mp.ROUTES
         scale = [mp.EFFORT_SCALE.index(e) for e in profile.efforts]
         assert scale == sorted(set(scale)), profile
@@ -62,9 +63,23 @@ def test_the_measured_menus(route, model, menu):
     assert mp.exact_effort_menu(route, model) == menu
 
 
-def test_none_is_listed_only_where_the_vendor_lists_it():
-    with_none = [(p.route, p.model) for p in mp.PROFILES if "none" in p.efforts]
+def test_none_without_a_required_style_is_listed_only_where_the_vendor_lists_it():
+    with_none = [(p.route, p.model) for p in mp.PROFILES if "none" in mp.exact_effort_menu(p.route, p.model)]
     assert with_none == [("openrouter", "deepseek/deepseek-v4.1-flash")]
+
+
+@pytest.mark.parametrize("style", [None, "top-level", "ninfer", "chat_template_kwargs", "reasoning-object"])
+def test_an_unrestricted_profile_keeps_its_menu_with_any_style(style: str | None) -> None:
+    assert mp.exact_effort_menu("openrouter", "deepseek/deepseek-v4.1-flash", effort_style=style) == (
+        "none", "low", "high", "max"
+    )
+
+
+@pytest.mark.parametrize("style", ["typo", "unsupported", "", False])
+def test_a_profile_cannot_require_an_invalid_or_undeliverable_style(style: object) -> None:
+    with pytest.raises(ValueError, match="required_effort_style must be a delivering style"):
+        mp.ModelProfile("openrouter", "a/b", ("none",), mp.SOURCE_OPENROUTER_LIVE,
+                        "2026-10-24", required_effort_style=style)
 
 
 def test_an_unmeasured_model_has_no_exact_menu():
