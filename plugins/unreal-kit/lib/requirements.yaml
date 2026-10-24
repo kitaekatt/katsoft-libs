@@ -1,6 +1,0 @@
-# UE Python dependencies managed via unreal-pip
-# Scripts call ensure_dependencies() to install missing packages at runtime.
-#
-# To add a dependency: add it here, scripts will pick it up automatically.
-packages:
-  - pyyaml

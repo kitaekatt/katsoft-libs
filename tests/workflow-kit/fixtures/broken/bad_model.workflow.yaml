@@ -1,7 +1,0 @@
-name: bad-model
-description: Declares a model with an empty list, which is not a declaration.
-steps:
-  - id: x
-    agent:
-      prompt: "hello"
-      model: []

@@ -1,7 +1,0 @@
-name: bad-field
-description: A typo'd field should be rejected.
-steps:
-  - id: x
-    agent:
-      prompt: "hello"
-      promt: "typo"

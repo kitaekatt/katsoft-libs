@@ -1,6 +1,0 @@
-# Plugin display overrides for the plugin-ecosystem skill
-# (plugins-kit:awesome-kit /plugin-ecosystem). See awesome-kit's poster.yaml
-# for the layering rules; fields here are optional.
-
-skills:
-  task: "File-backed task tracking: a task owns a folder, documents reference it, and every verb names its task explicitly. Init, work, move, archive -- 13 verbs. Evolved from hand-off."

@@ -1,7 +1,0 @@
-name: bad-dupes
-description: Two steps share an id.
-steps:
-  - id: x
-    agent: { prompt: "one" }
-  - id: x
-    agent: { prompt: "two" }

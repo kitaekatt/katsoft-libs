@@ -1,1 +1,0 @@
-"""git-kit test package."""

@@ -1,3 +1,0 @@
-# Old cleanup
-
-Fixture task.

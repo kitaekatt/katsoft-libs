@@ -1,7 +1,0 @@
-name: bad-schema
-description: References a schema that is not declared.
-steps:
-  - id: x
-    agent:
-      prompt: "hello"
-      schema: nope

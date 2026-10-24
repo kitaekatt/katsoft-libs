@@ -1,5 +1,0 @@
-# skills-kit standards configuration for the plugins-kit repo.
-# Layered per skills_kit_lib/standards_resolve.py; rule ids and tunability
-# per skills_kit_lib/rule_catalog.py (only "optional"/"inoffensive" rules
-# may be turned off; the resolver rejects un-tunable ids loudly).
-rules: {}
