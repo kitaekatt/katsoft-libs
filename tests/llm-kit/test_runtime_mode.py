@@ -537,10 +537,12 @@ def test_package_mode_codex_adapter_detects_and_builds_without_bootstrap_lib(sit
         "result = [adapter.is_available(), argv]"
     ), env=env)
     available, argv = out["ok"]
-    launcher = (["cmd", "/c", str(tmp_path / "bin" / "codex.cmd")] if os.name == "nt"
-                else [str(tmp_path / "bin" / "codex")])
+    launcher = ["cmd", "/c"] if os.name == "nt" else []
+    executable = tmp_path / "bin" / ("codex.cmd" if os.name == "nt" else "codex")
     assert available is True, out
-    assert argv[:len(launcher) + 1] == [*launcher, "exec"], out
+    assert argv[:len(launcher)] == launcher, out
+    assert Path(argv[len(launcher)]) == executable, out
+    assert argv[len(launcher) + 1] == "exec", out
     assert argv[-1] == "-", out
     assert out["modules"] == []
 
