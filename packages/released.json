@@ -8,6 +8,15 @@
       "verified_at": "2026-10-22T20:09:08Z",
       "version": "1.0.0",
       "wheel_sha256": "ead596c8d60159303295b52fec81a4e71d4567de698d84818acc81a2a79808fd"
+    },
+    "1.0.1": {
+      "commit": "dff435bf4c69ae57ed232e2d835f8df2c1227eae",
+      "filename": "katsoft_contracts-1.0.1-py3-none-any.whl",
+      "tag": "katsoft-contracts-v1.0.1",
+      "tag_url": "https://github.com/kitaekatt/katsoft-libs/tree/katsoft-contracts-v1.0.1",
+      "verified_at": "2026-10-24T03:47:02Z",
+      "version": "1.0.1",
+      "wheel_sha256": "ab3055e69c0168bc5fe9a39dab1891160559dd56f5c615ebf872dc943af9a953"
     }
   },
   "katsoft-llm-kit": {
