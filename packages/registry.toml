@@ -11,7 +11,7 @@
 # surface = { json = "plugins/llm-kit/contract/public-surface.json" }
 #   # or { all = "packages/<name>/src/<pkg>/__init__.py" } for an __all__ list
 schema = 1
-repository = "https://github.com/kitaekatt/plugins-kit"
+repository = "https://github.com/kitaekatt/katsoft-libs"
 
 [[package]]
 name = "katsoft-contracts"
@@ -25,4 +25,4 @@ name = "katsoft-llm-kit"
 import = "llm_kit"
 marker = "llm_kit/_deployment.py"
 sources = []
-surface = { json = "plugins/llm-kit/contract/public-surface.json" }
+surface = { json = "packages/katsoft-llm-kit/public-surface.json" }

@@ -30,7 +30,7 @@ def test_wheel_marker_names_the_release(wheel):
         marker = zf.read("katsoft_contracts/_release.py").decode("utf-8")
     assert marker == rb.render_marker(
         support.DIST, support.VERSION, tag, support.COMMIT,
-        rb.tag_url("https://github.com/kitaekatt/plugins-kit", tag))
+        rb.tag_url("https://github.com/kitaekatt/katsoft-libs", tag))
     assert 'MODE = "package"' in marker
 
 

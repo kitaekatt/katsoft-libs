@@ -1,2 +1,2 @@
-"""Deployment marker of the llm_kit source tree; the package wheel replaces it."""
-MODE = "legacy"
+"""Standalone source provenance; release wheels replace this marker with identity."""
+MODE = "source"

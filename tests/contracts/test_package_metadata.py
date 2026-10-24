@@ -13,7 +13,7 @@ def test_distribution_identity():
     data = _project()
     project = data["project"]
     assert project["name"] == "katsoft-contracts"
-    assert project["version"] == "1.0.0"
+    assert project["version"] == "1.0.1"
     assert project["dependencies"] == []
     assert project["dynamic"] == ["urls"]
     assert data["build-system"]["build-backend"] == "hatchling.build"

@@ -1,6 +1,6 @@
 """Which deployment this ``llm_kit`` runs in, and the seams that depend on it.
 
-Two deployments exist and they must never be mixed in one environment:
+Deployment provenance is explicit, and source and installed copies must stay separate:
 
 ``legacy``
     The source tree as a path-linked copy: a ``.pth`` file or ``sys.path`` entry
@@ -15,7 +15,14 @@ Two deployments exist and they must never be mixed in one environment:
     ``TAG``, ``COMMIT``, ``TAG_URL``), depends on ``katsoft-contracts`` and
     never meets ``bootstrap_lib``.
 
-``mode()`` decides once per process and refuses an environment whose identity
+``source``
+    A development source tree routes contracts through ``katsoft-contracts``
+    without claiming a release identity. Its marker says ``MODE = "source"``.
+    It refuses competing installed ``katsoft-llm-kit`` metadata.
+
+``mode()`` reports the contract-routing policy: standalone source and released
+wheels both return ``package``. The marker's MODE records their distinct
+provenance. It decides once per process and refuses an environment whose identity
 cannot be established. Nothing here reads the network or the clock, and nothing
 is repaired: an ambiguous environment raises and says what to separate.
 
@@ -50,8 +57,9 @@ CONTRACTS_PACKAGE = "katsoft_contracts"
 ROUTED_CONTRACTS = ("execution_event", "interrupt_contract", "model_declaration")
 
 LEGACY = "legacy"
+SOURCE = "source"
 PACKAGE = "package"
-_MODES = (LEGACY, PACKAGE)
+_MODES = (LEGACY, SOURCE, PACKAGE)
 _MARKER_MEMBER = "llm_kit/_deployment.py"
 
 
@@ -98,7 +106,7 @@ def _real(path: Any) -> str:
 
 
 def mode() -> str:
-    """``"legacy"`` or ``"package"``; decided once per process, cached on success."""
+    """Contract routing: ``legacy`` or ``package`` (source trees included)."""
     global _MODE
     if _MODE is None:
         _MODE = _identify()
@@ -122,6 +130,14 @@ def _identify() -> str:
     # (2) The layout.
     _check_layout(_deployment)
     named = _named_distributions()
+    if declared == SOURCE:
+        if named:
+            raise RuntimeIdentityError(
+                "this environment holds both a standalone llm_kit source tree "
+                f"and installed {DIST} metadata; use separate environments for "
+                "source development and the installed package"
+            )
+        return PACKAGE
     if declared == LEGACY:
         # (3) A linked plugin copy beside an installed package: two llm_kit.
         if named:

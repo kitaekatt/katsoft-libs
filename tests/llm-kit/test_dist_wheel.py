@@ -74,7 +74,7 @@ def test_wheel_marker_names_the_release_and_replaces_the_legacy_one(wheel):
     with zipfile.ZipFile(wheel) as zf:
         marker = zf.read("llm_kit/_deployment.py").decode("utf-8")
     assert marker == rb.render_marker(ds.DIST, VERSION, tag, ds.COMMIT,
-                                      rb.tag_url("https://github.com/kitaekatt/plugins-kit", tag))
+                                      rb.tag_url("https://github.com/kitaekatt/katsoft-libs", tag))
     assert 'MODE = "package"' in marker and LEGACY_MARKER.decode() not in marker
 
 
@@ -97,8 +97,8 @@ def test_sdist_carries_the_source_tree_as_committed(tmp_path):
     assert marker == LEGACY_MARKER
 
 
-def test_the_committed_marker_is_legacy():
-    assert b'MODE = "legacy"' in LEGACY_MARKER
+def test_the_committed_marker_identifies_standalone_source():
+    assert b'MODE = "source"' in LEGACY_MARKER
 
 
 def test_wheel_metadata(wheel):

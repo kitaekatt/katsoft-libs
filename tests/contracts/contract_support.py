@@ -23,12 +23,12 @@ RELEASE_BUILD = REPO / "packages" / "_build" / "release_build.py"
 MODULES = ("execution_event", "interrupt_contract", "model_declaration")
 
 DIST = "katsoft-contracts"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 EPOCH = "1767225600"
 SYNTHETIC_REGISTRY = (
     'schema = 1\n'
-    'repository = "https://github.com/kitaekatt/plugins-kit"\n\n'
+    'repository = "https://github.com/kitaekatt/katsoft-libs"\n\n'
     '[[package]]\n'
     f'name = "{DIST}"\n'
     'import = "katsoft_contracts"\n'

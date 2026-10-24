@@ -82,10 +82,45 @@ def rewrite_record_hash(site: Path, member: str) -> None:
 
 # --- the two modes ---------------------------------------------------------
 
-def test_the_source_tree_is_legacy_mode():
+def test_the_source_tree_routes_contracts_without_a_release_identity():
     from llm_kit import _runtime
-    assert _runtime._identify() == "legacy"
-    assert _runtime.mode() == "legacy"
+    from llm_kit import _deployment
+    assert _deployment.MODE == "source"
+    assert not hasattr(_deployment, "COMMIT")
+    assert _runtime._identify() == "package"
+    assert _runtime.mode() == "package"
+
+
+def test_direct_source_uses_contracts_with_bootstrap_blocked():
+    out = ds.run(
+        "from llm_kit import _runtime, _deployment\n"
+        "result = [_runtime.mode(), _deployment.MODE, _runtime.load('model_declaration').__name__]",
+        [ds.LIB, CONTRACTS], blocked=BLOCK)
+    assert out["ok"] == ["package", "source", "katsoft_contracts.model_declaration"]
+    assert out["modules"] == []
+
+
+def test_direct_source_names_missing_contracts():
+    out = ds.run(
+        absent_prelude("bootstrap_lib", "katsoft_contracts")
+        + "from llm_kit import _runtime\n_runtime.load('model_declaration')",
+        [ds.LIB])
+    assert out["error"] == "ContractsMissing"
+    assert "install katsoft-contracts" in out["message"]
+
+
+def test_source_beside_installed_distribution_is_refused(site):
+    out = ds.run("from llm_kit import _runtime\n_runtime.mode()", [ds.LIB, site])
+    assert out["error"] == "RuntimeIdentityError"
+    assert "source tree" in out["message"] and "installed" in out["message"]
+
+
+def test_installed_marker_cannot_claim_source_provenance(site):
+    (site / "llm_kit" / "_deployment.py").write_text('MODE = "source"\n', encoding="utf-8")
+    rewrite_record_hash(site, "llm_kit/_deployment.py")
+    out = ds.run("from llm_kit import _runtime\n_runtime.mode()", [site])
+    assert out["error"] == "RuntimeIdentityError"
+    assert "source tree" in out["message"] and "installed" in out["message"]
 
 
 def test_unpacked_wheel_is_package_mode_with_the_build_identity(site):
@@ -124,6 +159,7 @@ def test_legacy_with_dist_metadata_requires_separation(site):
 def test_legacy_without_dist_metadata_is_fine(tmp_path):
     lib = tmp_path / "lib"
     shutil.copytree(ds.SOURCE_DIR, lib / "llm_kit", ignore=shutil.ignore_patterns("__pycache__"))
+    (lib / "llm_kit" / "_deployment.py").write_text('MODE = "legacy"\n', encoding="utf-8")
     out = ds.run("from llm_kit import _runtime\nresult = _runtime.mode()", [lib], blocked=BLOCK)
     assert out["ok"] == "legacy"
 
@@ -319,10 +355,9 @@ def test_no_module_but_the_runtime_names_the_contracts_package():
         assert "katsoft_contracts" not in path.read_text(encoding="utf-8"), path
 
 
-def test_load_is_a_package_mode_seam(tmp_path):
+def test_source_loads_the_standalone_contracts(tmp_path):
     from llm_kit import _runtime
-    with pytest.raises(_runtime.RuntimeIdentityError, match="package-mode seam"):
-        _runtime.load("model_declaration")
+    assert _runtime.load("model_declaration").__name__ == "katsoft_contracts.model_declaration"
 
 
 def test_package_mode_never_imports_bootstrap_lib(site, tmp_path):
@@ -395,12 +430,6 @@ def test_fleet_is_false_when_the_bootstrap_lib_import_is_blocked(site):
     assert out["ok"] == ["package", False, False] and out["modules"] == []
 
 
-def test_fleet_is_true_when_bootstrap_lib_imports(site):
-    out = package(site, (
-        "from llm_kit import _runtime\n"
-        "result = [_runtime.mode(), _runtime.fleet()]"
-    ), fleet=True)
-    assert out["ok"] == ["package", True]
 
 
 def test_fleet_does_not_swallow_a_broken_bootstrap_lib(site, tmp_path):
@@ -414,20 +443,12 @@ def test_fleet_does_not_swallow_a_broken_bootstrap_lib(site, tmp_path):
     assert out["error"] == "ModuleNotFoundError" and "not_a_real_module_xyz" in out["message"]
 
 
-def test_require_fleet_is_silent_in_legacy_mode():
+def test_source_refuses_a_missing_optional_fleet_feature():
     from llm_kit import _runtime
-    assert _runtime.require_fleet("anything") is None
+    with pytest.raises(_runtime.UnsupportedInPackageMode):
+        _runtime.require_fleet("anything")
 
 
-def test_package_mode_fleet_allows_review_lane(site):
-    """With bootstrap_lib importable, the gate that used to refuse in package mode passes."""
-    out = package(site, (
-        "from llm_kit import _runtime\n"
-        "import llm_kit.dispatch.review_lane as lane\n"
-        "_runtime.require_fleet('anything')\n"
-        "result = [_runtime.mode(), lane.__name__]"
-    ), fleet=True, env={"CLAUDE_PLUGIN_TEST": "1"})
-    assert out["ok"] == ["package", "llm_kit.dispatch.review_lane"], out
 
 
 # --- Codex in package mode: no bootstrap_lib anywhere ------------------------
@@ -567,25 +588,6 @@ def test_package_mode_model_list_uses_shipped_defaults(site, tmp_path):
     assert overridden["ok"] == [True, "", ["only"]]
 
 
-def test_package_mode_fleet_uses_layered_registry(site, tmp_path):
-    """With bootstrap_lib importable, package mode reads the fleet config layer."""
-    home = tmp_path / "home"
-    (home / ".claude" / "config").mkdir(parents=True)
-    (home / ".claude" / "config" / "llm-scripting-kit.yaml").write_text(
-        "default_endpoint: fleet-chosen\nendpoints:\n  fleet-chosen:\n    model: m\n",
-        encoding="utf-8")
-    body = (
-        "from llm_kit.registry import models\n"
-        "config = models.load_model_config()\n"
-        "result = [config.get('default_endpoint'), 'fleet-chosen' in config['endpoints'],\n"
-        "          config == models.DEFAULT_MODEL_CONFIG]"
-    )
-    fleet = package(site, body, fleet=True, env={"HOME": str(home)})
-    assert fleet["ok"] == ["fleet-chosen", True, False], fleet
-    off = package(site, body, env={"HOME": str(home)})
-    # shipped defaults, layers ignored; the shipped baseline names no default_endpoint (no shipped default)
-    assert off["ok"] == [None, False, True], off
-    assert off["modules"] == []
 
 
 # --- C5: the re-exec ---------------------------------------------------------
@@ -625,14 +627,12 @@ def test_cli_main_argv_none_package_no_exec(site, tmp_path):
     assert (mode, code, calls) == ("package", 0, [])     # --help parsed, no exec
 
 
-def test_cli_main_argv_none_legacy_execs(tmp_path):
+def test_cli_main_argv_none_source_does_not_exec(tmp_path):
     home = tmp_path / "home"
     python = _stub_plugin_venv(home)
     out = ds.run(REEXEC_BODY, [ds.LIB], blocked=BLOCK, env={"HOME": str(home)})
     mode, code, calls = out["ok"]
-    assert mode == "legacy" and code == "execv"
-    assert [Path(call[0]).resolve() for call in calls] == [python.resolve()]
-    assert calls[0][1][1:] == ["-m", "llm_kit.cli", "--help"]
+    assert (mode, code, calls) == ("package", 0, [])
 
 
 # --- the goldens, forced through package mode ---------------------------------

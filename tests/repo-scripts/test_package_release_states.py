@@ -554,7 +554,7 @@ class TestObservations:
 
         message = str(exc.value)
         assert "ended failure" in message
-        assert f"gh workflow run release-packages.yml --ref master -f tag={TAG}" in message
+        assert f"gh workflow run release-packages.yml --ref dev -f tag={TAG}" in message
         assert "gh run rerun" in message
         assert {c[1][:2] for c in world.calls if c[0] == "gh"} == {("run", "list")}
 

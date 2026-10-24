@@ -36,13 +36,13 @@ COMMIT = "0123456789abcdef0123456789abcdef01234567"
 EPOCH = "1767225600"
 SYNTHETIC_REGISTRY = (
     'schema = 1\n'
-    'repository = "https://github.com/kitaekatt/plugins-kit"\n\n'
+    'repository = "https://github.com/kitaekatt/katsoft-libs"\n\n'
     '[[package]]\n'
     f'name = "{DIST}"\n'
     'import = "llm_kit"\n'
     'marker = "llm_kit/_deployment.py"\n'
     'sources = []\n'
-    'surface = { json = "plugins/llm-kit/contract/public-surface.json" }\n'
+    'surface = { json = "packages/katsoft-llm-kit/public-surface.json" }\n'
 )
 
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", "dist", "build", ".venv", "*.egg-info")

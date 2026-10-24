@@ -174,50 +174,6 @@ def normalize_json_text(text: str, replacements: Mapping[str, str]) -> Any:
 # --------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def legacy_mods() -> Iterator[types.SimpleNamespace]:
-    """The frozen legacy CLIs, imported from their own lib directories.
-
-    The ``sys.path`` insert and the ``sys.modules`` entries are removed at module
-    teardown, so the legacy import roots never leak into other test modules.
-    """
-    before = set(sys.modules)
-    for entry in map(str, LEGACY_LIBS):
-        sys.path.insert(0, entry)
-    try:
-        ns = types.SimpleNamespace(
-            cli=importlib.import_module("llm_scripting_kit.cli"),
-            jobs_cli=importlib.import_module("job_kit.cli"),
-            jobs_model=importlib.import_module("job_kit.model"),
-            jobs_store=importlib.import_module("job_kit.store"),
-            jobs_run=importlib.import_module("job_kit.run"),
-            api_key=importlib.import_module("llm_scripting_kit.api_key"),
-            factory=importlib.import_module("llm_scripting_kit.completion.factory"),
-            types=importlib.import_module("llm_scripting_kit.completion.types"),
-            reach=importlib.import_module("llm_scripting_kit.reachability"),
-            account=importlib.import_module("llm_scripting_kit.account"),
-            swapper=importlib.import_module("llm_scripting_kit.swapper"),
-            swapper_acceptance=importlib.import_module("llm_scripting_kit.swapper_acceptance"),
-            frontdoor_acceptance=importlib.import_module("llm_scripting_kit.frontdoor.acceptance"),
-            frontdoor=importlib.import_module("llm_scripting_kit.frontdoor"),
-            cpk_run=importlib.import_module("content_pipeline.cli.run"),
-            cpk_scaffold=importlib.import_module("content_pipeline.cli.scaffold"),
-            cpk_store=importlib.import_module("content_pipeline.execution.store"),
-            usage=importlib.import_module("llm_scripting_kit.usage_budget"),
-            models=importlib.import_module("llm_scripting_kit.models"),
-            declaration=importlib.import_module("llm_scripting_kit.declaration"),
-            client=importlib.import_module("llm_scripting_kit.client"),
-            seats=importlib.import_module("llm_scripting_kit.seats"),
-            process=importlib.import_module("llm_scripting_kit._swapper_process"),
-        )
-        yield ns
-    finally:
-        for entry in map(str, LEGACY_LIBS):
-            with contextlib.suppress(ValueError):
-                sys.path.remove(entry)
-        for name in list(sys.modules):
-            if name not in before and name.split(".")[0] in LEGACY_ROOTS:
-                del sys.modules[name]
 
 
 @pytest.fixture(scope="module")

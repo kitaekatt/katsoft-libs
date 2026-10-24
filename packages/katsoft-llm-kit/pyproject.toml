@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "katsoft-llm-kit"
-version = "1.7.1"
+version = "1.7.2"
 description = "LLM access, durable agent jobs and batch content pipelines in one library (import package llm_kit)"
 readme = "README.md"
 license = "MIT"
@@ -12,7 +12,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 # The base library is standard-library plus the contracts distribution. Each
 # capability that needs a third-party package names it in an extra; the extras
-# mirror plugins/llm-kit/pyproject.toml (tests/llm-kit/test_dist_metadata_parity.py).
+# let consumers install only the capabilities they use.
 dependencies = ["katsoft-contracts>=1.0,<2"]
 # [project.urls] Source is set by the build hook from the release identity.
 dynamic = ["urls"]
@@ -32,7 +32,7 @@ pipeline = ["pyyaml>=6.0"]
 path = "../_build/hatch_build.py"
 
 # The library source is src/llm_kit. The wheel selects it as a package and
-# excludes the committed legacy marker src/llm_kit/_deployment.py; the build
+# excludes the committed source marker src/llm_kit/_deployment.py; the build
 # hook (packages/_build/hatch_build.py; registry `marker`) force-includes the
 # release marker at that wheel path in its place.
 [tool.hatch.build.targets.wheel]
@@ -42,7 +42,7 @@ exclude = ["src/llm_kit/_deployment.py"]
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "../_build/hatch_build.py"
 
-# The sdist carries the source as committed, legacy marker included, and builds
+# The sdist carries the source as committed, source marker included, and builds
 # no wheel itself: a release wheel is built only by packages/_build/release_build.py.
 [tool.hatch.build.targets.sdist]
 include = ["src/llm_kit", "README.md", "LICENSE", "pyproject.toml"]

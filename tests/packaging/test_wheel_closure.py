@@ -263,9 +263,13 @@ def test_closure_catches_a_linked_plugin_tree(local_wheels, tmp_path):
     venv = support.make_venv(tmp_path / "v", support.local_requirements(local_wheels, extras=""))
     site = next((venv / "lib").glob("python*/site-packages")) if sys.platform != "win32" \
         else venv / "Lib" / "site-packages"
-    (site / "plugin_link.pth").write_text(str(support.REPO / "plugins" / "bootstrap") + "\n", encoding="utf-8")
+    repository = tmp_path / "fake_repository"
+    linked = repository / "plugins" / "bootstrap"
+    (linked / "bootstrap_lib").mkdir(parents=True)
+    (linked / "bootstrap_lib" / "__init__.py").write_text("", encoding="utf-8")
+    (site / "plugin_link.pth").write_text(str(linked) + "\n", encoding="utf-8")
     problems = support.environment_problems(_environment(venv, tmp_path), expected_commits={
-        support.KIT_DIST: local_wheels["commit"], support.CONTRACTS_DIST: local_wheels["commit"]})
+        support.KIT_DIST: local_wheels["commit"], support.CONTRACTS_DIST: local_wheels["commit"]}, repo=repository)
     assert any("bootstrap_lib is importable" in p for p in problems), problems
     assert any(".pth links present" in p for p in problems), problems
     assert any("reaches the repository" in p for p in problems), problems

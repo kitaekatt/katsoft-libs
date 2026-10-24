@@ -1,0 +1,16 @@
+[project]
+name = "katsoft-libs"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0", "pytest-xdist>=3.5", "pyyaml>=6.0", "regex",
+    "websocket-client>=1.6", "fastapi>=0.110", "httpx>=0.27",
+    "psutil>=6.0", "packaging>=24.0", "openai>=1.0.0", "uvicorn>=0.29",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--dist=worksteal"]
+pythonpath = ["packages/katsoft-llm-kit/src", "packages/katsoft-contracts/src"]

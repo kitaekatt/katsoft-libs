@@ -79,6 +79,12 @@ registry reads the shipped defaults; point `MODEL_ENDPOINTS_REGISTRY` at a
 registry file to change them. The Codex adapter itself works in package mode
 and does not require Claude Code, bootstrap or plugins-kit.
 
+Development source trees also use package contract routing.
+Their marker has `MODE = "source"` and carries no release identity.
+Release wheels have `MODE = "package"` with a verified version, commit, and tag.
+`_runtime.mode()` returns `"package"` for both standalone forms.
+A source tree beside installed `katsoft-llm-kit` metadata is refused as ambiguous.
+
 Do not install this distribution into an environment that also holds a
 path-linked copy of the `llm_kit` source tree.
 

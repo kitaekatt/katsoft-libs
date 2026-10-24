@@ -1,17 +1,16 @@
 # Build and upload ONE package release to PyPI, from its release tag.
 #
-# scripts/publish.py creates the tag (<distribution>-v<version>, for example
-# katsoft-llm-kit-v1.0.0) only after dev holds the tagged commit, then waits
+# scripts/release.py creates the tag (<distribution>-v<version>, for example
+# katsoft-llm-kit-v1.0.0) only after reviewed dev holds the tagged commit, then waits
 # for this workflow's run titled "release <tag>" and verifies the uploaded
 # wheel against a rebuild of the same tag before recording it in
 # packages/released.json. A failed or missing run is resumed by the user
-# (`gh run rerun <id>`, or `gh workflow run release-packages.yml --ref master
-# -f tag=<tag>`); publish.py never re-dispatches. Procedure and states:
+# (`gh run rerun <id>`, or `gh workflow run release-packages.yml --ref dev
+# -f tag=<tag>`); release.py never re-dispatches. Procedure and states:
 # docs/reference/package-release.md.
 #
-# This file must be identical on master and dev before any package releases
-# (publish.py refuses otherwise): GitHub runs tag-push and dispatch workflows
-# as defined on the default branch.
+# dev is the default branch. Dispatches use this workflow from dev; tagged
+# builds check out the exact release commit.
 name: release-packages
 run-name: release ${{ inputs.tag || github.ref_name }}
 

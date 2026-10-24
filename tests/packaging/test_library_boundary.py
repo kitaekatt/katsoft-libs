@@ -44,7 +44,7 @@ def _library_roots() -> frozenset[str]:
 def _plugin_only_roots() -> frozenset[str]:
     """Top-level packages that exist only under plugins/** (bootstrap_lib etc.)."""
     roots: set[str] = set()
-    for plugin in PLUGINS.iterdir():
+    for plugin in (PLUGINS.iterdir() if PLUGINS.is_dir() else ()):
         if not plugin.is_dir():
             continue
         for base in (plugin, plugin / "lib", plugin / "src"):

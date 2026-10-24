@@ -32,7 +32,6 @@ from test_cli_harness import (  # noqa: F401 -- fixtures
     REPO,
     final_mods,
     home,
-    legacy_mods,
     run,
 )
 
@@ -47,11 +46,6 @@ def _choices(parser: Any) -> set[str]:
 
 
 class TestVerbMap:
-    def test_every_scripting_verb_has_exactly_one_home(self, legacy_mods, final_mods):
-        legacy = _choices(legacy_mods.cli._parser())
-        job_kit_verbs = {"run", "resume", "events", "gc"}  # job-kit's, not llm-scripting-kit's
-        mapped = (set(final_mods.cli.LEGACY_VERBS) - job_kit_verbs) | {"frontdoor"}
-        assert legacy == mapped, (legacy ^ mapped)
 
     def test_the_legacy_to_new_map_is_the_documented_one(self, final_mods):
         assert final_mods.cli.LEGACY_VERBS == {
@@ -70,36 +64,8 @@ class TestVerbMap:
             code = run(final_mods.cli.main, [*target.split(), "--help"], capsys).code
             assert code == 0, target
 
-    def test_the_jobs_group_carries_the_job_kit_verbs_and_cancel(self, legacy_mods, final_mods, capsys):
-        legacy = _choices(legacy_mods.jobs_cli._parser())
-        assert legacy == {"run", "status", "resume", "resolve", "events", "gc"}
-        for verb in legacy:
-            assert run(final_mods.cli.main, ["jobs", verb, "--help"], capsys).code == 0, verb
-        # Deliberate difference (ledger schema 13): llm-kit adds `cancel`; the
-        # legacy verbs are all still there.
-        assert _choices(final_mods.jobs_cli._parser()) == legacy | {"cancel"}
-        assert run(final_mods.cli.main, ["jobs", "cancel", "--help"], capsys).code == 0
 
-    def test_the_pipeline_group_carries_the_store_only_command_set(self, legacy_mods, final_mods, tmp_path):
-        store = legacy_mods.cpk_store.ExecutionStore(tmp_path / "legacy.db")
-        legacy = set(legacy_mods.cpk_run.build_commands(store))
-        final = set(final_mods.run.build_commands(final_mods.exec_store.ExecutionStore(tmp_path / "final.db")))
-        assert legacy == final == set(final_mods.pipeline._COMMANDS)
 
-    def test_swapper_and_acceptance_subverbs_are_unchanged(self, legacy_mods, final_mods):
-        def nested(parser: Any, name: str) -> set[str]:
-            for action in parser._actions:
-                if action.__class__.__name__ == "_SubParsersAction":
-                    return _choices(action.choices[name])
-            raise AssertionError(name)
-
-        legacy = legacy_mods.cli._parser()
-        final = final_mods.local._parser()
-        assert nested(final, "swapper") == nested(legacy, "swapper")
-        assert nested(final, "acceptance") == nested(legacy, "acceptance")
-        assert nested(final, "swapper") == {"running", "terminate", "unload", "strays", "terminate-listener",
-                                            "guard-launch"}
-        assert nested(final, "acceptance") == {"swapper", "frontdoor"}
 
     def test_the_groups_are_the_eight_in_the_design(self, final_mods):
         assert list(final_mods.cli.GROUPS) == [
@@ -204,7 +170,7 @@ class TestComposition:
         assert out.code == 0 and "Source: user" in out.out
         assert seen == {"key": "from-user-file", "endpoint": "openrouter"}
 
-    def test_only_the_console_path_moves_into_the_plugin_venv(self, final_mods, monkeypatch, capsys):
+    def test_source_console_path_keeps_the_current_interpreter(self, final_mods, monkeypatch, capsys):
         calls = []
 
         def guard(plugin: str, *a: Any, **k: Any) -> None:
@@ -214,7 +180,7 @@ class TestComposition:
         monkeypatch.setattr(sys, "argv", ["llm-kit-wrapper", "models", "--help"])
         out = run(lambda argv: final_mods.cli.main(), [], capsys)
         assert out.code == 0
-        assert calls == [("llm-kit", ["-m", "llm_kit.cli", "models", "--help"])]
+        assert calls == []
         assert sys.argv == ["llm-kit-wrapper", "models", "--help"]
         calls.clear()
         run(final_mods.cli.main, ["models", "--help"], capsys)

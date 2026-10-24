@@ -1,0 +1,6 @@
+{
+  "project_venv": {
+    "extras": ["dev"],
+    "check_imports": ["pytest", "yaml", "packaging", "openai", "psutil"]
+  }
+}

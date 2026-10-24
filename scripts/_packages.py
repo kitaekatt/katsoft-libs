@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Package release machinery for scripts/publish.py.
+"""Package release machinery for scripts/release.py.
 
-publish.py moves plugin releases from dev to master. When packages/registry.toml
-registers a distribution whose pyproject version has no entry in
-packages/released.json, the same run also releases that version to PyPI, BEFORE
-master can expose a plugin that needs it. The procedure, the states and the
+When packages/registry.toml registers a distribution whose pyproject version
+has no entry in packages/released.json, release.py releases that version to
+PyPI independently of plugin publication. The procedure and the
 user's commands: docs/reference/package-release.md. This module is the source
 of truth for the mechanics; the document states the contract.
 
@@ -12,7 +11,7 @@ Three groups, in the order a run uses them:
 
   * preflight policy (plan): the release set R, the --only refusal, registry
     and dependency checks, the partial semver check, the source-drift report,
-    and the workflow-on-master check. Reads git objects only -- no network.
+    and the workflow check. Reads git objects only -- no network.
   * observations (re-read every run): the ledger entry J at origin/dev, the
     peeled tag T on origin, the PyPI JSON for (d, v), and the release workflow's
     newest run. An observation that cannot be made raises ObservationFailed:
@@ -24,10 +23,8 @@ Three groups, in the order a run uses them:
 Every network-facing operation goes through `Services`, so a test substitutes
 local fakes and a run with an empty release set never reaches one.
 
-Import is standard-library only: publish.py imports this module, and the
-pre-commit hook runs `publish.py --print-range-base` on a possibly
-unprovisioned clone. `packaging` (root dev extra) is imported where a
-registered package needs it, so an empty registry needs no third-party module.
+Import is standard-library only. `packaging` (root dev extra) is imported
+where a registered package needs it.
 """
 from __future__ import annotations
 
@@ -73,9 +70,8 @@ REGISTRY_PATH = rb.REGISTRY_PATH
 RELEASED_PATH = rb.RELEASED_PATH
 WORKFLOW_PATH = ".github/workflows/release-packages.yml"
 WORKFLOW_FILE = "release-packages.yml"
-MARKETPLACE_PATH = ".claude-plugin/marketplace.json"
-# Paths only publish.py writes on dev. P and F may differ in these alone.
-PUBLISH_OWNED = (MARKETPLACE_PATH, RELEASED_PATH)
+# The standalone release command writes only the verified release ledger.
+PUBLISH_OWNED = (RELEASED_PATH,)
 LEDGER_FIELDS = ("version", "tag", "tag_url", "commit", "filename",
                  "wheel_sha256", "verified_at")
 
@@ -109,7 +105,7 @@ class ObservationFailed(PackageError):
 
 class Waiting(PackageError):
     """The release workflow has not finished the upload; the message says how
-    to resume. publish.py never re-dispatches a run on its own."""
+    to resume. release.py never re-dispatches a run on its own."""
 
 
 class _PushRejected(Exception):
@@ -207,7 +203,7 @@ class Repo:
 
 
 def advance_dev(repo: Repo, new: str) -> None:
-    """Move dev to `new`: the ONE way publish.py advances dev.
+    """Move dev to `new`: the ONE way release.py advances dev.
 
     `git push <remote> <new>:refs/heads/dev` is fast-forward only, so a dev
     that moved underneath raises _PushRejected instead of being overwritten.
@@ -483,7 +479,10 @@ def _require_major_for_removed_names(repo: Repo, ref: str, entry, version: str,
         return
     from packaging.version import Version
     base = max(released, key=Version)
-    before = surface_names(repo, released[base]["commit"], entry)
+    before_commit = released[base]["commit"]
+    # The historical registry names the surface file before a source move.
+    historical_entry = read_registry(repo, before_commit).entry(entry.name)
+    before = surface_names(repo, before_commit, historical_entry)
     if before is None:
         return
     removed = before - (surface_names(repo, ref, entry) or set())
@@ -717,11 +716,11 @@ def newest_run(services: Services, tag: str) -> dict | None:
 # --- transitions ------------------------------------------------------------------
 
 def _resume(tag: str, run: dict | None) -> str:
-    lines = [f"  gh workflow run {WORKFLOW_FILE} --ref master -f tag={tag}"]
+    lines = [f"  gh workflow run {WORKFLOW_FILE} --ref dev -f tag={tag}"]
     if run is not None:
         lines.insert(0, f"  gh run rerun {run['databaseId']}")
-    return ("Resume it yourself (publish.py never re-dispatches), then run "
-            "publish.py again:\n" + "\n".join(lines))
+    return ("Resume it yourself (release.py never re-dispatches), then run "
+            "release.py again:\n" + "\n".join(lines))
 
 
 @dataclass
@@ -771,7 +770,7 @@ class Release:
                     f"{dist} {version} is recorded in {RELEASED_PATH} but the "
                     f"remote now shows tag={t or 'absent'}, PyPI={state}"
                     + (" (the release is YANKED on PyPI)" if state == YANKED else "")
-                    + ". Decide how to repair it; publish.py will not.")
+                    + ". Decide how to repair it; release.py will not.")
             if t is None:
                 if state != ABSENT:
                     raise Refusal(                                      # row 4
@@ -855,7 +854,7 @@ class Release:
                 if elapsed >= RUN_WAIT_SECONDS:
                     raise Waiting(f"release run {run.get('url')} for {tag} is still "
                                   f"{run.get('status')}; stopped with no state "
-                                  "change. Run publish.py again to keep waiting.")
+                                  "change. Run release.py again to keep waiting.")
             elif run.get("conclusion") == "success":
                 break
             else:
@@ -867,7 +866,7 @@ class Release:
             if self.services.now() - start >= PYPI_WAIT_SECONDS:
                 raise Waiting(f"the release run for {tag} succeeded but PyPI does "
                               f"not list {dist} {version} after "
-                              f"{PYPI_WAIT_SECONDS // 60} min; run publish.py again.")
+                              f"{PYPI_WAIT_SECONDS // 60} min; run release.py again.")
             self.services.sleep(POLL_SECONDS)
 
     def _wait_simple_index(self, dist: str, version: str, filename: str) -> None:
@@ -879,7 +878,7 @@ class Release:
                     f"PyPI's JSON API lists {dist} {version} but the simple index "
                     f"https://pypi.org/simple/{rb.normalize_dist(dist)}/ does not "
                     f"list {filename} after {SIMPLE_INDEX_WAIT_SECONDS // 60} min; "
-                    "nothing was recorded. Run publish.py again to keep waiting.")
+                    "nothing was recorded. Run release.py again to keep waiting.")
             self.services.sleep(POLL_SECONDS)
 
     def _uploaded(self, dist: str, version: str, tag: str, t: str, info: dict) -> None:
@@ -962,4 +961,4 @@ def ledger_commit(repo: Repo, dist: str, entry: dict) -> str:
         return commit
     raise Refusal(f"{DEV_BRANCH} moved on every one of {LEDGER_TRIES} attempts to "
                   f"record {dist} {entry['version']}; the release is uploaded and "
-                  "verified -- run publish.py again to record it.")
+                  "verified -- run release.py again to record it.")

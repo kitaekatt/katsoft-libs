@@ -18,10 +18,6 @@ def test_canonical_package_matches_goldens(canonical, tmp_path):
     assert support.golden_mismatches(canonical, tmp_path) == []
 
 
-def test_bootstrap_lib_alias_matches_goldens(bootstrap_alias, tmp_path):
-    assert support.golden_mismatches(bootstrap_alias, tmp_path) == []
-
-
 def test_canonical_modules_come_from_the_source_tree(canonical):
     for name in support.MODULES:
         assert Path(getattr(canonical, name).__file__).resolve() == \
