@@ -56,6 +56,7 @@ from .model import (
     Port,
 )
 from .ops import OpError, OpHalted
+from .portable import PathScrubber
 from .records import RUN_FORMAT, RunStore, new_run_id, record_path, utc_now
 from .validate import validate_graph
 
@@ -210,6 +211,7 @@ class Runner:
         self.store = store
         self.item = item
         self.project_root = Path(project_root).resolve()
+        self._scrub = PathScrubber(self.project_root)
         self.services = dict(services or {})
         self.max_parallel = max_parallel
         problems = validate_graph(graph, registry=registry, project_root=self.project_root)
@@ -280,7 +282,7 @@ class Runner:
         }
         if resumed_from is not None:
             ex.record["resumed_from"] = resumed_from
-        path = self.store.write_run(ex.record)
+        path = self._write_run(ex.record)
         outputs = None
         try:
             try:
@@ -308,9 +310,9 @@ class Runner:
             status=ex.record["status"],
             record_path=path,
             outputs=outputs if target_ids is None else None,
-            stop=ex.stop,
+            stop=self._scrub.scrub(ex.stop),
             nodes={p: r["status"] for p, r in ex.record["nodes"].items()},
-            errors={p: r["error"]["message"] for p, r in ex.record["nodes"].items() if r.get("error")},
+            errors={p: self._scrub.text(r["error"]["message"]) for p, r in ex.record["nodes"].items() if r.get("error")},
         )
 
     def plan(self, inputs: Optional[Mapping[str, Any]] = None, *, target: Iterable[str] = (),
@@ -396,7 +398,7 @@ class Runner:
             "counts": {"seeded": 1},
             "nodes": {node_path: record},
         }
-        self.store.write_run(run)
+        self._write_run(run)
         return record
 
     def resolve_inputs(self, given: Optional[Mapping[str, Any]] = None) -> tuple[dict, dict[str, str]]:
@@ -615,6 +617,10 @@ class Runner:
             record["attributes"] = {name: self.store.put_attribute(value)
                                     for name, value in sorted(exc.attributes.items())}
 
+    def _write_run(self, record: dict) -> Path:
+        """Write a run record with the project root made relative and the home directory made ``~``."""
+        return self.store.write_run(self._scrub.scrub(record))
+
     def _put(self, ex: _Exec, record: dict) -> None:
         if ex.plan:
             return
@@ -622,7 +628,7 @@ class Runner:
             if record["path"] in ex.record["nodes"]:
                 raise GraphError(f"node path {record['path']} ran twice in run {ex.run_id}")
             ex.record["nodes"][record["path"]] = record
-            self.store.write_run(ex.record)
+            self._write_run(ex.record)
 
     def _finish(self, ex: _Exec) -> None:
         with ex.lock:
@@ -631,7 +637,7 @@ class Runner:
                 counts[record["status"]] = counts.get(record["status"], 0) + 1
             ex.record["counts"] = dict(sorted(counts.items()))
             ex.record["ended_at"] = utc_now()
-            self.store.write_run(ex.record)
+            self._write_run(ex.record)
 
     def _entry(self, ex: _Exec, node: Node, path: str, action: str, reason: str = "",
                run: Optional[str] = None, *, estimate: Optional[float] = None, note: str = "") -> None:
@@ -842,7 +848,8 @@ class Runner:
             with ex.lock:
                 if ex.stop is None:
                     ex.stop = {**stop.detail, "reason": stop.reason, "node": path, "message": stop.message}
-            ex.stopping.set()
+            if stop.reason != "waiting":  # a wait stops only what reads the waiting node; the rest drains
+                ex.stopping.set()
             finish(stop.status, error={**_error(stop), **stop.detail})
             raise _Ended("stopped") from None
         except Exception as exc:  # noqa: BLE001 -- a node failure is recorded, then gates its dependents

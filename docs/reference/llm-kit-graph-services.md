@@ -146,7 +146,9 @@ the same wait.
    unit (fencing token), requests an interrupt (kind = the node `kind`, schema
    = the node `schema`, payload = graph, node, run, item and a reference to the
    payload value) and stops the run (node `stopped`, reason `waiting`; the
-   stop has `wait`).
+   stop has `wait`). Nodes that do not read the waiting node keep running to
+   completion first (the run drains, `llm-kit-graph-runtime.md`); only its
+   dependents stay `pending`.
 2. A person answers:
 
    ```sh

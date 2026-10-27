@@ -109,6 +109,13 @@ committed record names no machine path. `records.resolve_record_path(root,
 text)` turns one back into a path under the project root and refuses an
 absolute or escaping path.
 
+Every string in a record is also made portable when the record is written
+(`portable.PathScrubber`): the project root becomes a project-relative path
+(the root itself becomes `.`) and the home directory becomes `~`. This covers
+what an op writes into its receipt (a `llm.subprocess` `cwd`, `argv` and
+`stderr` tail) and the error and stop messages. A path matches only at a path
+boundary (`/work/proj2` is not the root `/work/proj`).
+
 ### Graph structure (`graphs`)
 
 ```json
@@ -279,7 +286,8 @@ Run steps:
      `next`; then the loop stops if `until` was true. Every round's result is
      in `rounds`; `carry` holds the values after the last update.
    - `human`: a durable wait (`llm-kit-graph-services.md`). With no answer
-     the node stops the run (`stopped`, reason `waiting`); with a recorded
+     the node stops the run (`stopped`, reason `waiting`; see rule 4 for what
+     keeps running); with a recorded
      answer `out` is the answer. Without the wait service (`runs.state`) it
      stops the run with reason `unsupported`.
    - `commit`: the bundle is checked against the contract (a failure fails
@@ -287,7 +295,15 @@ Run steps:
 4. An op (or a service) may raise `run.NodeStopped(reason, message, status=, detail=)`
    to stop the run cleanly: the node is `stopped` (or `refused`), `detail` is
    added to the run's `stop`, no new node starts anywhere, nodes
-   already running finish, and the rest are `pending`. `llm_kit.graph.ops.OpHalted`
+   already running finish, and the rest are `pending`. The reason `waiting`
+   (a `human` node with no answer) is the exception: the run drains. Only the
+   nodes that read the waiting node, directly or through other nodes, are
+   `pending`; every node that does not depend on it, in any subgraph, map or
+   repeat, still starts and runs to completion, and then the run stops
+   (status `stopped`, reason `waiting`). One run finishes the independent work;
+   after the answer, `resume` reuses it. Every other reason (`halted`,
+   `unsupported`, a spend refusal) stops new nodes at once, as described.
+   `llm_kit.graph.ops.OpHalted`
    (a usage limit) stops the run the same way with reason `halted` (or fails
    the node when `services.pause_on_halt` is false); `OpError`
    and `OpFailed` fail the node with their `code`. For both, the receipt and
