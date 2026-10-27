@@ -1,0 +1,21 @@
+id: demo.pose
+inputs:
+  pose: {schema: {type: object}}
+outputs:
+  image: {schema: {type: object}}
+nodes:
+  prompt:
+    op: demo.pose_prompt
+    in: {pose: inputs.pose}
+  render:
+    op: demo.render_image
+    in: {prompt: prompt.out}
+  review:
+    op: llm.model
+    model: demo.pose.review
+    effort: low
+    prompt: ../../prompts/review.md
+    slots: {image: render.out}
+    output_schema: {type: object}
+outputs_from:
+  image: render.out

@@ -1,0 +1,5 @@
+You are writing a brief for a Moment.
+
+Seed: night-petition, a petition read aloud at 2 a.m.
+
+Answer with JSON: {"title", "hook", "stake"}.

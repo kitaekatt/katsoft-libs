@@ -1,0 +1,46 @@
+id: demo.story
+inputs:
+  brief: {schema: {type: object}}
+outputs:
+  plot: {schema: {type: object}}
+  score: {schema: {type: number}}
+nodes:
+  loop:
+    repeat:
+      max: 3
+      carry:
+        best: {init: "null", next: "round.score"}
+      until: round.score >= 9
+      body:
+        nodes:
+          write:
+            op: llm.model
+            model: demo.story.write
+            effort: high
+            prompt: ../../prompts/write.md
+            slots: {brief: inputs.brief, findings: carry.best}
+            output_schema: {type: object}
+          check:
+            op: demo.check
+            in: {answer: write.out}
+          repair:
+            when: not check.out.ok
+            op: llm.model
+            model: demo.story.write
+            prompt: ../../prompts/repair.md
+            slots: {draft: write.text, errors: check.out.errors}
+            output_schema: {type: object}
+          evaluate:
+            op: llm.model
+            model: demo.story.judge
+            effort: medium
+            prompt: ../../prompts/judge.md
+            slots: {plot: write.out}
+            output_schema: {type: object}
+        out: {plot: write.out, score: evaluate.out.score}
+  keep:
+    op: demo.keep_best
+    in: {rounds: loop.rounds}
+outputs_from:
+  plot: keep.out.plot
+  score: keep.out.score

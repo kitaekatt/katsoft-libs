@@ -1,0 +1,344 @@
+{
+ "counts": {
+  "done": 2
+ },
+ "ended_at": null,
+ "files": {},
+ "force": [],
+ "format": "llm-kit.graph.run/v1",
+ "graph": {
+  "file": "graphs/night.graph.yaml",
+  "hash": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+  "id": "demo.night"
+ },
+ "graphs": {
+  "3b479405247a06152aaef83880e39374dd8e887bb9366c0ed90f5a617da6c41a": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/story.graph.yaml",
+   "id": "demo.story",
+   "inputs": [
+    "brief"
+   ],
+   "location": "",
+   "nodes": {
+    "keep": {
+     "body": null,
+     "definition_hash": "3184f02c7c412273c6d7a0bb500df597e14ed64ebc211dd2313c461e1a215b17",
+     "deps": [
+      "loop"
+     ],
+     "kind": "op",
+     "op": "demo.keep_best@1",
+     "paid": false
+    },
+    "loop": {
+     "body": "bdf96ed6c45083b12e397bf691bc929154af42612ed3c49b35c1deb1cac1910e",
+     "definition_hash": "4a98afe03f04dd2720a8e1e14d7c78c6f38ac814245f76422b42f83b9fcfdd2a",
+     "deps": [],
+     "kind": "repeat",
+     "op": null,
+     "paid": false
+    }
+   },
+   "outputs": [
+    "plot",
+    "score"
+   ]
+  },
+  "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/night.graph.yaml",
+   "id": "demo.night",
+   "inputs": [
+    "moment"
+   ],
+   "location": "",
+   "nodes": {
+    "approve": {
+     "body": null,
+     "definition_hash": "96225cc621b5fc612a8ec0c37e36f00150a7ae87d3bb046058bf92db15e99a43",
+     "deps": [
+      "bundle"
+     ],
+     "kind": "human",
+     "op": null,
+     "paid": false
+    },
+    "brief": {
+     "body": null,
+     "definition_hash": "1d47fd4fb11c9fff71c695ce9357bd38ca6a1b051c6567e55b9efd35729a1c15",
+     "deps": [],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    },
+    "bundle": {
+     "body": null,
+     "definition_hash": "73ac0b318186e7d646eacf06600e9bfaa25325b84be32f737b458d0641fca75b",
+     "deps": [
+      "plot",
+      "poses"
+     ],
+     "kind": "op",
+     "op": "demo.bundle@1",
+     "paid": false
+    },
+    "encode": {
+     "body": null,
+     "definition_hash": "ad781a3dc6f7ae57c66e06465017e6f9004aef640c9651f4c140ebd56a4f828c",
+     "deps": [
+      "approve",
+      "bundle"
+     ],
+     "kind": "commit",
+     "op": null,
+     "paid": false
+    },
+    "plot": {
+     "body": "3b479405247a06152aaef83880e39374dd8e887bb9366c0ed90f5a617da6c41a",
+     "definition_hash": "49cc70c2553ea5416af3b7b5b7fa17df1027d94adcedf8bd655b5c77c20ec01a",
+     "deps": [
+      "brief"
+     ],
+     "kind": "graph",
+     "op": null,
+     "paid": false
+    },
+    "poses": {
+     "body": "cebcd1ad0ef3bb79a87c6b481fce62d728e3eb9f92f93363bc9141d0f1c0b5ea",
+     "definition_hash": "174c31d8cde9639604a54e3ffd85edef5e6de2647b2c8a0c2d5ba5650d7100d8",
+     "deps": [
+      "plot"
+     ],
+     "kind": "map",
+     "op": null,
+     "paid": false
+    }
+   },
+   "outputs": [
+    "bundle"
+   ]
+  },
+  "bdf96ed6c45083b12e397bf691bc929154af42612ed3c49b35c1deb1cac1910e": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/story.graph.yaml",
+   "id": "demo.story#loop",
+   "inputs": [],
+   "location": "",
+   "nodes": {
+    "check": {
+     "body": null,
+     "definition_hash": "5699614e2ec1c694f7665dbe7b87c54b526f2659813917600261fe9216b3b75c",
+     "deps": [
+      "write"
+     ],
+     "kind": "op",
+     "op": "demo.check@1",
+     "paid": false
+    },
+    "evaluate": {
+     "body": null,
+     "definition_hash": "854828115abe2aa23f0d77d4f829e22f13d7b8960c14d70648c22add8af59436",
+     "deps": [
+      "write"
+     ],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    },
+    "repair": {
+     "body": null,
+     "definition_hash": "bf75981602104bd0c3c8cebb4e63a19979e433c5dab57aedb84503503d550d08",
+     "deps": [
+      "check",
+      "write"
+     ],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    },
+    "write": {
+     "body": null,
+     "definition_hash": "326cb34458b91a97132a84176a89832d52bbe198d97b38f14abcb1bb4fff447f",
+     "deps": [],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    }
+   },
+   "outputs": []
+  },
+  "cebcd1ad0ef3bb79a87c6b481fce62d728e3eb9f92f93363bc9141d0f1c0b5ea": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/pose.graph.yaml",
+   "id": "demo.pose",
+   "inputs": [
+    "pose"
+   ],
+   "location": "",
+   "nodes": {
+    "prompt": {
+     "body": null,
+     "definition_hash": "e2632dc2396a5675aa73bc425d109685089d4c8d521b4ffa8be3b7518a543af9",
+     "deps": [],
+     "kind": "op",
+     "op": "demo.pose_prompt@1",
+     "paid": false
+    },
+    "render": {
+     "body": null,
+     "definition_hash": "ba775bac1de8b761f69adf2a0dbb19ad0177214fabf13b47ef5b0c8f6405083b",
+     "deps": [],
+     "kind": "op",
+     "op": "demo.render_image@1",
+     "paid": false
+    },
+    "review": {
+     "body": null,
+     "definition_hash": "8c86ea4eb2434b7a8d4ba13656cf5315e5644e7353517599c705c1447dd925d7",
+     "deps": [
+      "render"
+     ],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    }
+   },
+   "outputs": [
+    "image"
+   ]
+  }
+ },
+ "inputs": "value:c4a6742161887184179d163d90ef0c7295d42b7d237321db443830c9fc330710",
+ "inputs_from": {},
+ "item": "night-petition",
+ "kind": "run",
+ "nodes": {
+  "brief": {
+   "attributes": {
+    "out": "value:72734549a0b60488f9f17e49a6b6c4ed02e87ac0e02a3fe16a8768f603ab74e8",
+    "sent": "blob:d53e7659fc4e9747d0f86c5faa03154811660ce716bba11eadbf00bb259853e4",
+    "text": "blob:e11d43031ac331331daf1bf23c1d21e9cb4f95cd4e8e50d28ba0200adcb8d9e8"
+   },
+   "definition_hash": "9b47e971834c31e0a4bab86da6efe3cf7ad383edf4faa0a39467d9f7c11e2bad",
+   "ended_at": "2026-10-26T12:00:08.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "e9f687b5477082ae5510b1994145129681ead137e0bd5f2116431d4dc54b4a27",
+   "inputs": "value:ee32e24a3b4d8d98c72c62a239f6d80e3804ea01d0773f62ea8e986bf13ada8d",
+   "kind": "op",
+   "media": [],
+   "node": "brief",
+   "op": "llm.model@1",
+   "params": "value:2180bd5a8e0f91be6f0a8f0d045e8f60eccdc3dd834c7054ab7d32f2a36588cf",
+   "path": "brief",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0012
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 1280,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "high",
+      "sent": "high",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.brief.write"
+    },
+    "sent_chars": 3600,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 900,
+     "output_tokens": 320,
+     "wall_ms": 7900
+    }
+   },
+   "reused_from": null,
+   "seconds": 8,
+   "seed": null,
+   "started_at": "2026-10-26T12:00:00.000000Z",
+   "status": "done"
+  },
+  "plot/loop[0]/write": {
+   "attributes": {
+    "out": "value:0af1ca17b052635cce90f3249bde5c72633c781062766680ea13e9c06ee9ed6e",
+    "sent": "blob:85a2756fb79ecd1f2c4df155c242ca71cce629d2d8027b0fcb5bbef71f633b8c",
+    "text": "blob:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+   },
+   "definition_hash": "394997305a16b1c3f0435967ef01f17bcf578ceb61f76979fc0625e5a6e4e9d0",
+   "ended_at": "2026-10-26T12:00:28.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "85fe4b47ab8b0e0ebd07198f1204d0ca48333589495a26e3a9f0fc49f6ef5e46",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "write",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "plot/loop[0]/write",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0031
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 3648,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "high",
+      "sent": "high",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.story.write"
+    },
+    "sent_chars": 8560,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 2140,
+     "output_tokens": 912,
+     "wall_ms": 19600
+    }
+   },
+   "reused_from": null,
+   "seconds": 20,
+   "seed": null,
+   "started_at": "2026-10-26T12:00:08.000000Z",
+   "status": "done"
+  }
+ },
+ "outputs": null,
+ "run_id": "20261026T120000000000Z-c003",
+ "started_at": "2026-10-26T12:00:00.000000Z",
+ "status": "running",
+ "stop": null,
+ "target": null
+}

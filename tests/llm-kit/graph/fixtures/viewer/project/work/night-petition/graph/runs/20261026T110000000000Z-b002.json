@@ -1,0 +1,852 @@
+{
+ "counts": {
+  "done": 6,
+  "pending": 1,
+  "reused": 9,
+  "seeded": 1,
+  "stopped": 1
+ },
+ "ended_at": "2026-10-26T11:00:56.000000Z",
+ "files": {},
+ "force": [],
+ "format": "llm-kit.graph.run/v1",
+ "graph": {
+  "file": "graphs/night.graph.yaml",
+  "hash": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+  "id": "demo.night"
+ },
+ "graphs": {
+  "3b479405247a06152aaef83880e39374dd8e887bb9366c0ed90f5a617da6c41a": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/story.graph.yaml",
+   "id": "demo.story",
+   "inputs": [
+    "brief"
+   ],
+   "location": "",
+   "nodes": {
+    "keep": {
+     "body": null,
+     "definition_hash": "3184f02c7c412273c6d7a0bb500df597e14ed64ebc211dd2313c461e1a215b17",
+     "deps": [
+      "loop"
+     ],
+     "kind": "op",
+     "op": "demo.keep_best@1",
+     "paid": false
+    },
+    "loop": {
+     "body": "bdf96ed6c45083b12e397bf691bc929154af42612ed3c49b35c1deb1cac1910e",
+     "definition_hash": "4a98afe03f04dd2720a8e1e14d7c78c6f38ac814245f76422b42f83b9fcfdd2a",
+     "deps": [],
+     "kind": "repeat",
+     "op": null,
+     "paid": false
+    }
+   },
+   "outputs": [
+    "plot",
+    "score"
+   ]
+  },
+  "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/night.graph.yaml",
+   "id": "demo.night",
+   "inputs": [
+    "moment"
+   ],
+   "location": "",
+   "nodes": {
+    "approve": {
+     "body": null,
+     "definition_hash": "96225cc621b5fc612a8ec0c37e36f00150a7ae87d3bb046058bf92db15e99a43",
+     "deps": [
+      "bundle"
+     ],
+     "kind": "human",
+     "op": null,
+     "paid": false
+    },
+    "brief": {
+     "body": null,
+     "definition_hash": "1d47fd4fb11c9fff71c695ce9357bd38ca6a1b051c6567e55b9efd35729a1c15",
+     "deps": [],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    },
+    "bundle": {
+     "body": null,
+     "definition_hash": "73ac0b318186e7d646eacf06600e9bfaa25325b84be32f737b458d0641fca75b",
+     "deps": [
+      "plot",
+      "poses"
+     ],
+     "kind": "op",
+     "op": "demo.bundle@1",
+     "paid": false
+    },
+    "encode": {
+     "body": null,
+     "definition_hash": "ad781a3dc6f7ae57c66e06465017e6f9004aef640c9651f4c140ebd56a4f828c",
+     "deps": [
+      "approve",
+      "bundle"
+     ],
+     "kind": "commit",
+     "op": null,
+     "paid": false
+    },
+    "plot": {
+     "body": "3b479405247a06152aaef83880e39374dd8e887bb9366c0ed90f5a617da6c41a",
+     "definition_hash": "49cc70c2553ea5416af3b7b5b7fa17df1027d94adcedf8bd655b5c77c20ec01a",
+     "deps": [
+      "brief"
+     ],
+     "kind": "graph",
+     "op": null,
+     "paid": false
+    },
+    "poses": {
+     "body": "cebcd1ad0ef3bb79a87c6b481fce62d728e3eb9f92f93363bc9141d0f1c0b5ea",
+     "definition_hash": "174c31d8cde9639604a54e3ffd85edef5e6de2647b2c8a0c2d5ba5650d7100d8",
+     "deps": [
+      "plot"
+     ],
+     "kind": "map",
+     "op": null,
+     "paid": false
+    }
+   },
+   "outputs": [
+    "bundle"
+   ]
+  },
+  "bdf96ed6c45083b12e397bf691bc929154af42612ed3c49b35c1deb1cac1910e": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/story.graph.yaml",
+   "id": "demo.story#loop",
+   "inputs": [],
+   "location": "",
+   "nodes": {
+    "check": {
+     "body": null,
+     "definition_hash": "5699614e2ec1c694f7665dbe7b87c54b526f2659813917600261fe9216b3b75c",
+     "deps": [
+      "write"
+     ],
+     "kind": "op",
+     "op": "demo.check@1",
+     "paid": false
+    },
+    "evaluate": {
+     "body": null,
+     "definition_hash": "854828115abe2aa23f0d77d4f829e22f13d7b8960c14d70648c22add8af59436",
+     "deps": [
+      "write"
+     ],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    },
+    "repair": {
+     "body": null,
+     "definition_hash": "bf75981602104bd0c3c8cebb4e63a19979e433c5dab57aedb84503503d550d08",
+     "deps": [
+      "check",
+      "write"
+     ],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    },
+    "write": {
+     "body": null,
+     "definition_hash": "326cb34458b91a97132a84176a89832d52bbe198d97b38f14abcb1bb4fff447f",
+     "deps": [],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    }
+   },
+   "outputs": []
+  },
+  "cebcd1ad0ef3bb79a87c6b481fce62d728e3eb9f92f93363bc9141d0f1c0b5ea": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/pose.graph.yaml",
+   "id": "demo.pose",
+   "inputs": [
+    "pose"
+   ],
+   "location": "",
+   "nodes": {
+    "prompt": {
+     "body": null,
+     "definition_hash": "e2632dc2396a5675aa73bc425d109685089d4c8d521b4ffa8be3b7518a543af9",
+     "deps": [],
+     "kind": "op",
+     "op": "demo.pose_prompt@1",
+     "paid": false
+    },
+    "render": {
+     "body": null,
+     "definition_hash": "ba775bac1de8b761f69adf2a0dbb19ad0177214fabf13b47ef5b0c8f6405083b",
+     "deps": [],
+     "kind": "op",
+     "op": "demo.render_image@1",
+     "paid": false
+    },
+    "review": {
+     "body": null,
+     "definition_hash": "8c86ea4eb2434b7a8d4ba13656cf5315e5644e7353517599c705c1447dd925d7",
+     "deps": [
+      "render"
+     ],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    }
+   },
+   "outputs": [
+    "image"
+   ]
+  }
+ },
+ "inputs": "value:c4a6742161887184179d163d90ef0c7295d42b7d237321db443830c9fc330710",
+ "inputs_from": {},
+ "item": "night-petition",
+ "kind": "run",
+ "nodes": {
+  "approve": {
+   "attributes": {},
+   "definition_hash": "ff07ff4678de2bf3feaa1b310092b71b16bf2fa1a46ed9c3486aa898cd6d8b51",
+   "ended_at": "2026-10-26T11:00:56.000000Z",
+   "error": {
+    "message": "human nodes are not run by this build",
+    "type": "Unsupported"
+   },
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "9cbc46536b427bcf8c25d771a6cf8a1fe0ce6e5486ad9c52bca99c5e65edaf36",
+   "inputs": "value:013fa9bcab278276a163bdaf49e05020d4add075e346b99bd6d3082bd06cf4f7",
+   "kind": "human",
+   "media": [],
+   "node": "approve",
+   "op": null,
+   "params": null,
+   "path": "approve",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:56.000000Z",
+   "status": "stopped"
+  },
+  "brief": {
+   "attributes": {
+    "out": "value:72734549a0b60488f9f17e49a6b6c4ed02e87ac0e02a3fe16a8768f603ab74e8",
+    "sent": "blob:d53e7659fc4e9747d0f86c5faa03154811660ce716bba11eadbf00bb259853e4",
+    "text": "blob:e11d43031ac331331daf1bf23c1d21e9cb4f95cd4e8e50d28ba0200adcb8d9e8"
+   },
+   "definition_hash": "9b47e971834c31e0a4bab86da6efe3cf7ad383edf4faa0a39467d9f7c11e2bad",
+   "ended_at": "2026-10-26T10:00:08.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "e9f687b5477082ae5510b1994145129681ead137e0bd5f2116431d4dc54b4a27",
+   "inputs": "value:ee32e24a3b4d8d98c72c62a239f6d80e3804ea01d0773f62ea8e986bf13ada8d",
+   "kind": "op",
+   "media": [],
+   "node": "brief",
+   "op": "llm.model@1",
+   "params": "value:2180bd5a8e0f91be6f0a8f0d045e8f60eccdc3dd834c7054ab7d32f2a36588cf",
+   "path": "brief",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0012
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 1280,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "high",
+      "sent": "high",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.brief.write"
+    },
+    "sent_chars": 3600,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 900,
+     "output_tokens": 320,
+     "wall_ms": 7900
+    }
+   },
+   "reused_from": null,
+   "seconds": 8,
+   "seed": {
+    "source": {
+     "blob": "3f2a9c1",
+     "path": "work/night-petition/brief.json"
+    },
+    "valid": true
+   },
+   "started_at": "2026-10-26T10:00:00.000000Z",
+   "status": "seeded"
+  },
+  "bundle": {
+   "attributes": {
+    "out": "value:3b05015ea21a494a19af343951e60023e63ed652d50dbf2b1c3182603c0808f4"
+   },
+   "definition_hash": "26471502b8667300c9f065aec59568f0ebf36c0817f9cc9b40a5fa4baa347f33",
+   "ended_at": "2026-10-26T11:00:55.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "02115b2f09f761e7d025e54e3054fd55dfab48576b60bb8c6bc481fba7714477",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "bundle",
+   "op": "demo.bundle@1",
+   "params": null,
+   "path": "bundle",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0.2,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:55.000000Z",
+   "status": "done"
+  },
+  "encode": {
+   "attributes": {},
+   "definition_hash": "020ad3bf2711f9fda26ff97ceb1b9b6f890529908f0485494a0e14d4e70bef72",
+   "ended_at": "2026-10-26T11:00:56.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "4d99b2157b5817b34d0e8f21beb92ef410ee473b1d2e57390ff8800e932e39fd",
+   "inputs": null,
+   "kind": "commit",
+   "media": [],
+   "node": "encode",
+   "op": null,
+   "params": null,
+   "path": "encode",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:56.000000Z",
+   "status": "pending"
+  },
+  "plot": {
+   "attributes": {
+    "out": "value:73522f04b20d081029f18e4cc6f57cce1fe936a065671c8af3d22574589e26f2"
+   },
+   "definition_hash": "e3eb255c0c0eba77105b0455d292c826ce7c9b0f1c31c035830ee1e3d6447bc4",
+   "ended_at": "2026-10-26T10:02:38.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "2e90bb966e3c9373167d940ec0ca0a5947363a3ab0da98337736623fab91667a",
+   "inputs": "value:a7d84244e6e633189362aff97ae4d9c8bd898322b526e1774878b31aedcfe683",
+   "kind": "graph",
+   "media": [],
+   "node": "plot",
+   "op": null,
+   "params": null,
+   "path": "plot",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": {
+    "path": "plot",
+    "run": "20261026T100000000000Z-a001"
+   },
+   "seconds": 150,
+   "seed": null,
+   "started_at": "2026-10-26T10:00:08.000000Z",
+   "status": "reused"
+  },
+  "poses": {
+   "attributes": {},
+   "definition_hash": "9bb6f4490ca9a032dbd77d3c8e1bb10e53dda601e20043852873fa027c66c31c",
+   "ended_at": "2026-10-26T11:00:55.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "c9fecbd20c9299d569acd1eeb6146cd9cd1fdcc0d0bb30e2acad7066189d4c7e",
+   "inputs": null,
+   "kind": "map",
+   "media": [],
+   "node": "poses",
+   "op": null,
+   "params": null,
+   "path": "poses",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 55,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:00.000000Z",
+   "status": "done"
+  },
+  "poses[p1]": {
+   "attributes": {},
+   "definition_hash": null,
+   "ended_at": "2026-10-26T11:01:00.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "index": 0,
+   "input_hash": null,
+   "inputs": null,
+   "key": "p1",
+   "kind": "item",
+   "media": [],
+   "node": "poses",
+   "op": null,
+   "params": null,
+   "path": "poses[p1]",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 60,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:00.000000Z",
+   "status": "reused"
+  },
+  "poses[p1]/prompt": {
+   "attributes": {
+    "out": "value:4fea0ce06289019c9f7cd3c30bfea95b8c0d7017e37d13223940da900676c4c7"
+   },
+   "definition_hash": "81814d8864d3e0664af7bfe9e911e94d8d8c95ba1a197620f26ba6e0b99deae0",
+   "ended_at": "2026-10-26T11:00:00.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "09bd3516c717e4cea30b78d55af01cc61ed610d5720d4b366f1e1e61beca6082",
+   "inputs": "value:83f6852aad47211c4678d4affb231272dadb31d020e33316a00a673860b150e4",
+   "kind": "op",
+   "media": [],
+   "node": "prompt",
+   "op": "demo.pose_prompt@1",
+   "params": null,
+   "path": "poses[p1]/prompt",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": {
+    "path": "poses[p1]/render",
+    "run": "20261026T100000000000Z-a001"
+   },
+   "seconds": 0.1,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:00.000000Z",
+   "status": "reused"
+  },
+  "poses[p1]/render": {
+   "attributes": {
+    "out": "value:3ae584c891255fcbc83117410fc2b6f3ebf5ea78e86621a9dd11e73196a09838"
+   },
+   "definition_hash": "aa40a5ec473136396b2364e0180b67efe8465f23bf327c3f5ce13e19f79d38a0",
+   "ended_at": "2026-10-26T11:00:29.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "c8bc78cb237fe3220431aa2e7c1b68c9c3c89d5bf100f449673b6c098e70c718",
+   "inputs": "value:eb604ac4b27759bfbb83cb76cd7a3f3b3e0c94bae89a8748a2b6dc1a016d7202",
+   "kind": "op",
+   "media": [
+    "media:a6d1c5a9a432fb6f.png"
+   ],
+   "node": "render",
+   "op": "demo.render_image@1",
+   "params": null,
+   "path": "poses[p1]/render",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost_usd": 0.04,
+    "model": "image-model"
+   },
+   "reused_from": {
+    "path": "poses[p1]/render",
+    "run": "20261026T100000000000Z-a001"
+   },
+   "seconds": 28,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:01.000000Z",
+   "status": "reused"
+  },
+  "poses[p1]/review": {
+   "attributes": {
+    "out": "value:58234dc1ca190fad0172422360394a59cd32ef3e52be30d284aabde3a7eb2f3e",
+    "sent": "blob:d087c40b490c534035a460ddbd27a8724f7e6693505770012ddf3b4be8be94c0",
+    "text": "blob:e91915b86f616c172ff3dde737b5fd5108eb32cede8cfdc18343758f559bb5bb"
+   },
+   "definition_hash": "a582a81807de887667aee819a147461f8570a9ba831c735f15f29999d18a2290",
+   "ended_at": "2026-10-26T11:00:36.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "b7e0f1a64783a368e8cf36d6c554db6d79060e90430ef6884cc9f5558b4d54ab",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "review",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "poses[p1]/review",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0008
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 480,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "low",
+      "sent": "low",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.pose.review"
+    },
+    "sent_chars": 3200,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 800,
+     "output_tokens": 120,
+     "wall_ms": 5700
+    }
+   },
+   "reused_from": {
+    "path": "poses[p1]/render",
+    "run": "20261026T100000000000Z-a001"
+   },
+   "seconds": 6,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:30.000000Z",
+   "status": "reused"
+  },
+  "poses[p2]": {
+   "attributes": {},
+   "definition_hash": null,
+   "ended_at": "2026-10-26T11:01:00.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "index": 1,
+   "input_hash": null,
+   "inputs": null,
+   "key": "p2",
+   "kind": "item",
+   "media": [],
+   "node": "poses",
+   "op": null,
+   "params": null,
+   "path": "poses[p2]",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 60,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:00.000000Z",
+   "status": "reused"
+  },
+  "poses[p2]/prompt": {
+   "attributes": {
+    "out": "value:9ba7b227e0c2617f9707e60268d4b0c9bc8e6956a8b2ec412ddacc8a1c3aa0cd"
+   },
+   "definition_hash": "24bfd4028b4a69581731de62dfb336a7d58be5bc6170d427056afc197e62cc9c",
+   "ended_at": "2026-10-26T11:00:00.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "4fa65dae9d5a2f9e5760107a3ff32e4b3ae307bea2ebe608fecca009f29663ed",
+   "inputs": "value:51b41c645ab769e57a2a20ed87d71e339708e9a8e9ec8d935ac1d1ff09a1b7a9",
+   "kind": "op",
+   "media": [],
+   "node": "prompt",
+   "op": "demo.pose_prompt@1",
+   "params": null,
+   "path": "poses[p2]/prompt",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": {
+    "path": "poses[p2]/render",
+    "run": "20261026T100000000000Z-a001"
+   },
+   "seconds": 0.1,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:00.000000Z",
+   "status": "reused"
+  },
+  "poses[p2]/render": {
+   "attributes": {
+    "out": "value:74daec6b9d7cd1867d5ab97f40e0937f7a2269da8cfde734faa3186818534b88"
+   },
+   "definition_hash": "ec560f8ff1f8ca5c31076478a8836e0377b79ae92887edda0b54b569067283f3",
+   "ended_at": "2026-10-26T11:00:29.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "f83bfbba9baee72787e4e8fbd172fff957db3f75a0d8e29a6523938e3cd5be70",
+   "inputs": "value:eb604ac4b27759bfbb83cb76cd7a3f3b3e0c94bae89a8748a2b6dc1a016d7202",
+   "kind": "op",
+   "media": [
+    "media:2900fd742fe5f7bf.png",
+    "media:3739b3d5dfa76de2.wav"
+   ],
+   "node": "render",
+   "op": "demo.render_image@1",
+   "params": null,
+   "path": "poses[p2]/render",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost_usd": 0.04,
+    "model": "image-model"
+   },
+   "reused_from": {
+    "path": "poses[p2]/render",
+    "run": "20261026T100000000000Z-a001"
+   },
+   "seconds": 28,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:01.000000Z",
+   "status": "reused"
+  },
+  "poses[p2]/review": {
+   "attributes": {
+    "out": "value:8429dd2797706c8d8d3c9b82c395f91e68595efa18bbc8de767d7e6584897036",
+    "sent": "blob:d087c40b490c534035a460ddbd27a8724f7e6693505770012ddf3b4be8be94c0",
+    "text": "blob:e91915b86f616c172ff3dde737b5fd5108eb32cede8cfdc18343758f559bb5bb"
+   },
+   "definition_hash": "f51975e981b1410dbbd52b4709b800f9b557ab93b1d8e61c006318f7ad07d4dd",
+   "ended_at": "2026-10-26T11:00:36.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "65e60dcb970a651393b280fb79ff829023460fbfc59e17c649551dce5f05a551",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "review",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "poses[p2]/review",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0008
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 480,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "low",
+      "sent": "low",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.pose.review"
+    },
+    "sent_chars": 3200,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 800,
+     "output_tokens": 120,
+     "wall_ms": 5700
+    }
+   },
+   "reused_from": {
+    "path": "poses[p2]/render",
+    "run": "20261026T100000000000Z-a001"
+   },
+   "seconds": 6,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:30.000000Z",
+   "status": "reused"
+  },
+  "poses[p3]": {
+   "attributes": {},
+   "definition_hash": null,
+   "ended_at": "2026-10-26T11:01:00.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "index": 2,
+   "input_hash": null,
+   "inputs": null,
+   "key": "p3",
+   "kind": "item",
+   "media": [],
+   "node": "poses",
+   "op": null,
+   "params": null,
+   "path": "poses[p3]",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 60,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:00.000000Z",
+   "status": "done"
+  },
+  "poses[p3]/prompt": {
+   "attributes": {
+    "out": "value:5e5a27c7a40e8c3077d37a593ee558a090793a97dde3ed67b542fdd3ce22914b"
+   },
+   "definition_hash": "e4c06fc570d50054dd0becfcf58a986dae73198184673bb6c3185793ebd3484f",
+   "ended_at": "2026-10-26T11:00:00.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "7814b52024377a58673d6fd662826ffaa2e64d721472b05cb8c5f4e2a2494169",
+   "inputs": "value:cf6e8d034bb6a947c356cd16b4b7725bf9f576eadf0024f711343843f4b3a610",
+   "kind": "op",
+   "media": [],
+   "node": "prompt",
+   "op": "demo.pose_prompt@1",
+   "params": null,
+   "path": "poses[p3]/prompt",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0.1,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:00.000000Z",
+   "status": "done"
+  },
+  "poses[p3]/render": {
+   "attributes": {
+    "out": "value:5048cb037f6612252e15a8027ad5f68b7253d8640390752d0eed2a3336c63bba"
+   },
+   "definition_hash": "efaf7399e83ff99a3cd19f62d190ff547f94fe5ee9fda0692ef7a5b60628ee14",
+   "ended_at": "2026-10-26T11:00:29.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "9d128f42279807f17667af0bb0d367f0a594de9e5aec6c7d3c800a1a99e29f1e",
+   "inputs": "value:eb604ac4b27759bfbb83cb76cd7a3f3b3e0c94bae89a8748a2b6dc1a016d7202",
+   "kind": "op",
+   "media": [
+    "media:89a7c1e9dc869996.png"
+   ],
+   "node": "render",
+   "op": "demo.render_image@1",
+   "params": null,
+   "path": "poses[p3]/render",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost_usd": 0.04,
+    "model": "image-model"
+   },
+   "reused_from": null,
+   "seconds": 28,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:01.000000Z",
+   "status": "done"
+  },
+  "poses[p3]/review": {
+   "attributes": {
+    "out": "value:8429dd2797706c8d8d3c9b82c395f91e68595efa18bbc8de767d7e6584897036",
+    "sent": "blob:d087c40b490c534035a460ddbd27a8724f7e6693505770012ddf3b4be8be94c0",
+    "text": "blob:e91915b86f616c172ff3dde737b5fd5108eb32cede8cfdc18343758f559bb5bb"
+   },
+   "definition_hash": "cf81d43b3d6421340996e685d33ef9fe20fc48b1cda764f479f3feefac6d9727",
+   "ended_at": "2026-10-26T11:00:36.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "a264ed9896513a396de478fe5ef24e97e6e818d773e699ca3c0f7ad5d3f4c5ca",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "review",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "poses[p3]/review",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0008
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 480,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "low",
+      "sent": "low",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.pose.review"
+    },
+    "sent_chars": 3200,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 800,
+     "output_tokens": 120,
+     "wall_ms": 5700
+    }
+   },
+   "reused_from": null,
+   "seconds": 6,
+   "seed": null,
+   "started_at": "2026-10-26T11:00:30.000000Z",
+   "status": "done"
+  }
+ },
+ "outputs": null,
+ "run_id": "20261026T110000000000Z-b002",
+ "started_at": "2026-10-26T11:00:00.000000Z",
+ "status": "stopped",
+ "stop": {
+  "message": "human nodes are not run by this build",
+  "node": "approve",
+  "reason": "unsupported"
+ },
+ "target": null
+}

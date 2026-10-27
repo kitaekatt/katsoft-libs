@@ -1,0 +1,41 @@
+# A small stand-in for a Moment pipeline, used by the viewer fixture.
+id: demo.night
+outer: true
+description: Brief, plot loop, one picture per pose, a human check and a commit.
+inputs:
+  moment: {schema: {type: object}}
+outputs:
+  bundle: {schema: {type: object}}
+nodes:
+  brief:
+    op: llm.model
+    model: demo.brief.write
+    effort: high
+    prompt: ../prompts/brief.md
+    slots: {seed: inputs.moment}
+    output_schema: {type: object}
+  plot:
+    graph: ./stages/story.graph.yaml
+    in: {brief: brief.out}
+  poses:
+    map:
+      over: plot.out.plot.poses
+      key: item.id
+      graph: ./stages/pose.graph.yaml
+      in: {pose: item}
+  bundle:
+    op: demo.bundle
+    in: {plot: plot.out.plot, poses: poses.out}
+  approve:
+    human:
+      kind: demo-approve
+      schema: {type: object, properties: {ok: {type: boolean}}, required: [ok]}
+      payload: {bundle: bundle.out}
+  encode:
+    when: approve.out.ok
+    commit:
+      contract: {type: object}
+      bundle: bundle.out
+      adapter: demo.encode
+outputs_from:
+  bundle: bundle.out

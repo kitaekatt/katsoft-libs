@@ -1,0 +1,1465 @@
+{
+ "counts": {
+  "done": 22,
+  "failed": 3,
+  "gated": 4,
+  "reused": 4,
+  "skipped": 2
+ },
+ "ended_at": "2026-10-26T10:03:50.000000Z",
+ "files": {},
+ "force": [],
+ "format": "llm-kit.graph.run/v1",
+ "graph": {
+  "file": "graphs/night.graph.yaml",
+  "hash": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+  "id": "demo.night"
+ },
+ "graphs": {
+  "3b479405247a06152aaef83880e39374dd8e887bb9366c0ed90f5a617da6c41a": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/story.graph.yaml",
+   "id": "demo.story",
+   "inputs": [
+    "brief"
+   ],
+   "location": "",
+   "nodes": {
+    "keep": {
+     "body": null,
+     "definition_hash": "3184f02c7c412273c6d7a0bb500df597e14ed64ebc211dd2313c461e1a215b17",
+     "deps": [
+      "loop"
+     ],
+     "kind": "op",
+     "op": "demo.keep_best@1",
+     "paid": false
+    },
+    "loop": {
+     "body": "bdf96ed6c45083b12e397bf691bc929154af42612ed3c49b35c1deb1cac1910e",
+     "definition_hash": "4a98afe03f04dd2720a8e1e14d7c78c6f38ac814245f76422b42f83b9fcfdd2a",
+     "deps": [],
+     "kind": "repeat",
+     "op": null,
+     "paid": false
+    }
+   },
+   "outputs": [
+    "plot",
+    "score"
+   ]
+  },
+  "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/night.graph.yaml",
+   "id": "demo.night",
+   "inputs": [
+    "moment"
+   ],
+   "location": "",
+   "nodes": {
+    "approve": {
+     "body": null,
+     "definition_hash": "96225cc621b5fc612a8ec0c37e36f00150a7ae87d3bb046058bf92db15e99a43",
+     "deps": [
+      "bundle"
+     ],
+     "kind": "human",
+     "op": null,
+     "paid": false
+    },
+    "brief": {
+     "body": null,
+     "definition_hash": "1d47fd4fb11c9fff71c695ce9357bd38ca6a1b051c6567e55b9efd35729a1c15",
+     "deps": [],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    },
+    "bundle": {
+     "body": null,
+     "definition_hash": "73ac0b318186e7d646eacf06600e9bfaa25325b84be32f737b458d0641fca75b",
+     "deps": [
+      "plot",
+      "poses"
+     ],
+     "kind": "op",
+     "op": "demo.bundle@1",
+     "paid": false
+    },
+    "encode": {
+     "body": null,
+     "definition_hash": "ad781a3dc6f7ae57c66e06465017e6f9004aef640c9651f4c140ebd56a4f828c",
+     "deps": [
+      "approve",
+      "bundle"
+     ],
+     "kind": "commit",
+     "op": null,
+     "paid": false
+    },
+    "plot": {
+     "body": "3b479405247a06152aaef83880e39374dd8e887bb9366c0ed90f5a617da6c41a",
+     "definition_hash": "49cc70c2553ea5416af3b7b5b7fa17df1027d94adcedf8bd655b5c77c20ec01a",
+     "deps": [
+      "brief"
+     ],
+     "kind": "graph",
+     "op": null,
+     "paid": false
+    },
+    "poses": {
+     "body": "cebcd1ad0ef3bb79a87c6b481fce62d728e3eb9f92f93363bc9141d0f1c0b5ea",
+     "definition_hash": "174c31d8cde9639604a54e3ffd85edef5e6de2647b2c8a0c2d5ba5650d7100d8",
+     "deps": [
+      "plot"
+     ],
+     "kind": "map",
+     "op": null,
+     "paid": false
+    }
+   },
+   "outputs": [
+    "bundle"
+   ]
+  },
+  "bdf96ed6c45083b12e397bf691bc929154af42612ed3c49b35c1deb1cac1910e": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/story.graph.yaml",
+   "id": "demo.story#loop",
+   "inputs": [],
+   "location": "",
+   "nodes": {
+    "check": {
+     "body": null,
+     "definition_hash": "5699614e2ec1c694f7665dbe7b87c54b526f2659813917600261fe9216b3b75c",
+     "deps": [
+      "write"
+     ],
+     "kind": "op",
+     "op": "demo.check@1",
+     "paid": false
+    },
+    "evaluate": {
+     "body": null,
+     "definition_hash": "854828115abe2aa23f0d77d4f829e22f13d7b8960c14d70648c22add8af59436",
+     "deps": [
+      "write"
+     ],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    },
+    "repair": {
+     "body": null,
+     "definition_hash": "bf75981602104bd0c3c8cebb4e63a19979e433c5dab57aedb84503503d550d08",
+     "deps": [
+      "check",
+      "write"
+     ],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    },
+    "write": {
+     "body": null,
+     "definition_hash": "326cb34458b91a97132a84176a89832d52bbe198d97b38f14abcb1bb4fff447f",
+     "deps": [],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    }
+   },
+   "outputs": []
+  },
+  "cebcd1ad0ef3bb79a87c6b481fce62d728e3eb9f92f93363bc9141d0f1c0b5ea": {
+   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/pose.graph.yaml",
+   "id": "demo.pose",
+   "inputs": [
+    "pose"
+   ],
+   "location": "",
+   "nodes": {
+    "prompt": {
+     "body": null,
+     "definition_hash": "e2632dc2396a5675aa73bc425d109685089d4c8d521b4ffa8be3b7518a543af9",
+     "deps": [],
+     "kind": "op",
+     "op": "demo.pose_prompt@1",
+     "paid": false
+    },
+    "render": {
+     "body": null,
+     "definition_hash": "ba775bac1de8b761f69adf2a0dbb19ad0177214fabf13b47ef5b0c8f6405083b",
+     "deps": [],
+     "kind": "op",
+     "op": "demo.render_image@1",
+     "paid": false
+    },
+    "review": {
+     "body": null,
+     "definition_hash": "8c86ea4eb2434b7a8d4ba13656cf5315e5644e7353517599c705c1447dd925d7",
+     "deps": [
+      "render"
+     ],
+     "kind": "op",
+     "op": "llm.model@1",
+     "paid": true
+    }
+   },
+   "outputs": [
+    "image"
+   ]
+  }
+ },
+ "inputs": "value:c4a6742161887184179d163d90ef0c7295d42b7d237321db443830c9fc330710",
+ "inputs_from": {},
+ "item": "night-petition",
+ "kind": "run",
+ "nodes": {
+  "approve": {
+   "attributes": {},
+   "definition_hash": "ff07ff4678de2bf3feaa1b310092b71b16bf2fa1a46ed9c3486aa898cd6d8b51",
+   "ended_at": "2026-10-26T10:03:50.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "9cbc46536b427bcf8c25d771a6cf8a1fe0ce6e5486ad9c52bca99c5e65edaf36",
+   "inputs": null,
+   "kind": "human",
+   "media": [],
+   "node": "approve",
+   "op": null,
+   "params": null,
+   "path": "approve",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0,
+   "seed": null,
+   "started_at": "2026-10-26T10:03:50.000000Z",
+   "status": "gated"
+  },
+  "brief": {
+   "attributes": {
+    "out": "value:72734549a0b60488f9f17e49a6b6c4ed02e87ac0e02a3fe16a8768f603ab74e8",
+    "sent": "blob:d53e7659fc4e9747d0f86c5faa03154811660ce716bba11eadbf00bb259853e4",
+    "text": "blob:e11d43031ac331331daf1bf23c1d21e9cb4f95cd4e8e50d28ba0200adcb8d9e8"
+   },
+   "definition_hash": "9b47e971834c31e0a4bab86da6efe3cf7ad383edf4faa0a39467d9f7c11e2bad",
+   "ended_at": "2026-10-26T10:00:08.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "e9f687b5477082ae5510b1994145129681ead137e0bd5f2116431d4dc54b4a27",
+   "inputs": "value:ee32e24a3b4d8d98c72c62a239f6d80e3804ea01d0773f62ea8e986bf13ada8d",
+   "kind": "op",
+   "media": [],
+   "node": "brief",
+   "op": "llm.model@1",
+   "params": "value:2180bd5a8e0f91be6f0a8f0d045e8f60eccdc3dd834c7054ab7d32f2a36588cf",
+   "path": "brief",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0012
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 1280,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "high",
+      "sent": "high",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.brief.write"
+    },
+    "sent_chars": 3600,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 900,
+     "output_tokens": 320,
+     "wall_ms": 7900
+    }
+   },
+   "reused_from": null,
+   "seconds": 8,
+   "seed": null,
+   "started_at": "2026-10-26T10:00:00.000000Z",
+   "status": "done"
+  },
+  "bundle": {
+   "attributes": {},
+   "definition_hash": "26471502b8667300c9f065aec59568f0ebf36c0817f9cc9b40a5fa4baa347f33",
+   "ended_at": "2026-10-26T10:03:50.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "02115b2f09f761e7d025e54e3054fd55dfab48576b60bb8c6bc481fba7714477",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "bundle",
+   "op": "demo.bundle@1",
+   "params": null,
+   "path": "bundle",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0,
+   "seed": null,
+   "started_at": "2026-10-26T10:03:50.000000Z",
+   "status": "gated"
+  },
+  "encode": {
+   "attributes": {},
+   "definition_hash": "020ad3bf2711f9fda26ff97ceb1b9b6f890529908f0485494a0e14d4e70bef72",
+   "ended_at": "2026-10-26T10:03:50.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "4d99b2157b5817b34d0e8f21beb92ef410ee473b1d2e57390ff8800e932e39fd",
+   "inputs": null,
+   "kind": "commit",
+   "media": [],
+   "node": "encode",
+   "op": null,
+   "params": null,
+   "path": "encode",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0,
+   "seed": null,
+   "started_at": "2026-10-26T10:03:50.000000Z",
+   "status": "gated"
+  },
+  "plot": {
+   "attributes": {
+    "out": "value:73522f04b20d081029f18e4cc6f57cce1fe936a065671c8af3d22574589e26f2"
+   },
+   "definition_hash": "e3eb255c0c0eba77105b0455d292c826ce7c9b0f1c31c035830ee1e3d6447bc4",
+   "ended_at": "2026-10-26T10:02:38.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "2e90bb966e3c9373167d940ec0ca0a5947363a3ab0da98337736623fab91667a",
+   "inputs": "value:a7d84244e6e633189362aff97ae4d9c8bd898322b526e1774878b31aedcfe683",
+   "kind": "graph",
+   "media": [],
+   "node": "plot",
+   "op": null,
+   "params": null,
+   "path": "plot",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 150,
+   "seed": null,
+   "started_at": "2026-10-26T10:00:08.000000Z",
+   "status": "done"
+  },
+  "plot/keep": {
+   "attributes": {
+    "out": "value:73522f04b20d081029f18e4cc6f57cce1fe936a065671c8af3d22574589e26f2"
+   },
+   "definition_hash": "2e0931ad9ca0286ce76fa3d2436ab601eea9e7181ed472a5ec7339cc5393d99c",
+   "ended_at": "2026-10-26T10:02:40.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "862065a1fb80345dd79e3b454584e57b1f6cff63195c52440abf28c79b1ba154",
+   "inputs": "value:3ddebaf90ebc60599876ff9de809e50be0bb246bb0bd681a28a41be301884256",
+   "kind": "op",
+   "media": [],
+   "node": "keep",
+   "op": "demo.keep_best@1",
+   "params": null,
+   "path": "plot/keep",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0.1,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:40.000000Z",
+   "status": "done"
+  },
+  "plot/loop": {
+   "attributes": {
+    "carry": "value:685859e0264369fac5f468508af6ec9e5d865303df32bffd0ce2692ace0ac17a",
+    "rounds": "value:8c654b6ffc62c8232b38da92ccb560639f332adbdbc3da96c680a21cb633fa77"
+   },
+   "definition_hash": "d38474abec9cd9435e8de8bd6cff6824fe4e27c83b4ba334340a0dae61b33c34",
+   "ended_at": "2026-10-26T10:02:28.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "48ceecd76d265f7d103d632559a1eb18100251383340c83879a961805bf5424d",
+   "inputs": null,
+   "kind": "repeat",
+   "media": [],
+   "node": "loop",
+   "op": null,
+   "params": null,
+   "path": "plot/loop",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 140,
+   "seed": null,
+   "started_at": "2026-10-26T10:00:08.000000Z",
+   "status": "done"
+  },
+  "plot/loop[0]": {
+   "attributes": {},
+   "carry": "value:e9652d7c7930619aaf53502e3361f51f84d25fe54ff6a69d6970cd4dca4c4d90",
+   "definition_hash": null,
+   "ended_at": "2026-10-26T10:00:52.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "index": 0,
+   "input_hash": null,
+   "inputs": null,
+   "kind": "round",
+   "media": [],
+   "node": "loop",
+   "op": null,
+   "params": null,
+   "path": "plot/loop[0]",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 44,
+   "seed": null,
+   "started_at": "2026-10-26T10:00:08.000000Z",
+   "status": "done",
+   "until": false
+  },
+  "plot/loop[0]/check": {
+   "attributes": {
+    "out": "value:d1a524f4da421828581e2197780e1a10060ae3e6f274c75cedb3b44cb988531d"
+   },
+   "definition_hash": "28a58d9567bae2a91193644541c3b05cdadf7ff4c5c75d94b2904f0b868f85c9",
+   "ended_at": "2026-10-26T10:00:28.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "8a35eea465e7545212e3822b254e3c3aed629378187aaa466fd612b7b2b50930",
+   "inputs": "value:867de2f10bd1e679fa2dd2040543b6166b2974363422339a6ed1bf3a10bf0d10",
+   "kind": "op",
+   "media": [],
+   "node": "check",
+   "op": "demo.check@1",
+   "params": null,
+   "path": "plot/loop[0]/check",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0.1,
+   "seed": null,
+   "started_at": "2026-10-26T10:00:28.000000Z",
+   "status": "done"
+  },
+  "plot/loop[0]/evaluate": {
+   "attributes": {
+    "out": "value:64a6a48cbf9323d5cf905ed22c2607967093adec0f6994e304879d037bd0dff6",
+    "sent": "blob:7f4886bd0e44d9fbc525e97dcd7902b98d0bb06b072bf6bd5a8832980c6122c6",
+    "text": "blob:6de9aba0e2df9df784eb57f72966ade1c2eeff26e2274b06930f9b96087cf937"
+   },
+   "definition_hash": "c09d24e531ecc9737d8198de157d9559a421a7e6a970c27bcb3bfe1a2f17fb36",
+   "ended_at": "2026-10-26T10:00:50.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "64e0f078fcff0dbff40bbf5b55a251c25eed8c40b0c5e2d227068b450b68dac1",
+   "inputs": "value:7f7408177ddc8dd6ac3589cd9c9dca75605c890bfd8cfef0b09341efe982799f",
+   "kind": "op",
+   "media": [],
+   "node": "evaluate",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "plot/loop[0]/evaluate",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0185
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 1600,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "medium",
+      "sent": "medium",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "anthropic/claude-sonnet",
+     "requested_model": "anthropic/claude-sonnet"
+    },
+    "selection": {
+     "key": "demo.story.judge"
+    },
+    "sent_chars": 12000,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 3000,
+     "output_tokens": 400,
+     "wall_ms": 8800
+    }
+   },
+   "reused_from": null,
+   "seconds": 9,
+   "seed": null,
+   "started_at": "2026-10-26T10:00:41.000000Z",
+   "status": "done"
+  },
+  "plot/loop[0]/repair": {
+   "attributes": {
+    "out": "value:484195c8bc9cf16568f33ce9b7a750a0a777bceccd7338e2a8271f9638ea38ca",
+    "sent": "blob:ac064813fd94ad07502f939624df8ab38cc7d563fd7a76a80c7bc263afe87461",
+    "text": "blob:339be4fe3ca921b4c9648fedc56832b1698773eceafefb232f3e68c59831856e"
+   },
+   "definition_hash": "8e5a28619ee568477ea2b4dd095fa03f019d7ae115258214d3349f0f55c31a4a",
+   "ended_at": "2026-10-26T10:00:41.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "478e1bb1529fcc3212071c5626f462148f346f1a8334ec5b9b536a45bc1b30f3",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "repair",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "plot/loop[0]/repair",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0024
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 2800,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "high",
+      "sent": "high",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.story.write"
+    },
+    "sent_chars": 7200,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 700,
+     "wall_ms": 11400
+    }
+   },
+   "reused_from": null,
+   "seconds": 12,
+   "seed": null,
+   "started_at": "2026-10-26T10:00:29.000000Z",
+   "status": "done"
+  },
+  "plot/loop[0]/write": {
+   "attributes": {
+    "out": "value:484195c8bc9cf16568f33ce9b7a750a0a777bceccd7338e2a8271f9638ea38ca",
+    "sent": "blob:e7d60e6884c2f06b1f0bed559753e0ce9a7c74f4060bcf43e0da5e8cb4e90c29",
+    "text": "blob:339be4fe3ca921b4c9648fedc56832b1698773eceafefb232f3e68c59831856e"
+   },
+   "definition_hash": "394997305a16b1c3f0435967ef01f17bcf578ceb61f76979fc0625e5a6e4e9d0",
+   "ended_at": "2026-10-26T10:00:28.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "85fe4b47ab8b0e0ebd07198f1204d0ca48333589495a26e3a9f0fc49f6ef5e46",
+   "inputs": "value:a7d84244e6e633189362aff97ae4d9c8bd898322b526e1774878b31aedcfe683",
+   "kind": "op",
+   "media": [],
+   "node": "write",
+   "op": "llm.model@1",
+   "params": "value:8e9e745df3b0e7e883c709fc28988c6505f86131a8b0e55f366c028f4af49ede",
+   "path": "plot/loop[0]/write",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0031
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 3648,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "high",
+      "sent": "high",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.story.write"
+    },
+    "sent_chars": 8560,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 2140,
+     "output_tokens": 912,
+     "wall_ms": 19600
+    }
+   },
+   "reused_from": null,
+   "seconds": 20,
+   "seed": null,
+   "started_at": "2026-10-26T10:00:08.000000Z",
+   "status": "done"
+  },
+  "plot/loop[1]": {
+   "attributes": {},
+   "carry": "value:685859e0264369fac5f468508af6ec9e5d865303df32bffd0ce2692ace0ac17a",
+   "definition_hash": null,
+   "ended_at": "2026-10-26T10:01:37.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "index": 1,
+   "input_hash": null,
+   "inputs": null,
+   "kind": "round",
+   "media": [],
+   "node": "loop",
+   "op": null,
+   "params": null,
+   "path": "plot/loop[1]",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 44,
+   "seed": null,
+   "started_at": "2026-10-26T10:00:53.000000Z",
+   "status": "done",
+   "until": false
+  },
+  "plot/loop[1]/check": {
+   "attributes": {
+    "out": "value:38a7f0e3aba5e481761763d87d708e7cadabd5fcdc71c250c31433b582d1a63a"
+   },
+   "definition_hash": "da19b64c87b3b8e7466fb54ebe848fcd541e5d5a04e475d081439c96a3f19e6b",
+   "ended_at": "2026-10-26T10:01:13.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "7ad2276c80b904520c005bcad848ab46d954c3413dd88c91e71d9241f6affaa6",
+   "inputs": "value:965f86abbfa870e7800f394b6414554c041bbe38f3a2f2f1bbe1cbd053bddb38",
+   "kind": "op",
+   "media": [],
+   "node": "check",
+   "op": "demo.check@1",
+   "params": null,
+   "path": "plot/loop[1]/check",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0.1,
+   "seed": null,
+   "started_at": "2026-10-26T10:01:13.000000Z",
+   "status": "done"
+  },
+  "plot/loop[1]/evaluate": {
+   "attributes": {
+    "out": "value:9ec978dfce04fcef2959571d82d7189e1e2a6e790e7bca80884cfa16274124e1",
+    "sent": "blob:7df50613e9b2e7c33ff9bb59875007c65df7ad1cc01945ee0945dd2c24e29269",
+    "text": "blob:bdea6dd4ee1ce0ba0707e3a11304b226634ec25da6117fd24729c02e9600aba0"
+   },
+   "definition_hash": "0f7f934464bbe70c34fac310d342ca63cb617732f72340709876dce1965e6d08",
+   "ended_at": "2026-10-26T10:01:35.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "cc9b66c54af1c1552ea8a1d26ea087a768ed89fd1f70a33b89d7d460d9a527b8",
+   "inputs": "value:c25dce5520dcfaf5e97537c9ee344a38f869bf9632d3498e6639fd01901a29f3",
+   "kind": "op",
+   "media": [],
+   "node": "evaluate",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "plot/loop[1]/evaluate",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0185
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 1600,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "medium",
+      "sent": "medium",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "anthropic/claude-sonnet",
+     "requested_model": "anthropic/claude-sonnet"
+    },
+    "selection": {
+     "key": "demo.story.judge"
+    },
+    "sent_chars": 12000,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 3000,
+     "output_tokens": 400,
+     "wall_ms": 8800
+    }
+   },
+   "reused_from": null,
+   "seconds": 9,
+   "seed": null,
+   "started_at": "2026-10-26T10:01:26.000000Z",
+   "status": "done"
+  },
+  "plot/loop[1]/repair": {
+   "attributes": {
+    "out": null
+   },
+   "definition_hash": "1a535c8c8d8263c8de50f0dcb67393bb0e4bbbe074ad6d5eb7a1fc39b315c7aa",
+   "ended_at": "2026-10-26T10:01:14.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "01dfc92c954d3592a210ffcbfaf7c1b2eb28c776e1504c1c360c1994527295fc",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "repair",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "plot/loop[1]/repair",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0,
+   "seed": null,
+   "started_at": "2026-10-26T10:01:14.000000Z",
+   "status": "skipped"
+  },
+  "plot/loop[1]/write": {
+   "attributes": {
+    "out": "value:3992449388c8b6abe7914668e3bb050c67b8f41912dd619e2375ce5980f87787",
+    "sent": "blob:9a5b08c024cabd36ae542c59a72b7eb6d3855f71a906ef18e89980fcc41889eb",
+    "text": "blob:4dc7e3fa0dd934efb2f87dee260ac75772cca50ce10081f1a615c58832b86e71"
+   },
+   "definition_hash": "b013c8c7101427da08b7745c99e115ff82a6596f778130dbd0f4d495375be787",
+   "ended_at": "2026-10-26T10:01:13.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "19238525df83faae61fd1820b3f9b99b0ed63850a821cb6d375812bf88040611",
+   "inputs": "value:a7d84244e6e633189362aff97ae4d9c8bd898322b526e1774878b31aedcfe683",
+   "kind": "op",
+   "media": [],
+   "node": "write",
+   "op": "llm.model@1",
+   "params": "value:8e9e745df3b0e7e883c709fc28988c6505f86131a8b0e55f366c028f4af49ede",
+   "path": "plot/loop[1]/write",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0031
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 3648,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "high",
+      "sent": "high",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.story.write"
+    },
+    "sent_chars": 8960,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 2240,
+     "output_tokens": 912,
+     "wall_ms": 19600
+    }
+   },
+   "reused_from": null,
+   "seconds": 20,
+   "seed": null,
+   "started_at": "2026-10-26T10:00:53.000000Z",
+   "status": "done"
+  },
+  "plot/loop[2]": {
+   "attributes": {},
+   "carry": "value:3531549e4c60c2a58d149fd649e913bdd18e72328ef1ec77ab843cab240272ab",
+   "definition_hash": null,
+   "ended_at": "2026-10-26T10:02:22.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "index": 2,
+   "input_hash": null,
+   "inputs": null,
+   "kind": "round",
+   "media": [],
+   "node": "loop",
+   "op": null,
+   "params": null,
+   "path": "plot/loop[2]",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 44,
+   "seed": null,
+   "started_at": "2026-10-26T10:01:38.000000Z",
+   "status": "done",
+   "until": false
+  },
+  "plot/loop[2]/check": {
+   "attributes": {
+    "out": "value:38a7f0e3aba5e481761763d87d708e7cadabd5fcdc71c250c31433b582d1a63a"
+   },
+   "definition_hash": "26701f39dbcdca8c4a06ef1e19136d5e1f99c5cb5272c09024a442921ba08df6",
+   "ended_at": "2026-10-26T10:01:58.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "6e7bb671ff4f80da10b562bc739919f39f704f7a68ec429069dbbd5a7df6792f",
+   "inputs": "value:ca2e1523a0f27639179c1097263aca66c61d1b9d10819cde78fd95bc36cf6d34",
+   "kind": "op",
+   "media": [],
+   "node": "check",
+   "op": "demo.check@1",
+   "params": null,
+   "path": "plot/loop[2]/check",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0.1,
+   "seed": null,
+   "started_at": "2026-10-26T10:01:58.000000Z",
+   "status": "done"
+  },
+  "plot/loop[2]/evaluate": {
+   "attributes": {
+    "out": "value:ad67f81ad65c3487e448c5eaaca104090e950922102ea5424507f608ac3d6a0f",
+    "sent": "blob:6f184778b8f300318521c98361fd00c73a8226de2bb32a4adcb69d204f25254a",
+    "text": "blob:3e00c0ced14f48f8f36c8e29de35e6147c0a0009f1d9022d0846a60183822925"
+   },
+   "definition_hash": "4abb75fc2f9b55480458ec08b3c34e2fb0b1bf04706c549a17e7d1b591d2d12e",
+   "ended_at": "2026-10-26T10:02:20.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "a5d97a841ac0a8733030a9fa73c1e1c57e97a5260af2e1c4f313971407fa556b",
+   "inputs": "value:2dd2340bd26916fd32f46451a5420813f1548c4104b8e009be9d18b37967b8d6",
+   "kind": "op",
+   "media": [],
+   "node": "evaluate",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "plot/loop[2]/evaluate",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0185
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 1600,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "medium",
+      "sent": "medium",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "anthropic/claude-sonnet",
+     "requested_model": "anthropic/claude-sonnet"
+    },
+    "selection": {
+     "key": "demo.story.judge"
+    },
+    "sent_chars": 12000,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 3000,
+     "output_tokens": 400,
+     "wall_ms": 8800
+    }
+   },
+   "reused_from": null,
+   "seconds": 9,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:11.000000Z",
+   "status": "done"
+  },
+  "plot/loop[2]/repair": {
+   "attributes": {
+    "out": null
+   },
+   "definition_hash": "9ac9389f5e5a47b50910424d5816918d391d6eadac231bcb2edcef42150a6d59",
+   "ended_at": "2026-10-26T10:01:59.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "51e4302a60be7704f71e5deb08c044fb70a577b9a19189b1a478c0f9730e8652",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "repair",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "plot/loop[2]/repair",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0,
+   "seed": null,
+   "started_at": "2026-10-26T10:01:59.000000Z",
+   "status": "skipped"
+  },
+  "plot/loop[2]/write": {
+   "attributes": {
+    "out": "value:245c198a1a8ab0270072793b46ac296b5163cfe6ee0f0f0c1a5b4fa4f6337922",
+    "sent": "blob:4dac64b90aef23c8a0cde6916ff8c7e44a6b01ea62507436bb10ca6805b3f77d",
+    "text": "blob:a821dc9dd4fc549676533712f39d4a79d73d3842cf78e6b655e0fbd04c90208d"
+   },
+   "definition_hash": "492e9b7344e5f3db9ce9269afb2868d5d91ac959b3702b62b8f5dc639a3c6b11",
+   "ended_at": "2026-10-26T10:01:58.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "e6af3ca954430362880c675d56d777f8f45c3006af13f4b6888e1e840747b0a3",
+   "inputs": "value:a7d84244e6e633189362aff97ae4d9c8bd898322b526e1774878b31aedcfe683",
+   "kind": "op",
+   "media": [],
+   "node": "write",
+   "op": "llm.model@1",
+   "params": "value:8e9e745df3b0e7e883c709fc28988c6505f86131a8b0e55f366c028f4af49ede",
+   "path": "plot/loop[2]/write",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0031
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 3648,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "high",
+      "sent": "high",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.story.write"
+    },
+    "sent_chars": 9360,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 2340,
+     "output_tokens": 912,
+     "wall_ms": 19600
+    }
+   },
+   "reused_from": null,
+   "seconds": 20,
+   "seed": null,
+   "started_at": "2026-10-26T10:01:38.000000Z",
+   "status": "done"
+  },
+  "poses": {
+   "attributes": {},
+   "definition_hash": "9bb6f4490ca9a032dbd77d3c8e1bb10e53dda601e20043852873fa027c66c31c",
+   "ended_at": "2026-10-26T10:03:50.000000Z",
+   "error": {
+    "message": "1 of 3 items failed",
+    "type": "MapFailed"
+   },
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "c9fecbd20c9299d569acd1eeb6146cd9cd1fdcc0d0bb30e2acad7066189d4c7e",
+   "inputs": null,
+   "kind": "map",
+   "media": [],
+   "node": "poses",
+   "op": null,
+   "params": null,
+   "path": "poses",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 70,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:40.000000Z",
+   "status": "failed"
+  },
+  "poses[p1]": {
+   "attributes": {},
+   "definition_hash": null,
+   "ended_at": "2026-10-26T10:03:40.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "index": 0,
+   "input_hash": null,
+   "inputs": null,
+   "key": "p1",
+   "kind": "item",
+   "media": [],
+   "node": "poses",
+   "op": null,
+   "params": null,
+   "path": "poses[p1]",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 60,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:40.000000Z",
+   "status": "done"
+  },
+  "poses[p1]/prompt": {
+   "attributes": {
+    "out": "value:4fea0ce06289019c9f7cd3c30bfea95b8c0d7017e37d13223940da900676c4c7"
+   },
+   "definition_hash": "81814d8864d3e0664af7bfe9e911e94d8d8c95ba1a197620f26ba6e0b99deae0",
+   "ended_at": "2026-10-26T10:02:40.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "09bd3516c717e4cea30b78d55af01cc61ed610d5720d4b366f1e1e61beca6082",
+   "inputs": "value:83f6852aad47211c4678d4affb231272dadb31d020e33316a00a673860b150e4",
+   "kind": "op",
+   "media": [],
+   "node": "prompt",
+   "op": "demo.pose_prompt@1",
+   "params": null,
+   "path": "poses[p1]/prompt",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0.1,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:40.000000Z",
+   "status": "done"
+  },
+  "poses[p1]/render": {
+   "attributes": {
+    "out": "value:3ae584c891255fcbc83117410fc2b6f3ebf5ea78e86621a9dd11e73196a09838"
+   },
+   "definition_hash": "aa40a5ec473136396b2364e0180b67efe8465f23bf327c3f5ce13e19f79d38a0",
+   "ended_at": "2026-10-26T10:03:09.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "c8bc78cb237fe3220431aa2e7c1b68c9c3c89d5bf100f449673b6c098e70c718",
+   "inputs": "value:eb604ac4b27759bfbb83cb76cd7a3f3b3e0c94bae89a8748a2b6dc1a016d7202",
+   "kind": "op",
+   "media": [
+    "media:a6d1c5a9a432fb6f.png"
+   ],
+   "node": "render",
+   "op": "demo.render_image@1",
+   "params": null,
+   "path": "poses[p1]/render",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost_usd": 0.04,
+    "model": "image-model"
+   },
+   "reused_from": null,
+   "seconds": 28,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:41.000000Z",
+   "status": "done"
+  },
+  "poses[p1]/review": {
+   "attributes": {
+    "out": "value:58234dc1ca190fad0172422360394a59cd32ef3e52be30d284aabde3a7eb2f3e",
+    "sent": "blob:d087c40b490c534035a460ddbd27a8724f7e6693505770012ddf3b4be8be94c0",
+    "text": "blob:e91915b86f616c172ff3dde737b5fd5108eb32cede8cfdc18343758f559bb5bb"
+   },
+   "definition_hash": "a582a81807de887667aee819a147461f8570a9ba831c735f15f29999d18a2290",
+   "ended_at": "2026-10-26T10:03:16.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "b7e0f1a64783a368e8cf36d6c554db6d79060e90430ef6884cc9f5558b4d54ab",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "review",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "poses[p1]/review",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0008
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 480,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "low",
+      "sent": "low",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.pose.review"
+    },
+    "sent_chars": 3200,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 800,
+     "output_tokens": 120,
+     "wall_ms": 5700
+    }
+   },
+   "reused_from": null,
+   "seconds": 6,
+   "seed": null,
+   "started_at": "2026-10-26T10:03:10.000000Z",
+   "status": "done"
+  },
+  "poses[p2]": {
+   "attributes": {},
+   "definition_hash": null,
+   "ended_at": "2026-10-26T10:03:40.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "index": 1,
+   "input_hash": null,
+   "inputs": null,
+   "key": "p2",
+   "kind": "item",
+   "media": [],
+   "node": "poses",
+   "op": null,
+   "params": null,
+   "path": "poses[p2]",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 60,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:40.000000Z",
+   "status": "reused"
+  },
+  "poses[p2]/prompt": {
+   "attributes": {
+    "out": "value:9ba7b227e0c2617f9707e60268d4b0c9bc8e6956a8b2ec412ddacc8a1c3aa0cd"
+   },
+   "definition_hash": "24bfd4028b4a69581731de62dfb336a7d58be5bc6170d427056afc197e62cc9c",
+   "ended_at": "2026-10-26T10:02:40.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "4fa65dae9d5a2f9e5760107a3ff32e4b3ae307bea2ebe608fecca009f29663ed",
+   "inputs": "value:51b41c645ab769e57a2a20ed87d71e339708e9a8e9ec8d935ac1d1ff09a1b7a9",
+   "kind": "op",
+   "media": [],
+   "node": "prompt",
+   "op": "demo.pose_prompt@1",
+   "params": null,
+   "path": "poses[p2]/prompt",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": {
+    "path": "poses[p2]/render",
+    "run": "20261026T100000000000Z-a001"
+   },
+   "seconds": 0.1,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:40.000000Z",
+   "status": "reused"
+  },
+  "poses[p2]/render": {
+   "attributes": {
+    "out": "value:74daec6b9d7cd1867d5ab97f40e0937f7a2269da8cfde734faa3186818534b88"
+   },
+   "definition_hash": "ec560f8ff1f8ca5c31076478a8836e0377b79ae92887edda0b54b569067283f3",
+   "ended_at": "2026-10-26T10:03:09.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "f83bfbba9baee72787e4e8fbd172fff957db3f75a0d8e29a6523938e3cd5be70",
+   "inputs": "value:eb604ac4b27759bfbb83cb76cd7a3f3b3e0c94bae89a8748a2b6dc1a016d7202",
+   "kind": "op",
+   "media": [
+    "media:2900fd742fe5f7bf.png",
+    "media:3739b3d5dfa76de2.wav"
+   ],
+   "node": "render",
+   "op": "demo.render_image@1",
+   "params": null,
+   "path": "poses[p2]/render",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost_usd": 0.04,
+    "model": "image-model"
+   },
+   "reused_from": {
+    "path": "poses[p2]/render",
+    "run": "20261026T100000000000Z-a001"
+   },
+   "seconds": 28,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:41.000000Z",
+   "status": "reused"
+  },
+  "poses[p2]/review": {
+   "attributes": {
+    "out": "value:8429dd2797706c8d8d3c9b82c395f91e68595efa18bbc8de767d7e6584897036",
+    "sent": "blob:d087c40b490c534035a460ddbd27a8724f7e6693505770012ddf3b4be8be94c0",
+    "text": "blob:e91915b86f616c172ff3dde737b5fd5108eb32cede8cfdc18343758f559bb5bb"
+   },
+   "definition_hash": "f51975e981b1410dbbd52b4709b800f9b557ab93b1d8e61c006318f7ad07d4dd",
+   "ended_at": "2026-10-26T10:03:16.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "65e60dcb970a651393b280fb79ff829023460fbfc59e17c649551dce5f05a551",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "review",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "poses[p2]/review",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost": {
+     "class": "metered",
+     "estimated_usd": null,
+     "reason": "fixture",
+     "source": "fixture",
+     "usd": 0.0008
+    },
+    "mode": "completion",
+    "output": {
+     "structured": true,
+     "text_chars": 480,
+     "text_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "protocol": 2,
+    "resolved": {
+     "effort": {
+      "requested": "low",
+      "sent": "low",
+      "source": "node"
+     },
+     "model_verified": true,
+     "reported_model": "deepseek/deepseek-v4-flash-0731",
+     "requested_model": "deepseek/deepseek-v4-flash-0731"
+    },
+    "selection": {
+     "key": "demo.pose.review"
+    },
+    "sent_chars": 3200,
+    "sent_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "status": "completed",
+    "usage": {
+     "input_tokens": 800,
+     "output_tokens": 120,
+     "wall_ms": 5700
+    }
+   },
+   "reused_from": {
+    "path": "poses[p2]/render",
+    "run": "20261026T100000000000Z-a001"
+   },
+   "seconds": 6,
+   "seed": null,
+   "started_at": "2026-10-26T10:03:10.000000Z",
+   "status": "reused"
+  },
+  "poses[p3]": {
+   "attributes": {},
+   "definition_hash": null,
+   "ended_at": "2026-10-26T10:03:40.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "index": 2,
+   "input_hash": null,
+   "inputs": null,
+   "key": "p3",
+   "kind": "item",
+   "media": [],
+   "node": "poses",
+   "op": null,
+   "params": null,
+   "path": "poses[p3]",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 60,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:40.000000Z",
+   "status": "failed"
+  },
+  "poses[p3]/prompt": {
+   "attributes": {
+    "out": "value:5e5a27c7a40e8c3077d37a593ee558a090793a97dde3ed67b542fdd3ce22914b"
+   },
+   "definition_hash": "e4c06fc570d50054dd0becfcf58a986dae73198184673bb6c3185793ebd3484f",
+   "ended_at": "2026-10-26T10:02:40.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "7814b52024377a58673d6fd662826ffaa2e64d721472b05cb8c5f4e2a2494169",
+   "inputs": "value:cf6e8d034bb6a947c356cd16b4b7725bf9f576eadf0024f711343843f4b3a610",
+   "kind": "op",
+   "media": [],
+   "node": "prompt",
+   "op": "demo.pose_prompt@1",
+   "params": null,
+   "path": "poses[p3]/prompt",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0.1,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:40.000000Z",
+   "status": "done"
+  },
+  "poses[p3]/render": {
+   "attributes": {},
+   "definition_hash": "efaf7399e83ff99a3cd19f62d190ff547f94fe5ee9fda0692ef7a5b60628ee14",
+   "ended_at": "2026-10-26T10:03:12.000000Z",
+   "error": {
+    "message": "image review refused the frame: second face in background",
+    "type": "OpFailed"
+   },
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "9d128f42279807f17667af0bb0d367f0a594de9e5aec6c7d3c800a1a99e29f1e",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "render",
+   "op": "demo.render_image@1",
+   "params": null,
+   "path": "poses[p3]/render",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": {
+    "cost_usd": 0.04,
+    "model": "image-model"
+   },
+   "reused_from": null,
+   "seconds": 31,
+   "seed": null,
+   "started_at": "2026-10-26T10:02:41.000000Z",
+   "status": "failed"
+  },
+  "poses[p3]/review": {
+   "attributes": {},
+   "definition_hash": "cf81d43b3d6421340996e685d33ef9fe20fc48b1cda764f479f3feefac6d9727",
+   "ended_at": "2026-10-26T10:03:12.000000Z",
+   "error": null,
+   "graph": "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328",
+   "input_hash": "a264ed9896513a396de478fe5ef24e97e6e818d773e699ca3c0f7ad5d3f4c5ca",
+   "inputs": null,
+   "kind": "op",
+   "media": [],
+   "node": "review",
+   "op": "llm.model@1",
+   "params": null,
+   "path": "poses[p3]/review",
+   "reads": "value:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+   "receipt": null,
+   "reused_from": null,
+   "seconds": 0,
+   "seed": null,
+   "started_at": "2026-10-26T10:03:12.000000Z",
+   "status": "gated"
+  }
+ },
+ "outputs": null,
+ "run_id": "20261026T100000000000Z-a001",
+ "started_at": "2026-10-26T10:00:00.000000Z",
+ "status": "failed",
+ "stop": null,
+ "target": null
+}

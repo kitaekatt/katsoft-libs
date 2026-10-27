@@ -1,0 +1,10 @@
+version: 1
+graphs:
+  demo.night: graphs/night.graph.yaml
+runs:
+  dir: work/{item}/graph
+  media: work/{item}/media
+  blobs: state/blobs
+viewer:
+  panels: [viewer/panels.mjs]
+  theme: viewer/theme.css
