@@ -1,0 +1,19 @@
+id: afterplay.beta.plot-evaluate
+inputs:
+  plot: {$ref: ../contracts/plot.v2.schema.json}
+outputs:
+  evaluation: {$ref: ../contracts/plot-evaluation.v1.schema.json}
+  score: {schema: {type: integer}}
+nodes:
+  judge:
+    op: llm.model
+    model: beta.story-structure.evaluate.plot
+    prompt: ../prompts/plot-evaluate.md
+    slots: {plot: inputs.plot}
+    output_schema: {$ref: ../contracts/plot-evaluation.v1.schema.json}
+  score:
+    op: afterplay.beta.plot_score
+    in: {evaluation: judge.out}
+outputs_from:
+  evaluation: judge.out
+  score: score.out.score

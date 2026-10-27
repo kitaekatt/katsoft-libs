@@ -111,7 +111,7 @@ def test_wheel_metadata(wheel):
     unconditional = [r for r in requires if "extra ==" not in r]
     assert unconditional == ["katsoft-contracts<2,>=1.0"]
     assert {v for k, _, v in fields if k == "Provides-Extra"} == {
-        "config", "sdk", "local", "frontdoor", "jobs", "pipeline"}
+        "config", "sdk", "local", "frontdoor", "jobs", "pipeline", "graph"}
     assert ("Requires-Python", ": ", ">=3.12") in fields
     assert "[console_scripts]" in entry_points and "llm-kit = llm_kit.cli:main" in entry_points
 

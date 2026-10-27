@@ -6,7 +6,7 @@ Status: signed off by the user 2026-10-16 (all 14 decisions).
 
 - Create one published plugin, llm-kit, with one release version and one library, llm_kit.
 - Consolidate under the final namespace privately, prove differential parity, then restructure one boundary at a time before consumer migration.
-- Use 16 import components with the exact acyclic edge set below; namespace initializers re-export nothing.
+- Use 17 import components with the exact acyclic edge set below; namespace initializers re-export nothing. (The 2026-10-16 sign-off had 16; `graph` was added on 2026-10-26 for opt-in generation graphs.)
 - Keep completion contracts and capability types below concrete adapters, capability tables, factories, and account probes.
 - Route pipeline backend construction through dispatch while preserving every constructor option and injection seam.
 - Keep flat jobs and leased pipeline execution separate above shared execution and storage mechanics.
@@ -68,6 +68,7 @@ packages/katsoft-llm-kit/src/
       execution/
       analysis/
     frontdoor/
+    graph/
     cli/
 ~~~
 
@@ -92,6 +93,7 @@ Public symbols are exported from their owning component, never the root.
 | llm_kit.pipeline.execution | Schema-10 migration loop, unit store, claims, fencing, leases, controller, waves, workers, status, drivers. | Worker, lease, claim, wave, or durable-unit policy changes. | yaml-data-editor-kit consumes it without flat jobs. |
 | llm_kit.pipeline.analysis | Audit reports, reasoning chains, provenance, call audits, snapshots, replay, impact-per-cost views. | Traceability, replay, audit, or reporting requirements change. | The reporting CLI needs no worker controller. |
 | llm_kit.frontdoor | FastAPI routes, translation, group routing, server lifecycle, swapper acceptance. | HTTP compatibility or server lifecycle changes. | Other paths avoid FastAPI, Uvicorn, and httpx. |
+| llm_kit.graph | Opt-in generation graphs: graph file format, project graph config, definition hashes, static validation, and (later units) the runner, operations and viewer. Its package initializer re-exports its modules' names lazily and imports nothing. | The graph format, its static checks or graph execution change. | Graph consumers need it; nothing else in llm_kit imports it except the CLI. |
 | llm_kit.cli | argv parsing, subcommand routing, formatting, bootstrap guard, lazy composition. | User-facing syntax or application composition changes. | Executable entry points only. |
 
 ## Execution-overlap ruling
@@ -105,9 +107,10 @@ Shared bootstrap execution contracts live in execution; SQLite and ownership mec
 A -> {B} is the complete inter-component import set. Same-package imports are unrestricted; an omitted edge is forbidden.
 
 ~~~text
-Layer 6  cli                -> {schema, completion, registry, adapters, dispatch, jobs,
+Layer 7  cli                -> {schema, completion, registry, adapters, dispatch, jobs,
                                 pipeline.runtime, pipeline.execution, pipeline.analysis,
-                                frontdoor, scaffold}
+                                frontdoor, scaffold, graph}
+Layer 6  graph              -> {schema, registry, pipeline.artifacts}
 Layer 5  pipeline.execution -> {execution, storage, pipeline.core,
                                 pipeline.artifacts, pipeline.runtime, adapters}
 Layer 4  jobs               -> {completion, registry, dispatch, execution, storage}
@@ -127,7 +130,7 @@ Layer 0  schema             -> {}
          scaffold           -> {}
 ~~~
 
-Deployment-mode support sits outside the 16 components, like `bootstrap_guard`: `llm_kit._runtime` (`mode()`, the routed-contract `load()`, `fleet()`, `require_fleet()`) may be imported by any component, imports no llm_kit module except `llm_kit._deployment`, and `llm_kit._deployment` (the marker the `katsoft-llm-kit` wheel replaces) is imported by `_runtime` alone. The guard `tests/llm-kit/test_import_graph.py` enforces all three. The package deployment, its contracts routing and the features it refuses are in [packaging implementation specification](https://github.com/kitaekatt/plugins-kit/blob/dev/docs/planning/shared-lib-packaging/implementation-spec.md), section C.
+Deployment-mode support sits outside the 17 components, like `bootstrap_guard`: `llm_kit._runtime` (`mode()`, the routed-contract `load()`, `fleet()`, `require_fleet()`) may be imported by any component, imports no llm_kit module except `llm_kit._deployment`, and `llm_kit._deployment` (the marker the `katsoft-llm-kit` wheel replaces) is imported by `_runtime` alone. The guard `tests/llm-kit/test_import_graph.py` enforces all three. The package deployment, its contracts routing and the features it refuses are in [packaging implementation specification](https://github.com/kitaekatt/plugins-kit/blob/dev/docs/planning/shared-lib-packaging/implementation-spec.md), section C.
 
 ### Required moves and composition seams
 
@@ -188,6 +191,7 @@ The base shared-library path is standard-library only.
 | frontdoor | frontdoor | fastapi>=0.110, uvicorn>=0.29, httpx>=0.27 |
 | jobs | job YAML and CLI | pyyaml>=6.0 |
 | pipeline | pipeline YAML and CLI | pyyaml>=6.0 |
+| graph | graph files and project graph config | pyyaml>=6.0 |
 
 The owner venv enables every extra its bundled CLI and skills reach. Importing llm_kit.completion costs only the source link and standard library. A dispatch consumer enables config; selecting the SDK adapter also enables sdk. Optional imports occur at the call site and a missing requested capability refuses. pyyaml and psutil are hard dependencies of llm-scripting-kit, so moving them to extras requires migration guards and refusal tests; it is not a free packaging change.
 

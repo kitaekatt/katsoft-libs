@@ -1,0 +1,11 @@
+id: afterplay.beta.pose-image
+inputs:
+  pose: {type: object, properties: {id: {type: string}}}
+outputs:
+  image: {type: string}
+nodes:
+  draw:
+    op: afterplay.beta.pose_image
+    in: {pose: inputs.pose}
+outputs_from:
+  image: draw.out.image

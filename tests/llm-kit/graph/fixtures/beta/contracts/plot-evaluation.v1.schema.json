@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": ["score"],
+  "properties": {
+    "score": {"type": "integer", "minimum": 0, "maximum": 10},
+    "findings": {"type": "array", "items": {"type": "string"}}
+  }
+}

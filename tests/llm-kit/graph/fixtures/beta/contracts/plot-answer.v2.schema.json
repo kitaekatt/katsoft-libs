@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": ["plot"],
+  "properties": {
+    "plot": {"$ref": "plot.v2.schema.json"},
+    "notes": {"type": "string"}
+  }
+}

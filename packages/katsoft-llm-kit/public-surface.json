@@ -1,13 +1,14 @@
 {
   "schema": 1,
-  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0.",
+  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily.",
   "package": "llm_kit",
   "current_version_file": ".claude-plugin/plugin.json",
   "covers": [
     "llm_kit.pipeline",
     "llm_kit.scaffold",
     "llm_kit.cli.run",
-    "llm_kit.jobs.supervisor"
+    "llm_kit.jobs.supervisor",
+    "llm_kit.graph"
   ],
   "entries": [
     {
@@ -2020,6 +2021,222 @@
     },
     {
       "name": "llm_kit.pipeline.artifacts.store.candidate.store_to_doc",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.ATTRIBUTE_CARRY",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.ATTRIBUTE_OUT",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.ATTRIBUTE_ROUNDS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.Binding",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.BUILTIN_OP_NAMESPACE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.Commit",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.Graph",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.GraphError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.Human",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.KIND_ATTRIBUTES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.Literal",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.MapSpec",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.NODE_KINDS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.Node",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.Op",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.OpContext",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.OpRegistry",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.OpResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.PARAM_KINDS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.ParamSpec",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.Port",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.RESERVED_NAMES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.RepeatSpec",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.SCOPE_NAMES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.Carry",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.model.UnknownOpError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.loader.PROMPT_MARKER",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.loader.SLOT_RE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.loader.ResolvedParam",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.loader.load_graph",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.loader.load_yaml",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.loader.prompt_body",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.loader.prompt_slots",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.loader.resolve_params",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.loader.resolve_schema",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.config.CONFIG_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.config.LOCAL_CONFIG_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.config.RUN_KEYS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.config.RUN_PLACEHOLDERS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.config.GraphConfig",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.config.expand_run_path",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.config.load_config",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.hashing.GRAPH_HASH_VERSION",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.hashing.GraphHashes",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.hashing.hash_graph",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.hashing.node_hash",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.validate.Problem",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.validate.validate_graph",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.expr.Expr",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.expr.ExprError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.expr.ExprMissingError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.expr.evaluate",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.expr.parse",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.expr.references",
       "status": "public"
     }
   ]

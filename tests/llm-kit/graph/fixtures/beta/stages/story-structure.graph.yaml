@@ -1,0 +1,63 @@
+# The Story Structure stage of implementation-plan.md section 3.3, as a fixture.
+# Inside a {flow mapping} an expression with "??", "," or ":" must be quoted.
+id: afterplay.beta.story-structure
+inputs:
+  brief: {$ref: ../contracts/brief.v1.schema.json}
+  incumbent:
+    schema: {anyOf: [{$ref: ../contracts/plot.v2.schema.json}, {type: "null"}]}
+  guidance: {schema: {type: string}, default: ""}
+  max_rounds: {schema: {type: integer, minimum: 1, maximum: 8}, default: 3}
+outputs:
+  plot: {$ref: ../contracts/plot.v2.schema.json}
+  evaluation: {$ref: ../contracts/plot-evaluation.v1.schema.json}
+  kept_round: {schema: {type: integer}}
+nodes:
+  baseline:
+    when: inputs.incumbent != null
+    graph: ./plot-evaluate.graph.yaml
+    in: {plot: inputs.incumbent}
+  loop:
+    repeat:
+      max: inputs.max_rounds
+      carry:
+        current: {init: inputs.incumbent, next: round.plot}
+        findings: {init: "baseline.out.evaluation ?? null", next: round.evaluation}
+        best: {init: "baseline.out.score ?? null", next: "max(carry.best ?? 0, round.score ?? 0)"}
+      until: round.score == null or round.score >= 10 or (carry.best != null and round.score <= carry.best)
+      body:
+        nodes:
+          prep:
+            op: afterplay.beta.plot_prompt_parts
+            in: {brief: inputs.brief, current: carry.current, findings: carry.findings, guidance: inputs.guidance}
+          write:
+            op: llm.model
+            model: beta.story-structure.generate.story-structure
+            prompt: ../prompts/story-structure.md
+            slots: {shapes: prep.out.shapes, changes: prep.out.changes, findings: prep.out.findings,
+                    feedback: prep.out.feedback, task: prep.out.task}
+            suffix: prep.out.declared_inputs
+            output_schema: {$ref: ../contracts/plot-answer.v2.schema.json}
+          check:
+            op: afterplay.beta.plot_errors
+            in: {answer: write.out}
+          repair:
+            when: not check.out.ok
+            op: llm.model
+            model: beta.story-structure.generate.story-structure
+            prompt: ../prompts/repair.md
+            slots: {original: write.sent, draft: write.text, errors: check.out.numbered}
+            output_schema: {$ref: ../contracts/plot-answer.v2.schema.json}
+          accept:
+            op: afterplay.beta.plot_accept
+            in: {answer: "repair.out ?? write.out"}
+          evaluate:
+            graph: ./plot-evaluate.graph.yaml
+            in: {plot: accept.out.plot}
+        out: {plot: accept.out.plot, evaluation: evaluate.out.evaluation, score: evaluate.out.score}
+  keep:
+    op: afterplay.beta.keep_best
+    in: {incumbent: inputs.incumbent, baseline: baseline.out, rounds: loop.rounds}
+outputs_from:
+  plot: keep.out.plot
+  evaluation: keep.out.evaluation
+  kept_round: keep.out.round

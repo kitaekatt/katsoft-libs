@@ -1,0 +1,9 @@
+{
+  "title": "Beta deliverable (fixture)",
+  "type": "object",
+  "required": ["plot"],
+  "properties": {
+    "plot": {"$ref": "plot.v2.schema.json"},
+    "images": {"type": "array"}
+  }
+}

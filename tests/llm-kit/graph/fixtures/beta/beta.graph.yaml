@@ -1,0 +1,28 @@
+# An outer graph in the shape of implementation-plan.md section 3.4, as a fixture.
+id: afterplay.beta
+outer: true
+inputs:
+  moment: {$ref: ./contracts/moment-seed.v1.schema.json}
+nodes:
+  plot:
+    graph: ./stages/story-structure.graph.yaml
+    in: {brief: inputs.moment.brief, incumbent: inputs.moment.structure}
+  pose_images:
+    map:
+      over: inputs.moment.poses
+      key: item.id
+      graph: ./stages/pose-image.graph.yaml
+      in: {pose: item}
+  bundle:
+    op: afterplay.beta.bundle
+    in: {plot: plot.out.plot, images: pose_images.out}
+  encode:
+    commit:
+      contract: ./contracts/beta-deliverable.v1.schema.json
+      bundle: bundle.out
+      adapter: afterplay.beta.encode
+  played:
+    human:
+      kind: playtest-played
+      schema: {$ref: ./contracts/played.v1.schema.json}
+      payload: {url: encode.out.preview_url, files_sha256: encode.out.files_sha256}

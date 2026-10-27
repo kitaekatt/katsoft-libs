@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["brief"],
+  "properties": {
+    "brief": {"$ref": "brief.v1.schema.json"},
+    "structure": {"anyOf": [{"$ref": "plot.v2.schema.json"}, {"type": "null"}]},
+    "poses": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}}}}
+  }
+}

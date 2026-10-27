@@ -1,0 +1,16 @@
+{
+  "title": "Plot structure (fixture)",
+  "type": "object",
+  "required": ["beats"],
+  "properties": {
+    "beats": {"type": "array", "items": {"$ref": "#/$defs/beat"}},
+    "ending": {"type": "string"}
+  },
+  "$defs": {
+    "beat": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {"id": {"type": "string"}, "turn": {"type": "string"}}
+    }
+  }
+}

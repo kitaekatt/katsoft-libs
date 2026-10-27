@@ -27,6 +27,7 @@ local = ["psutil>=6.0"]
 frontdoor = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]
 jobs = ["pyyaml>=6.0"]
 pipeline = ["pyyaml>=6.0"]
+graph = ["pyyaml>=6.0"]
 
 [tool.hatch.metadata.hooks.custom]
 path = "../_build/hatch_build.py"

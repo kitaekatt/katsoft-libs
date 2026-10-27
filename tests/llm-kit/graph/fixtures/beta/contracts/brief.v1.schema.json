@@ -1,0 +1,9 @@
+{
+  "title": "Narrative brief (fixture)",
+  "type": "object",
+  "required": ["title"],
+  "properties": {
+    "title": {"type": "string"},
+    "hook": {"type": "string"}
+  }
+}
