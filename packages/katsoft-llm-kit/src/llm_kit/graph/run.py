@@ -151,6 +151,13 @@ class _Exec:
         self.record: dict = {}
         self.entries: list[PlanEntry] = []
 
+    def set_stop(self, stop: dict) -> None:
+        """Keep ``stop`` as the run's stop. The first stop wins, except that a wait (it stops only what
+        reads the waiting node; the rest drains) gives way to any later stop, such as a spend refusal."""
+        with self.lock:
+            if self.stop is None or (self.stop.get("reason") == "waiting" and stop.get("reason") != "waiting"):
+                self.stop = stop
+
 
 def _encode_key(key: Union[str, int]) -> str:
     text = str(key)
@@ -828,9 +835,7 @@ class Runner:
                 finish("failed", error={**_error(halt), "code": halt.code, "halt": halt.halt})
                 raise _Ended("failed") from None
             self._keep_partial(ex, node, record, halt)
-            with ex.lock:
-                if ex.stop is None:
-                    ex.stop = {"reason": "halted", "node": path, "message": str(halt), "halt": halt.halt}
+            ex.set_stop({"reason": "halted", "node": path, "message": str(halt), "halt": halt.halt})
             ex.stopping.set()
             finish("stopped", error={**_error(halt), "code": halt.code, "halt": halt.halt})
             raise _Ended("stopped") from None
@@ -845,9 +850,7 @@ class Runner:
             if ex.plan:
                 self._entry(ex, node, path, "error", str(stop))
                 return UNKNOWN
-            with ex.lock:
-                if ex.stop is None:
-                    ex.stop = {**stop.detail, "reason": stop.reason, "node": path, "message": stop.message}
+            ex.set_stop({**stop.detail, "reason": stop.reason, "node": path, "message": stop.message})
             if stop.reason != "waiting":  # a wait stops only what reads the waiting node; the rest drains
                 ex.stopping.set()
             finish(stop.status, error={**_error(stop), **stop.detail})
@@ -913,9 +916,7 @@ class Runner:
 
         result, stop = call_op(self.services, op, ctx, copy.deepcopy(inputs), record)
         if stop is not None:
-            with ex.lock:
-                if ex.stop is None:
-                    ex.stop = {**stop, "node": path}
+            ex.set_stop({**stop, "node": path})
             ex.stopping.set()
         return result
 

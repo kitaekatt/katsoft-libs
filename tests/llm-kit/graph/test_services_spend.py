@@ -169,3 +169,35 @@ def test_spend_service_must_be_a_spend_service(tmp_path):
     calls = Calls()
     result = runner(tmp_path, calls, cost_op(calls, lambda ctx: 1), {"spend": object()}).run()
     assert result.status == "failed" and "must be a SpendService" in result.errors["p"]
+
+
+def test_a_spend_refusal_after_a_wait_is_the_run_stop_reason(tmp_path):
+    """A wait stops the run first; a drained node then refused by the cap must still report the spend stop."""
+    import time
+
+    from llm_kit.graph.run import NodeStopped
+
+    def wait(ctx, x):
+        raise NodeStopped("waiting", "waits for an answer")
+
+    def slow(ctx, x):
+        time.sleep(0.3)  # the wait node has stopped by now
+        return x
+
+    graph = ("id: t.waitspend\nnodes:\n"
+             "  w: {op: t.wait, in: {x: 1}}\n"
+             "  s: {op: t.slow, in: {x: 1}}\n"
+             "  p: {op: t.cost, in: {x: s.out}}\n")
+    calls = Calls()
+    ops = registry(calls, cost_op(calls, lambda ctx: 1),
+                   Op("t.wait", "1", wait, inputs={"x": Port({})}),
+                   Op("t.slow", "1", slow, inputs={"x": Port({})}))
+    path = write(tmp_path / "proj" / "main.graph.yaml", graph)
+    service = SpendService(ledger=make_ledger(tmp_path, 0.1))
+    r = Runner(load_graph(path), ops, RunStore(tmp_path / "runs" / "it"), item="it",
+               project_root=tmp_path / "proj", services={"spend": service})
+    result = r.run()
+    assert result.nodes["w"] == "stopped" and result.nodes["p"] == "refused"
+    assert result.status == "stopped"
+    assert result.stop["reason"] == "spend_cap" and result.stop["node"] == "p"
+    assert r.store.load_run(result.run_id)["stop"]["reason"] == "spend_cap"
