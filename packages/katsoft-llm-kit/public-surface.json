@@ -2634,6 +2634,10 @@
     {
       "name": "llm_kit.graph.commit.contract_errors",
       "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.replay.replay_node",
+      "status": "public"
     }
   ]
 }

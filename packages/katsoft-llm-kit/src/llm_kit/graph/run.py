@@ -257,11 +257,14 @@ class Runner:
     # ------------------------------------------------------------------
 
     def run(self, inputs: Optional[Mapping[str, Any]] = None, *, target: Iterable[str] = (),
-            force: Iterable[str] = (), resumed_from: Optional[str] = None) -> RunResult:
+            force: Iterable[str] = (), resumed_from: Optional[str] = None,
+            replay: Optional[Mapping[str, Any]] = None) -> RunResult:
         """Run the graph (or the ``target`` nodes and what they read) and write the record.
 
         ``resumed_from`` names the stopped run this run continues (the
-        ``resume`` verb); it is kept in the record.
+        ``resume`` verb); it is kept in the record. ``replay`` (JSON; the
+        ``replay`` verb) says which run and node this run replays; it is kept
+        in the record as ``replay``.
         """
         target_ids, force = self._check_selection(target, force)
         values, sources = self.resolve_inputs(inputs)
@@ -289,6 +292,9 @@ class Runner:
         }
         if resumed_from is not None:
             ex.record["resumed_from"] = resumed_from
+        if replay is not None:
+            check_json(dict(replay), "replay")
+            ex.record["replay"] = dict(replay)
         path = self._write_run(ex.record)
         outputs = None
         try:

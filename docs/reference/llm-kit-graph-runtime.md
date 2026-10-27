@@ -99,6 +99,7 @@ start time.
 | `outputs` | the graph outputs, or `null` when the run did not finish or ran with a target |
 | `stop` | `null`, or `{"reason", "node", "message"}` (plus `halt`, llm-kit's halt document, for reason `halted`; `wait` for `waiting`; the spend detail for a spend reason); reason `unsupported` = a human node without the wait service |
 | `resumed_from` | present on a run made by `resume`: the stopped run it continues |
+| `replay` | present on a run made by `replay`: `{run, node, graph, graph_file}`, the source run, the replayed node, and the recorded graph hash and file |
 | `error` | `null`, or `{"type", "message", "traceback"}` when the runner itself raised (the run is `failed`) |
 | `counts` | node records per status |
 | `nodes` | node path -> node record, in the order the records were made |

@@ -135,3 +135,34 @@ The loader refuses structural faults first (unknown keys, names, kinds, schemas,
 ## Verbs
 
 `llm_kit.cli.graph.VERBS` is the verb table: `validate run status answer resume serve replay`. Verb `<v>` is the module `llm_kit.graph.commands.<v>` with `run(argv) -> int`. A verb whose module is not in the build exits 2 and names the missing module.
+
+### Replay
+
+```sh
+llm-kit graph replay GRAPH --item ID --node NODE [--run RUN] [--project DIR] [--json]
+```
+
+`replay` runs one top-level node again from the inputs a recorded run saved,
+against the graph version that run recorded, in a new run
+(`llm_kit.graph.replay.replay_node(store, run_id, node, registry=..., project_root=..., services=...)`).
+The default source is the newest run of GRAPH; `--run` names another.
+
+1. The graph is rebuilt from the run's `files` snapshots in a scratch directory
+   `.llm-kit/replay-*` inside the project root (removed afterwards). The rebuilt
+   graph hash must equal the recorded one.
+2. The graph inputs are the run's `inputs`. The new run has `target` and
+   `force` set to the node, so its dependencies are reused from their stored
+   records and only the node calls its op. Spend, concurrency and waits apply as
+   in `run`.
+3. The new record has `replay: {run, node, graph, graph_file}`. Its snapshot
+   paths lie under the scratch directory. The source run and all other records
+   are not changed.
+
+`replay` fails loudly, with nothing called, when the run is a seed or has no
+record of the node; the node never ran (`pending`, `gated`, `skipped`,
+`seeded`) or is not a top-level node; a recorded file is missing from the
+snapshots or the blob store; the rebuilt hash differs from the recorded one (an
+op changed its `name@version` since the run); a node it reads has no reusable
+record; or the stored record that would be reused differs from the one the
+source run read. Exit codes are those of `run`: 0 done, 1 failed or not
+replayable, 2 usage, 3 stopped.
