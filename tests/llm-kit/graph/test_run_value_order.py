@@ -26,8 +26,8 @@ outputs_from:
 """
 
 # Keys are deliberately not sorted at any depth.
-SHAPED = {"zeta": 1, "alpha": {"y": [{"b": 2, "a": 1}], "x": "é"}, "mid": None}
-REORDERED = {"mid": None, "alpha": {"x": "é", "y": [{"a": 1, "b": 2}]}, "zeta": 1}
+SHAPED = {"zeta": 1, "alpha": {"y": [{"b": 2, "a": 1}], "x": "\u00e9"}, "mid": None}
+REORDERED = {"mid": None, "alpha": {"x": "\u00e9", "y": [{"a": 1, "b": 2}]}, "zeta": 1}
 
 
 def _dump(value) -> str:
@@ -56,7 +56,7 @@ def test_a_value_reads_back_in_its_key_order(tmp_path):
 
 def test_a_value_with_sorted_keys_keeps_its_old_bytes_and_reference(tmp_path):
     store = RunStore(tmp_path / "runs" / "it")
-    value = {"a": 1, "b": {"c": [1, 2, {"d": "é", "e": 1.5}]}}
+    value = {"a": 1, "b": {"c": [1, 2, {"d": "\u00e9", "e": 1.5}]}}
     ref = store.put_value(value)
     assert ref == "value:" + hashlib.sha256(stable_json(value)).hexdigest()
     path = store.values_dir / ref[6:8] / (ref[6:] + ".json")
