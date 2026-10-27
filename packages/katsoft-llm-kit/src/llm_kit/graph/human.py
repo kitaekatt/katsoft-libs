@@ -22,6 +22,15 @@ is the same wait, whichever graph run reaches it.
 
 A forced node (``--force``) whose answer was used asks again (unit ``#n+1``).
 A second process that races for the same unit gets the store's claim error.
+
+A wait is identified by graph, node path and the digest of definition hash and
+input hash (the unit id). When a run opens or reaches a wait for a node path,
+every other open wait of that graph, item and node path (another digest: an
+older build or other inputs) is superseded: the store records it as resolved
+with the reason ``superseded by <unit>``, so only the current wait stays open.
+A person may also dismiss an open wait (reason ``dismissed``). Both close the
+unit ``operator_rejected`` and stay in the store; a later run that asks the same
+question again opens the next unit number.
 """
 
 from __future__ import annotations
@@ -41,10 +50,15 @@ from llm_kit.schema.json_schema import validate as validate_value
 from .model import GraphError
 from .run import NodeStopped
 
-__all__ = ["WAITS_FILE", "OpenWait", "WaitService", "answer_wait", "open_waits"]
+__all__ = ["DISMISSED", "SUPERSEDED", "WAITS_FILE", "OpenWait", "WaitService", "answer_wait", "dismiss_wait",
+           "open_waits", "resolution_kind"]
 
 #: The wait store's file name inside ``runs.state``.
 WAITS_FILE = "waits.sqlite"
+
+#: The reason words of a closed wait that nobody answered (stored as a rejection with this reason prefix).
+SUPERSEDED = "superseded"
+DISMISSED = "dismissed"
 
 _DRIVER = "llm-kit.graph"
 _LEASE_SECONDS = 300.0
@@ -56,6 +70,15 @@ def _key(definition_hash: str, input_hash: str) -> str:
 
 def _number(unit_id: str) -> int:
     return int(unit_id.rsplit("#", 1)[1])
+
+
+def resolution_kind(outcome: str, reason: Optional[str]) -> str:
+    """``answered``, ``superseded``, ``dismissed`` or the store's own outcome word for a resolved wait."""
+    if outcome == "rejected" and reason:
+        for kind in (SUPERSEDED, DISMISSED):
+            if reason == kind or reason.startswith(kind + " ") or reason.startswith(kind + ":"):
+                return kind
+    return outcome
 
 
 @dataclass(frozen=True)
@@ -77,6 +100,13 @@ class OpenWait:
         return {"item": self.item, "graph": self.graph, "node": self.node, "run": self.run, "kind": self.kind,
                 "interrupt": self.interrupt, "unit": self.unit, "schema": dict(self.schema),
                 "payload": self.payload, "created_at": self.created_at}
+
+    def describe(self, limit: int = 160) -> str:
+        """One line: unit, run and a short payload summary."""
+        text = json.dumps(self.payload, sort_keys=True, ensure_ascii=True)
+        if len(text) > limit:
+            text = text[:limit] + "..."
+        return f"{self.unit} (run {self.run}, payload {text})"
 
 
 class WaitService:
@@ -119,6 +149,7 @@ class WaitService:
             answers = [r for r in unit_resolutions(self.store, item, latest.unit_id) if r["outcome"] == "answered"]
             if state is UnitState.WAITING:
                 open_ = self.store.open_interrupt(item, latest.unit_id)
+                self._supersede(item, graph_id, path, latest.unit_id)
                 raise self._waiting(path, kind, latest.unit_id, open_.id if open_ is not None else None)
             if state is UnitState.PENDING and answers:
                 answer = answers[-1]["input"]
@@ -135,10 +166,10 @@ class WaitService:
                 self._check(schema, answer, f"human node {path}: the recorded answer")
                 return answer, {"unit": latest.unit_id, "interrupt": answers[-1]["interrupt_id"],
                                 "fencing_token": None, "answered": True}
-            if state not in (UnitState.ACCEPTED, UnitState.PENDING):
+            if state not in (UnitState.ACCEPTED, UnitState.PENDING, UnitState.OPERATOR_REJECTED):
                 raise GraphError(f"human node {path}: wait unit {latest.unit_id} is {state.value}; "
                                  "this build only answers waits")
-        if latest is None or latest.state is UnitState.ACCEPTED:
+        if latest is None or latest.state in (UnitState.ACCEPTED, UnitState.OPERATOR_REJECTED):
             self._ensure_run(item)
             unit = f"{prefix}#{_number(latest.unit_id) + 1 if latest is not None else 1}"
             self.store.register_units(item, [unit])
@@ -149,7 +180,18 @@ class WaitService:
                                    payload={"graph": graph_id, "node": path, "run": run_id, "item": item,
                                             "payload": payload_ref, "input_hash": input_hash})
         record = self.store.request_interrupt(item, unit, claim.fencing_token, request)
+        self._supersede(item, graph_id, path, unit)
         raise self._waiting(path, kind, unit, record.id, claim.fencing_token)
+
+    def _supersede(self, item: str, graph_id: str, path: str, keep_unit: str) -> list[str]:
+        """Close every other open wait of ``graph_id``'s node ``path`` as superseded by ``keep_unit``."""
+        closed = []
+        for wait in self.open_waits(item, graph_id=graph_id):
+            if wait.node == path and wait.unit != keep_unit:
+                self.store.resolve_interrupt(item, wait.interrupt, decision="reject",
+                                             reason=f"{SUPERSEDED}: by {keep_unit}")
+                closed.append(wait.unit)
+        return closed
 
     @staticmethod
     def _waiting(path: str, kind: str, unit: str, interrupt: Optional[str],
@@ -190,19 +232,61 @@ class WaitService:
                                 schema=record.request_schema, payload=payload, created_at=record.created_at))
         return out
 
-    def answer(self, item: str, node: str, value: Any, *, graph_id: Optional[str] = None) -> OpenWait:
-        """Validate ``value`` against the waiting node's schema and resolve its interrupt."""
-        waits = [w for w in self.open_waits(item, graph_id=graph_id) if w.node == node]
+    def _select(self, item: str, node: Optional[str], graph_id: Optional[str], wait: Optional[str],
+                run: Optional[str], store: Any = None) -> OpenWait:
+        """The one open wait named by ``node``, ``wait`` (unit id) and ``run``; GraphError when none or several."""
+        everything = self.open_waits(item, graph_id=graph_id, store=store)
+        waits = [w for w in everything
+                 if (node is None or w.node == node) and (wait is None or w.unit == wait)
+                 and (run is None or w.run == run)]
         if not waits:
-            open_nodes = sorted({w.node for w in self.open_waits(item, graph_id=graph_id)})
-            raise GraphError(f"no open wait for node {node!r} of item {item!r}; open: {open_nodes or 'none'}")
+            what = ", ".join(f"{name} {value!r}" for name, value in (("node", node), ("wait", wait), ("run", run))
+                             if value is not None)
+            raise GraphError(f"no open wait for {what} of item {item!r}; open: "
+                             f"{[w.unit for w in everything] or 'none'}")
         if len(waits) > 1:
-            raise GraphError(f"node {node!r} of item {item!r} has {len(waits)} open waits "
-                             f"(graphs {sorted(w.graph for w in waits)}); name the graph")
-        wait = waits[0]
-        self._check(wait.schema, value, f"the answer for {node}")
-        self.store.resolve_interrupt(item, wait.interrupt, decision="answer", input=value)
-        return wait
+            lines = "".join(f"\n  {w.describe()}" for w in waits)
+            raise GraphError(f"item {item!r} has {len(waits)} open waits for this selection; pick one with "
+                             f"--wait UNIT (or --run RUN), or close a stale one with --dismiss UNIT:{lines}")
+        return waits[0]
+
+    def answer(self, item: str, node: Optional[str], value: Any, *, graph_id: Optional[str] = None,
+               wait: Optional[str] = None, run: Optional[str] = None, store: Any = None) -> OpenWait:
+        """Validate ``value`` against the chosen wait's schema and resolve its interrupt (only that one).
+
+        The wait is chosen by ``node``, by ``wait`` (its unit id) or by ``run`` (the run that opened it);
+        several open waits that match need ``wait`` or ``run`` to tell them apart.
+        ``store`` (the item's RunStore) lets the error for several waits show each payload.
+        """
+        if node is None and wait is None:
+            raise GraphError("name the wait to answer: a node path or a wait unit id")
+        chosen = self._select(item, node, graph_id, wait, run, store)
+        self._check(chosen.schema, value, f"the answer for {chosen.node}")
+        self.store.resolve_interrupt(item, chosen.interrupt, decision="answer", input=value)
+        return chosen
+
+    def dismiss(self, item: str, unit: str, *, graph_id: Optional[str] = None,
+                reason: Optional[str] = None, store: Any = None) -> OpenWait:
+        """Close the open wait ``unit`` without an answer; the store records it as dismissed."""
+        chosen = self._select(item, None, graph_id, unit, None, store)
+        self.store.resolve_interrupt(item, chosen.interrupt, decision="reject",
+                                     reason=f"{DISMISSED}: {reason}" if reason else DISMISSED)
+        return chosen
+
+    def closed_waits(self, item: str, *, graph_id: Optional[str] = None) -> list[dict]:
+        """The resolved waits of ``item``, oldest first: unit, node, run, ``resolution`` (answered, superseded,
+        dismissed) and the stored reason."""
+        if self.store.get_run(item) is None:
+            return []
+        out = []
+        for record in self.store.list_interrupts(item):
+            res = record.resolution
+            meta = record.payload
+            if res is None or (graph_id is not None and meta.get("graph") != graph_id):
+                continue
+            out.append({"unit": record.unit_id, "node": meta["node"], "run": meta["run"], "graph": meta["graph"],
+                        "resolution": resolution_kind(res.outcome, res.reason), "reason": res.reason})
+        return out
 
 
 def open_waits(config: Any, item: str, *, graph_id: Optional[str] = None) -> list[OpenWait]:
@@ -213,6 +297,19 @@ def open_waits(config: Any, item: str, *, graph_id: Optional[str] = None) -> lis
                                                          store=RunStore.for_item(config, item))
 
 
-def answer_wait(config: Any, item: str, node: str, value: Any, *, graph_id: Optional[str] = None) -> OpenWait:
-    """Answer the open wait of ``node`` for ``item``; raise GraphError for a bad value or no wait."""
-    return WaitService.for_item(config, item).answer(item, node, value, graph_id=graph_id)
+def answer_wait(config: Any, item: str, node: Optional[str], value: Any, *, graph_id: Optional[str] = None,
+                wait: Optional[str] = None, run: Optional[str] = None) -> OpenWait:
+    """Answer the open wait of ``node`` (or unit ``wait``, or opened by ``run``) for ``item``.
+
+    Raises GraphError for a bad value, no wait, or several matching waits.
+    """
+    from .records import RunStore  # noqa: PLC0415
+
+    return WaitService.for_item(config, item).answer(item, node, value, graph_id=graph_id, wait=wait, run=run,
+                                                     store=RunStore.for_item(config, item))
+
+
+def dismiss_wait(config: Any, item: str, unit: str, *, graph_id: Optional[str] = None,
+                 reason: Optional[str] = None) -> OpenWait:
+    """Dismiss the open wait ``unit`` of ``item`` (recorded, not deleted)."""
+    return WaitService.for_item(config, item).dismiss(item, unit, graph_id=graph_id, reason=reason)

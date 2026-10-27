@@ -2592,6 +2592,14 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.graph.human.DISMISSED",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.human.SUPERSEDED",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.graph.human.WAITS_FILE",
       "status": "public"
     },
@@ -2608,7 +2616,15 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.graph.human.dismiss_wait",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.graph.human.open_waits",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.human.resolution_kind",
       "status": "public"
     },
     {

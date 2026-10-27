@@ -159,11 +159,42 @@ the same wait.
    The value must match the node schema, or nothing is recorded (exit 1).
    Python: `human.answer_wait(config, item, node, value)` and
    `human.open_waits(config, item)`.
+
+   Normally one wait is open per node path (see "One open wait per node path").
+   When several are open, `--node` alone answers none: exit 1 and a list of
+   each open wait with its unit id, run id and payload summary. Choose one:
+
+   ```sh
+   llm-kit graph answer GRAPH --item ID --wait UNIT --value JSON      # by unit id; --node is optional
+   llm-kit graph answer GRAPH --item ID --node PATH --run RUN --value JSON   # by the run that asked
+   llm-kit graph answer GRAPH --item ID --dismiss UNIT [--reason TEXT]       # close a stale wait, no answer
+   ```
+
+   Only the chosen wait is resolved. Python: `answer_wait(..., wait=UNIT)` /
+   `run=RUN`, and `dismiss_wait(config, item, unit)`.
 3. `llm-kit graph resume GRAPH --item ID` runs the graph again. The finished
    nodes are reused. The human node claims the unit (the next fencing token),
    accepts it with the answer, and its `out` is the answer. The node record
    keeps `wait`: `{"unit", "interrupt", "fencing_token", "answered"}`. Later
    runs reuse the node record.
+
+### One open wait per node path
+
+A wait is identified by graph, node path and the digest of the definition hash
+and the input hash (the `@key` of the unit id). When a run opens a wait, or
+reaches an open wait, for a node path, every other open wait of the same graph,
+item and node path (another build or other inputs) is superseded. The store
+keeps it: its interrupt is resolved as `rejected` with the reason
+`superseded: by <unit>`, and the unit ends `operator_rejected`. `--dismiss`
+records the same way with the reason `dismissed` (or `dismissed: TEXT`).
+`WaitService.closed_waits(item)` lists resolved waits with `resolution`
+(`answered`, `superseded`, `dismissed`). A later run that asks a superseded or
+dismissed question again opens the next unit number (`#n+1`).
+
+Waits that were open before this rule (two open waits for one node path) stay
+open until the next run reaches that node, which supersedes all but the
+current one, or until `--dismiss UNIT`. Answering a wait of an older build does
+not help the current build: its question has another digest.
 
 `--force PATH` on an answered human node asks again (unit `#n+1`). Two
 processes that race for one unit get the store's claim error. The interrupt
@@ -173,14 +204,16 @@ mode); without it, a human node fails with `InterruptSupportError`.
 ## Resume
 
 ```sh
-llm-kit graph resume GRAPH --item ID [--run RUN] [--project DIR] [--json]
+llm-kit graph resume GRAPH --item ID [--run RUN | --wait UNIT] [--project DIR] [--json]
 ```
 
-`resume` continues the newest stopped run of GRAPH (or `--run`). It runs the
+`resume` continues the newest stopped run of GRAPH, or `--run`, or with
+`--wait UNIT` the newest stopped run that stopped on that wait unit (the run
+that owns the answered wait). It runs the
 graph again with that run's inputs and target. Finished nodes are reused. A
 `--force` path of the stopped run stays forced until a run finishes it. The new
 record has `resumed_from`. `resume` refuses a run that is not `stopped`, and a
-run whose human node still waits. Exit codes are those of `run`: 0 done, 1
+run whose own wait (the unit its stop names) is still open. Exit codes are those of `run`: 0 done, 1
 failed or refused, 2 usage, 3 stopped again.
 
 ## Commit nodes
