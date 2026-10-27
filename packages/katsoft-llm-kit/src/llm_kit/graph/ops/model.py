@@ -116,6 +116,8 @@ def _receipt(document: Mapping[str, Any], sent: str) -> dict:
         "watch_files": ParamSpec("expr", description="workspace: files the receipt hashes"),
         "max_tokens": ParamSpec("literal", description="output token cap"),
         "timeout_s": ParamSpec("literal", description="wall-clock cap for the call in seconds"),
+        "limit": ParamSpec("literal", description="the concurrency kind of this call (services.concurrency); "
+                                                  "default model-text, e.g. model-image for image calls"),
     },
     attributes=("sent", "text", "files"),
     output_schema_param="output_schema",

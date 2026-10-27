@@ -85,17 +85,24 @@ start time.
 | `kind` | `run`, or `seed` (written by `Runner.seed`) |
 | `status` | `running`, `done`, `failed` (a node failed), `stopped` (a node stopped the run; see `stop`) |
 | `graph` | the root graph: id, file (relative to the project root, POSIX), graph hash |
-| `graphs` | the structure of the root graph and every graph it runs, keyed by graph hash |
+| `graphs` | the structure of the root graph and every graph it runs, keyed by graph hash (each `file` relative to the project root, POSIX) |
 | `files` | snapshots of the graph files and the `file`/`template` parameter files, by project-relative path, in the blob store (for replay against the recorded version) |
 | `target` | the top-level node ids the run was limited to, or `null` (the whole graph) |
 | `force` | node paths whose records were not reused |
 | `inputs` | the graph inputs after inheritance and defaults |
 | `inputs_from` | input name -> run id it was inherited from (absent names were given or defaulted) |
 | `outputs` | the graph outputs, or `null` when the run did not finish or ran with a target |
-| `stop` | `null`, or `{"reason", "node", "message"}` (plus `halt`, llm-kit's halt document, for reason `halted`); reason `unsupported` = a human or commit node in a build without their services |
+| `stop` | `null`, or `{"reason", "node", "message"}` (plus `halt`, llm-kit's halt document, for reason `halted`; `wait` for `waiting`; the spend detail for a spend reason); reason `unsupported` = a human node without the wait service |
+| `resumed_from` | present on a run made by `resume`: the stopped run it continues |
 | `error` | `null`, or `{"type", "message", "traceback"}` when the runner itself raised (the run is `failed`) |
 | `counts` | node records per status |
 | `nodes` | node path -> node record, in the order the records were made |
+
+Every file path in a record is relative to the project root in POSIX form
+(`records.record_path`, which refuses a path outside the project root), so a
+committed record names no machine path. `records.resolve_record_path(root,
+text)` turns one back into a path under the project root and refuses an
+absolute or escaping path.
 
 ### Graph structure (`graphs`)
 
@@ -171,6 +178,8 @@ A path names one node execution. Segments are joined with `/`:
 | `error` | `{"type", "message"}` for `failed` and `stopped`; `code` for an op error (`OpError`), `halt` for `OpHalted`, `traceback` for an unexpected exception type; type `Inner` on a composite, item or round whose inner node failed or stopped |
 | `reused_from` | `{"run", "path"}` of the record a `reused` record copies |
 | `seed` | for `seeded`: `{"source": <JSON from the caller>, "valid": bool}` |
+| `spend` | a paid op only: the spend admission and settlement (`llm-kit-graph-services.md`) |
+| `wait` | an answered `human` node only: the wait unit, interrupt and fencing token (`llm-kit-graph-services.md`) |
 | `until`, `carry` | `round` only: the stop rule's value and a reference to the carried values after the round |
 
 Node statuses:
@@ -184,6 +193,7 @@ Node statuses:
 | `failed` | raised an error (`error`) |
 | `gated` | not run because a node it reads failed |
 | `stopped` | stopped the run cleanly (`error`; also in the run's `stop`) |
+| `refused` | the spend service refused the call before it was made; the run stops (reason `spend_cap`, `no_estimate` or `no_ledger`) |
 | `pending` | not started because the run stopped |
 
 A composite node (`graph`, `map`, `repeat`) has its own record; the records of
@@ -248,9 +258,11 @@ Run steps:
      port schemas; parameters are resolved; `fn(OpContext, **inputs)` runs;
      `out` is checked against the op's output schema (or the node's
      `output_schema_param` schema). The op must return every declared
-     attribute and no other. A `paid` op is refused unless the runner has the
-     spend service (`services["spend"]`, unit L05). A commit adapter is
-     refused in an op node.
+     attribute and no other. The call runs under the runtime services
+     (`llm-kit-graph-services.md`): a concurrency slot of its kind, and for a
+     `paid` op spend admission before the call and settlement after it. A
+     `paid` op fails unless the runner has the spend service
+     (`services["spend"]`). A commit adapter is refused in an op node.
    - `graph`: the subgraph runs with its bound inputs (defaults added,
      checked); `out` is its outputs, checked against its output ports.
    - `map`: `over` must be a list; `key` must give a unique string or integer
@@ -261,13 +273,18 @@ Run steps:
      before the update and `index`; then every carried value updates with its
      `next`; then the loop stops if `until` was true. Every round's result is
      in `rounds`; `carry` holds the values after the last update.
-   - `human`, `commit`: not run by this build. The node stops the run
-     (`stopped`, reason `unsupported`). Units L05 (`human.py`, `commit.py`)
-     replace `Runner._run_human` and `Runner._run_commit`.
-4. An op (or a service) may raise `run.NodeStopped(reason, message)` to stop
-   the run cleanly: the node is `stopped`, no new node starts anywhere, nodes
+   - `human`: a durable wait (`llm-kit-graph-services.md`). With no answer
+     the node stops the run (`stopped`, reason `waiting`); with a recorded
+     answer `out` is the answer. Without the wait service (`runs.state`) it
+     stops the run with reason `unsupported`.
+   - `commit`: the bundle is checked against the contract (a failure fails
+     the node with code `contract`), then the commit adapter runs.
+4. An op (or a service) may raise `run.NodeStopped(reason, message, status=, detail=)`
+   to stop the run cleanly: the node is `stopped` (or `refused`), `detail` is
+   added to the run's `stop`, no new node starts anywhere, nodes
    already running finish, and the rest are `pending`. `llm_kit.graph.ops.OpHalted`
-   (a usage limit) stops the run the same way with reason `halted`; `OpError`
+   (a usage limit) stops the run the same way with reason `halted` (or fails
+   the node when `services.pause_on_halt` is false); `OpError`
    and `OpFailed` fail the node with their `code`. For both, the receipt and
    the attributes the op made before the error (`sent`, raw `text`) are kept in
    the record. Any other exception fails the node.

@@ -17,7 +17,7 @@
  },
  "graphs": {
   "3b479405247a06152aaef83880e39374dd8e887bb9366c0ed90f5a617da6c41a": {
-   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/story.graph.yaml",
+   "file": "graphs/stages/story.graph.yaml",
    "id": "demo.story",
    "inputs": [
     "brief"
@@ -49,7 +49,7 @@
    ]
   },
   "b00d00e20a5484f4069aaef8c021ee5f023acf836e269bc588a8533741ff7328": {
-   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/night.graph.yaml",
+   "file": "graphs/night.graph.yaml",
    "id": "demo.night",
    "inputs": [
     "moment"
@@ -122,7 +122,7 @@
    ]
   },
   "bdf96ed6c45083b12e397bf691bc929154af42612ed3c49b35c1deb1cac1910e": {
-   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/story.graph.yaml",
+   "file": "graphs/stages/story.graph.yaml",
    "id": "demo.story#loop",
    "inputs": [],
    "location": "",
@@ -170,7 +170,7 @@
    "outputs": []
   },
   "cebcd1ad0ef3bb79a87c6b481fce62d728e3eb9f92f93363bc9141d0f1c0b5ea": {
-   "file": "/Users/christina/Dev/katsoft-libs/tests/llm-kit/graph/fixtures/viewer/project/graphs/stages/pose.graph.yaml",
+   "file": "graphs/stages/pose.graph.yaml",
    "id": "demo.pose",
    "inputs": [
     "pose"

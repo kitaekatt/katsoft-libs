@@ -6,6 +6,7 @@ import pytest
 
 from llm_kit.graph.freshness import forced
 from llm_kit.graph.model import GraphError
+from llm_kit.graph.spend import SpendService
 from test_run_support import Calls, runner, top, write
 
 PROMPTED = """\
@@ -239,7 +240,7 @@ def test_dry_run_plan_lists_reuse_run_and_unknown_and_writes_nothing(tmp_path):
     calls = Calls()
     write(tmp_path / "proj" / "plot.graph.yaml", PLOT)
     r = runner(tmp_path, SEEDED.replace("op: t.echo, in: {x: plot.out.plot}", "op: t.paid, in: {x: plot.out.plot}"),
-               calls, services={"spend": object()})
+               calls, services={"spend": SpendService()})
     plan = {e.path: e for e in r.plan({"topic": "rain"})}
     assert plan["brief"].action == "run" and plan["brief"].reason == "no record"
     assert plan["plot"].action == "unknown" and plan["plot/write"].action == "unknown"

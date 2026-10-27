@@ -8,6 +8,7 @@ import pytest
 
 from llm_kit.graph.model import GraphError, Op, Port
 from llm_kit.graph.ops import OpFailed, OpHalted
+from llm_kit.graph.spend import SpendService
 from test_run_support import Calls, runner, top, write
 
 DIAMOND = """\
@@ -281,10 +282,10 @@ def test_paid_ops_need_the_spend_service(tmp_path):
     calls = Calls()
     result = runner(tmp_path, text, calls).run()
     assert result.status == "failed" and "spend service" in result.errors["p"] and not calls.paths
-    assert runner(tmp_path, text, calls, services={"spend": object()}).run().status == "done"
+    assert runner(tmp_path, text, calls, services={"spend": SpendService()}).run().status == "done"
 
 
-def test_human_and_commit_nodes_stop_the_run_as_unsupported(tmp_path):
+def test_a_human_node_without_the_wait_service_stops_the_run_as_unsupported(tmp_path):
     text = """\
 id: t.outer
 outer: true
@@ -299,9 +300,9 @@ nodes:
     result = runner(tmp_path, text, Calls(), max_parallel=1).run()
     assert result.status == "stopped" and result.stop["reason"] == "unsupported"
     assert result.nodes["make"] == "done"
-    assert {result.nodes["played"], result.nodes["ship"]} <= {"stopped", "pending"}
+    assert result.nodes["played"] == "stopped" and result.nodes["ship"] in ("done", "pending")
     assert result.nodes["after"] == "pending"
-    assert "not in this build" in result.stop["message"]
+    assert "durable-wait service" in result.stop["message"]
 
 
 def test_target_runs_only_the_target_and_what_it_reads(tmp_path):

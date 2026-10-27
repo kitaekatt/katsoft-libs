@@ -102,7 +102,7 @@ graphs: {afterplay.beta: pipeline/moments/beta/graph/beta.graph.yaml}
 runs:                    # dir, media, blobs, state; placeholders {item} and {git_common_dir}
   dir: pipeline/moments/beta/work/{item}/graph
   blobs: "{git_common_dir}/beta-graph/blobs"
-services: {}             # runtime services; checked by the services module
+services: {}             # runtime services (llm-kit-graph-services.md); checked when the config loads
 viewer: {panels: [path.mjs], theme: path.css}
 ```
 

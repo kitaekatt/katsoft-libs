@@ -113,7 +113,7 @@ def registry(calls: Calls, *extra: Op) -> OpRegistry:
         Op("t.picture", "1", picture, inputs={"x": Port(ANY)}),
         Op("t.bad_out", "1", bad_out, inputs={"x": Port(ANY)},
            outputs={"type": "object", "properties": {"n": {"type": "number"}}}),
-        Op("t.paid", "1", echo, inputs={"x": Port(ANY)}, paid=True),
+        Op("t.paid", "1", echo, inputs={"x": Port(ANY)}, paid=True, estimate=lambda ctx, x: 0),
         Op("t.adapter", "1", echo, inputs={"bundle": Port(ANY)}, commit=True),
         *extra,
     ]

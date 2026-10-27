@@ -12,7 +12,11 @@
       media: pipeline/moments/beta/work/{item}/media
       blobs: "{git_common_dir}/beta-graph/blobs"
       state: "{git_common_dir}/beta-graph/state"
-    services: {...}              # runtime services; their keys are checked by the services module
+    services:                    # runtime services (llm_kit.graph.services; checked by check_services)
+      concurrency: {model-text: 4, heavy: 1}
+      retries: none
+      spend: {ledger_env: CONTENT_PIPELINE_SPEND_LEDGER, guards: [], models: {}}
+      pause_on_halt: true
     viewer:
       panels: [pipeline/moments/beta/graph/viewer/panels.mjs]
       theme: pipeline/moments/beta/graph/viewer/theme.css
@@ -41,6 +45,7 @@ from typing import Any, Optional
 
 from .loader import load_yaml
 from .model import BUILTIN_OP_NAMESPACE, GraphError
+from .services import check_services
 
 __all__ = [
     "CONFIG_FILE",
@@ -154,6 +159,8 @@ def _check_section(name: str, value: Any, where: str, *, tracked: bool) -> dict:
             raise GraphError(f"unknown runs keys {unknown}; allowed: {list(RUN_KEYS)}", where)
         for key, template in out.items():
             _placeholders(_path_text(template, f"{where}.{key}", tracked=tracked), f"{where}.{key}")
+    elif name == "services":
+        out = check_services(out, where)
     elif name == "viewer":
         unknown = sorted(set(out) - set(_VIEWER_KEYS))
         if unknown:

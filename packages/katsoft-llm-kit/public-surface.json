@@ -2440,6 +2440,14 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.graph.records.record_path",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.records.resolve_record_path",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.graph.freshness.INPUT_HASH_VERSION",
       "status": "public"
     },
@@ -2497,6 +2505,118 @@
     },
     {
       "name": "llm_kit.graph.media.ref_kind",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.services.RETRY_POLICIES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.services.SERVICE_KEYS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.services.SERVICE_NAMES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.services.SPEND_KEYS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.services.Limits",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.services.build_services",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.services.call_op",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.services.check_services",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.services.op_limit",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.services.plan_estimate",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.spend.GRAPH_GUARD_ATTRIBUTE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.spend.MODEL_OP",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.spend.Admission",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.spend.CapGuard",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.spend.Charge",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.spend.GuardSetup",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.spend.SpendRefused",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.spend.SpendService",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.spend.cap_guard",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.spend.cost_from_receipt",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.spend.load_guard",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.human.WAITS_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.human.OpenWait",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.human.WaitService",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.human.answer_wait",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.human.open_waits",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.commit.check_bundle",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.commit.contract_errors",
       "status": "public"
     }
   ]

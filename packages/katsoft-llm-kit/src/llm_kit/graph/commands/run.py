@@ -10,10 +10,15 @@ GRAPH is a graph name from ``.llm-kit/graphs.yaml`` or a graph file path.
 ``@path`` to a JSON file. ``--target`` limits the run to top-level nodes and
 the nodes they read. ``--force`` reruns a node path (and everything above and
 below it) instead of reusing its record. ``--dry-run`` prints the plan and
-calls nothing.
+calls nothing; a paid op due to run shows its spend estimate
+(``[paid $0.005000]``, or why it has none).
+
+The runtime services (concurrency, spend, waits) come from the project config
+(``docs/reference/llm-kit-graph-services.md``).
 
 Prints one line per top-level node (``<status> <path>``), every failed node
-with its message, then ``run <id>: <status>`` and the record path.
+with its message, then ``run <id>: <status>`` and the record path. A stopped
+run also prints its stop, the top-level nodes done and the nodes remaining.
 
 Exit codes: 0 the run is done (or a dry run printed), 1 a node failed or the
 graph, config or inputs are invalid, 2 usage, 3 the run stopped (a node
@@ -28,14 +33,14 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from llm_kit.graph.model import GraphError
-from llm_kit.graph.run import PlanEntry, Runner
+from llm_kit.graph.run import PlanEntry, Runner, RunResult
 
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_USAGE = 2
 EXIT_STOPPED = 3
 
-__all__ = ["format_plan", "parse_inputs", "run"]
+__all__ = ["exit_code", "format_plan", "parse_inputs", "print_result", "run"]
 
 
 def parse_inputs(items: Sequence[str]) -> dict:
@@ -71,7 +76,11 @@ def format_plan(entries: Sequence[PlanEntry], *, top_only: bool = False) -> list
             parts.append(f"({entry.reason})")
         if entry.run:
             parts.append(f"[run {entry.run}]")
-        if entry.paid:
+        if entry.paid and entry.estimate_usd is not None:
+            parts.append(f"[paid ${entry.estimate_usd:.6f}]")
+        elif entry.paid and entry.action == "run" and entry.estimate_note:
+            parts.append(f"[paid, no estimate: {entry.estimate_note}]")
+        elif entry.paid:
             parts.append("[paid]")
         lines.append(" ".join(parts))
     return lines
@@ -110,22 +119,44 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     except GraphError as exc:
         print(f"llm-kit graph run: {exc}", file=sys.stderr)
         return EXIT_FAILED
-    if args.json:
+    print_result(result, as_json=args.json)
+    return exit_code(result)
+
+
+def _top(path: str) -> bool:
+    return "/" not in path and "[" not in path
+
+
+def print_result(result: RunResult, *, as_json: bool = False) -> None:
+    """Print a run result as the ``run`` and ``resume`` verbs do."""
+    if as_json:
         print(json.dumps({"run_id": result.run_id, "status": result.status, "record": str(result.record_path),
                           "stop": result.stop, "nodes": dict(result.nodes), "errors": dict(result.errors),
                           "outputs": result.outputs}, indent=1, sort_keys=True))
-    else:
-        for path, status in result.nodes.items():
-            if "/" not in path and "[" not in path:
-                print(f"{status:<8} {path}")
-        for path, message in result.errors.items():
-            if result.nodes[path] == "failed" and message not in ("a node inside it failed", "the item failed",
-                                                                   "the round failed"):
-                print(f"failed   {path}: {message}")
-        if result.stop:
-            print(f"stopped  {result.stop['node']}: {result.stop['reason']}: {result.stop['message']}")
-        print(f"run {result.run_id}: {result.status}")
-        print(f"record: {result.record_path}")
+        return
+    for path, status in result.nodes.items():
+        if _top(path):
+            print(f"{status:<8} {path}")
+    for path, message in result.errors.items():
+        if result.nodes[path] == "failed" and message not in ("a node inside it failed", "the item failed",
+                                                               "the round failed"):
+            print(f"failed   {path}: {message}")
+    if result.stop:
+        print(f"stopped  {result.stop['node']}: {result.stop['reason']}: {result.stop['message']}")
+        done = [p for p, s in result.nodes.items() if _top(p) and s in ("done", "reused", "seeded", "skipped")]
+        remaining = [p for p, s in result.nodes.items() if _top(p) and s not in ("done", "reused", "seeded",
+                                                                                  "skipped")]
+        print(f"done: {', '.join(done) or '-'}")
+        print(f"remaining: {', '.join(remaining) or '-'}")
+        ledger = result.stop.get("ledger")
+        if ledger:
+            print(f"ledger: ${ledger['outstanding_usd']:.6f} of ${ledger['cap_usd']:.2f}; "
+                  f"${ledger['remaining_usd']:.6f} remaining")
+    print(f"run {result.run_id}: {result.status}")
+    print(f"record: {result.record_path}")
+
+
+def exit_code(result: RunResult) -> int:
     if result.status == "done":
         return EXIT_OK
     return EXIT_STOPPED if result.status == "stopped" else EXIT_FAILED

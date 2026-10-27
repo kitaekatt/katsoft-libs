@@ -10,10 +10,13 @@ with the same definition hash and input hash is reused instead
 record (:mod:`llm_kit.graph.records`), values by reference to the
 content-addressed stores (:mod:`llm_kit.graph.media`).
 
-``human`` and ``commit`` nodes stop the run cleanly in this build (status
-``stopped``, reason ``unsupported``); the services units replace
-:meth:`Runner._run_human` and :meth:`Runner._run_commit`. A ``paid`` op is
-refused unless the runner was given the spend service (``services["spend"]``).
+The runtime services (:mod:`llm_kit.graph.services`) wrap every op call:
+per-kind concurrency, spend admission and settlement for ``paid`` ops
+(:mod:`llm_kit.graph.spend`), ``human`` nodes as durable waits
+(:mod:`llm_kit.graph.human`) and ``commit`` nodes (:mod:`llm_kit.graph.commit`).
+A ``paid`` op is refused unless the runner has the spend service
+(``services["spend"]``); a ``human`` node stops the run (reason
+``unsupported``) unless it has the wait service (``services["waits"]``).
 
 The behaviour and the record format are specified in
 ``docs/reference/llm-kit-graph-runtime.md``.
@@ -22,13 +25,12 @@ The behaviour and the record format are specified in
 from __future__ import annotations
 
 import copy
-import os
 import threading
 import time
 import traceback
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any, Optional, Union
 
 from llm_kit.pipeline.execution.scheduler import NodeFailed, Scheduler, SchedulerNode, run_graph
@@ -54,7 +56,7 @@ from .model import (
     Port,
 )
 from .ops import OpError, OpHalted
-from .records import RUN_FORMAT, RunStore, new_run_id, utc_now
+from .records import RUN_FORMAT, RunStore, new_run_id, record_path, utc_now
 from .validate import validate_graph
 
 __all__ = ["NodeStopped", "PlanEntry", "RunResult", "Runner"]
@@ -63,14 +65,21 @@ __all__ = ["NodeStopped", "PlanEntry", "RunResult", "Runner"]
 class NodeStopped(Exception):
     """Raised by an op or a service to stop the run cleanly.
 
-    The node is recorded ``stopped``; no new node starts; nodes already
-    running finish; the rest are ``pending``. ``reason`` is a short word
-    (``unsupported``, ``halted``, ``waiting``, ``spend_cap``).
+    The node is recorded with ``status`` (``stopped``, or ``refused`` for a
+    spend refusal); no new node starts; nodes already running finish; the
+    rest are ``pending``. ``reason`` is a short word (``unsupported``,
+    ``halted``, ``waiting``, ``spend_cap``). ``detail`` (JSON) is added to the
+    run's ``stop`` and to the node record's ``error``.
     """
 
-    def __init__(self, reason: str, message: str) -> None:
+    def __init__(self, reason: str, message: str, *, status: str = "stopped",
+                 detail: Optional[Mapping[str, Any]] = None) -> None:
+        if status not in ("stopped", "refused"):
+            raise ValueError(f"NodeStopped status must be stopped or refused, not {status!r}")
         self.reason = reason
         self.message = message
+        self.status = status
+        self.detail = dict(detail or {})
         super().__init__(f"{reason}: {message}")
 
 
@@ -80,7 +89,9 @@ class PlanEntry:
 
     ``action``: ``reuse`` (``run`` names the record's run), ``skip``, ``run``
     (``reason`` says why) or ``unknown`` (it reads a value a node due to run
-    would make, or lies inside such a node).
+    would make, or lies inside such a node). For a paid op due to run,
+    ``estimate_usd`` is the spend service's estimate (``None`` when its inputs
+    are unknown or the runner has no spend service; ``estimate_note`` says why).
     """
 
     path: str
@@ -90,6 +101,8 @@ class PlanEntry:
     action: str
     reason: str = ""
     run: Optional[str] = None
+    estimate_usd: Optional[float] = None
+    estimate_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -180,8 +193,11 @@ class Runner:
     """Runs one graph for one work item.
 
     ``services`` is the mapping an op sees as ``OpContext.services``; the
-    runner reads ``services["spend"]`` only to admit paid ops (unit L05).
-    ``max_parallel`` bounds the nodes (or map items) one level runs at once.
+    runner reads the keys of :data:`llm_kit.graph.services.SERVICE_NAMES`
+    (``spend``, ``concurrency``, ``waits``, ``pause_on_halt``).
+    :meth:`for_project` builds them from the project config when none are
+    given. ``max_parallel`` bounds the nodes (or map items) one level runs at
+    once.
     """
 
     def __init__(self, graph: Graph, registry: OpRegistry, store: RunStore, *, item: str,
@@ -220,7 +236,11 @@ class Runner:
         if registry is None:
             from .commands import validate as _validate  # noqa: PLC0415 -- the registry loader of the CLI
             registry = _validate.load_registry(config)
-        return cls(load_graph(path), registry, RunStore.for_item(config, item), item=item,
+        store = RunStore.for_item(config, item)
+        if services is None:
+            from .services import build_services  # noqa: PLC0415 -- services import this module
+            services = build_services(config, item=item, store=store)
+        return cls(load_graph(path), registry, store, item=item,
                    project_root=config.root, services=services, max_parallel=max_parallel)
 
     # ------------------------------------------------------------------
@@ -228,8 +248,12 @@ class Runner:
     # ------------------------------------------------------------------
 
     def run(self, inputs: Optional[Mapping[str, Any]] = None, *, target: Iterable[str] = (),
-            force: Iterable[str] = ()) -> RunResult:
-        """Run the graph (or the ``target`` nodes and what they read) and write the record."""
+            force: Iterable[str] = (), resumed_from: Optional[str] = None) -> RunResult:
+        """Run the graph (or the ``target`` nodes and what they read) and write the record.
+
+        ``resumed_from`` names the stopped run this run continues (the
+        ``resume`` verb); it is kept in the record.
+        """
         target_ids, force = self._check_selection(target, force)
         values, sources = self.resolve_inputs(inputs)
         ex = _Exec(self, plan=False, force=force)
@@ -254,6 +278,8 @@ class Runner:
             "counts": {},
             "nodes": {},
         }
+        if resumed_from is not None:
+            ex.record["resumed_from"] = resumed_from
         path = self.store.write_run(ex.record)
         outputs = None
         try:
@@ -402,7 +428,7 @@ class Runner:
     # ------------------------------------------------------------------
 
     def _rel(self, path: Path) -> str:
-        return PurePosixPath(Path(os.path.relpath(Path(path).resolve(), self.project_root))).as_posix()
+        return record_path(self.project_root, path)
 
     def _graph_head(self) -> dict:
         return {"id": self.graph.id, "file": self._rel(self.graph.path), "hash": self.hashes.graph}
@@ -608,11 +634,12 @@ class Runner:
             self.store.write_run(ex.record)
 
     def _entry(self, ex: _Exec, node: Node, path: str, action: str, reason: str = "",
-               run: Optional[str] = None) -> None:
+               run: Optional[str] = None, *, estimate: Optional[float] = None, note: str = "") -> None:
         op = self._node_op(node)
         with ex.lock:
             ex.entries.append(PlanEntry(path, node.kind, op.ref if op is not None else None,
-                                        bool(op.paid) if op is not None else False, action, reason, run))
+                                        bool(op.paid) if op is not None else False, action, reason, run,
+                                        estimate, note))
 
     def _unknown_inside(self, ex: _Exec, graph: Graph, prefix: str, reason: str) -> None:
         for node_id, node in graph.nodes.items():
@@ -766,7 +793,8 @@ class Runner:
             if ex.plan:
                 reason = "forced" if forced(path, ex.force) else ex.index.reason(
                     path, record["definition_hash"], record["input_hash"])
-                self._entry(ex, node, path, "run", reason)
+                estimate, note = self._plan_estimate(ex, graph, node, scope, path)
+                self._entry(ex, node, path, "run", reason, estimate=estimate, note=note)
                 if node.kind in ("op", "human", "commit"):
                     return UNKNOWN
             body_hashes = hashes.bodies.get(node.id)
@@ -789,6 +817,10 @@ class Runner:
             finish(inner, error={"type": "Inner", "message": message})
             raise
         except OpHalted as halt:
+            if not self.services.get("pause_on_halt", True):
+                self._keep_partial(ex, node, record, halt)
+                finish("failed", error={**_error(halt), "code": halt.code, "halt": halt.halt})
+                raise _Ended("failed") from None
             self._keep_partial(ex, node, record, halt)
             with ex.lock:
                 if ex.stop is None:
@@ -804,11 +836,14 @@ class Runner:
             finish("failed", error={**_error(exc), "code": exc.code})
             raise _Ended("failed") from None
         except NodeStopped as stop:
+            if ex.plan:
+                self._entry(ex, node, path, "error", str(stop))
+                return UNKNOWN
             with ex.lock:
                 if ex.stop is None:
-                    ex.stop = {"reason": stop.reason, "node": path, "message": stop.message}
+                    ex.stop = {**stop.detail, "reason": stop.reason, "node": path, "message": stop.message}
             ex.stopping.set()
-            finish("stopped", error=_error(stop))
+            finish(stop.status, error={**_error(stop), **stop.detail})
             raise _Ended("stopped") from None
         except Exception as exc:  # noqa: BLE001 -- a node failure is recorded, then gates its dependents
             if ex.plan:
@@ -827,11 +862,10 @@ class Runner:
 
     # -- kinds -----------------------------------------------------------
 
-    def _run_op(self, ex: _Exec, graph: Graph, node: Node, scope: Mapping[str, Any], path: str,
-                record: dict) -> dict:
+    def _op_call(self, ex: _Exec, graph: Graph, node: Node, scope: Mapping[str, Any],
+                 path: str) -> tuple[Op, dict, dict, dict, OpContext]:
+        """The op of an op node, its inputs and parameters (evaluated and as shown) and its context."""
         op = self.registry.get(node.op)
-        if op.commit:
-            raise GraphError(f"{op.name} is a commit adapter; only a commit node may call it")
         inputs = {name: self._eval(binding, scope) for name, binding in node.bind.items()}
         inputs = _with_defaults(op.inputs, inputs, f"op {op.name}")
         params: dict[str, Any] = {}
@@ -848,15 +882,48 @@ class Runner:
                 shown[name] = self._rel(param.path)
             else:
                 params[name] = shown[name] = copy.deepcopy(param.value)
+        return op, inputs, params, shown, self._context(ex, graph, path, params)
+
+    def _context(self, ex: _Exec, graph: Graph, path: str, params: Mapping[str, Any]) -> OpContext:
+        return OpContext(run_id=ex.run_id, item=self.item, graph_id=graph.id, node_path=path,
+                         project_root=self.project_root, base_dir=graph.base_dir, params=params,
+                         store=self.store, services=self.services)
+
+    def _plan_estimate(self, ex: _Exec, graph: Graph, node: Node, scope: Mapping[str, Any],
+                       path: str) -> tuple[Optional[float], str]:
+        """A dry run's spend estimate for a paid op node due to run (no call is made)."""
+        if node.kind != "op" or not self.registry.get(node.op).paid:
+            return None, ""
+        from .services import plan_estimate  # noqa: PLC0415 -- services import this module
+
+        op, inputs, _, _, ctx = self._op_call(ex, graph, node, scope, path)
+        return plan_estimate(self.services, op, ctx, inputs)
+
+    def _call(self, ex: _Exec, node: Node, op: Op, ctx: OpContext, inputs: dict, path: str,
+              record: dict) -> Any:
+        """Call ``op`` through the runtime services; keep a services stop (spend) for the run."""
+        from .services import call_op  # noqa: PLC0415 -- services import this module
+
+        result, stop = call_op(self.services, op, ctx, copy.deepcopy(inputs), record)
+        if stop is not None:
+            with ex.lock:
+                if ex.stop is None:
+                    ex.stop = {**stop, "node": path}
+            ex.stopping.set()
+        return result
+
+    def _run_op(self, ex: _Exec, graph: Graph, node: Node, scope: Mapping[str, Any], path: str,
+                record: dict) -> dict:
+        op, inputs, params, shown, ctx = self._op_call(ex, graph, node, scope, path)
+        if op.commit:
+            raise GraphError(f"{op.name} is a commit adapter; only a commit node may call it")
         record["inputs"] = self.store.put_value(inputs)
         record["params"] = self.store.put_value(shown)
-        if op.paid and "spend" not in self.services:
-            raise GraphError(f"op {op.name} is paid; a paid op needs the spend service "
-                             "(services['spend'], llm_kit.graph.services), which this runner was not given")
-        ctx = OpContext(run_id=ex.run_id, item=self.item, graph_id=graph.id, node_path=path,
-                        project_root=self.project_root, base_dir=graph.base_dir, params=params,
-                        store=self.store, services=self.services)
-        result = op.fn(ctx, **copy.deepcopy(inputs))
+        result = self._call(ex, node, op, ctx, inputs, path, record)
+        return self._op_result(node, op, graph, result, record)
+
+    def _op_result(self, node: Node, op: Op, graph: Graph, result: Any, record: dict) -> dict:
+        """Check an op's result against its declaration; store it in ``record``; return the attributes."""
         if not isinstance(result, OpResult):
             result = OpResult(out=result)
         check_json(result.out, f"op {op.name} out")
@@ -1046,18 +1113,35 @@ class Runner:
 
     def _run_human(self, ex: _Exec, graph: Graph, node: Node, scope: Mapping[str, Any], path: str,
                    record: dict) -> Any:
-        """The hook for human-input nodes (unit L05 replaces it). This build stops the run."""
+        """A durable wait for a person's answer (:mod:`llm_kit.graph.human`)."""
+        from .human import WaitService  # noqa: PLC0415 -- human imports this module
+
         payload = {name: self._eval(binding, scope) for name, binding in node.human.payload.items()}
         record["inputs"] = self.store.put_value(payload)
-        raise NodeStopped("unsupported", f"human node {path} (kind {node.human.kind!r}) needs the durable-wait "
-                                         "service (llm_kit.graph.human), which is not in this build")
+        waits = self.services.get("waits")
+        if waits is None:
+            raise NodeStopped("unsupported", f"human node {path} (kind {node.human.kind!r}) needs the durable-wait "
+                                             "service (services['waits']; configure runs.state)")
+        if not isinstance(waits, WaitService):
+            raise GraphError(f"services['waits'] must be a WaitService, not {type(waits).__name__}")
+        answer, wait = waits.wait(item=self.item, graph_id=graph.id, path=path, run_id=ex.run_id,
+                                  kind=node.human.kind, schema=node.human.schema, payload_ref=record["inputs"],
+                                  definition_hash=record["definition_hash"], input_hash=record["input_hash"],
+                                  ask_again=forced(path, ex.force))
+        record["wait"] = wait
+        return {"out": answer}
 
     def _run_commit(self, ex: _Exec, graph: Graph, node: Node, scope: Mapping[str, Any], path: str,
                     record: dict) -> Any:
-        """The hook for commit nodes (unit L05 replaces it). This build stops the run."""
+        """Check the bundle against the contract, then call the commit adapter (:mod:`llm_kit.graph.commit`)."""
+        from .commit import check_bundle  # noqa: PLC0415 -- commit imports this module
+
         bundle = node.commit.bundle
         value = ({name: self._eval(b, scope) for name, b in bundle.items()} if isinstance(bundle, Mapping)
                  else self._eval(bundle, scope))
         record["inputs"] = self.store.put_value(value)
-        raise NodeStopped("unsupported", f"commit node {path} (adapter {node.commit.adapter}) needs the commit "
-                                         "service (llm_kit.graph.commit), which is not in this build")
+        op = self.registry.get(node.commit.adapter)
+        check_bundle(node.commit.contract, value, op, path)
+        ctx = self._context(ex, graph, path, {})
+        result = self._call(ex, node, op, ctx, {"bundle": value}, path, record)
+        return self._op_result(node, op, graph, result, record)

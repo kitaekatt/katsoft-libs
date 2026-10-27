@@ -6,6 +6,11 @@ and the content-addressed stores of :mod:`llm_kit.graph.media`. The record
 format (``llm-kit.graph.run/v1``) is specified in
 ``docs/reference/llm-kit-graph-runtime.md``; this module reads and writes it
 and indexes the records of an item. It never runs anything.
+
+Records are committed in consumer repositories and read on other machines, so
+every file path in a record is relative to the project root, in POSIX form
+(:func:`record_path`); :func:`resolve_record_path` turns one back into a path
+under the project root.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ import secrets
 import subprocess
 import tempfile
 from collections.abc import Iterator, Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 
 from .config import GraphConfig, expand_run_path
@@ -34,18 +39,47 @@ __all__ = [
     "RunStore",
     "list_items",
     "new_run_id",
+    "record_path",
+    "resolve_record_path",
     "utc_now",
 ]
 
 RUN_FORMAT = "llm-kit.graph.run/v1"
 RUN_KINDS = ("run", "seed")
 RUN_STATUSES = ("running", "done", "failed", "stopped")
-NODE_STATUSES = ("done", "reused", "seeded", "skipped", "failed", "gated", "stopped", "pending")
+NODE_STATUSES = ("done", "reused", "seeded", "skipped", "failed", "gated", "stopped", "refused", "pending")
 #: Statuses whose record can be reused (a ``seeded`` record only when valid).
 REUSABLE_STATUSES = frozenset({"done", "reused", "seeded"})
 
 ITEM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _RUN_ID_RE = re.compile(r"^\d{8}T\d{12}Z-[0-9a-f]{4}$")
+
+
+def record_path(root: Path | str, path: Path | str) -> str:
+    """``path`` as a run record writes it: relative to the project ``root``, POSIX form.
+
+    A path outside the project root is refused (GraphError): a record must not
+    name a machine path.
+    """
+    base = Path(root).resolve()
+    target = Path(path)
+    target = (target if target.is_absolute() else base / target).resolve()
+    try:
+        relative = target.relative_to(base)
+    except ValueError:
+        raise GraphError(f"{target} is outside the project root {base}; a run record holds only "
+                         "project-relative paths") from None
+    return PurePosixPath(*relative.parts).as_posix()
+
+
+def resolve_record_path(root: Path | str, text: str) -> Path:
+    """A record's project-relative path as a path under ``root``; refuse an absolute or escaping one."""
+    if not isinstance(text, str) or not text:
+        raise GraphError(f"record path {text!r} is not a non-empty string")
+    pure = PurePosixPath(text)
+    if pure.is_absolute() or "\\" in text or ".." in pure.parts or (pure.parts and ":" in pure.parts[0]):
+        raise GraphError(f"record path {text!r} is not a project-relative POSIX path")
+    return Path(root).resolve().joinpath(*pure.parts)
 
 
 def utc_now() -> str:
