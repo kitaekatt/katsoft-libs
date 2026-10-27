@@ -210,6 +210,25 @@ class TestPageAndProjectFiles:
         # what a relative import from /project/viewer/panels.mjs resolves to
         assert get(app, "/project/other/render.js").header("Content-Type").startswith("text/javascript")
 
+    def test_the_project_route_serves_json_as_json(self, project):
+        (project / "viewer" / "words.json").write_text('{"a": 1}', encoding="utf-8")
+        response = get(make_app(project), "/project/viewer/words.json")
+        assert response.status == 200 and response.body == b'{"a": 1}'
+        assert response.header("Content-Type").startswith("application/json")
+
+    @pytest.mark.parametrize("target", [
+        "/project/..%2F..%2Fetc%2Fpasswd.json", "/project/viewer/..%2F..%2Fx.json", "/project/.llm-kit/x.json",
+        "/project/viewer/.hidden.json", "/project/viewer/missing.json",
+    ])
+    def test_json_under_the_project_route_keeps_the_guards(self, app, target):
+        assert get(app, target).status == 404
+
+    def test_a_json_link_out_of_the_project_is_not_followed(self, project, tmp_path):
+        secret = tmp_path / "secret.json"
+        secret.write_text("{}", encoding="utf-8")
+        (project / "viewer" / "link.json").symlink_to(secret)
+        assert get(make_app(project), "/project/viewer/link.json").status == 404
+
     @pytest.mark.parametrize("target", [
         "/project/.llm-kit/graphs.yaml", "/project/graphs/night.graph.yaml", "/project/work/night-petition/graph/runs/x.json",
         "/project/..%2F..%2Fetc%2Fpasswd", "/project/../test_viewer.py", "/project/viewer/..%2F..%2Fx.mjs",

@@ -58,7 +58,7 @@ HOST = "127.0.0.1"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 #: Project files a panel or theme may load (``/project/<path>``), by extension.
 PROJECT_TYPES = {".mjs": "text/javascript; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-                 ".css": "text/css; charset=utf-8"}
+                 ".css": "text/css; charset=utf-8", ".json": "application/json"}
 
 _JS = "text/javascript; charset=utf-8"
 #: The page's files: name -> content type. Nothing else is served from ``static/``.
@@ -211,7 +211,7 @@ class ViewerApp:
         return _text(_JS, Path(self.panels[int(match.group(1))]).read_bytes())
 
     def _project_file(self, segments: list[str]) -> Response:
-        """A script or stylesheet inside the project root, so a panel can import its neighbours."""
+        """A script, stylesheet or JSON file inside the project root, so a panel can import its neighbours."""
         for part in segments:
             if not part or part.startswith(".") or "/" in part or "\\" in part or "\0" in part:
                 raise NotFound("no such project file")

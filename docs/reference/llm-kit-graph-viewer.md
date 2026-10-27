@@ -85,7 +85,7 @@ viewer:
 
 ### Theme
 
-The theme is a stylesheet that loads after the viewer's own. It sets CSS variables on `:root`, or overrides any class. Variables: surface (`--bg`, `--panel`, `--panel2`, `--line`, `--ink`, `--muted`, `--soft`, `--accent`, `--link`, `--shadow`, `--canvas-bg`), node kind (`--kind-op`, `--kind-graph`, `--kind-map`, `--kind-repeat`, `--kind-human`, `--kind-commit`), status (`--st-pending`, `--st-running`, `--st-waiting`, `--st-halted`, `--st-failed`, `--st-done`, `--st-reused`, `--st-seeded`, `--st-skipped`, `--st-gated`, `--st-stopped`, `--st-partial`) and fonts (`--mono`, `--sans`). The viewer follows the system light or dark setting; the light values are set under `prefers-color-scheme: light`, so a theme that must hold in both redefines the variables in both places.
+The theme is a stylesheet that loads after the viewer's own. It sets CSS variables on `:root`, or overrides any class. Variables: surface (`--bg`, `--panel`, `--panel2`, `--line`, `--ink`, `--muted`, `--soft`, `--accent`, `--link`, `--shadow`, `--canvas-bg`), node kind (`--kind-op`, `--kind-graph`, `--kind-map`, `--kind-repeat`, `--kind-human`, `--kind-commit`), status (`--st-pending`, `--st-running`, `--st-waiting`, `--st-halted`, `--st-failed`, `--st-done`, `--st-reused`, `--st-seeded`, `--st-skipped`, `--st-gated`, `--st-stopped`, `--st-refused`, `--st-partial`) and fonts (`--mono`, `--sans`). The viewer follows the system light or dark setting; the light values are set under `prefers-color-scheme: light`, so a theme that must hold in both redefines the variables in both places.
 
 ### Panels
 
@@ -102,11 +102,13 @@ export default [{
 
 The inspector calls `applies` and `render` for the selected node, after the facts and before the recorded values. A panel that throws shows its error in its own section and in the console; the rest of the page still works.
 
+The content security policy blocks the `style` attribute and `el.style.cssText`. A panel sets a style only with `el.style.setProperty("name", "value")`, or with a class that a theme stylesheet defines.
+
 `node` has: `path`, `id`, `kind`, `op`, `status`, `summary` (the picture's summary), `detail` (the whole node answer), `run` (`{item, run_id, graph, status}`), `structure`, and the recorded values `inputs`, `params`, `reads`, `out`, `attributes`, `receipt`, `facts` (`model`, `effort`, `cost_usd`, `usage`), `media` (each with `url`, `mime`, `name`).
 
 `api` has: `el(tag, props, ...children)`, `text(value)`, `pre(string)`, `json(value)`, `popover(trigger, build, {id, keyActivate})`, `formatSeconds`, `formatCost`. Build the output with `api.el` or `document.createElement`. Values are text; do not build markup from them.
 
-A panel file inside the project is served at `/project/<path>`, so it can import its neighbours with a relative import (`import { render } from "../../render/brief.mjs"`). A panel file outside the project (a path in `graphs.local.yaml`) is served at `/panels/<n>.mjs` and cannot import relative files.
+A panel file inside the project is served at `/project/<path>`, so it can import its neighbours with a relative import (`import { render } from "../../render/brief.mjs"`). `/project/<path>` serves `.mjs`, `.js`, `.css` and `.json` (as `application/json`), so a panel can import dictionary JSON with an ES module JSON import (`import words from "../dict/words.json" with { type: "json" }`). Dot-leading parts, traversal and links out of the project are refused. A panel file outside the project (a path in `graphs.local.yaml`) is served at `/panels/<n>.mjs` and cannot import relative files.
 
 ## Protection
 

@@ -10,7 +10,7 @@ import { attachPopover, closePopover, popoverTrigger } from "./popover.js";
 const $ = (id) => document.getElementById(id);
 const POLL_MS = 2500;
 const LIVE = new Set(["running", "waiting"]);
-const STATUSES = ["pending", "running", "done", "reused", "seeded", "skipped", "failed", "gated", "stopped"];
+const STATUSES = ["pending", "running", "done", "reused", "seeded", "skipped", "failed", "gated", "stopped", "refused"];
 
 const state = { expanded: new Set(), choice: new Map(), selectedPath: null, fit: false };
 const structures = new Map();

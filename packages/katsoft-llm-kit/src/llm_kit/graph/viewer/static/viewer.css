@@ -36,6 +36,7 @@
   --st-gated: #b58a9a;
   --st-stopped: #f0a35e;
   --st-partial: #7fa8c8;
+  --st-refused: #e07a5f;
 
   --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -73,6 +74,7 @@
     --st-gated: #a0647c;
     --st-stopped: #c0661c;
     --st-partial: #5a86aa;
+    --st-refused: #b8452c;
   }
 }
 
@@ -139,6 +141,7 @@ button:focus-visible, [role="button"]:focus-visible, [tabindex]:focus-visible, s
 .st-gated { --c: var(--st-gated); }
 .st-stopped { --c: var(--st-stopped); }
 .st-partial { --c: var(--st-partial); }
+.st-refused { --c: var(--st-refused); }
 
 /* the graph picture */
 .canvas { border: 1px solid var(--line); border-radius: 16px; background: var(--canvas-bg); overflow: auto; max-height: calc(100vh - 190px); min-height: 220px; box-shadow: var(--shadow); }
@@ -159,7 +162,7 @@ button:focus-visible, [role="button"]:focus-visible, [tabindex]:focus-visible, s
 .gnode .gdot { fill: var(--c, var(--st-pending)); }
 .gnode.st-failed > .gbody { stroke: var(--st-failed); stroke-width: 2.5; }
 .gnode.st-running > .gbody { stroke: var(--st-running); stroke-width: 2.5; }
-.gnode.st-waiting > .gbody, .gnode.st-halted > .gbody, .gnode.st-stopped > .gbody { stroke: var(--c); stroke-width: 2.5; }
+.gnode.st-waiting > .gbody, .gnode.st-halted > .gbody, .gnode.st-stopped > .gbody, .gnode.st-refused > .gbody { stroke: var(--c); stroke-width: 2.5; }
 .gnode.st-pending > .gbody, .gnode.st-skipped > .gbody, .gnode.st-gated > .gbody { stroke-dasharray: 5 4; }
 .gnode.st-skipped { opacity: 0.6; }
 .gnode.st-running > .gdot { animation: pulse 1.2s ease-in-out infinite; }
@@ -222,7 +225,9 @@ button:focus-visible, [role="button"]:focus-visible, [tabindex]:focus-visible, s
   .inspector { grid-column: 1 / -1; position: static; max-height: none; }
 }
 @media (max-width: 760px) {
-  .layout { grid-template-columns: minmax(0, 1fr); padding: 10px 16px 20px; }
+  html, body { height: auto; overflow-x: hidden; }
+  .layout { flex: none; grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; padding: 10px 16px 20px; }
+  .side, .main, .inspector { min-width: 0; max-width: 100%; }
   .side { max-height: 36vh; overflow: auto; }
   .canvas { max-height: 70vh; }
   .legend { margin-left: 0; }

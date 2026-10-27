@@ -158,7 +158,7 @@ function metaLine(item, ctx) {
   }
   if (!summary) return "";
   const bits = [formatSeconds(summary.duration_s), formatCost(summary.cost_usd)].filter(Boolean);
-  if (["reused", "seeded", "skipped", "gated", "stopped"].includes(summary.status)) bits.unshift(summary.status);
+  if (["reused", "seeded", "skipped", "gated", "stopped", "refused"].includes(summary.status)) bits.unshift(summary.status);
   return bits.join("  ");
 }
 
