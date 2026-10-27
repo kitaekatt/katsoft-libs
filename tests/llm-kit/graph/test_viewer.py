@@ -230,12 +230,12 @@ class TestPageAndProjectFiles:
         assert get(make_app(project), "/project/viewer/link.json").status == 404
 
     @pytest.mark.parametrize("target", [
-        "/project/.llm-kit/graphs.yaml", "/project/graphs/night.graph.yaml", "/project/work/night-petition/graph/runs/x.json",
+        "/project/.llm-kit/graphs.yaml", "/project/graphs/night.graph.yaml", "/project/work/night-petition/graph/runs/x.py",
         "/project/..%2F..%2Fetc%2Fpasswd", "/project/../test_viewer.py", "/project/viewer/..%2F..%2Fx.mjs",
         "/project/.git/config.js", "/project/viewer/.hidden.mjs", "/project/viewer", "/project/", "/project/viewer/missing.mjs",
         "/project/viewer/panels.mjs%00.png",
     ])
-    def test_the_project_route_serves_only_scripts_and_styles_inside_the_project(self, app, target):
+    def test_the_project_route_serves_only_scripts_styles_and_json_inside_the_project(self, app, target):
         assert get(app, target).status == 404
 
     def test_a_link_out_of_the_project_is_not_followed(self, project, tmp_path):

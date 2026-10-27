@@ -117,7 +117,7 @@ A panel file inside the project is served at `/project/<path>`, so it can import
 - Every response has `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy: same-origin`, `X-Frame-Options: DENY` and a content security policy of the own origin only: no inline script, no inline style, no `eval`, no frame.
 - JSON is sent with ASCII escapes and with `<`, `>` and `&` escaped. Stored text is sent as `text/plain`. A media file is shown only under an image, audio or video type chosen from its extension; any other file is a download.
 - The page never builds markup from text: it uses `createElement`, `createTextNode` and `setAttribute`. `tests/llm-kit/graph/test_viewer.py` fails if a page file contains `innerHTML` or a similar call.
-- `/project/` serves only `.mjs`, `.js` and `.css` files, never a path part that starts with a dot, and never a file whose real path is outside the project root.
+- `/project/` serves only `.mjs`, `.js`, `.css` and `.json` files, never a path part that starts with a dot, and never a file whose real path is outside the project root.
 
 ## Write hook (answer forms, unit L05)
 
