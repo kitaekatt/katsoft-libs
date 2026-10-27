@@ -2238,6 +2238,266 @@
     {
       "name": "llm_kit.graph.expr.references",
       "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.prompt.PromptError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.prompt.render_prompt",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.prompt.render_prompt_file",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.testing.MockBackendFactory",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.testing.MockCompletionBackend",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.testing.MockProject",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.testing.make_project",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.testing.mock_backend",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.testing.op_context",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.OpContext",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.OpError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.OpFailed",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.OpHalted",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.OpResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.builtin_ops",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.load_namespace",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.load_registry",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.op",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.registry.GRAPH_OP_ATTRIBUTE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.registry.OpError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.registry.OpFailed",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.registry.OpHalted",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.registry.builtin_ops",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.registry.load_namespace",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.registry.load_registry",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.registry.op",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.model.MODES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.model.llm_model",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.model.set_backend_factory",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.validate.MODES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.validate.RESULT_SCHEMA",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.validate.llm_validate",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.subprocess.DEFAULT_ENV_ALLOW",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.subprocess.DEFAULT_MAX_OUTPUT_BYTES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.subprocess.DEFAULT_TIMEOUT_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.subprocess.STDERR_TAIL_BYTES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.ops.subprocess.llm_subprocess",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.run.NodeStopped",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.run.PlanEntry",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.run.RunResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.run.Runner",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.records.ITEM_RE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.records.NODE_STATUSES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.records.REUSABLE_STATUSES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.records.RUN_FORMAT",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.records.RUN_STATUSES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.records.RunStore",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.records.list_items",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.records.new_run_id",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.records.utc_now",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.freshness.INPUT_HASH_VERSION",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.freshness.ReadsAnalyzer",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.freshness.ReuseIndex",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.freshness.binding_refs",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.freshness.forced",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.freshness.input_hash",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.freshness.parse_binding",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.freshness.reads_document",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.media.BLOB_PREFIX",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.media.MEDIA_PREFIX",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.media.VALUE_PREFIX",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.media.ContentStore",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.media.StoreError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.media.check_json",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.media.ref_kind",
+      "status": "public"
     }
   ]
 }

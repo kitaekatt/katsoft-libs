@@ -62,7 +62,9 @@ ALLOWED: dict[str, frozenset[str]] = {
         "pipeline.runtime", "pipeline.execution", "pipeline.analysis",
         "frontdoor", "scaffold", "graph",
     }),
-    "graph": frozenset({"schema", "registry", "pipeline.artifacts"}),
+    "graph": frozenset({
+        "schema", "completion", "registry", "dispatch", "pipeline.runtime", "pipeline.artifacts", "pipeline.execution",
+    }),
     "pipeline.execution": frozenset({
         "execution", "storage", "pipeline.core", "pipeline.artifacts",
         "pipeline.runtime", "adapters",

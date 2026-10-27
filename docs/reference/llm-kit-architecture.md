@@ -110,7 +110,8 @@ A -> {B} is the complete inter-component import set. Same-package imports are un
 Layer 7  cli                -> {schema, completion, registry, adapters, dispatch, jobs,
                                 pipeline.runtime, pipeline.execution, pipeline.analysis,
                                 frontdoor, scaffold, graph}
-Layer 6  graph              -> {schema, registry, pipeline.artifacts}
+Layer 6  graph              -> {schema, completion, registry, dispatch, pipeline.runtime,
+                                pipeline.artifacts, pipeline.execution}
 Layer 5  pipeline.execution -> {execution, storage, pipeline.core,
                                 pipeline.artifacts, pipeline.runtime, adapters}
 Layer 4  jobs               -> {completion, registry, dispatch, execution, storage}
