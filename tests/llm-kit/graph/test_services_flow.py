@@ -145,3 +145,23 @@ def test_two_processes_on_one_ledger_admit_only_what_fits(tmp_path):
     assert statuses == ["done", "refused"]
     status = open_ledger(ledger.path).status()
     assert status.settled_usd == 0.5 and status.outstanding_usd == 0.5 and status.reservations_open == 0
+
+
+def test_an_item_that_escapes_the_project_is_refused_before_the_wait_store_opens(tmp_path):
+    from llm_kit.graph.config import load_config
+    from llm_kit.graph.model import GraphError
+    from llm_kit.graph.human import WaitService
+    from test_services_support import CONFIG
+
+    root = make_project(tmp_path, config=CONFIG.replace("state: state", "state: state/{item}"))
+    project = ("--project", str(root))
+    code, out, err = cli("answer", "demo.main", "--item", "../../x", "--node", "played", "--value", "{}", *project)
+    assert code == 1 and "must match" in err
+    assert not (tmp_path.parent / "x").exists() and not list(tmp_path.rglob("waits.sqlite"))
+    config = load_config(root)
+    try:
+        WaitService.for_item(config, "../../x")
+    except GraphError as error:
+        assert "must match" in str(error)
+    else:
+        raise AssertionError("for_item accepted an escaping item")

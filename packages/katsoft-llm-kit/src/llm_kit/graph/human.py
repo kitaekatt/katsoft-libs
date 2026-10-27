@@ -88,11 +88,12 @@ class WaitService:
 
     @classmethod
     def for_item(cls, config: Any, item: str) -> "WaitService":
-        from .records import _placeholder_values  # noqa: PLC0415 -- the run-path placeholders of the item
+        from .records import _placeholder_values, check_item  # noqa: PLC0415 -- the run-path placeholders of the item
 
         if "state" not in config.runs:
             raise GraphError(f"{config.path}: runs.state is not configured; a human node needs the wait store")
         template = config.runs["state"]
+        check_item(item)
         return cls(config.run_path("state", **_placeholder_values(config, template, item)) / WAITS_FILE)
 
     def _ensure_run(self, item: str) -> None:
