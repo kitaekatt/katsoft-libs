@@ -21,13 +21,18 @@ template uses it).
 | Store | Config key | Default | Content |
 |---|---|---|---|
 | run records | `runs.dir` (required) | none | `<dir>/runs/<run_id>.json` |
-| values | `runs.dir` | `<dir>/values/` | `<dir>/values/<h[:2]>/<h>.json`: one canonical JSON value |
+| values | `runs.dir` | `<dir>/values/` | `<dir>/values/<h[:2]>/<h>.json`: one JSON value in its own key order |
 | blobs | `runs.blobs` | `<dir>/blobs/` | `<blobs>/<h[:2]>/<h>`: raw bytes (exact prompts, raw answers) |
 | media | `runs.media` | `<dir>/media/` | `<media>/<h[:16]><ext>`: media files (images, audio) |
 
 Every store is content-addressed and write-once. `h` is the SHA-256 (64 hex)
-of the stored bytes; a value file holds `stable_json(value)` (sorted keys,
-ASCII, no spaces), so `sha256sum` of the file equals its name. A media name
+of the stored bytes; a value file holds the value as compact ASCII JSON (no
+spaces) in the value's own key order, so `sha256sum` of the file equals its
+name. Key order is data for a consumer that serializes the value, so a value
+read back from a record has the key order its node produced. Two values that
+differ only in key order have different references. Freshness is unaffected:
+the input hash covers the canonical `stable_json` (sorted keys) of the reads.
+A value with sorted keys has the same bytes and reference as before. A media name
 is the first 16 hex of the SHA-256 plus the extension (`a1b2c3d4e5f60718.png`);
 writing different bytes under an existing media name is an error.
 

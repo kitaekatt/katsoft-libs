@@ -2,9 +2,12 @@
 
 Three write-once stores, each addressed by the SHA-256 of the stored bytes:
 
-``values``  ``<values>/<h[:2]>/<h>.json``: one JSON value as
-            ``stable_json`` bytes (sorted keys, ASCII, no spaces). Node inputs,
-            outputs and reads live here; the run records refer to them.
+``values``  ``<values>/<h[:2]>/<h>.json``: one JSON value as compact ASCII
+            JSON in the value's own key order (no spaces). Node inputs,
+            outputs and reads live here; the run records refer to them. Key
+            order is data for a consumer that serializes the value, so a value
+            read back has the key order it was stored with. Two values that
+            differ only in key order are two objects with two references.
 ``blobs``   ``<blobs>/<h[:2]>/<h>``: raw bytes. Large text (exact prompts,
             raw answers) and graph file snapshots. A consumer may keep this
             store outside version control.
@@ -30,8 +33,6 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any, Optional, Union
-
-from llm_kit.pipeline.artifacts.freshness.hashing import stable_json
 
 from .model import GraphError
 
@@ -129,9 +130,16 @@ class ContentStore:
     # -- values -------------------------------------------------------------
 
     def put_value(self, value: Any) -> str:
-        """Store a JSON value; return its ``value:`` reference."""
+        """Store a JSON value; return its ``value:`` reference.
+
+        The file holds the value in its own key order, and the reference is the
+        SHA-256 of those bytes, so :meth:`get_value` returns the keys in the
+        order they were stored. Freshness does not use this reference (the
+        input hash covers the canonical ``stable_json`` of the reads), so a
+        key-order-only difference changes the reference, not reuse.
+        """
         check_json(value)
-        data = stable_json(value)
+        data = json.dumps(value, ensure_ascii=True, separators=(",", ":"), allow_nan=False).encode("ascii")
         digest = hashlib.sha256(data).hexdigest()
         _write_once(self.values_dir / digest[:2] / f"{digest}.json", data)
         return VALUE_PREFIX + digest

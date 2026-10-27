@@ -96,10 +96,11 @@ def test_content_store_is_write_once_and_verified(tmp_path):
     ref = store.put_value({"b": 1, "a": [1.5, None]})
     digest = ref.split(":", 1)[1]
     path = tmp_path / "v" / digest[:2] / f"{digest}.json"
-    assert path.read_bytes() == b'{"a":[1.5,null],"b":1}'
+    assert path.read_bytes() == b'{"b":1,"a":[1.5,null]}'          # the value's own key order
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
-    assert store.put_value({"a": [1.5, None], "b": 1}) == ref
-    assert store.get_value(ref) == {"a": [1.5, None], "b": 1}
+    assert store.put_value({"b": 1, "a": [1.5, None]}) == ref
+    assert store.put_value({"a": [1.5, None], "b": 1}) != ref      # another key order is another value
+    assert list(store.get_value(ref)) == ["b", "a"]
     blob = store.put_blob("caf\u00e9")
     assert store.resolve(blob) == "caf\u00e9"
     media = store.put_media(b"PNG", ".png")
