@@ -93,18 +93,45 @@ class TestResolveSchema:
     def test_file_references_are_bundled_with_their_own_defs(self):
         schema = resolve_schema({"$ref": "contracts/plot-answer.v2.schema.json"}, gs.BETA)
         check_schema(schema)
-        assert schema["$ref"] == "#/$defs/file:contracts~1plot-answer.v2.schema.json"
+        assert schema["type"] == "object" and "$ref" not in schema
+        assert schema["properties"]["plot"] == {"$ref": "#/$defs/file:contracts~1plot.v2.schema.json"}
         defs = schema["$defs"]
-        assert set(defs) == {"file:contracts/plot-answer.v2.schema.json", "file:contracts/plot.v2.schema.json",
-                             "file:contracts/plot.v2.schema.json#beat"}
+        assert set(defs) == {"file:contracts/plot.v2.schema.json", "file:contracts/plot.v2.schema.json#beat"}
         assert defs["file:contracts/plot.v2.schema.json"]["properties"]["beats"]["items"] == {
             "$ref": "#/$defs/file:contracts~1plot.v2.schema.json#beat"}
         good = {"plot": {"beats": [{"id": "b1"}]}}
         assert validate_value(schema, good) == ()
         assert validate_value(schema, {"plot": {"beats": [{"turn": "x"}]}}) != ()
 
+    def test_a_nested_file_reference_stays_bundled(self):
+        schema = resolve_schema({"type": "object", "properties": {"a": {"$ref": "contracts/plot.v2.schema.json"}}},
+                                gs.BETA)
+        check_schema(schema)
+        assert schema["properties"]["a"] == {"$ref": "#/$defs/file:contracts~1plot.v2.schema.json"}
+
+    def test_a_bare_ref_root_is_delivered_as_the_schema_it_names(self):
+        # Providers need a root with its own type; a bare $ref root has none.
+        schema = resolve_schema({"$ref": "../contracts/brief.v1.schema.json", "description": "mine"},
+                                gs.BETA / "stages")
+        check_schema(schema)
+        assert schema["type"] == "object" and schema["title"] == "Narrative brief (fixture)"
+        assert schema["description"] == "mine"
+        assert "$defs" not in schema
+        assert "$ref" not in json.dumps(schema)
+
+    def test_a_self_referencing_file_keeps_the_entry_it_still_names(self, tmp_path):
+        (tmp_path / "tree.json").write_text(json.dumps(
+            {"type": "object", "properties": {"kids": {"type": "array", "items": {"$ref": "tree.json"}}}}))
+        schema = resolve_schema({"$ref": "tree.json"}, tmp_path)
+        check_schema(schema)
+        assert schema["type"] == "object"
+        assert set(schema["$defs"]) == {"file:tree.json"}
+        assert validate_value(schema, {"kids": [{"kids": []}]}) == ()
+        assert validate_value(schema, {"kids": [{"kids": 1}]}) != ()
+
     def test_relative_keys_follow_the_root_directory(self):
-        schema = resolve_schema({"$ref": "../contracts/brief.v1.schema.json"}, gs.BETA / "stages")
+        schema = resolve_schema({"type": "object", "properties": {"b": {"$ref": "../contracts/brief.v1.schema.json"}}},
+                                gs.BETA / "stages")
         assert "file:../contracts/brief.v1.schema.json" in schema["$defs"]
 
     def test_enum_and_const_values_are_not_rewritten(self, tmp_path):
@@ -112,8 +139,15 @@ class TestResolveSchema:
         assert schema == {"enum": [{"$ref": "x.json"}], "const": {"$ref": "y"}}
 
     def test_root_defs_stay_local(self, tmp_path):
-        schema = resolve_schema({"$ref": "#/$defs/a", "$defs": {"a": {"type": "string"}}}, tmp_path)
-        assert schema == {"$ref": "#/$defs/a", "$defs": {"a": {"type": "string"}}}
+        schema = resolve_schema({"type": "object", "properties": {"x": {"$ref": "#/$defs/a"}},
+                                 "$defs": {"a": {"type": "string"}}}, tmp_path)
+        assert schema == {"type": "object", "properties": {"x": {"$ref": "#/$defs/a"}},
+                          "$defs": {"a": {"type": "string"}}}
+
+    def test_a_bare_local_ref_root_is_delivered_as_its_definition(self, tmp_path):
+        schema = resolve_schema({"$ref": "#/$defs/a", "$defs": {"a": {"type": "string"}, "b": {"type": "integer"}}},
+                                tmp_path)
+        assert schema == {"type": "string", "$defs": {"b": {"type": "integer"}}}
 
     @pytest.mark.parametrize("schema, files, message", [
         ({"$ref": "x.json#/$defs/a"}, {"x.json": "{}"}, "without a fragment"),

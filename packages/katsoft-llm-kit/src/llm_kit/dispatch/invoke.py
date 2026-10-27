@@ -476,7 +476,7 @@ def invoke(
         halt = backend.classify_halt(exc)
         halted = bool(halt)
         code = "timeout" if isinstance(exc, AgentTimeoutError) else (halt or "execution")
-        failure = {"code": code, "message": str(exc)}
+        failure = {"code": code, "message": _failure_message(exc)}
         if halt:
             halt_info = halt_payload(halt, exc)
     wall_ms = int((time.monotonic() - started) * 1000)
@@ -581,6 +581,29 @@ def _refuse_unless_allowed(
             f"{endpoint!r} is a {cost_class} entry ({reason}) and {policy.refusal(cost_class)}; "
             "nothing was dispatched",
         )
+
+
+#: The most stderr an execution failure carries into the response document.
+STDERR_TAIL_CHARS = 4096
+
+
+def _failure_message(exc: BaseException) -> str:
+    """``str(exc)`` plus a bounded tail of the transport's stderr, when it has one.
+
+    A CLI transport (codex, claude) fails with a message it wrote itself and the
+    provider's own error text on ``exc.stderr``. Without the tail the document
+    says only "exit 1". The tail goes into the DOCUMENT message only: halt
+    classification has already read the exception's own channels, and the
+    exception message stays free of model-authored text.
+    """
+    message = str(exc)
+    stderr = getattr(exc, "stderr", None)
+    if not isinstance(stderr, str) or not stderr.strip():
+        return message
+    text = stderr.strip()
+    shown = text[-STDERR_TAIL_CHARS:]
+    lead = "..." if len(text) > STDERR_TAIL_CHARS else ""
+    return f"{message}; stderr: {lead}{shown}"
 
 
 def _error_from_response(response: LLMResponse, fallback: str) -> Dict[str, Any]:

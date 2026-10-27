@@ -80,7 +80,7 @@ def test_op_resolves_relative_schema_files_against_the_defining_file(tmp_path):
     })
     (declared,) = load_namespace("acme", root)
     schema = declared.inputs["thing"].schema
-    assert schema["$ref"] == "#/$defs/file:contracts~1thing.schema.json"
+    assert schema["type"] == "object" and "$ref" not in schema and "$defs" not in schema
 
 
 def test_op_checks_the_function_signature():

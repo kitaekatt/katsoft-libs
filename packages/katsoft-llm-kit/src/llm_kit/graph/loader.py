@@ -19,6 +19,12 @@ reference, so the result is self-contained and passes
 ``file:<path>#<name>``. A reference with a fragment (``x.json#/$defs/a``) is
 refused.
 
+A schema whose root is only a ``$ref`` (plus annotations and ``$defs``) is
+delivered as the referenced schema itself: providers require a root with its own
+``type``, and a bare-``$ref`` root has none. The root's annotations win, the
+referenced entry leaves ``$defs`` unless something still names it, and every
+other definition stays.
+
 Prompt templates: an optional header for people, then one line that is exactly
 :data:`PROMPT_MARKER`; only the text after it is the prompt. A file without the
 marker line is all prompt. Slots are ``{{name}}`` (lower-case letters, digits
@@ -36,7 +42,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 
-from llm_kit.schema.json_schema import check_schema, validate as validate_value
+from llm_kit.schema.json_schema import ANNOTATION_KEYWORDS, check_schema, resolve_local_ref, validate as validate_value
 
 from .model import (
     NAME_RE,
@@ -262,11 +268,70 @@ def resolve_schema(schema: Any, base_dir: Path, *, where: str = "") -> dict:
         if "$defs" in result and not isinstance(result["$defs"], Mapping):
             raise GraphError("$defs must be an object", where)
         result["$defs"] = {**own, **bundled}
+    result = _hoist_root_ref(result)
     try:
         check_schema(result)
     except ValueError as exc:
         raise GraphError(f"invalid schema: {exc}", where) from None
     return result
+
+
+def _ref_names(node: Any, found: set) -> None:
+    """Every ``$ref`` value under the schema keywords that hold subschemas."""
+    if not isinstance(node, Mapping):
+        return
+    for keyword, value in node.items():
+        if keyword == "$ref":
+            found.add(value)
+        elif keyword in ("properties", "$defs") and isinstance(value, Mapping):
+            for sub in value.values():
+                _ref_names(sub, found)
+        elif keyword in ("items", "additionalProperties"):
+            _ref_names(value, found)
+        elif keyword == "anyOf" and isinstance(value, list):
+            for sub in value:
+                _ref_names(sub, found)
+
+
+def _hoist_root_ref(schema: dict) -> dict:
+    """Make a bare-``$ref`` root the schema it names; any other schema is returned as is."""
+    if not isinstance(schema.get("$ref"), str):
+        return schema
+    if any(k != "$ref" and k not in ANNOTATION_KEYWORDS for k in schema):
+        return schema
+    defs = schema.get("$defs", {})
+    if not isinstance(defs, Mapping):
+        return schema
+    notes = {k: v for k, v in schema.items() if k not in ("$ref", "$defs")}
+    node: Mapping = schema
+    followed: list[str] = []
+    for _ in range(len(defs) + 1):
+        ref = node.get("$ref")
+        if ref is None:
+            break
+        try:
+            target = resolve_local_ref(schema, ref)
+        except ValueError:
+            return schema  # check_schema reports the fault
+        followed.append(_unescape(ref[len("#/$defs/"):]))
+        node = target
+        if any(k != "$ref" and k not in ANNOTATION_KEYWORDS for k in target):
+            break
+    else:
+        return schema  # a $ref cycle; check_schema reports it
+    root = {k: v for k, v in node.items() if k != "$defs"}
+    root.update(notes)
+    kept = dict(defs)
+    named: set = set()
+    _ref_names(root, named)
+    for sub in kept.values():
+        _ref_names(sub, named)
+    for name in followed:
+        if f"#/$defs/{_escape(name)}" not in named:
+            kept.pop(name, None)
+    if kept:
+        root["$defs"] = kept
+    return root
 
 
 def _port(value: Any, base_dir: Path, where: str) -> Port:

@@ -29,7 +29,7 @@ Names (node ids, ports, carried values, body outputs) match `^[A-Za-z][A-Za-z0-9
 
 A port is a JSON Schema, or the long form `{schema, default, description}`. A schema is in the `llm_kit.schema.json_schema` subset (no `pattern`, `oneOf`, `allOf`, `format`, `uniqueItems`). A default must match its schema. A port with a default may be left unbound.
 
-A `$ref` that does not start with `#` names a whole JSON file, relative to the file that holds it. The loader bundles each file into the root `$defs` as `file:<path relative to the root's directory>` (a file's own `$defs` become `file:<path>#<name>`) and rewrites the reference. A reference with a fragment (`x.json#/$defs/a`) is refused.
+A `$ref` that does not start with `#` names a whole JSON file, relative to the file that holds it. The loader bundles each file into the root `$defs` as `file:<path relative to the root's directory>` (a file's own `$defs` become `file:<path>#<name>`) and rewrites the reference. A reference with a fragment (`x.json#/$defs/a`) is refused. A schema whose root is only a `$ref` (plus annotations and `$defs`) is delivered as the schema it names, so the root carries its own `type` (providers refuse a root without one); the root's annotations win, and the named entry leaves `$defs` unless another reference still uses it.
 
 ### Bindings
 
