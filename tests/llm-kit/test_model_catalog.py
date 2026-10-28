@@ -106,7 +106,6 @@ def test_the_order_follows_the_file_not_the_library(project, capsys, monkeypatch
 
 def test_the_library_ships_no_roster_or_order():
     shipped = set(DEFAULT_MODEL_CONFIG["endpoints"])
-    assert "astra" not in shipped  # the customer's roster entry is theirs, not a default
     assert not hasattr(catalog_mod, "ROSTER")
     src = Path(catalog_mod.__file__).read_text(encoding="utf-8")
     for label in ("Sonnet", "DeepSeek Flash", "Astra", "Fable"):
@@ -359,3 +358,10 @@ def test_catalog_golden_with_an_override(project, capsys, tmp_path, monkeypatch)
     got = json.loads(cap.out)
     assert got["resolved_selections"]["draft.generate.primary"]["source"] == "override"
     assert got["selections"]["draft.generate.primary"]["effort"] == "high"
+
+
+def test_shipped_defaults_include_the_astra_seat():
+    entry = DEFAULT_MODEL_CONFIG["endpoints"]["astra"]
+    assert entry["harness"] == "codex"
+    assert entry["model"] == "gpt-6-astra"
+    assert entry["tier"] == 4

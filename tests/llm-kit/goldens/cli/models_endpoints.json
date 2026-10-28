@@ -662,6 +662,14 @@
       },
       "default": "openrouter",
       "endpoints": {
+        "astra": {
+          "adapter": "codex-cli",
+          "effort": "high",
+          "harness": "codex",
+          "kind": "harness",
+          "model": "gpt-6-astra",
+          "name": null
+        },
         "cdx": {
           "adapter": "codex-cli",
           "effort": "high",

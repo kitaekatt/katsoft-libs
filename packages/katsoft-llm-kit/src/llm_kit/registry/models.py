@@ -118,21 +118,14 @@ DEFAULT_MODEL_CONFIG = {
             "tier": 2, "family": "openai",
         },
         # Astra (gpt-6-astra) is OpenAI's frontier tier, a peer of fable, so
-        # tier 4. COMMENTED OUT 2026-09-04. The entry was shipped on the premise
-        # that a machine without access "probes unreachable and routing falls
-        # through past it". That premise is false: reachability.check_harness is
-        # a CLI-PRESENCE check, so wherever the codex CLI exists astra probes
-        # reachable regardless of whether the account may call it. On a ChatGPT
-        # plan every dispatch to it fails with
-        #   400 invalid_request_error: The 'gpt-6-astra' model is not supported
-        #   when using Codex with a ChatGPT account.
-        # so the entry only supplies a frontier seat that cannot run. Restore it
-        # when either the rollout reaches ChatGPT plans or a per-model
-        # reachability probe exists to make the fall-through real.
-        # "astra": {
-        #     "harness": "codex", "model": "gpt-6-astra", "effort": "high",
-        #     "tier": 4, "family": "openai",
-        # },
+        # tier 4. A ChatGPT-plan account cannot call it (the Codex CLI answers
+        # 400 invalid_request_error), and reachability.check_harness tests only
+        # that the codex CLI exists, so routing does not skip it on such an
+        # account.
+        "astra": {
+            "harness": "codex", "model": "gpt-6-astra", "effort": "high",
+            "tier": 4, "family": "openai",
+        },
         # OpenRouter models as ENTRIES. A declaration names registry ids, so
         # each alias of the top-level `models:` map below also ships as a
         # direct transport entry. The alias map stays: under an endpoint it is
