@@ -84,15 +84,18 @@ def reset_detection_cache() -> None:
     _CACHE_KEY = None
 
 
-def resolve_cli(name: str) -> Optional[Tuple[str, ...]]:
+def resolve_cli(name: str, path: Optional[str] = None) -> Optional[Tuple[str, ...]]:
     """Resolve ``name`` to a launchable argv prefix, or None if not on PATH.
+
+    ``path`` is a PATH string to search instead of the process's own, for a
+    caller that will spawn the CLI with a different environment.
 
     The ``shutil.which`` step is what makes this work on Windows at all: an
     npm/scoop-installed CLI is ``name.cmd``, and CreateProcess does not consult
     PATHEXT the way a shell does. A resolved ``.cmd``/``.bat`` is additionally
     wrapped in ``cmd /c``, because a batch file is not an executable image.
     """
-    resolved = shutil.which(name)
+    resolved = shutil.which(name) if path is None else shutil.which(name, path=path)
     if resolved is None:
         return None
     if os.name == "nt" and resolved.lower().endswith((".cmd", ".bat")):

@@ -9,11 +9,12 @@ callers treat as spend). Reasons name fields and variables, never secret values.
   with ``apiProvider == "firstParty"`` -> SUBSCRIPTION, any other value -> METERED;
   launch failure, timeout or parse failure -> UNKNOWN.
 * ``codex_auth``: asks Codex for its own resolved configuration with
-  ``codex doctor --json`` in the run's working directory and environment. An auth
+  ``codex doctor --json`` in the run's working directory and environment, launched through
+  ``resolve_cli`` (so a Windows ``codex.cmd`` shim runs). An auth
   environment variable gives METERED (or UNKNOWN for ``CODEX_ACCESS_TOKEN`` alone)
   before doctor runs. SUBSCRIPTION only when doctor shows provider ``openai``,
   ChatGPT auth and no stored API key; another provider or auth mode is METERED;
-  anything else (missing doctor, non-zero exit, timeout, unknown schema, missing
+  anything else (codex not on PATH, non-zero exit, timeout, unknown schema, missing
   field, a check status other than ok) is UNKNOWN. No file-reading fallback.
   Definitive results (SUBSCRIPTION, METERED) are cached per process, keyed by
   ``(cwd, CODEX_AUTH_ENV values, CODEX_HOME)``; UNKNOWN is never cached, so a timeout
@@ -36,6 +37,12 @@ from llm_kit.adapters.claude_command import (
     CLAUDE_EXECUTABLE_ENV,
     ClaudeExecutableError,
     resolve_claude_executable,
+)
+from llm_kit.adapters.codex_command import (
+    CODEX_EXECUTABLE_ENV,
+    CodexExecutableError,
+    configured_codex_executable,
+    resolve_cli,
 )
 from llm_kit.registry.cost import (
     BILLING_DIVERTING_VARS,
@@ -203,8 +210,21 @@ def codex_auth(
     cached = _CODEX_CACHE.get(key)
     if cached is not None:
         return cached
+    try:
+        name = configured_codex_executable()
+    except CodexExecutableError:
+        # Never raises (this probe's contract); the reason names the variable so
+        # the misconfiguration is visible, and the dispatch itself raises.
+        return HarnessAuth(UNKNOWN, f"{CODEX_EXECUTABLE_ENV} is set to an unusable value")
+    # Resolve the launcher the way dispatch does: an npm or scoop install is
+    # codex.cmd on Windows, which CreateProcess cannot start from the bare name.
+    prefix = resolve_cli(name, path=env.get("PATH"))
+    if prefix is None:
+        if CODEX_EXECUTABLE_ENV in os.environ:
+            return HarnessAuth(UNKNOWN, f"{CODEX_EXECUTABLE_ENV} names a command that is not on PATH")
+        return HarnessAuth(UNKNOWN, "codex is not on PATH")
     doc, failure = _run_json(
-        ["codex", "doctor", "--json"], what="codex doctor",
+        [*prefix, "doctor", "--json"], what="codex doctor",
         env=env, cwd=cwd, runner=runner, timeout_s=timeout_s,
     )
     auth = HarnessAuth(UNKNOWN, failure) if failure is not None else _codex_from_doctor(doc)

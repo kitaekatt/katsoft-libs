@@ -29,11 +29,21 @@ from llm_kit.registry.cost import BILLING_DIVERTING_VARS, METERED, SUBSCRIPTION,
 TOKEN = "sk-FIXTURE-TOKEN-0123456789abcdef"
 
 
+_REAL_RESOLVE_CLI = harness_auth.resolve_cli
+
+
 @pytest.fixture(autouse=True)
 def _fresh_cache():
     clear_codex_auth_cache()
     yield
     clear_codex_auth_cache()
+
+
+@pytest.fixture(autouse=True)
+def _fake_resolver(monkeypatch):
+    """Probe tests inject a runner, so no codex needs to be installed to resolve one."""
+    monkeypatch.delenv("LLM_KIT_CODEX_EXECUTABLE", raising=False)
+    monkeypatch.setattr(harness_auth, "resolve_cli", lambda name, path=None: (name,))
 
 
 class Spy:
@@ -242,6 +252,48 @@ def test_codex_doctor_failure_unknown(tmp_path, spy):
     assert codex_auth({}, cwd=tmp_path, runner=spy).state == UNKNOWN
 
 
+def test_codex_launches_the_resolved_prefix(tmp_path, monkeypatch):
+    # An npm or scoop install is a Windows batch shim; resolve_cli wraps it in cmd /c.
+    seen = []
+
+    def resolve(name, path=None):
+        seen.append((name, path))
+        return ("cmd", "/c", "C:/bin/codex.cmd")
+
+    monkeypatch.setattr(harness_auth, "resolve_cli", resolve)
+    spy = Spy(stdout=doctor())
+    assert codex_auth({"PATH": "/p"}, cwd=tmp_path, runner=spy).state == SUBSCRIPTION
+    assert spy.calls[0][0] == ["cmd", "/c", "C:/bin/codex.cmd", "doctor", "--json"]
+    assert seen == [("codex", "/p")]
+
+
+def test_codex_not_on_path_is_unknown_without_running(tmp_path, monkeypatch):
+    monkeypatch.setattr(harness_auth, "resolve_cli", lambda name, path=None: None)
+    spy = Spy(stdout=doctor())
+    auth = codex_auth({}, cwd=tmp_path, runner=spy)
+    assert auth.state == UNKNOWN
+    assert auth.reason == "codex is not on PATH"
+    assert spy.calls == []
+
+
+@pytest.mark.parametrize("value", ["", "relative/codex"], ids=["empty", "relative"])
+def test_codex_unusable_executable_variable_is_unknown_and_named(tmp_path, monkeypatch, value):
+    monkeypatch.setenv("LLM_KIT_CODEX_EXECUTABLE", value)
+    spy = Spy(stdout=doctor())
+    auth = codex_auth({}, cwd=tmp_path, runner=spy)
+    assert auth.state == UNKNOWN
+    assert "LLM_KIT_CODEX_EXECUTABLE" in auth.reason
+    assert spy.calls == []
+
+
+def test_codex_executable_variable_naming_a_missing_command_is_unknown_and_named(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLM_KIT_CODEX_EXECUTABLE", "no-such-codex")
+    monkeypatch.setattr(harness_auth, "resolve_cli", lambda name, path=None: None)
+    auth = codex_auth({}, cwd=tmp_path, runner=Spy(stdout=doctor()))
+    assert auth.state == UNKNOWN
+    assert "LLM_KIT_CODEX_EXECUTABLE" in auth.reason
+
+
 def test_codex_unknown_is_not_cached(tmp_path):
     failing, working = Spy(raises=subprocess.TimeoutExpired(["codex"], 30)), Spy(stdout=doctor())
     assert codex_auth({}, cwd=tmp_path, runner=failing).state == UNKNOWN
@@ -353,7 +405,8 @@ def test_real_subprocess_claude(tmp_path):
 
 
 @posix_only
-def test_real_subprocess_codex_runs_in_cwd(tmp_path):
+def test_real_subprocess_codex_runs_in_cwd(tmp_path, monkeypatch):
+    monkeypatch.setattr(harness_auth, "resolve_cli", _REAL_RESOLVE_CLI)
     bin_dir, ws = tmp_path / "bin", tmp_path / "ws"
     bin_dir.mkdir(), ws.mkdir()
     record = tmp_path / "rec"
