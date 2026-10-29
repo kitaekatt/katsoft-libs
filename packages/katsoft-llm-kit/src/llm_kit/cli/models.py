@@ -127,7 +127,7 @@ def _add_describe_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--consent-scope",
         metavar="NAME",
-        help="With --consent, apply the named scope's restrictions over the global policy.",
+        help="With --consent, apply the named scope, which overrides the global defaults for the classes it states.",
     )
     parser.add_argument("--json", action="store_true", help="Emit the ranking as JSON.")
     _add_project_arg(parser)

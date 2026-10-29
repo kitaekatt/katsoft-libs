@@ -122,7 +122,7 @@ filter instead, pass `--allow local,subscription` (not combinable with `--consen
 With the layer applied and no file, `local` and `subscription` are on and `metered` is off.
 One file, `$XDG_CONFIG_HOME/llm-kit/consent.json` (`~/.config/llm-kit/consent.json` by
 default; `LLM_KIT_CONSENT_FILE` overrides), holds the global policy and optional named scopes.
-A scope can only restrict the global policy; a class the scope omits inherits.
+A scope overrides the global default for the classes it states, in either direction (a scope `on` over a global `off` allows that class for the scope only); a class the scope omits inherits the global value.
 
 ```
 llm-kit consent show [--scope NAME] [--json]

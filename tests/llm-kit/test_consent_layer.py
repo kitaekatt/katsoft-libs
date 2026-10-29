@@ -8,8 +8,9 @@ one the library applies on its own. The opt-in surfaces are protocol 2 request f
 
 What each group pins, and what reverting breaks:
 
-* scope intersection -- red when ``effective`` stops ANDing the scope over the global
-  policy (a scope would then widen the ceiling, or ignore a restriction);
+* scope override -- red when ``effective`` stops letting a stated scope value win over the
+  global default in either direction (a scope ``on`` over a global ``off`` must allow, a
+  scope ``off`` over a global ``on`` must refuse), or stops inheriting an omitted class;
 * missing-file default -- red when ``load_config`` creates a file, or when the default
   stops being local+subscription on, metered off;
 * protocol 2 opt-in -- red when ``dispatch/invoke.py`` stops enforcing the policy for a
@@ -51,28 +52,28 @@ def _allowed(result: "consent_mod.Policy") -> dict:
     return {name: state.allowed for name, state in result.classes.items()}
 
 
-# --- scope intersection: effective = global AND scope.get(class, true) ------------------------------
+# --- scope override: effective = scope[class] if stated else global[class] -------------------------
 
 
 @pytest.mark.parametrize("global_value", [True, False])
 @pytest.mark.parametrize("scope_value", [True, False, None])
-def test_effective_is_the_global_value_and_the_scope_value_with_absent_meaning_inherit(global_value, scope_value):
+def test_effective_is_the_scope_value_when_stated_else_the_global_value(global_value, scope_value):
     stated = {} if scope_value is None else {"metered": scope_value}
     config = _config({"metered": global_value}, {"s": stated})
     result = effective(config, "s")
-    expected = global_value and (True if scope_value is None else scope_value)
+    expected = global_value if scope_value is None else scope_value
     assert result.classes["metered"].allowed is expected
     assert result.classes["metered"].global_allowed is global_value
     assert result.classes["metered"].scope_allowed is scope_value
 
 
-def test_a_scope_restricts_and_never_widens_the_global_ceiling():
+def test_a_scope_overrides_the_global_defaults_in_both_directions():
     config = _config(
         {"local": True, "subscription": False, "metered": False},
         {"s": {"local": False, "subscription": True, "metered": True}},
     )
     result = effective(config, "s")
-    assert _allowed(result) == {"local": False, "subscription": False, "metered": False}
+    assert _allowed(result) == {"local": False, "subscription": True, "metered": True}
     # the global policy is untouched by the scope
     assert _allowed(effective(config)) == {"local": True, "subscription": False, "metered": False}
 
@@ -84,26 +85,36 @@ def test_an_unknown_scope_inherits_the_global_policy_whole():
     }
 
 
-def test_a_scope_on_that_global_blocks_is_shown_blocked_with_the_global_command():
-    state = effective(_config({"metered": False}, {"s": {"metered": True}}), "s").classes["metered"]
-    assert state.allowed is False and state.blocked_by_global is True
-    assert state.provenance == "global"
-    assert state.commands == ("llm-kit consent set --metered on",)  # the GLOBAL command, not a scoped one
+def test_global_metered_off_and_scope_metered_on_allows_that_scope_only():
+    config = _config({"metered": False}, {"s": {"metered": True}})
+    state = effective(config, "s").classes["metered"]
+    assert state.allowed is True and state.provenance == "scope" and state.commands == ()
+    assert state.global_allowed is False and state.scope_allowed is True
+    assert effective(config, "other").allows("metered") is False  # another scope still inherits the global off
+    assert effective(config).allows("metered") is False  # and so does the global policy
 
 
-def test_a_scope_off_names_the_scoped_command_and_both_when_global_is_also_off():
-    only_scope = effective(_config({"metered": True}, {"s": {"metered": False}}), "s").classes["metered"]
-    assert only_scope.provenance == "scope" and only_scope.blocked_by_global is False
-    assert only_scope.commands == ("llm-kit consent set --scope s --metered on",)
-    both = effective(_config({"metered": False}, {"s": {"metered": False}}), "s").classes["metered"]
-    assert both.commands == ("llm-kit consent set --metered on", "llm-kit consent set --scope s --metered on")
+def test_global_metered_on_and_scope_metered_off_refuses_that_scope_only():
+    config = _config({"metered": True}, {"s": {"metered": False}})
+    state = effective(config, "s").classes["metered"]
+    assert state.allowed is False and state.provenance == "scope"
+    assert state.commands == ("llm-kit consent set --scope s --metered on",)
+    assert effective(config, "other").allows("metered") is True
+    assert effective(config).allows("metered") is True
+
+
+def test_a_class_not_allowed_names_the_scope_command_in_a_scope_and_the_global_command_without_one():
+    config = _config({"metered": False}, {"s": {"local": False}})
+    inherited = effective(config, "s").classes["metered"]  # global off, not stated by the scope
+    assert inherited.provenance == "global" and inherited.commands == ("llm-kit consent set --scope s --metered on",)
+    assert effective(config).classes["metered"].commands == ("llm-kit consent set --metered on",)
 
 
 def test_provenance_names_the_layer_that_decided_the_value():
     config = _config({"subscription": True}, {"s": {"metered": True, "local": False}})
     by = {name: state.provenance for name, state in effective(config, "s").classes.items()}
-    # local: the scope turned it off; subscription: stated by the global file; metered: global default off blocks the scope
-    assert by == {"local": "scope", "subscription": "global", "metered": "default"}
+    # local and metered: the scope states them; subscription: stated by the global file
+    assert by == {"local": "scope", "subscription": "global", "metered": "scope"}
 
 
 def test_scope_names_are_validated():
@@ -183,13 +194,15 @@ def test_a_scoped_request_is_held_to_the_scope_over_the_global_policy(world, cap
     assert call(world, capsys, selection="art", consent=True)[0] == 0
 
 
-def test_a_scope_on_that_the_global_policy_blocks_is_refused_naming_the_global_command(world, capsys):
+def test_a_scope_on_over_a_global_off_is_allowed_for_that_scope_and_other_requests_stay_refused(world, capsys):
     save_config(globals_={"local": True, "subscription": True, "metered": False}, scopes={"databench": {"metered": True}})
-    code, _doc, err = call(world, capsys, selection="art", consent={"scope": "databench"})
-    assert code == 4 and err["error"]["kind"] == "consent"
-    assert "`llm-kit consent set --metered on`" in err["error"]["message"]
-    assert "--scope" not in err["error"]["message"].split("run ")[1]  # the scope never widens global
-    assert world.runner_calls == 0
+    code, doc, err = call(world, capsys, selection="art", consent={"scope": "databench"})
+    assert code == 0, (doc, err)
+    assert world.runner_calls == 1
+    for other in (True, {"scope": "orchestrate"}):  # the global policy and another scope keep the global off
+        code, _doc, err = call(world, capsys, selection="art", consent=other)
+        assert code == 4 and err["error"]["kind"] == "consent"
+    assert world.runner_calls == 1
 
 
 def test_the_response_reports_the_scope_that_was_applied(world, capsys):

@@ -9,14 +9,15 @@ the policy a caller may apply to it.
 
 ``consent show [--scope X] [--json]`` prints the effective policy: per class
 (``local``, ``subscription``, ``metered``) whether it is allowed and which layer
-decided it (``default``, ``global`` or ``scope``). A scope ``on`` that the global
-policy blocks is shown as blocked, with the global command that lifts the block.
+decided it (``default``, ``global`` or ``scope``). With ``--scope X``, a class the
+scope states takes the scope's value, and a class it omits shows the global value.
 ``path`` is the file read, ``write_path`` the file ``consent set`` writes (the
 ``LLM_KIT_CONSENT_FILE`` override, else the neutral ``consent.json``).
 
 ``consent set [--scope X] [--local on|off] [--subscription on|off] [--metered on|off]``
 is a partial update: a flag that is not given keeps its value, scopes are
-preserved by a global change, and a scope can only restrict the global policy.
+preserved by a global change, and a scope overrides the global default for that
+scope, either way.
 With no class flag it changes nothing and exits 2.
 
 Exit codes follow the scripting groups: 0 success, 2 usage or configuration
@@ -51,13 +52,9 @@ def _flag(value: bool) -> str:
 
 def _class_line(policy: consent_store.Policy, cost_class: str) -> str:
     state = policy.classes[cost_class]
-    line = f"{cost_class}: {_flag(state.allowed)} ({state.provenance})"
-    if state.blocked_by_global:
-        line += (
-            f"; scope {policy.scope!r} states it on but the global policy blocks it: "
-            f"run `{state.commands[0]}`"
-        )
-    elif not state.allowed:
+    source = f"scope {policy.scope!r}" if state.provenance == consent_store.FROM_SCOPE else state.provenance
+    line = f"{cost_class}: {_flag(state.allowed)} ({source})"
+    if not state.allowed:
         line += "; to allow: " + " and ".join(f"`{c}`" for c in state.commands)
     return line
 
@@ -113,7 +110,7 @@ def _parser() -> argparse.ArgumentParser:
     show.add_argument("--scope", help="Show the named scope's effective policy (default: the global policy).")
     show.add_argument("--json", action="store_true", help="Print one JSON object.")
     setter = sub.add_parser("set", help="Change the policy; a flag not given keeps its value.")
-    setter.add_argument("--scope", help="Change the named scope instead of the global policy (a scope can only restrict).")
+    setter.add_argument("--scope", help="Change the named scope instead of the global policy (a scope overrides the global default for that scope).")
     setter.add_argument("--local", choices=("on", "off"), help="Allow local (declared unmetered and self-owned endpoint) operations.")
     setter.add_argument("--subscription", choices=("on", "off"), help="Allow subscription (claude or codex session pool) operations.")
     setter.add_argument("--metered", choices=("on", "off"), help="Allow metered (paid or unverified billing) operations.")

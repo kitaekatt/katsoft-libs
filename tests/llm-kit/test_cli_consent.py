@@ -65,12 +65,12 @@ class TestShow:
         assert payload["source"] == "file"
         assert payload["classes"]["metered"] == {
             "allowed": True, "provenance": "global", "global": True, "scope": None,
-            "blocked_by_global": False, "commands": [],
+            "commands": [],
         }
         text = run(final_mods.cli.main, ["consent", "show"], capsys).out.splitlines()
         assert text[1] == "source: file" and text[6] == "metered: on (global)"
 
-    def test_show_a_scope_reports_each_value_and_what_blocks_it(self, final_mods, home, capsys):
+    def test_show_a_scope_reports_each_value_and_where_it_comes_from(self, final_mods, home, capsys):
         run(final_mods.cli.main, ["consent", "set", "--scope", "databench", "--metered", "on"], capsys)
         run(final_mods.cli.main, ["consent", "set", "--scope", "databench", "--subscription", "off"], capsys)
         payload = json.loads(
@@ -78,14 +78,15 @@ class TestShow:
         )
         classes = payload["classes"]
         assert payload["scope"] == "databench"
-        # a scope `on` that the global policy blocks is shown as blocked, naming the global command
-        assert classes["metered"]["allowed"] is False and classes["metered"]["blocked_by_global"] is True
-        assert classes["metered"]["commands"] == ["llm-kit consent set --metered on"]
+        # a scope `on` over the global default `off` allows the class for that scope
+        assert classes["metered"]["allowed"] is True and classes["metered"]["provenance"] == "scope"
+        assert classes["metered"]["global"] is False and classes["metered"]["commands"] == []
         assert classes["subscription"]["allowed"] is False and classes["subscription"]["provenance"] == "scope"
         assert classes["subscription"]["commands"] == ["llm-kit consent set --scope databench --subscription on"]
         assert classes["local"]["allowed"] is True
         text = run(final_mods.cli.main, ["consent", "show", "--scope", "databench"], capsys).out
-        assert "blocks it: run `llm-kit consent set --metered on`" in text
+        assert "metered: on (scope 'databench')" in text
+        assert "local: on (global)" in text and "subscription: off (scope 'databench'); to allow:" in text
 
     def test_show_a_malformed_file_is_a_configuration_error(self, final_mods, home, capsys):
         target = _consent_file(home)

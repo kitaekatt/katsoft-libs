@@ -18,11 +18,12 @@ One file holds a global policy and optional named scopes::
     {"schema": 2, "local": true, "subscription": true, "metered": false,
      "scopes": {"databench": {"metered": true}}, "updated_at": "..."}
 
-Global classes are a CEILING; a scope may only restrict. An absent scope key
-inherits, so ``effective = global AND scope.get(class, true)``. A scope ``on`` that
-the global policy blocks is reported as blocked, with the global command that would
-lift the block; it never widens the global policy. A global change preserves every
-scope entry.
+The global classes are DEFAULTS, and a scope overrides them in both directions: a
+class the scope states (``true`` or ``false``) takes the scope's value, and a class it
+omits inherits the global value (else the built-in default). So
+``effective(class, scope) = scope[class] if stated else global[class]``. A scope
+``on`` over a global ``off`` allows the class for that scope only; other scopes and
+the global policy are unchanged. A global change preserves every scope entry.
 
 Without a file the policy is ``{local: true, subscription: true, metered: false}``
 with provenance ``default``; reading it creates nothing. A file that cannot be read
@@ -297,11 +298,10 @@ class ClassPolicy:
     """The effective state of one class and where it came from.
 
     ``allowed`` is the effective value. ``provenance`` names the layer that decided
-    it: ``default`` (no file, or the file does not state the class), ``global`` or
-    ``scope``. ``blocked_by_global`` is true when the scope states ``on`` and the
-    global policy says off; the effective value is then off and ``commands`` holds
-    the global command that lifts the block. ``commands`` is always the exact
-    command(s) that would allow the class (empty when it is allowed).
+    it: ``scope`` (the scope states the class, either way), ``global`` (the file
+    states it globally) or ``default`` (no file, or the file does not state the class).
+    ``commands`` is the exact command that would allow the class (empty when it is
+    allowed): the scope command when a scope is in use, else the global command.
     """
 
     cost_class: str
@@ -309,7 +309,6 @@ class ClassPolicy:
     provenance: str
     global_allowed: bool
     scope_allowed: Optional[bool]
-    blocked_by_global: bool
     commands: Tuple[str, ...]
 
     def to_json(self) -> Dict[str, Any]:
@@ -318,7 +317,6 @@ class ClassPolicy:
             "provenance": self.provenance,
             "global": self.global_allowed,
             "scope": self.scope_allowed,
-            "blocked_by_global": self.blocked_by_global,
             "commands": list(self.commands),
         }
 
@@ -369,7 +367,7 @@ class Policy:
 
 
 def effective(config: ConsentConfig, scope: Optional[str] = None) -> Policy:
-    """Apply ``scope`` over the global policy in ``config``: ``global AND scope.get(class, true)``."""
+    """Apply ``scope`` over the global defaults in ``config``: the scope's value when it states the class, else the global one."""
     if scope is not None:
         validate_scope_name(scope)
     stated = config.scopes.get(scope, {}) if scope is not None else {}
@@ -379,29 +377,21 @@ def effective(config: ConsentConfig, scope: Optional[str] = None) -> Policy:
         global_value = config.globals_[cls] if explicit_global else DEFAULT_CLASSES[cls]
         global_from = FROM_GLOBAL if explicit_global else FROM_DEFAULT
         scope_value = stated.get(cls)
-        value = global_value and (scope_value is None or scope_value)
-        if not value and scope_value is False:
-            provenance = FROM_SCOPE
-        elif not value:
+        if scope_value is None:
+            value = global_value
             provenance = global_from
-        elif scope_value is True:
-            provenance = FROM_SCOPE
         else:
-            provenance = global_from
-        blocked = scope_value is True and not global_value
+            value = scope_value
+            provenance = FROM_SCOPE
         commands: list = []
         if not value:
-            if not global_value:
-                commands.append(set_command(cls))
-            if scope_value is False:
-                commands.append(set_command(cls, scope=scope))
+            commands.append(set_command(cls, scope=scope))
         classes[cls] = ClassPolicy(
             cost_class=cls,
             allowed=value,
             provenance=provenance,
             global_allowed=global_value,
             scope_allowed=scope_value,
-            blocked_by_global=blocked,
             commands=tuple(commands),
         )
     return Policy(scope=scope, classes=classes, source=config.source, path=config.path)
