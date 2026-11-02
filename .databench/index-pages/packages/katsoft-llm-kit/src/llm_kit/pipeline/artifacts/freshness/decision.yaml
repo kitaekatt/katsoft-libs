@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/freshness",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "76dd42e17260c8a75218e6234f56b19f8a5ceb5efcb406d2c6be20b1a34f1d88",
+  "input_shape_sha256": "bf9c4266106269be4ecc010a3d42aec5252d1a6fdcd18b1896f1dadcdbaea696",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

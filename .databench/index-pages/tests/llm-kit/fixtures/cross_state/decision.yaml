@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/llm-kit/fixtures/cross_state",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "72cadeba96c5ff19bca8c1ab25e91d4ed067b6310400c5d2f21bcbeb662f755b",
+  "input_shape_sha256": "8d0ed2c1184eba322b0d490a284bc7a115d3d13d70e99d5a70e7889b3e1a2b27",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

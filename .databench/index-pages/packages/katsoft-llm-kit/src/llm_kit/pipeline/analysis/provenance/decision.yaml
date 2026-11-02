@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/analysis/provenance",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "4ed84a6e3b7c18dc11f73332cbf3b4d9f1289b16c4a260097726c87316a7a5c6",
+  "input_shape_sha256": "d3150cdfc03c8466b813dfc086e93a55d416d154849c8c8c1eec899f755ea634",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

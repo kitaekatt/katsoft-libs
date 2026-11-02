@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/llm-kit/graph",
+  "decision": "none",
+  "source_sha": "a52cddabeaf54b9522cf0702038251afdf3f079e",
+  "input_sha256": "33d08f4bea7de4a8234b9c189c66497bfc5bff16a749ca8a5ca4e68c1ffbf69c",
+  "input_shape_sha256": "bcca516ad3e67a17aa08d165e2e4a59425cdb537f9ba929198aa7e4e9558a6a1",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

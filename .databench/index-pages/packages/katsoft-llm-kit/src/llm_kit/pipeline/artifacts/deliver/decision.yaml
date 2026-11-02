@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/deliver",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "283430635396054d490c8f7b27e6c746ec8e2e462943279f9b314fdd4ce08ea0",
+  "input_shape_sha256": "010ab3c41c86a905fc5a796fb52bd0c7a74f010840ac094be33c09a71709c3a1",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

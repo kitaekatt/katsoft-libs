@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts",
+  "decision": "page",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "generation_spec_sha256": "8573606e5f3b827eff1eb29578efe854f3b917c38f7e9b9539ce898c925d9fa1",
+  "input_sha256": "0ae97c35e7b8b072063664cd2a37be922f817088f204f67ff2d089d832400528",
+  "input_shape_sha256": "9435f663c7f1d7f0fa56bbe706a467cb7b3d6cd4f57173c7215cbef4643227bd",
+  "dirty": false,
+  "identity": "The pipeline artifact layer: canonical attributed store, two-tier freshness, in-place and projection delivery, context-provider registry, human round-trip, and version-control seam.",
+  "instructions": "",
+  "references": []
+}

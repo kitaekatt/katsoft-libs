@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-contracts/src/katsoft_contracts",
+  "decision": "none",
+  "source_sha": "60a8dc69e23490c01649331c6a0ba43114f71e31",
+  "input_sha256": "98ff1867554668fb05f8f9bcfab432fff3ede327eb4913e85bc72fc9e8ba7b12",
+  "input_shape_sha256": "ae07c10d2ac359074cd45cea6cd91e0a8c7d9d49696b36b906b8885342ef849a",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

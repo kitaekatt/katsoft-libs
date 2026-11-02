@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": ".github/workflows",
+  "decision": "none",
+  "source_sha": "7b9d3c8f47a5601aeb43f8bf861779fb0cd47abc",
+  "input_sha256": "71357bb6cae8f9dd0e75ffdf4b4911435560ce43d7660602cc219fb3785cbaf6",
+  "input_shape_sha256": "e914fc347db36f393d7fd497ac07ded2cee5f108d19aa850d16059541ca8f912",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

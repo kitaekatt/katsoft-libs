@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/frontdoor",
+  "decision": "none",
+  "source_sha": "a648c7d30f2bda09563c04ebd36a75ffce220be9",
+  "input_sha256": "9b0e07364ff1c91de7196db401ec873d6298361167555a5f5ede95afb458d56b",
+  "input_shape_sha256": "ac6b59d9cd2e1bab505fd9d972d3d93b228edc5723be2e351dc578b33d738291",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

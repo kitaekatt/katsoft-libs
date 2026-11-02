@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/graph/viewer/static",
+  "decision": "none",
+  "source_sha": "10caf517ec08cd144aa13d453d7531cfc0f22805",
+  "input_sha256": "519a1491a54b0486cd00c29c8d85817bc92df37417641dda3019200a123cf075",
+  "input_shape_sha256": "e291630eb0a9fc7307d0f7fa134a92aaae4860182369f491cf8c6b6df7e1db8f",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

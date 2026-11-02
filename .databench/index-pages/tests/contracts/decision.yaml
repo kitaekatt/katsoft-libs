@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/contracts",
+  "decision": "none",
+  "source_sha": "7b9d3c8f47a5601aeb43f8bf861779fb0cd47abc",
+  "input_sha256": "574e13203c457325df6f8282838b89c828db5438dccbdbaa65a8439ffa1307e0",
+  "input_shape_sha256": "88ec8fac10237189b0618b60771e98a48aeb13c1a35bb72f7c0517d61d47aa2a",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

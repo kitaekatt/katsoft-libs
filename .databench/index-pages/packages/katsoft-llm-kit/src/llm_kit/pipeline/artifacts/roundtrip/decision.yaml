@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/roundtrip",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "ea0a4e6d11c387b13c703ed008e2f567bf4cb7fc2a715710dfdd7745c9e9dfb0",
+  "input_shape_sha256": "8716cdc7e0bb7b181e726eb8a9347c2e04b6ef0bb6f1ae3866e3e8e379fe2679",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

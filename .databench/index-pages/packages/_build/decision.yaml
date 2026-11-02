@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/_build",
+  "decision": "none",
+  "source_sha": "65edb82c09e44a906239e891bb20a3d0abadde0c",
+  "input_sha256": "7d28f3938377faac9c50e5f1f17efd215d287fb54487faf6c43a1173362e6e9b",
+  "input_shape_sha256": "df9147c47cad0d8d68616af6234515678279460f44df7b464e66d5ba1621bddf",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

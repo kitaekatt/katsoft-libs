@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/repo-scripts",
+  "decision": "none",
+  "source_sha": "7b9d3c8f47a5601aeb43f8bf861779fb0cd47abc",
+  "input_sha256": "9d0e65f9331b700767ac36bfe6ba0b255ce1ab9f711e4fcd9da4e0cf87761e64",
+  "input_shape_sha256": "70a8c113923d4ef536f814ad5993595d63a1b468152df82291bae007267d2bc3",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/analysis/audit",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "fec4b8797b61b2b517a9537dea55c56e3fe556c5d1f458cf2e412df96162c8c8",
+  "input_shape_sha256": "a693409eae0558336dedf0d9871ada8e9cecccf7e1d7f3f1cda4e7af16937d38",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

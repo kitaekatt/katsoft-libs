@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "docs/reference",
+  "decision": "none",
+  "source_sha": "a52cddabeaf54b9522cf0702038251afdf3f079e",
+  "input_sha256": "45cb99722cc55fab184d6f3bff5e919ea1adeabc722a2e5cc2bb816a8d518071",
+  "input_shape_sha256": "ad29efbb7a20548f663472994e3a4505bf602907374a26563af4e92e5cfe928e",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

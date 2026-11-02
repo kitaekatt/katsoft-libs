@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/packaging/probes",
+  "decision": "none",
+  "source_sha": "65749f37ba5100955200f07aac84fb528f441219",
+  "input_sha256": "f117127f26b96e4bf41a562a33b8a01e222f19413d766a514623ea8fb6a6b9a0",
+  "input_shape_sha256": "3d4cf502441210fdcdcff43b07ba20879945deddbf075edf7bf2a9fde057190c",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": ".claude",
+  "decision": "none",
+  "source_sha": "7b9d3c8f47a5601aeb43f8bf861779fb0cd47abc",
+  "input_sha256": "0c343a8043c350cf0f176c07814595f5c9b13e935e55cb97e6256bcb79b0b91f",
+  "input_shape_sha256": "abb22c93b1b3731b2631b33287f020f946c7747291ccb21229a2680c2cc311d4",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

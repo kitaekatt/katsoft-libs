@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/llm-kit/graph/fixtures/beta/stages",
+  "decision": "none",
+  "source_sha": "bb0b9b5fac3444f2c264d0179afa8495b260bf60",
+  "input_sha256": "e8b8756777470e1d62686044b18f6184addf7c2b2edfea398ff859952ea5ff6e",
+  "input_shape_sha256": "92e398c18540010873c085599aa48e599a44377aa3f6db6b2031df3ee6cc5266",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

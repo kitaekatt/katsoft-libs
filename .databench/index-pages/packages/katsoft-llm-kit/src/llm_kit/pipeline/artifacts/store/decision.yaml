@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/store",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "03b1689a4025f3a85f20ed682319b4bbf189158f814679103d19cc6839c3c200",
+  "input_shape_sha256": "82b5b5e5a39696f308ddf31c838d81a1383ef3d8cccdb6fdbf5c6d68efa30bc6",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

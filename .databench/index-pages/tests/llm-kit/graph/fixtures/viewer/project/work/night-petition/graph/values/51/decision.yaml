@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/llm-kit/graph/fixtures/viewer/project/work/night-petition/graph/values/51",
+  "decision": "none",
+  "source_sha": "0c6473e85c13b7e500ef100ccd4d64824c72f5d8",
+  "input_sha256": "ed4f71ae935490d3df8e097b25f407436f6dd2d04ba1e791522d1728d3fbc867",
+  "input_shape_sha256": "847b2cc7854f17c05520810b134f184c614ff72b0709678099da77b657ce6570",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

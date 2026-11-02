@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/llm-kit/graph/fixtures/viewer/project/state",
+  "decision": "none",
+  "source_sha": "0c6473e85c13b7e500ef100ccd4d64824c72f5d8",
+  "input_sha256": "9b08d4af2cf1206bdb70615aff046332d0c0d5a19ddd6e5c52d02c6e9e32e0d5",
+  "input_shape_sha256": "92ec5bb29d01ef0b4c50c0bd4289b8690fe3103546b77deae3feed5387c5ea91",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

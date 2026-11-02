@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/storage",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "6986e35e3bf3009d5850e2f979294d17e7f2111fafd31e85e358b462b27df657",
+  "input_shape_sha256": "08a2a2dd81d787fa6cff3014c31f7075af334ae1533593ef3bc18674fe420953",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

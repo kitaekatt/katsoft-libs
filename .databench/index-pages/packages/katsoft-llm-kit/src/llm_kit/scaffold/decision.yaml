@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/scaffold",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "590e9d70fa7795025e0ccf7345f0c0bc153dc2164ad570305cb50716290c50e1",
+  "input_shape_sha256": "7ed09baa058f87c4c905632011f5e65b7482d76a92daee68698e1afaf3718ef3",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}
