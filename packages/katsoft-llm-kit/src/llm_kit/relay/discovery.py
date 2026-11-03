@@ -63,6 +63,7 @@ homes.
 from __future__ import annotations
 
 import contextlib
+import hmac
 import json
 import os
 import re
@@ -319,7 +320,7 @@ class RegistrationTable:
     def _by_id(self, registration_id: str, nonce: str) -> Registration:
         for registration in self._by_session.values():
             if registration.registration_id == registration_id:
-                if registration.channel_nonce != nonce:
+                if not hmac.compare_digest(registration.channel_nonce.encode(), str(nonce).encode()):
                     raise P.RelayError("nonce_mismatch", "channel nonce does not match the registration")
                 return registration
         raise P.RelayError("registration_unknown", "unknown or lapsed registration; register again")
@@ -471,6 +472,17 @@ class RegistrationTable:
             )
             self._by_session[registration.session_id] = registration
         return HeartbeatOutcome(registration, changed, old)
+
+    def peek(self, registration_id: str) -> Optional[Registration]:
+        """The live registration with this id, or ``None``; never renews the lease.
+
+        Sweeps lapsed leases like every other call (their end events reach the listeners).
+        """
+        with self._locked(self._clock()):
+            for registration in self._by_session.values():
+                if registration.registration_id == registration_id:
+                    return registration
+        return None
 
     def touch(self, registration_id: str, session_id: str, channel_nonce: str) -> Registration:
         """Renew the lease (``poll`` does this)."""

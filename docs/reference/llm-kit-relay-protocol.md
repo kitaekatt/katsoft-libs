@@ -166,6 +166,7 @@ command for `consent_refused`, or `{"message_id": ...}` for a refused send.
 | `bad_request` | no | 400 | Envelope or params fail their schema, or an identity is malformed. |
 | `unsupported_protocol` | no | 400 | `protocol` is not `relay-protocol/1`. |
 | `unknown_verb` | no | 404 | No such verb. |
+| `not_implemented` | no | 501 | The verb exists but this relay or hub does not serve it. |
 | `unauthenticated` | no | 401 | Missing or wrong relay token or hub bearer. |
 | `origin_not_allowed` | no | 403 | The origin kind may not call this verb, or names another machine. |
 | `grant_required` | no | 403 | No grant reference and no covering live grant. |

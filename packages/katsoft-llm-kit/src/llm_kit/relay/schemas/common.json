@@ -195,6 +195,7 @@
         "bad_request",
         "unsupported_protocol",
         "unknown_verb",
+        "not_implemented",
         "unauthenticated",
         "origin_not_allowed",
         "grant_required",

@@ -692,3 +692,8 @@ def test_reference_document_names_every_verb_code_and_state():
                                  P.PROTOCOL, P.HEADER_RELAY_TOKEN, P.HEADER_GRANT, "origin_proof")
                if f"`{word}`" not in text]
     assert not missing, f"{DOC.name} does not name: {missing}"
+
+
+def test_not_implemented_is_a_non_retryable_501():
+    assert P.ERROR_CODES["not_implemented"] == (False, 501)
+    assert P.RelayError("not_implemented", "x").http_status == 501

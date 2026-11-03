@@ -153,6 +153,7 @@ ERROR_CODES: Mapping[str, tuple[bool, int]] = {
     "bad_request": (False, 400),
     "unsupported_protocol": (False, 400),
     "unknown_verb": (False, 404),
+    "not_implemented": (False, 501),
     "unauthenticated": (False, 401),
     "origin_not_allowed": (False, 403),
     "grant_required": (False, 403),

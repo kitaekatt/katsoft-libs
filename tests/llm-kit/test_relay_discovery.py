@@ -729,3 +729,29 @@ def test_lapsed_lease_event_is_emitted_when_register_conflicts(sleeper) -> None:
         register(table, held, os.getpid())                         # held by another live pid
     assert err.value.code == "registration_conflict"
     assert [(e.address, e.reason) for e in events] == [(f"{MACHINE}/claude/{lapsing}", "lease_lapsed")]
+
+
+def test_nonce_compare_is_constant_time(monkeypatch) -> None:
+    calls = []
+    real = D.hmac.compare_digest
+    monkeypatch.setattr(D.hmac, "compare_digest", lambda a, b: calls.append((a, b)) or real(a, b))
+    table = make_table(Clock())
+    session = sid()
+    reg = register(table, session, os.getpid()).registration
+    with pytest.raises(P.RelayError) as err:
+        table.heartbeat(reg.registration_id, session, "x" * 24)
+    assert err.value.code == "nonce_mismatch"
+    assert len(calls) == 1
+
+
+def test_peek_does_not_renew_the_lease_and_returns_none_when_unknown() -> None:
+    clock = Clock()
+    table = make_table(clock)
+    session = sid()
+    reg = register(table, session, os.getpid()).registration
+    clock.now += 30
+    assert table.peek(reg.registration_id) == reg
+    assert table.peek(reg.registration_id).lease_expires_at == reg.lease_expires_at
+    assert table.peek("reg_nope") is None
+    clock.now += 1000
+    assert table.peek(reg.registration_id) is None

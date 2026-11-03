@@ -561,3 +561,16 @@ def test_mailbox_db_path_is_under_the_state_root(tmp_path):
     from llm_kit.relay.config import StatePaths
 
     assert M.mailbox_db_path(StatePaths(tmp_path)) == tmp_path / "mailbox.sqlite3"
+
+
+def test_empty_poll_takes_no_write_transaction(box: M.Mailbox, monkeypatch) -> None:
+    writes = []
+    real = box._write
+    monkeypatch.setattr(box, "_write", lambda: writes.append(1) or real())
+    assert box.poll(BOB) == []
+    assert writes == []
+    # a poll with something to deliver still writes
+    send(box)
+    writes.clear()
+    assert len(box.poll(BOB)) == 1
+    assert writes == [1]

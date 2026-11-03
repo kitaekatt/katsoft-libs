@@ -600,6 +600,14 @@ class Mailbox:
         origin = f"channel:{address}"
         now = self._clock()
         out: list[P.DeliveredMessage] = []
+        with self._read() as conn:  # an idle poll must not take the write lock
+            pending = conn.execute(
+                "SELECT 1 FROM messages WHERE to_addr = ? AND ((state IN ('queued', 'delivered') AND expires_at <= ?)"
+                " OR state = 'queued' OR (state = 'delivered' AND delivered_at <= ?)) LIMIT 1",
+                (address, now, now - self.ack_timeout_s),
+            ).fetchone()
+        if pending is None:
+            return out
         with self._write() as conn:
             self._expire(conn, now, address)
             rows = conn.execute(
