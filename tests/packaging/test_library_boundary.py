@@ -186,6 +186,9 @@ PATH_ALLOWLIST: dict[str, list[tuple[str, str]]] = {
         ('Path.home() / ".claude" / "projects"', "Claude Code transcript root read by the claude-bg driver"),
         ('Path.home() / ".claude" / "jobs"', "Claude Code background-jobs root read by the claude-bg driver"),
     ],
+    "katsoft-llm-kit/src/llm_kit/relay/discovery.py": [
+        ('return Path.home() / ".claude"', "default root of the Claude Code session files and transcripts that session discovery scans read only; the root is injectable (DiscoveryRoots) and tests never use the default"),
+    ],
     "katsoft-llm-kit/src/llm_kit/relay/config.py": [
         ('Path.home() / ".claude" / "env.json"', "default path of the fleet machine registry env.json, read only; the relay resolves its machine label from it and the path is injectable"),
     ],
