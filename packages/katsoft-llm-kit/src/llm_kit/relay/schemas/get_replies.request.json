@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/get_replies.request.json",
+  "title": "get_replies params",
+  "description": "Exactly one of message_id or address.",
+  "type": "object",
+  "properties": {
+    "message_id": {
+      "$ref": "#/$defs/message_id"
+    },
+    "address": {
+      "$ref": "#/$defs/target"
+    },
+    "wait_s": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 25
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    }
+  },
+  "required": [],
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "properties": {
+        "message_id": {},
+        "wait_s": {},
+        "limit": {}
+      },
+      "required": [
+        "message_id"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "address": {},
+        "wait_s": {},
+        "limit": {}
+      },
+      "required": [
+        "address"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "examples": [
+    {
+      "message_id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW",
+      "wait_s": 10
+    },
+    {
+      "address": "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+      "limit": 20
+    }
+  ]
+}

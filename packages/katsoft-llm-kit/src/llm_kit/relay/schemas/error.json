@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/error.json",
+  "title": "error",
+  "description": "The error object (common $defs/error).",
+  "$ref": "#/$defs/error",
+  "examples": [
+    {
+      "code": "machine_unreachable",
+      "message": "relay 5090w did not answer",
+      "retryable": true
+    },
+    {
+      "code": "paused",
+      "message": "relay paused",
+      "retryable": true,
+      "details": {
+        "scope": "relay",
+        "paused_since": 1793664000.0
+      }
+    }
+  ]
+}

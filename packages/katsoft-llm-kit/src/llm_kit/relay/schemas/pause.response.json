@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/pause.response.json",
+  "title": "pause result",
+  "description": "Set the relay or hub pause flag. Response result (unknown fields allowed).",
+  "type": "object",
+  "properties": {
+    "pause": {
+      "$ref": "#/$defs/pause_state"
+    }
+  },
+  "required": [
+    "pause"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "pause": {
+        "relay": {
+          "paused": true,
+          "paused_since": 1793664060.0,
+          "reason": "owner kill switch"
+        },
+        "hub": {
+          "paused": false,
+          "paused_since": null,
+          "reason": null
+        }
+      }
+    }
+  ]
+}

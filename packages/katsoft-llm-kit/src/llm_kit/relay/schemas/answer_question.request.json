@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/answer_question.request.json",
+  "title": "answer_question params",
+  "description": "decision answer carries input; decision reject may carry reason. Mirrors llm-kit jobs resolve.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "#/$defs/question_id"
+    },
+    "decision": {
+      "enum": [
+        "answer",
+        "reject"
+      ]
+    },
+    "input": {
+      "description": "Any JSON value; validated against the question's request_schema."
+    },
+    "reason": {
+      "$ref": "#/$defs/reason_text"
+    }
+  },
+  "required": [
+    "id",
+    "decision"
+  ],
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "properties": {
+        "id": {},
+        "decision": {
+          "const": "answer"
+        },
+        "input": {}
+      },
+      "required": [
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "id": {},
+        "decision": {
+          "const": "reject"
+        },
+        "reason": {}
+      },
+      "additionalProperties": false
+    }
+  ],
+  "examples": [
+    {
+      "id": "q:m5pro/jobs-main:run-20261103-01:7",
+      "decision": "answer",
+      "input": {
+        "choice": "yes"
+      }
+    },
+    {
+      "id": "q:m5pro/jobs-main:run-20261103-01:7",
+      "decision": "reject",
+      "reason": "Wait until the owner is back."
+    },
+    {
+      "id": "q:m5pro/jobs-main:run-20261103-01:7",
+      "decision": "reject"
+    }
+  ]
+}

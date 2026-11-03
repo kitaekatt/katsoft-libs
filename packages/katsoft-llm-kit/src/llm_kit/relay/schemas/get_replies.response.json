@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/get_replies.response.json",
+  "title": "get_replies result",
+  "description": "Messages and their replies, with a capped long-poll. Response result (unknown fields allowed).",
+  "type": "object",
+  "properties": {
+    "messages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/message_record"
+      }
+    }
+  },
+  "required": [
+    "messages"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "messages": [
+        {
+          "id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW",
+          "to": "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+          "sender": "direct:m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+          "kind": "question",
+          "body": "Are the relay tests green?",
+          "hop": 0,
+          "created_at": 1793664000.0,
+          "expires_at": 1793667600.0,
+          "updated_at": 1793664040.0,
+          "state": "answered",
+          "attempts": 1,
+          "task": "plugins-kit/harness-messaging",
+          "reply": {
+            "id": "rpl_01JBX3VA2C4E6G8J0K2M4N6P8Q",
+            "in_reply_to": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW",
+            "sender": "channel:m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+            "state": "answered",
+            "body": "Done: tests pass.",
+            "at": 1793664040.0
+          }
+        },
+        {
+          "id": "msg_01JBX3W0REFUSED000000000000",
+          "to": "m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+          "sender": "claude.ai/owner",
+          "kind": "note",
+          "body": "hello",
+          "hop": 0,
+          "created_at": 1793664000.0,
+          "expires_at": 1793667600.0,
+          "updated_at": 1793664000.0,
+          "state": "refused",
+          "attempts": 0,
+          "state_reason": "not_opted_in"
+        }
+      ]
+    }
+  ]
+}

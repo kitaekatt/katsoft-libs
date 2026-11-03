@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/ask_llm.request.json",
+  "title": "ask_llm params",
+  "description": "Exactly one form: prompt (optionally in a named conversation) or explicit messages.",
+  "type": "object",
+  "properties": {
+    "endpoint": {
+      "$ref": "#/$defs/address"
+    },
+    "prompt": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32768
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/chat_message"
+      },
+      "minItems": 1,
+      "maxItems": 64
+    },
+    "conversation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "A named conversation the relay keeps; the prompt is its next user turn."
+    },
+    "max_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32768
+    },
+    "temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2
+    }
+  },
+  "required": [
+    "endpoint"
+  ],
+  "additionalProperties": false,
+  "anyOf": [
+    {
+      "properties": {
+        "endpoint": {},
+        "prompt": {},
+        "conversation": {},
+        "max_tokens": {},
+        "temperature": {}
+      },
+      "required": [
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "properties": {
+        "endpoint": {},
+        "messages": {},
+        "max_tokens": {},
+        "temperature": {}
+      },
+      "required": [
+        "messages"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "examples": [
+    {
+      "endpoint": "m5pro/llm/qwen38-m5-32k-local",
+      "prompt": "Summarise the relay protocol in one line."
+    },
+    {
+      "endpoint": "m5pro/llm/qwen38-m5-32k-local",
+      "prompt": "And the grant rules?",
+      "conversation": "relay-notes",
+      "max_tokens": 256
+    },
+    {
+      "endpoint": "m5pro/llm/qwen38-m5-32k-local",
+      "messages": [
+        {
+          "role": "system",
+          "content": "Be brief."
+        },
+        {
+          "role": "user",
+          "content": "Hi"
+        }
+      ],
+      "temperature": 0.2
+    }
+  ]
+}

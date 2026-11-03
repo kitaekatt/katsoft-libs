@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/grant_check.request.json",
+  "title": "grant_check params",
+  "description": "Whether a live grant covers (session, verb, target), without consuming it. Request params (strict).",
+  "type": "object",
+  "properties": {
+    "session": {
+      "$ref": "#/$defs/address"
+    },
+    "verb": {
+      "$ref": "#/$defs/grantable_verb"
+    },
+    "target": {
+      "$ref": "#/$defs/target"
+    },
+    "grant_id": {
+      "$ref": "#/$defs/grant_id"
+    }
+  },
+  "required": [
+    "session",
+    "verb"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "session": "m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+      "verb": "send_message",
+      "target": "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11"
+    },
+    {
+      "session": "m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+      "verb": "list_machines",
+      "grant_id": "grt_01JBX3T7Z1Y2X3W4V5U6T7S8R9"
+    }
+  ]
+}

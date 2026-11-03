@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/ask_llm.response.json",
+  "title": "ask_llm result",
+  "description": "A completion from a local LLM endpoint. Response result (unknown fields allowed).",
+  "type": "object",
+  "properties": {
+    "endpoint": {
+      "$ref": "#/$defs/address"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 0
+    },
+    "finish_reason": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "conversation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "turn": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "required": [
+    "endpoint",
+    "text"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "endpoint": "m5pro/llm/qwen38-m5-32k-local",
+      "text": "A frozen JSON contract.",
+      "finish_reason": "stop",
+      "conversation": "relay-notes",
+      "turn": 2,
+      "usage": {
+        "prompt_tokens": 40,
+        "completion_tokens": 6
+      }
+    }
+  ]
+}

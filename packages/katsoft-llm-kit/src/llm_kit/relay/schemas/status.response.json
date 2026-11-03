@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/status.response.json",
+  "title": "status result",
+  "description": "Protocol, machine, pause state. Response result (unknown fields allowed).",
+  "type": "object",
+  "properties": {
+    "protocol": {
+      "$ref": "#/$defs/protocol"
+    },
+    "machine": {
+      "$ref": "#/$defs/machine_label"
+    },
+    "now": {
+      "$ref": "#/$defs/epoch"
+    },
+    "pause": {
+      "$ref": "#/$defs/pause_state"
+    },
+    "library_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "registrations": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "protocol",
+    "machine",
+    "now",
+    "pause"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "protocol": "relay-protocol/1",
+      "machine": "m5pro",
+      "now": 1793664000.0,
+      "pause": {
+        "relay": {
+          "paused": false,
+          "paused_since": null,
+          "reason": null
+        },
+        "hub": {
+          "paused": false,
+          "paused_since": null,
+          "reason": null
+        }
+      },
+      "library_version": "1.11.0",
+      "registrations": 2
+    }
+  ]
+}

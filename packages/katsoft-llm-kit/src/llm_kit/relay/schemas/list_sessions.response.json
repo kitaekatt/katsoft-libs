@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/list_sessions.response.json",
+  "title": "list_sessions result",
+  "description": "Sessions with address, cwd, title, task and state. Response result (unknown fields allowed).",
+  "type": "object",
+  "properties": {
+    "sessions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/session"
+      }
+    },
+    "machines": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/machine_reach"
+      }
+    }
+  },
+  "required": [
+    "sessions",
+    "machines"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "sessions": [
+        {
+          "address": "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+          "machine": "m5pro",
+          "harness": "claude",
+          "session_id": "7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+          "state": "live-accepting",
+          "registered": true,
+          "accepts": [
+            "note",
+            "instruction",
+            "question"
+          ],
+          "cwd": "/Users/christina/Dev/katsoft-libs",
+          "title": "relay F0",
+          "task": "plugins-kit/harness-messaging",
+          "pid": 41234,
+          "version": "2.1.317",
+          "last_activity_at": 1793664030.0
+        },
+        {
+          "address": "m5pro/codex/019a3c5e-7d21-7b90-a4f2-3e8d6c1b9a07",
+          "machine": "m5pro",
+          "harness": "codex",
+          "session_id": "019a3c5e-7d21-7b90-a4f2-3e8d6c1b9a07",
+          "state": "live-read-only",
+          "registered": false,
+          "accepts": []
+        }
+      ],
+      "machines": [
+        {
+          "machine": "m5pro",
+          "status": "up"
+        },
+        {
+          "machine": "5090w",
+          "status": "unreachable",
+          "error": {
+            "code": "machine_unreachable",
+            "message": "relay 5090w did not answer",
+            "retryable": true
+          }
+        }
+      ]
+    }
+  ]
+}

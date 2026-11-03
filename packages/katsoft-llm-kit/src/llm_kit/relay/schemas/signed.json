@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/signed.json",
+  "title": "signed",
+  "description": "The signed object (common $defs/signed).",
+  "$ref": "#/$defs/signed",
+  "examples": [
+    {
+      "audience": "m5pro",
+      "issued_at": 1793664000.0,
+      "not_after": 1793664030.0,
+      "nonce": "n-01JBX3",
+      "key_id": "enclave:owner-1",
+      "alg": "es256",
+      "signature": "c2lnbmF0dXJlLXBsYWNlaG9sZGVy"
+    },
+    {}
+  ]
+}

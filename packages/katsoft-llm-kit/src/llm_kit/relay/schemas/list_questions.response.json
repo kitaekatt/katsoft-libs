@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/list_questions.response.json",
+  "title": "list_questions result",
+  "description": "Pending operator questions (job interrupts). Response result (unknown fields allowed).",
+  "type": "object",
+  "properties": {
+    "questions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/question"
+      }
+    },
+    "machines": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/machine_reach"
+      }
+    }
+  },
+  "required": [
+    "questions",
+    "machines"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "questions": [
+        {
+          "id": "q:m5pro/jobs-main:run-20261103-01:7",
+          "machine": "m5pro",
+          "source": {
+            "kind": "job",
+            "ledger": "jobs-main",
+            "run_id": "run-20261103-01",
+            "job_id": "review-1",
+            "interrupt_id": "7"
+          },
+          "kind": "choose-option",
+          "payload": {
+            "question": "Ship 1.11.0?",
+            "options": [
+              "yes",
+              "no"
+            ]
+          },
+          "request_schema": {
+            "type": "object",
+            "properties": {
+              "choice": {
+                "enum": [
+                  "yes",
+                  "no"
+                ]
+              }
+            },
+            "required": [
+              "choice"
+            ]
+          },
+          "created_at": 1793664000.0,
+          "expires_at": null,
+          "state": "open"
+        }
+      ],
+      "machines": [
+        {
+          "machine": "m5pro",
+          "status": "up"
+        }
+      ]
+    }
+  ]
+}

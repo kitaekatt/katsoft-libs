@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/list_machines.response.json",
+  "title": "list_machines result",
+  "description": "Machines with relay status and last contact. Response result (unknown fields allowed).",
+  "type": "object",
+  "properties": {
+    "machines": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/machine"
+      }
+    }
+  },
+  "required": [
+    "machines"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "machines": [
+        {
+          "machine": "m5pro",
+          "status": "up",
+          "protocol": "relay-protocol/1",
+          "last_contact_at": 1793664005.0,
+          "pause": {
+            "relay": {
+              "paused": false,
+              "paused_since": null,
+              "reason": null
+            },
+            "hub": {
+              "paused": false,
+              "paused_since": null,
+              "reason": null
+            }
+          },
+          "endpoints": [
+            "m5pro/llm/qwen38-m5-32k-local",
+            "m5pro/llm/qwen36-m5-local"
+          ]
+        },
+        {
+          "machine": "5090w",
+          "status": "unreachable",
+          "error": {
+            "code": "machine_unreachable",
+            "message": "relay 5090w did not answer",
+            "retryable": true
+          }
+        }
+      ]
+    }
+  ]
+}

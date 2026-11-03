@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/send_message.request.json",
+  "title": "send_message params",
+  "description": "Queue a message for an opted-in session. Request params (strict).",
+  "type": "object",
+  "properties": {
+    "to": {
+      "$ref": "#/$defs/target"
+    },
+    "kind": {
+      "$ref": "#/$defs/message_kind"
+    },
+    "body": {
+      "$ref": "#/$defs/body"
+    },
+    "id": {
+      "$ref": "#/$defs/message_id"
+    },
+    "expires_in_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 86400
+    },
+    "task": {
+      "$ref": "#/$defs/short_text"
+    },
+    "hop": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Hops so far; the relay refuses hop_limit above MAX_HOP (1)."
+    }
+  },
+  "required": [
+    "to",
+    "kind",
+    "body"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "to": "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+      "kind": "question",
+      "body": "Are the relay tests green?",
+      "id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW",
+      "expires_in_s": 3600,
+      "task": "plugins-kit/harness-messaging"
+    },
+    {
+      "to": "m5pro/claude/latest",
+      "kind": "note",
+      "body": "FYI: 1.11.0 is out."
+    }
+  ]
+}

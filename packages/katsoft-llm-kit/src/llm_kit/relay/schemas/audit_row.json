@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/audit_row.json",
+  "title": "audit_row",
+  "description": "The audit_row object (common $defs/audit_row).",
+  "$ref": "#/$defs/audit_row",
+  "examples": [
+    {
+      "seq": 41,
+      "at": 1793664001.0,
+      "machine": "m5pro",
+      "ingress": "relay",
+      "event": "call",
+      "origin": "direct:m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+      "verb": "send_message",
+      "outcome": "ok",
+      "request_id": "req-0001",
+      "target": "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+      "grant_id": "grt_01JBX3T7Z1Y2X3W4V5U6T7S8R9",
+      "message_id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW",
+      "from_state": null,
+      "to_state": "queued",
+      "code": null,
+      "detail": null
+    },
+    {
+      "seq": 42,
+      "at": 1793667601.0,
+      "machine": "m5pro",
+      "ingress": "relay",
+      "event": "transition",
+      "origin": "relay:m5pro",
+      "verb": "expire",
+      "outcome": "ok",
+      "message_id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW",
+      "from_state": "queued",
+      "to_state": "lapsed"
+    },
+    {
+      "seq": 43,
+      "at": 1793664002.0,
+      "machine": "m5pro",
+      "ingress": "hub",
+      "event": "call",
+      "origin": "claude.ai/owner",
+      "verb": "send_message",
+      "outcome": "refused",
+      "target": "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+      "code": "grant_required"
+    }
+  ]
+}
