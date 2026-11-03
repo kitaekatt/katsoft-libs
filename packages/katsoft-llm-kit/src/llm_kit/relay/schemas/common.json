@@ -219,6 +219,7 @@
         "answer_invalid",
         "registration_unknown",
         "registration_conflict",
+        "already_running",
         "nonce_mismatch",
         "consent_refused",
         "endpoint_refused",

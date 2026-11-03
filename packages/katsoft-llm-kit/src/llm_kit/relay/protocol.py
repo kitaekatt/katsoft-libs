@@ -177,6 +177,7 @@ ERROR_CODES: Mapping[str, tuple[bool, int]] = {
     "answer_invalid": (False, 422),
     "registration_unknown": (False, 404),
     "registration_conflict": (True, 409),
+    "already_running": (False, 409),
     "nonce_mismatch": (False, 403),
     "consent_refused": (False, 403),
     "endpoint_refused": (False, 403),

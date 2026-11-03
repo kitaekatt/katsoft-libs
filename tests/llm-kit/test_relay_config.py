@@ -315,7 +315,7 @@ def test_second_holder_of_a_role_is_refused(tmp_path, env_json):
         second = L.RoleLock(cfg.paths, "relay")
         with pytest.raises(L.SingletonHeld) as caught:
             second.acquire()
-        assert caught.value.code == "registration_conflict" and caught.value.holder_pid == os.getpid()
+        assert caught.value.code == "already_running" and caught.value.holder_pid == os.getpid()
         assert not second.held
         with L.RoleLock(cfg.paths, "hub"):  # another role is independent
             pass

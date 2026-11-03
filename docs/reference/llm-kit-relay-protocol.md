@@ -188,6 +188,7 @@ command for `consent_refused`, or `{"message_id": ...}` for a refused send.
 | `answer_invalid` | no | 422 | The answer's input fails the question's request schema. |
 | `registration_unknown` | no | 404 | Unknown or lapsed registration; the channel must `register` again. |
 | `registration_conflict` | yes | 409 | A live registration from another process holds this session. |
+| `already_running` | no | 409 | A second `serve` of the same relay or hub role was refused because the singleton lock is held. |
 | `nonce_mismatch` | no | 403 | The channel nonce does not match the registration. |
 | `consent_refused` | no | 403 | The consent policy does not allow this endpoint's cost class. |
 | `endpoint_refused` | no | 403 | The endpoint is not a loopback entry, or no explicit endpoint was named. |

@@ -15,8 +15,7 @@ Singleton. A role (``relay`` or ``hub``) runs at most once per state
 directory. The holder owns an exclusive ``flock`` on ``<role>.pid`` for its
 whole life and writes its pid there; the kernel releases the lock when the
 process dies, so a stale pidfile never blocks a start. A second holder is
-refused with the protocol error ``registration_conflict`` (the closest code
-``relay-protocol/1`` defines; it has no dedicated one). POSIX only.
+refused with the protocol error ``already_running``. POSIX only.
 
 Pause. ``pause.json`` holds the persisted ``relay`` and ``hub`` pause flags
 (protocol section 16): ``paused``, ``paused_since`` (epoch seconds, set when a
@@ -138,11 +137,11 @@ def token_matches(presented: Optional[str], expected: str) -> bool:
 # --------------------------------------------------------------------------
 
 class SingletonHeld(P.RelayError):
-    """Another process already serves this role (``registration_conflict``)."""
+    """Another process already serves this role (``already_running``)."""
 
     def __init__(self, role: str, pidfile: Path, holder_pid: Optional[int]) -> None:
         super().__init__(
-            "registration_conflict",
+            "already_running",
             f"a {role} is already running (pidfile {pidfile}, pid {holder_pid if holder_pid else 'unknown'})",
             details={"role": role, "pid": holder_pid},
         )
