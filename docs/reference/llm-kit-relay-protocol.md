@@ -55,7 +55,7 @@ exactly the verb's response result.
 | Header | Where | Meaning |
 |---|---|---|
 | `X-Relay-Token` | every request to a relay | The relay token. Without a valid one, the relay refuses `unauthenticated`. |
-| `Authorization: Bearer <hub bearer>` | every request to the hub's MCP endpoint | The hub bearer. It authenticates the connector to the hub only and never authorizes a relay call. |
+| `Authorization: Bearer <hub bearer>` | every request to the hub's MCP endpoint; also every hub-origin request to a relay (section 20) | The hub bearer. It authenticates the connector to the hub, and a hub-origin request to a relay. By itself it never authorizes a relay call. |
 | `X-Relay-Grant` | optional on a granted verb | A grant id. When present, that grant must cover the call. When absent, the relay picks a covering live grant of the origin's session, and refuses `grant_required` if there is none. |
 
 ### Origins
@@ -110,7 +110,9 @@ The relay token, the hub bearer and every origin are claims a same-user
 process can make: a model with Bash can read the token, forge hook input and
 call the relay over HTTP. Under A the grant check is a guardrail against
 accidental model-initiated calls. It is NOT a security boundary against a
-same-user model.
+same-user model. In particular, any same-user process that holds the relay
+token can mint a grant for any session by claiming that session's `direct`
+origin (section 20).
 
 ### Extension points for alternative B
 
@@ -500,3 +502,159 @@ Files: `common`, `envelope.request`, `envelope.response`, the objects `error`,
   `origin_proof` other than `none`: alternative B or the OAuth phase.
 - `continue_session`, `start_session`, `stop_session` and remote approval of
   permission prompts: later, separately gated phases.
+
+## 20. Relay server decisions (unit S3)
+
+The relay server is `llm_kit/relay/service.py` (the checks and verbs,
+independent of the transport, so the hub can reuse them),
+`llm_kit/relay/server.py` (HTTP), `llm_kit/relay/client.py`
+(`HttpRelayClient`, the `RelayClient` over HTTP) and the CLI group
+`llm-kit relay`. Where sections 2 to 17 leave room, it decides as follows.
+
+### Transport and lifecycle
+
+- The relay binds only a literal loopback address, `RelayConfig.bind("relay")`
+  (`127.0.0.1:4710` by default). The server checks the host before it creates
+  any state, and again on the address the socket bound. A non-loopback host is
+  a configuration error and nothing is bound.
+- Start order: prepare the state (directory, relay token, hub bearer, loopback
+  registry), take the relay role lock, bind. A second relay on the same state
+  directory is refused `already_running` before it binds.
+- A method other than POST, a `Content-Type` other than `application/json`,
+  or a path verb that differs from the envelope's `verb` is `bad_request`. A
+  path that is not `/v1/<verb>`, or names no verb, is `unknown_verb`.
+- A request body over `MAX_REQUEST_BYTES` is `too_large` (HTTP 413) with
+  `details.what` `request`. The JSON constants `NaN` and `Infinity` are
+  `bad_request`. A malformed `origin` identity is `bad_request` at the envelope
+  stage.
+- Every result is validated against its `<verb>.response` schema before it is
+  returned; a result that does not conform is `internal`.
+
+### Authentication
+
+- Every relay request needs a valid `X-Relay-Token`, whatever its origin.
+- A hub-origin request (`claude.ai/<user>`) also needs
+  `Authorization: Bearer <hub bearer>`; without it, or with a wrong one, it is
+  `unauthenticated`. Both comparisons are constant time. The bearer alone
+  never authorizes a relay call. Requiring it on hub origins stops a relay-token
+  holder from claiming the hub origin to skip the `/direct` read grants. A hub
+  therefore sends both headers. Under alternative A this is a guardrail too: a
+  same-user process can read both files.
+
+### Grants
+
+- `grant_mint` and `grant_check` accept only the origin
+  `direct:<this machine>/claude/<S>` with `session` equal to `<S>`. Any other
+  origin, and a `session` other than the caller's own, is
+  `origin_not_allowed`. `origin_proof` must be `{"type": "none"}`;
+  `enclave-signature` is `proof_unsupported`.
+- Plainly: under alternative A, a same-user process that holds the relay token
+  can mint a grant for any session by claiming that session's `direct`
+  origin. The grant check stops accidental model-initiated calls; it is not a
+  security boundary. `llm-kit relay client` has no mint verb. The `/direct`
+  UserPromptSubmit hook is the mint path.
+- A selector in a granted call's target param (`read_session` `address`,
+  `send_message` `to`, `get_replies` `address`) is resolved to an address at
+  the grant stage, before coverage is checked. A selector that matches no live
+  session, or several, is refused there (`target_not_found`,
+  `target_ambiguous`). Selector targets of `grant_mint` and `grant_check`
+  resolve the same way.
+- Consumption: `send_message` consumes its use in the mailbox transaction that
+  inserts the message. Every other granted verb is checked at the grant stage,
+  before its effect, and consumes one use after its effect succeeded. If a
+  concurrent call took the last use in between, the call is refused
+  `grant_used_up` and its result is withheld (an `ask_llm` conversation turn
+  may already be stored).
+- A hub-origin `send_message` or `answer_question` is `grant_required` at the
+  grant stage, whatever `X-Relay-Grant` names.
+
+### Channel verbs
+
+- A `register` origin must be `channel:<this machine>/claude/<session_id>`. The
+  other channel verbs must name the `session_id` of their params (`heartbeat`:
+  `session_id` or `previous_session_id`). Anything else is
+  `origin_not_allowed`.
+- `ack` and `reply` check the registration and nonce but do not renew the lease
+  (only `register`, `heartbeat` and `poll` do, section 9).
+- When a registration ends (`deregister`, a lapsed lease, a session-id change,
+  or a `register` from a pid that holds another session), the mailbox ends the
+  old address's unfinished messages with `state_reason` `deregistered`,
+  `lease_lapsed` or `session_changed`. The server also sweeps lapsed leases and
+  expired messages every 5 seconds.
+- `poll` long-polls up to `wait_s`. A `send_message` to this relay wakes it at
+  once; a write by another process is seen within the poll interval (1 second).
+  While the relay is paused, `poll` returns at once with no messages, and a
+  waiting `poll` returns when it sees the pause.
+
+### Messaging
+
+- `send_message` resolves `to` with session discovery and derives the refusal
+  from the session's state: `idle` or `ended`, or a registration that ended
+  (also when no transcript shows the session), is `session_ended`;
+  `live-accepting` with the kind in `accepts` is queued; anything else
+  (`live-read-only`, a Codex session, a kind not accepted) is `not_opted_in`.
+  Both refusals are stored `refused`. A target that no store shows is
+  `target_not_found` and creates no row.
+- `get_replies` with `message_id` returns that message; with `address`, the
+  newest `limit` (default 50) messages to that address, oldest first, whoever
+  sent them (unit M9 may narrow this). With `wait_s` it returns as soon as the
+  state or `updated_at` of a listed message changes.
+
+### Reads and control
+
+- `list_machines` lists this machine only: `status` `up` or `paused`, and the
+  endpoints of the relay's loopback registry.
+- `list_sessions` for another machine returns no sessions and lists that
+  machine `unreachable` with `machine_unreachable`: relay-protocol/1 defines no
+  forwarding.
+- `status` adds `registrations` (live registrations), and `library_version`
+  when the package metadata is installed.
+- `list_questions` and `answer_question` are not served by this build (unit
+  Q10). They are refused `unknown_verb` at the verb stage with
+  `details: {"verb": ..., "not_implemented": true}`.
+
+### Audit
+
+- Every request whose envelope names a known verb and a well-formed origin gets
+  one `call` row, refused requests included (also `unauthenticated` ones), with
+  `request_id`, `target`, the `grant_id` of the use consumed, and the refusal
+  `code`. `outcome` is `error` for `internal`, `upstream_unavailable` and
+  `machine_unreachable`, and `refused` for every other code.
+- A request whose body does not parse, that names an unknown verb, or that
+  carries a malformed origin gets no row: the audit table admits only known
+  verbs and identities.
+
+### Client and CLI
+
+- `HttpRelayClient` accepts only a loopback `http` URL (the relay token never
+  leaves this machine) and ignores proxy environment variables. A transport
+  failure is `machine_unreachable`. `poll` and `get_replies` timeouts grow by
+  `wait_s`; `ask_llm` waits up to 660 seconds.
+- `llm-kit relay serve` runs the relay in the foreground until SIGINT or
+  SIGTERM. `pause`, `resume` and `status` call the relay as
+  `operator:<machine>`; with `--offline` they read or write the pause file
+  directly (no relay, no audit row). `llm-kit relay client <verb> --session <S>`
+  calls one of the eight client verbs as `direct:<machine>/claude/<S>`, with
+  `--grant` as `X-Relay-Grant`. Output is JSON; exit 0 ok, 1 refused or
+  unreachable, 2 usage or configuration.
+
+## 21. Session discovery decisions (unit D2)
+
+Session discovery (`llm_kit/relay/discovery.py`, `transcript.py`,
+`redact.py`) decides the following points sections 7 and 13 leave open.
+
+- `idle` means the process is gone and the transcript was written within the
+  last 7 days; otherwise the session is `ended`. The old session id after a
+  `/clear` or resume (a session-id change) is `ended`.
+- Selectors (`latest`, `task:`, `cwd:`) resolve against live sessions only
+  (`live-accepting`, `live-read-only`). Any other session is addressed by its
+  full address. `task:` matches the task recorded on a registration.
+- A `register` from a pid that holds a registration for a different session id
+  ends that registration as `session_changed`: one process, one registration.
+- A tool result whose call is outside the scanned window is withheld (replaced
+  by a short notice and counted as a redaction), as is the result of a call
+  that touched a secrets location.
+- Codex sessions are only `idle` or `ended`: their processes are shared
+  app-servers that hold no rollout file open, so liveness is not detectable.
+- `read_session` may add `skipped_lines`, the count of transcript lines in the
+  scanned window that are not JSON.

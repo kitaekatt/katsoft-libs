@@ -22,6 +22,8 @@ Groups, and where each legacy command now lives:
 ``local``       llm-scripting-kit ``swapper`` and ``acceptance``
 ``consent``     the optional consent layer for the local, subscription and metered cost classes
 ``graph``       generation graphs (``llm_kit.graph``): validate, run and inspect
+``relay``       this machine's harness-messaging relay (``llm_kit.relay``): serve,
+                pause, resume, status and the ``/direct`` client verbs
 
 Each carried verb keeps its arguments, output and exit codes. The exit-code
 tables differ by group because the legacy commands differed (the scripting
@@ -53,6 +55,7 @@ GROUPS = {
     "local": "The local llama-swap model swapper and acceptance runs.",
     "consent": "Show or change the optional consent layer for cost classes.",
     "graph": "Validate, run and inspect generation graphs.",
+    "relay": "Serve this machine's relay, pause or resume it, or call it as a /direct client.",
 }
 
 #: legacy command (llm-scripting-kit, job-kit, content-pipeline adapters) -> its
@@ -138,6 +141,8 @@ def _run_group(group: str, rest: Sequence[str]) -> int:
         from llm_kit.cli.consent import run  # noqa: PLC0415
     elif group == "graph":
         from llm_kit.cli.graph import run  # noqa: PLC0415
+    elif group == "relay":
+        from llm_kit.cli.relay import run  # noqa: PLC0415
     elif group == "frontdoor":
         # Handed straight to the front door's own parser: argparse.REMAINDER on
         # a subparser's sole positional drops a leading option (`frontdoor
