@@ -6,7 +6,7 @@ Status: signed off by the user 2026-10-16 (all 14 decisions).
 
 - Create one published plugin, llm-kit, with one release version and one library, llm_kit.
 - Consolidate under the final namespace privately, prove differential parity, then restructure one boundary at a time before consumer migration.
-- Use 17 import components with the exact acyclic edge set below; namespace initializers re-export nothing. (The 2026-10-16 sign-off had 16; `graph` was added on 2026-10-26 for opt-in generation graphs.)
+- Use 18 import components with the exact acyclic edge set below; namespace initializers re-export nothing. (The 2026-10-16 sign-off had 16; `graph` was added on 2026-10-26 for opt-in generation graphs and `relay` on 2026-11-03 for the cross-harness messaging relay, by the owner's approval of design decision 6 of the harness-messaging task.)
 - Keep completion contracts and capability types below concrete adapters, capability tables, factories, and account probes.
 - Route pipeline backend construction through dispatch while preserving every constructor option and injection seam.
 - Keep flat jobs and leased pipeline execution separate above shared execution and storage mechanics.
@@ -69,6 +69,7 @@ packages/katsoft-llm-kit/src/
       analysis/
     frontdoor/
     graph/
+    relay/
     cli/
 ~~~
 
@@ -94,6 +95,7 @@ Public symbols are exported from their owning component, never the root.
 | llm_kit.pipeline.analysis | Audit reports, reasoning chains, provenance, call audits, snapshots, replay, impact-per-cost views. | Traceability, replay, audit, or reporting requirements change. | The reporting CLI needs no worker controller. |
 | llm_kit.frontdoor | FastAPI routes, translation, group routing, server lifecycle, swapper acceptance. | HTTP compatibility or server lifecycle changes. | Other paths avoid FastAPI, Uvicorn, and httpx. |
 | llm_kit.graph | Opt-in generation graphs: graph file format, project graph config, definition hashes, static validation, and (later units) the runner, operations and viewer. Its package initializer re-exports its modules' names lazily and imports nothing. | The graph format, its static checks or graph execution change. | Graph consumers need it; nothing else in llm_kit imports it except the CLI. |
+| llm_kit.relay | The cross-harness messaging relay: the frozen `relay-protocol/1` contract ([relay protocol](llm-kit-relay-protocol.md)) and the relay's configuration, mailbox, discovery, HTTP service and hub. Its package initializer re-exports nothing. Message validation uses `llm_kit.schema.json_schema`; model calls go through `llm_kit.dispatch`. | The relay wire contract, mailbox state machine, grant rules or relay service change. | Relay consumers need it; nothing else in llm_kit imports it except the CLI. Its third-party packages (the MCP SDK, uvicorn, httpx, psutil, plus openai and pyyaml through dispatch) sit behind the `relay` extra. |
 | llm_kit.cli | argv parsing, subcommand routing, formatting, bootstrap guard, lazy composition. | User-facing syntax or application composition changes. | Executable entry points only. |
 
 ## Execution-overlap ruling
@@ -109,9 +111,11 @@ A -> {B} is the complete inter-component import set. Same-package imports are un
 ~~~text
 Layer 7  cli                -> {schema, completion, registry, adapters, dispatch, jobs,
                                 pipeline.runtime, pipeline.execution, pipeline.analysis,
-                                frontdoor, scaffold, graph}
+                                frontdoor, scaffold, graph, relay}
 Layer 6  graph              -> {schema, completion, registry, dispatch, pipeline.runtime,
                                 pipeline.artifacts, pipeline.execution}
+         relay              -> {completion, registry, adapters, dispatch, execution,
+                                storage, jobs, schema}
 Layer 5  pipeline.execution -> {execution, storage, pipeline.core,
                                 pipeline.artifacts, pipeline.runtime, adapters}
 Layer 4  jobs               -> {completion, registry, dispatch, execution, storage}
@@ -131,7 +135,7 @@ Layer 0  schema             -> {}
          scaffold           -> {}
 ~~~
 
-Deployment-mode support sits outside the 17 components, like `bootstrap_guard`: `llm_kit._runtime` (`mode()`, the routed-contract `load()`, `fleet()`, `require_fleet()`) may be imported by any component, imports no llm_kit module except `llm_kit._deployment`, and `llm_kit._deployment` (the marker the `katsoft-llm-kit` wheel replaces) is imported by `_runtime` alone. The guard `tests/llm-kit/test_import_graph.py` enforces all three. The package deployment, its contracts routing and the features it refuses are in [packaging implementation specification](https://github.com/kitaekatt/plugins-kit/blob/dev/docs/planning/shared-lib-packaging/implementation-spec.md), section C.
+Deployment-mode support sits outside the 18 components, like `bootstrap_guard`: `llm_kit._runtime` (`mode()`, the routed-contract `load()`, `fleet()`, `require_fleet()`) may be imported by any component, imports no llm_kit module except `llm_kit._deployment`, and `llm_kit._deployment` (the marker the `katsoft-llm-kit` wheel replaces) is imported by `_runtime` alone. The guard `tests/llm-kit/test_import_graph.py` enforces all three. The package deployment, its contracts routing and the features it refuses are in [packaging implementation specification](https://github.com/kitaekatt/plugins-kit/blob/dev/docs/planning/shared-lib-packaging/implementation-spec.md), section C.
 
 ### Required moves and composition seams
 
