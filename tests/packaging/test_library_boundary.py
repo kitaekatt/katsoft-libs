@@ -186,6 +186,9 @@ PATH_ALLOWLIST: dict[str, list[tuple[str, str]]] = {
         ('Path.home() / ".claude" / "projects"', "Claude Code transcript root read by the claude-bg driver"),
         ('Path.home() / ".claude" / "jobs"', "Claude Code background-jobs root read by the claude-bg driver"),
     ],
+    "katsoft-llm-kit/src/llm_kit/relay/config.py": [
+        ('Path.home() / ".claude" / "env.json"', "default path of the fleet machine registry env.json, read only; the relay resolves its machine label from it and the path is injectable"),
+    ],
     "katsoft-llm-kit/src/llm_kit/registry/consent.py": [
         ('Path.home() / ".claude" / "plugins"', "READ-ONLY legacy consent file, used only when the neutral $XDG_CONFIG_HOME/llm-kit/consent.json is absent; consent is never written there"),
     ],
