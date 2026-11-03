@@ -680,3 +680,52 @@ def test_results_validate_against_the_frozen_schemas(roots, own_start) -> None:
                "machines": [{"machine": MACHINE, "status": "up"}]}
     assert len(listing["sessions"]) == 2
     assert JS.validate(P.load_schema(P.response_schema_name("list_sessions")), listing) == ()
+
+
+# --------------------------------------------------------------------------
+# swept lease events are delivered even when the call itself is refused
+# --------------------------------------------------------------------------
+
+def _late_heartbeat(table, reg, session, sleeper):
+    table.heartbeat(reg.registration_id, session, NONCE)
+
+
+def _late_touch(table, reg, session, sleeper):
+    table.touch(reg.registration_id, session, NONCE)
+
+
+def _late_deregister(table, reg, session, sleeper):
+    table.deregister(reg.registration_id, session, NONCE)
+
+
+@pytest.mark.parametrize("call", [_late_heartbeat, _late_touch, _late_deregister])
+def test_lapsed_lease_event_is_emitted_when_the_late_call_raises(call, sleeper) -> None:
+    clock = Clock()
+    table = make_table(clock)
+    events: list[D.EndEvent] = []
+    table.add_end_listener(events.append)
+    session = sid()
+    reg = register(table, session, os.getpid()).registration
+    clock.now += P.REGISTRATION_LEASE_S + 1                        # the lease lapses unseen
+    with pytest.raises(P.RelayError) as err:
+        call(table, reg, session, sleeper)                         # the late call is refused ...
+    assert err.value.code == "registration_unknown"
+    assert [(e.address, e.reason) for e in events] == [(f"{MACHINE}/claude/{session}", "lease_lapsed")]
+    table.expire_lapsed()
+    assert len(events) == 1                                        # ... and the event is not repeated
+
+
+def test_lapsed_lease_event_is_emitted_when_register_conflicts(sleeper) -> None:
+    clock = Clock()
+    table = make_table(clock)
+    events: list[D.EndEvent] = []
+    table.add_end_listener(events.append)
+    lapsing, held = sid(), sid()
+    register(table, lapsing, os.getpid())
+    clock.now += 60
+    register(table, held, sleeper.pid)
+    clock.now += 40                                                # lapsing is 100 s old, held 40 s
+    with pytest.raises(P.RelayError) as err:
+        register(table, held, os.getpid())                         # held by another live pid
+    assert err.value.code == "registration_conflict"
+    assert [(e.address, e.reason) for e in events] == [(f"{MACHINE}/claude/{lapsing}", "lease_lapsed")]

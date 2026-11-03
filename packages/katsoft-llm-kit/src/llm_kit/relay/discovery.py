@@ -62,6 +62,7 @@ homes.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -70,7 +71,7 @@ import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Optional, Protocol, Sequence
+from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Protocol, Sequence
 
 from llm_kit.relay import protocol as P
 from llm_kit.relay import transcript as T
@@ -277,6 +278,22 @@ class RegistrationTable:
         if error is not None:
             raise error
 
+    @contextlib.contextmanager
+    def _locked(self, now: float) -> Iterator[list[EndEvent]]:
+        """Hold the lock and sweep lapsed leases; yield the list of end events to deliver.
+
+        The events (the swept ones and any the call appends) are emitted to the listeners after
+        the lock is released, ALSO when the call raises: a lease that lapsed is ended either way,
+        so its listeners must hear of it even if the call's own check then refuses.
+        """
+        events: list[EndEvent] = []
+        try:
+            with self._lock:
+                events += self._sweep(now)
+                yield events
+        finally:
+            self._emit(events)
+
     # -- helpers ----------------------------------------------------------
 
     def address(self, session_id: str) -> str:
@@ -360,9 +377,7 @@ class RegistrationTable:
         if pid_start is None:
             raise P.RelayError("bad_request", f"pid {pid} is not a live process")
         now = self._clock()
-        events: list[EndEvent] = []
-        with self._lock:
-            events += self._sweep(now)
+        with self._locked(now) as events:
             replaced = False
             existing = self._by_session.get(session_id)
             if existing is not None:
@@ -397,7 +412,6 @@ class RegistrationTable:
                 lease_expires_at=now + self._lease_s,
             )
             self._by_session[session_id] = registration
-        self._emit(events)
         return RegisterOutcome(registration, replaced)
 
     def heartbeat(
@@ -421,9 +435,7 @@ class RegistrationTable:
         """
         kinds = self._check_accepts(accepts) if accepts is not None else None
         now = self._clock()
-        events: list[EndEvent] = []
-        with self._lock:
-            events += self._sweep(now)
+        with self._locked(now) as events:
             current = self._by_id(registration_id, channel_nonce)
             if (
                 previous_session_id is not None
@@ -458,33 +470,27 @@ class RegistrationTable:
                 lease_expires_at=now + self._lease_s,
             )
             self._by_session[registration.session_id] = registration
-        self._emit(events)
         return HeartbeatOutcome(registration, changed, old)
 
     def touch(self, registration_id: str, session_id: str, channel_nonce: str) -> Registration:
         """Renew the lease (``poll`` does this)."""
         now = self._clock()
-        events: list[EndEvent] = []
-        with self._lock:
-            events += self._sweep(now)
+        with self._locked(now) as events:
             registration = replace(
                 self._find(registration_id, session_id, channel_nonce),
                 last_seen_at=now,
                 lease_expires_at=now + self._lease_s,
             )
             self._by_session[session_id] = registration
-        self._emit(events)
         return registration
 
     def deregister(self, registration_id: str, session_id: str, channel_nonce: str) -> EndEvent:
         """End a registration on a clean exit."""
         now = self._clock()
-        events: list[EndEvent] = []
-        with self._lock:
-            events += self._sweep(now)
+        with self._locked(now) as events:
             registration = self._find(registration_id, session_id, channel_nonce)
             event = self._end(registration, "deregistered", now)
-        self._emit(events + [event])
+            events.append(event)
         return event
 
     # -- queries ----------------------------------------------------------
