@@ -548,7 +548,12 @@ a persisted flag; `scope` is `relay` or `hub`. Both return the pause state
   from every origin; `poll` returns no messages with `paused: true` at once.
   Registration, heartbeats, acks, replies, reads, `ask_llm`, grants and
   `status` continue. Expiry keeps running, so a queued message can lapse
-  during a pause. Queued messages are delivered after `resume`.
+  during a pause. Queued messages are delivered after `resume`. A waiting
+  `poll` sees the pause within the relay's poll interval (1 s), so delivery
+  stops well inside one heartbeat. Every `poll` is an audit row and audit rows
+  are never deleted, so a channel server polls a paused relay slowly instead of
+  once a second (the llm-kit channel server waits 5 s between paused polls;
+  delivery resumes within that gap after `resume`).
 - Hub paused: the hub refuses every tool call `paused`, and relays refuse
   every request whose origin kind is `hub`. `/direct` (origin `direct`) is not
   affected by a hub pause.
@@ -723,7 +728,7 @@ independent of the transport, so the hub can reuse them),
   `target_not_found` and creates no row.
 - `get_replies` with `message_id` returns that message; with `address`, the
   newest `limit` (default 50) messages to that address, oldest first, whoever
-  sent them (unit M9 may narrow this). With `wait_s` it returns as soon as the
+  sent them (unit M9 kept it so: the grant the owner typed `/direct replies` for names the address, and hub reads need no grant). With `wait_s` it returns as soon as the
   state or `updated_at` of a listed message changes.
 
 ### Reads and control
