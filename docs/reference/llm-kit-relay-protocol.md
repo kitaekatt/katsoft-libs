@@ -195,7 +195,7 @@ command for `consent_refused`, or `{"message_id": ...}` for a refused send.
 | `nonce_mismatch` | no | 403 | The channel nonce does not match the registration. |
 | `consent_refused` | no | 403 | The consent policy does not allow this endpoint's cost class. |
 | `endpoint_refused` | no | 403 | The endpoint is not a loopback entry, or no explicit endpoint was named. |
-| `rate_limited` | yes | 429 | A per-session or global rate limit. |
+| `rate_limited` | yes | 429 | A per-session or global rate limit, or a relay with its in-flight request limit reached. |
 | `paused` | yes | 503 | The relay or hub is paused (section 16). |
 | `machine_unreachable` | yes | 502 | A relay did not answer (also raised by a `RelayClient` on transport failure). |
 | `upstream_unavailable` | yes | 502 | The LLM endpoint did not answer. |
@@ -208,7 +208,8 @@ the first failing stage decides the error: envelope (`bad_request`,
 `unsupported_protocol`), auth (`unauthenticated`), verb (`unknown_verb`),
 params (`bad_request`), origin (`origin_not_allowed`), pause (`paused`), grant
 (the `grant_*` codes), then the verb's own refusals. A call refused at any
-stage has no effect and consumes no grant use.
+stage has no effect and consumes no grant use. (The HTTP transport checks the
+relay token even earlier, before it reads the body; section 20.)
 
 ## 7. Addresses, selectors, identities and ids
 
@@ -415,8 +416,13 @@ that holds it), `verb` (one section-7 verb), `targets` (resolved targets),
   equals the grant's session, the grant is live with uses left, and the value
   of the verb's target param (section 8) is in `targets`. A request that names
   no target is covered only by a grant whose `targets` is empty.
-- Consumption: one use is consumed atomically with the call's effect, only
-  when the call returns ok.
+- Consumption: one use is reserved atomically BEFORE the call's effect, so
+  two concurrent calls cannot share the last use (the loser is
+  `grant_used_up` and has no effect). A call that returns ok has consumed its
+  use. A reserved use is given back only when the call failed before any
+  effect (section 20, "Grants" states the rule); a call whose effect may have
+  happened keeps it spent. `send_message` reserves in the mailbox transaction
+  that inserts the message, which is its effect.
 - With a named grant, the first failing check in this order is the code:
   `grant_unknown`, `grant_wrong_session`, `grant_wrong_verb`,
   `grant_wrong_target`, `grant_expired`, `grant_used_up`. With no named grant
@@ -524,6 +530,15 @@ independent of the transport, so the hub can reuse them),
 - A method other than POST, a `Content-Type` other than `application/json`,
   or a path verb that differs from the envelope's `verb` is `bad_request`. A
   path that is not `/v1/<verb>`, or names no verb, is `unknown_verb`.
+- `X-Relay-Token` is checked, in constant time, before any part of the body
+  is read; a missing or wrong token is `unauthenticated` (HTTP 401) with a
+  null `id` and no audit row (nothing of the envelope has been read). The
+  Content-Type and declared size checks follow, then a request takes one of
+  at most 64 in-flight slots (`DEFAULT_MAX_IN_FLIGHT`, held until the worker
+  finishes, long polls and `ask_llm` included); a request past the bound is
+  `rate_limited` (HTTP 429, retryable) with `details.what` `in_flight`. The
+  body must arrive in full within 10 seconds (`DEFAULT_BODY_DEADLINE_S`);
+  otherwise it is `bad_request`.
 - A request body over `MAX_REQUEST_BYTES` is `too_large` (HTTP 413) with
   `details.what` `request`. The JSON constants `NaN` and `Infinity` are
   `bad_request`. A malformed `origin` identity is `bad_request` at the envelope
@@ -561,11 +576,22 @@ independent of the transport, so the hub can reuse them),
   `target_ambiguous`). Selector targets of `grant_mint` and `grant_check`
   resolve the same way.
 - Consumption: `send_message` consumes its use in the mailbox transaction that
-  inserts the message. Every other granted verb is checked at the grant stage,
-  before its effect, and consumes one use after its effect succeeded. If a
-  concurrent call took the last use in between, the call is refused
-  `grant_used_up` and its result is withheld (an `ask_llm` conversation turn
-  may already be stored).
+  inserts the message (a refused or replayed send consumes nothing). Every
+  other granted verb is checked at the grant stage and then RESERVES one use
+  in a single immediate transaction (`consume_grant`) before its handler runs;
+  if a concurrent call took the last use, the call is refused `grant_used_up`
+  with no effect. This is the atomic-effect requirement of section 14: no
+  effect runs without a reserved use.
+- Refund rule: a reserved use is given back (`refund_grant`, never above the
+  minted `uses`) only when the handler failed before any effect. That is a
+  `RelayError` other than `too_large` and `internal` (the verbs that reach a
+  handler's refusal before acting: an unresolvable target, `endpoint_refused`,
+  `consent_refused`, `bad_request`), and `upstream_unavailable` only when its
+  cause shows the connection was never made (connection refused, name
+  resolution failed). A timeout, a dropped connection, a completion that is
+  `too_large`, an `internal` error and any other exception keep the use
+  spent, because the endpoint may have processed the request. A call that
+  returns ok never refunds.
 - A hub-origin `send_message` or `answer_question` is `grant_required` at the
   grant stage, whatever `X-Relay-Grant` names.
 
@@ -617,13 +643,28 @@ independent of the transport, so the hub can reuse them),
 ### Audit
 
 - Every request whose envelope names a known verb and a well-formed origin gets
-  one `call` row, refused requests included (also `unauthenticated` ones), with
-  `request_id`, `target`, the `grant_id` of the use consumed, and the refusal
-  `code`. `outcome` is `error` for `internal`, `upstream_unavailable` and
-  `machine_unreachable`, and `refused` for every other code.
+  one `call` row, refused requests included, with `request_id`, `target`, the
+  `grant_id` of the use consumed, and the refusal `code`. The exception is
+  `unauthenticated`, whose rows are bounded (below). `outcome` is `error` for
+  `internal`, `upstream_unavailable` and `machine_unreachable`, and `refused`
+  for every other code.
 - A request whose body does not parse, that names an unknown verb, or that
   carries a malformed origin gets no row: the audit table admits only known
-  verbs and identities.
+  verbs and identities. A request refused at the transport (no relay token, a
+  body that did not arrive, the in-flight bound) was never parsed and gets no
+  row either.
+- `unauthenticated` rows (a hub-origin request without the hub bearer, or a
+  service called in process) are bounded, because audit rows are never
+  deleted: one row per origin per 60-second window (`AUTH_AUDIT_WINDOW_S`),
+  at most 60 such rows per window over all origins
+  (`AUTH_AUDIT_MAX_ROWS_PER_WINDOW`), and at most 10,000 in the table
+  (`AUTH_AUDIT_MAX_TOTAL_ROWS`, counted from the table when the relay starts).
+  The requests a window did not record are counted in one closing row for the
+  origin (`detail` names the count; for origins past the per-window limit,
+  one closing row with origin `relay:<machine>`), written when the next failed
+  request arrives after the window or when the maintenance sweep runs. At the
+  total cap the relay stops recording and prints one line to stderr; the
+  refusals themselves are unchanged.
 
 ### Client and CLI
 

@@ -23,8 +23,10 @@ What lives here (protocol sections 10-15 of ``llm-kit-relay-protocol.md``):
   ``lapsed`` (never redelivered stale).
 - **Grants.** ``mint_grant``, ``check_grant`` (no side effect) and
   ``consume_grant`` (one use, atomic: of N concurrent consumers of a one-use
-  grant exactly one wins). ``send_message`` can consume its grant in the same
-  transaction as the insert, so a refused or replayed send consumes nothing.
+  grant exactly one wins) and ``refund_grant`` (give one reserved use back for
+  an operation that did not take effect). ``send_message`` can consume its
+  grant in the same transaction as the insert, so a refused or replayed send
+  consumes nothing.
 - **Audit.** An append-only table: this class offers ``append_audit`` and
   ``audit_rows`` only, and the table carries triggers that abort any UPDATE or
   DELETE, so even raw SQL cannot rewrite a row. Every mailbox state change
@@ -347,9 +349,10 @@ class Mailbox:
             return _audit_row(conn.execute("SELECT * FROM audit WHERE seq = ?", (seq,)).fetchone())
 
     def audit_rows(
-        self, *, since_seq: int = 0, limit: int = 100, message_id: Optional[str] = None
+        self, *, since_seq: int = 0, limit: int = 100, message_id: Optional[str] = None,
+        code: Optional[str] = None,
     ) -> list[P.AuditRow]:
-        """Audit rows with ``seq`` above ``since_seq``, oldest first (read-only)."""
+        """Audit rows with ``seq`` above ``since_seq``, oldest first (read-only); ``code`` keeps one error code."""
         if limit < 1:
             raise _bad("limit must be positive")
         sql = "SELECT * FROM audit WHERE seq > ?"
@@ -357,6 +360,9 @@ class Mailbox:
         if message_id is not None:
             sql += " AND message_id = ?"
             args.append(message_id)
+        if code is not None:
+            sql += " AND code = ?"
+            args.append(code)
         sql += " ORDER BY seq LIMIT ?"
         args.append(limit)
         with self._read() as conn:
@@ -499,11 +505,11 @@ class Mailbox:
         sender_text = str(sender)
         content = _fingerprint(to_text, kind, body, task or "", hop, sender_text)
         body_bytes = len(body.encode("utf-8"))
-        now = self._clock()
         refusal: Optional[P.RelayError] = None
         result: Optional[P.SendMessageResult] = None
 
         with self._write() as conn:
+            now = self._clock()  # read once the write lock is held: waiting for it must not stale the expiry check
             if grant is not None:
                 self._check_grant_in(conn, grant.session, "send_message", to_text, grant.grant_id, now)
             existing = conn.execute("SELECT * FROM messages WHERE id = ?", (id,)).fetchone()
@@ -847,9 +853,29 @@ class Mailbox:
         write; ``send_message(grant=...)`` consumes in the same transaction
         as its insert, which is what "consumed only when the call is ok" needs.
         """
-        now = self._clock()
         with self._write() as conn:
+            now = self._clock()  # read once the write lock is held: waiting for it must not stale the expiry check
             return self._consume_in(conn, session, verb, target, grant_id, now)
+
+    def refund_grant(self, grant_id: str) -> P.Grant:
+        """Give back ONE use that :meth:`consume_grant` reserved, for an operation that did not take effect.
+
+        The use count never rises above the minted ``uses``; with nothing to
+        give back this is ``invalid_transition``, and an unknown grant is
+        ``grant_unknown``. Expiry is not consulted: a grant that lapsed while
+        its call ran gets its use back and stays expired.
+        """
+        with self._write() as conn:
+            row = conn.execute("SELECT * FROM grants WHERE grant_id = ?", (grant_id,)).fetchone()
+            if row is None:
+                raise P.RelayError("grant_unknown", f"no grant {grant_id}")
+            cursor = conn.execute(
+                "UPDATE grants SET uses_remaining = uses_remaining + 1 WHERE grant_id = ? AND uses_remaining < uses",
+                (grant_id,),
+            )
+            if cursor.rowcount != 1:
+                raise P.RelayError("invalid_transition", f"grant {grant_id} has no reserved use to give back")
+            return _grant(conn.execute("SELECT * FROM grants WHERE grant_id = ?", (grant_id,)).fetchone(), self._clock())
 
     def _check_grant_in(self, conn, session, verb, target, grant_id, now) -> sqlite3.Row:
         return self._cover(conn, session, verb, target, grant_id, now)

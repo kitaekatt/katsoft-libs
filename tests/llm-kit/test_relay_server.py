@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -32,6 +33,7 @@ from llm_kit.relay import discovery as D
 from llm_kit.relay import lifecycle as L
 from llm_kit.relay import protocol as P
 from llm_kit.relay import server as S
+from llm_kit.relay import service as SV
 from llm_kit.relay.client import HttpRelayClient
 
 MACHINE = "m5pro"
@@ -592,3 +594,255 @@ def test_the_client_refuses_a_non_loopback_url_and_reports_an_unreachable_relay(
 def test_the_http_client_satisfies_the_relay_client_protocol(relay):
     assert isinstance(relay.client, P.RelayClient)
     assert relay.client.machine == MACHINE
+
+
+# --------------------------------------------------------------------------
+# security read: grant reservation, refund rule, pre-body auth, bounds, failed-auth audit
+# --------------------------------------------------------------------------
+
+class GateBackend(FakeBackend):
+    """Holds every completion until a second one arrives or ``hold_s`` passes."""
+
+    def __init__(self, hold_s: float = 0.6, need: int = 2) -> None:
+        super().__init__()
+        self.hold_s, self.need = hold_s, need
+        self.release = threading.Event()
+        self.lock = threading.Lock()
+        self.fail: Optional[BaseException] = None
+
+    def complete(self, system, user, *, model, options=None):
+        with self.lock:
+            self.calls.append(user)
+            if len(self.calls) >= self.need:
+                self.release.set()
+        self.release.wait(self.hold_s)
+        if self.fail is not None:
+            raise self.fail
+        return LLMResponse(text=f"echo: {user}", model=model, finish_reason="stop", input_tokens=5, output_tokens=2)
+
+
+def _served(config, roots, backend, tmp_path, **kw) -> Iterator[Relay]:
+    server = make_server(config, roots, backend, tmp_path, **kw).start()
+    try:
+        yield Relay(server, roots)
+    finally:
+        server.stop()
+
+
+def _wait_for(predicate, what: str, timeout_s: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while not predicate():
+        assert time.monotonic() < deadline, f"timed out waiting for {what}"
+        time.sleep(0.01)
+
+
+def test_two_concurrent_ask_llm_calls_cannot_share_one_remaining_grant_use(config, roots, tmp_path):
+    backend = GateBackend(need=2)
+    gen = _served(config, roots, backend, tmp_path)
+    relay = next(gen)
+    try:
+        grant = relay.mint("ask_llm", [ENDPOINT], uses=1)
+        outcomes: list[str] = []
+
+        def call() -> None:
+            try:
+                relay.direct("ask_llm", {"endpoint": ENDPOINT, "prompt": "ping"}, grant=grant["grant_id"])
+                outcomes.append("ok")
+            except P.RelayError as exc:
+                outcomes.append(exc.code)
+
+        threads = [threading.Thread(target=call) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        assert sorted(outcomes) == ["grant_used_up", "ok"]
+        assert backend.calls == ["ping"], "the operation ran for a call whose grant use was never reserved"
+        assert relay.mailbox.get_grant(grant["grant_id"])["state"] == "used-up"
+    finally:
+        gen.close()
+
+
+def _connect_refused() -> BaseException:
+    try:
+        try:
+            raise ConnectionRefusedError(61, "Connection refused")
+        except OSError as inner:
+            raise RuntimeError("Connection error.") from inner
+    except RuntimeError as outer:
+        return outer
+
+
+def test_a_reserved_use_is_refunded_only_when_the_operation_failed_before_any_request_was_sent(config, roots, tmp_path):
+    backend = GateBackend(hold_s=0.0)
+    gen = _served(config, roots, backend, tmp_path)
+    relay = next(gen)
+    try:
+        grant = relay.mint("ask_llm", [ENDPOINT, f"{MACHINE}/llm/nonesuch"], uses=3)
+        gid = grant["grant_id"]
+        ask = {"endpoint": ENDPOINT, "prompt": "ping"}
+        left = lambda: relay.mailbox.get_grant(gid)["uses_remaining"]
+
+        backend.fail = _connect_refused()          # connection refused: no request was sent
+        relay.refused("upstream_unavailable", relay.direct, "ask_llm", ask, grant=gid)
+        assert left() == 3
+
+        backend.fail = RuntimeError("read timed out")  # the request may have been processed
+        relay.refused("upstream_unavailable", relay.direct, "ask_llm", ask, grant=gid)
+        assert left() == 2
+
+        backend.fail = None                          # a refusal before the backend exists is free
+        relay.refused("endpoint_refused", relay.direct, "ask_llm",
+                      {"endpoint": f"{MACHINE}/llm/nonesuch", "prompt": "x"}, grant=gid)
+        assert left() == 2
+        assert relay.direct("ask_llm", ask, grant=gid)["text"] == "echo: ping" and left() == 1
+    finally:
+        gen.close()
+
+
+def _raw_exchange(server: S.RelayServer, head: bytes, *, wait_s: float) -> tuple[bytes, float]:
+    """Send ``head`` (no body) to the server and return the raw reply and the seconds it took."""
+    host, port = server.address
+    started = time.monotonic()
+    with socket.create_connection((host, port), timeout=wait_s) as sock:
+        sock.settimeout(wait_s)
+        sock.sendall(head)
+        chunks = b""
+        try:
+            while b"\r\n\r\n" not in chunks:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                chunks += data
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                chunks += data
+                if b"}" in data:
+                    break
+        except socket.timeout:
+            pass
+    return chunks, time.monotonic() - started
+
+
+def _head(token: Optional[str], length: int = 1000) -> bytes:
+    lines = ["POST /v1/status HTTP/1.1", "Host: 127.0.0.1", "Content-Type: application/json",
+             f"Content-Length: {length}", "Connection: close"]
+    if token is not None:
+        lines.append(f"{P.HEADER_RELAY_TOKEN}: {token}")
+    return ("\r\n".join(lines) + "\r\n\r\n").encode("ascii")
+
+
+def test_the_relay_token_is_checked_before_the_body_is_read(config, roots, backend, tmp_path):
+    gen = _served(config, roots, backend, tmp_path, body_deadline_s=30.0)
+    relay = next(gen)
+    try:
+        for token in (None, "not-the-token"):
+            reply, took = _raw_exchange(relay.server, _head(token), wait_s=3.0)
+            assert reply.startswith(b"HTTP/1.1 401"), reply[:200]
+            assert b'"unauthenticated"' in reply and took < 2.5, "the relay waited for a body it had no right to"
+        assert [r for r in relay.mailbox.audit_rows(limit=100) if r["code"] == "unauthenticated"] == []
+    finally:
+        gen.close()
+
+
+def test_a_body_that_does_not_arrive_in_time_is_refused(config, roots, backend, tmp_path):
+    gen = _served(config, roots, backend, tmp_path, body_deadline_s=0.3)
+    relay = next(gen)
+    try:
+        reply, took = _raw_exchange(relay.server, _head(relay.server.prepared.relay_token), wait_s=5.0)
+        assert reply.startswith(b"HTTP/1.1 400"), reply[:200]
+        assert b'"bad_request"' in reply and took < 4.0
+        assert relay.operator("status", {})["machine"] == MACHINE  # the relay still answers
+    finally:
+        gen.close()
+
+
+def test_requests_in_flight_are_bounded(config, roots, tmp_path):
+    backend = GateBackend(hold_s=10.0, need=99)
+    gen = _served(config, roots, backend, tmp_path, max_in_flight=2)
+    relay = next(gen)
+    try:
+        grant = relay.mint("ask_llm", [ENDPOINT], uses=2)
+        threads = [threading.Thread(target=lambda: relay.direct(
+            "ask_llm", {"endpoint": ENDPOINT, "prompt": "hold"}, grant=grant["grant_id"])) for _ in range(2)]
+        for t in threads:
+            t.start()
+        _wait_for(lambda: len(backend.calls) == 2, "both calls to reach the backend")
+        err = relay.refused("rate_limited", relay.operator, "status", {})
+        assert err.retryable is True
+        backend.release.set()
+        for t in threads:
+            t.join(30)
+        assert relay.operator("status", {})["machine"] == MACHINE  # the slots came back
+    finally:
+        backend.release.set()
+        gen.close()
+
+
+def _fail_auth(service, origin: str = f"operator:{MACHINE}", verb: str = "status") -> None:
+    body = json.dumps(envelope(verb, {}, origin=origin)).encode()
+    status, response = service.handle(body, path_verb=verb, relay_token="not-the-token")
+    assert status == 401 and response["error"]["code"] == "unauthenticated"
+
+
+def _unauth_rows(relay: Relay) -> list:
+    return [r for r in relay.mailbox.audit_rows(limit=100_000) if r["code"] == "unauthenticated"]
+
+
+def test_failed_auth_audit_rows_are_coalesced_per_origin_and_window(config, roots, backend, tmp_path):
+    clock = Clock()
+    gen = _served(config, roots, backend, tmp_path, clock=clock)
+    relay = next(gen)
+    try:
+        service = relay.server.service
+        for _ in range(300):
+            _fail_auth(service)
+        assert len(_unauth_rows(relay)) == 1
+
+        clock.offset += SV.AUTH_AUDIT_WINDOW_S + 1
+        service.maintain()                        # the idle relay still closes the window
+        rows = _unauth_rows(relay)
+        assert len(rows) == 2 and "299" in rows[1]["detail"] and rows[1]["origin"] == f"operator:{MACHINE}"
+
+        _fail_auth(service)                       # a new window records again
+        assert len(_unauth_rows(relay)) == 3
+    finally:
+        gen.close()
+
+
+def test_failed_auth_audit_rows_are_bounded_across_origins(config, roots, backend, tmp_path):
+    clock = Clock()
+    gen = _served(config, roots, backend, tmp_path, clock=clock)
+    relay = next(gen)
+    try:
+        service = relay.server.service
+        for _ in range(SV.AUTH_AUDIT_MAX_ROWS_PER_WINDOW * 4):
+            _fail_auth(service, origin=f"direct:{addr(sid())}", verb="list_sessions")
+        assert len(_unauth_rows(relay)) == SV.AUTH_AUDIT_MAX_ROWS_PER_WINDOW
+    finally:
+        gen.close()
+
+
+def test_failed_auth_audit_rows_stop_at_a_total_cap_that_survives_a_restart(config, roots, backend, tmp_path, monkeypatch):
+    monkeypatch.setattr(SV, "AUTH_AUDIT_MAX_TOTAL_ROWS", 5)
+    clock = Clock()
+    first = _served(config, roots, backend, tmp_path, clock=clock)
+    relay = next(first)
+    try:
+        for _ in range(4):
+            _fail_auth(relay.server.service, origin=f"direct:{addr(sid())}", verb="list_sessions")
+        clock.offset += SV.AUTH_AUDIT_WINDOW_S + 1
+        for _ in range(4):
+            _fail_auth(relay.server.service, origin=f"direct:{addr(sid())}", verb="list_sessions")
+        assert len(_unauth_rows(relay)) == 5
+    finally:
+        first.close()
+    second = _served(config, roots, backend, tmp_path, clock=clock)
+    relay = next(second)
+    try:
+        _fail_auth(relay.server.service, origin=f"direct:{addr(sid())}", verb="list_sessions")
+        assert len(_unauth_rows(relay)) == 5
+    finally:
+        second.close()

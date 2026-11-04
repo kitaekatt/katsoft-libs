@@ -23,7 +23,8 @@ or a short value is not a secret shape.
 
 ``is_secret_path_use`` answers a different question: does a tool call READ a
 path under a secrets location (``~/.ssh``, ``.env`` files, keychains, cloud
-and package-manager credential files, secrets-kit stores)? The transcript
+and package-manager credential files, secrets-kit stores, the relay's own
+``relay.token`` and ``hub.bearer``)? The transcript
 reader withholds the whole output of such a call, because the output of
 ``cat ~/.ssh/id_rsa`` has no shape a pattern can be trusted to catch.
 :data:`SECRET_PATH_PATTERNS` is the list.
@@ -168,6 +169,8 @@ SECRET_PATH_PATTERNS: tuple[str, ...] = (
     r"\b(?:credentials?|secrets?)\.(?:json|ya?ml|toml|txt|ini)\b",
     r"[\\/]llm-kit[\\/]\.env\b|[\\/]\.claude\.json\b|[\\/]\.credentials\.json\b",
     r"\bauth\.json\b",
+    # The relay's own credentials (the state directory's relay token and hub bearer).
+    r"(?:^|[\s\"'=:(/\\<])(?:relay\.token|hub\.bearer)(?=$|[\s\"'),;:/\\])",
 )
 _SECRET_PATH_RES = tuple(re.compile(p, re.IGNORECASE | re.MULTILINE) for p in SECRET_PATH_PATTERNS)
 

@@ -574,3 +574,63 @@ def test_empty_poll_takes_no_write_transaction(box: M.Mailbox, monkeypatch) -> N
     writes.clear()
     assert len(box.poll(BOB)) == 1
     assert writes == [1]
+
+
+# --------------------------------------------------------------------------
+# expiry is judged on a clock read inside the write transaction
+# --------------------------------------------------------------------------
+
+class LockProbeClock(Clock):
+    """A clock that records, on every reading, whether another connection could take the write lock."""
+
+    def __init__(self, db_path: Path, start: float = 1_000_000.0) -> None:
+        super().__init__(start)
+        self.db_path = db_path
+        self.watching = False
+        self.held: list[bool] = []
+
+    def __call__(self) -> float:
+        if self.watching:
+            probe = sqlite3.connect(self.db_path, timeout=0, isolation_level=None)
+            try:
+                try:
+                    probe.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError:
+                    self.held.append(True)
+                else:
+                    self.held.append(False)
+                    probe.execute("ROLLBACK")
+            finally:
+                probe.close()
+        return self.now
+
+
+def test_send_message_and_consume_grant_read_the_clock_after_taking_the_write_lock(tmp_path):
+    # A writer waits for the lock for up to busy_timeout; a timestamp read before that wait can
+    # judge a grant live that has expired by the time the transaction runs.
+    clock = LockProbeClock(tmp_path / "state" / "mailbox.sqlite3")
+    box = M.Mailbox(clock.db_path, machine=MACHINE, clock=clock)
+    mint(box, uses=3)
+    clock.watching = True
+    send(box, id="msg_a", grant=M.GrantUse(ALICE, None))
+    sent = list(clock.held)
+    box.consume_grant(session=ALICE, verb="send_message", target=BOB)
+    clock.watching = False
+    assert sent and all(sent), "send_message judged its grant on a clock read outside the write transaction"
+    consumed = clock.held[len(sent):]
+    assert consumed and all(consumed), "consume_grant judged its grant on a clock read outside the write transaction"
+
+
+# --------------------------------------------------------------------------
+# a reserved grant use can be given back
+# --------------------------------------------------------------------------
+
+def test_refund_grant_returns_one_use_and_never_exceeds_the_minted_uses(box):
+    g = mint(box, uses=2)
+    gid = g["grant_id"]
+    box.consume_grant(session=ALICE, verb="send_message", target=BOB, grant_id=gid)
+    assert box.get_grant(gid)["uses_remaining"] == 1
+    assert box.refund_grant(gid)["uses_remaining"] == 2
+    assert code_of(lambda: box.refund_grant(gid)) == "invalid_transition"    # nothing to give back
+    assert box.get_grant(gid)["uses_remaining"] == 2
+    assert code_of(lambda: box.refund_grant("grt_missing")) == "grant_unknown"

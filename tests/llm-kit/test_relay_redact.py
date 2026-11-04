@@ -101,6 +101,11 @@ def test_redact_text_rejects_non_text() -> None:
         ("exec", 'const r = await tools.exec_command({cmd: "cat ~/.ssh/config"});'),
         ("Read", {"file_path": "/Users/u/.codex/auth.json"}),
         ("Bash", '{"command": "cat ~/.ssh/id_ed25519"}'),
+        ("Read", {"file_path": "/Users/u/.local/state/llm-kit/relay/relay.token"}),
+        ("Read", {"file_path": "/home/u/.local/state/llm-kit/relay/hub.bearer"}),
+        ("Bash", "cat $XDG_STATE_HOME/llm-kit/relay/hub.bearer"),
+        ("Bash", "cd ~/.local/state/llm-kit/relay && cat relay.token"),
+        ("Bash", "echo \"$(<'relay.token')\""),
     ],
 )
 def test_secret_location_calls_are_detected(name: str, tool_input: object) -> None:
@@ -117,6 +122,10 @@ def test_secret_location_calls_are_detected(name: str, tool_input: object) -> No
         ("Read", {"file_path": "/Users/u/Dev/app/.envrc"}),
         ("Read", {"file_path": "/Users/u/Dev/plugins-kit/plugins/secrets-kit/README.md"}),
         ("Edit", {"file_path": "/a/b.py", "old_string": "x", "new_string": "y"}),
+        ("Read", {"file_path": "/Users/u/Dev/katsoft-libs/packages/katsoft-llm-kit/src/llm_kit/relay/server.py"}),
+        ("Bash", "grep relay_token src/llm_kit/relay/lifecycle.py"),
+        ("Read", {"file_path": "/a/relay.token.md"}),
+        ("Read", {"file_path": "/a/myrelay.token"}),
     ],
 )
 def test_ordinary_calls_are_not_secret_locations(name: str, tool_input: object) -> None:

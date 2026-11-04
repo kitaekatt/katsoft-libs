@@ -25,9 +25,12 @@ code and no effect:
    relay-protocol/1);
 8. the verb's own refusals.
 
-A grant use is consumed only when the call is ok: ``send_message`` consumes
-in the mailbox transaction that inserts the message; every other granted verb
-consumes after its effect succeeded. Every result is validated against its
+A grant use is reserved before the effect, so two concurrent calls cannot
+share one remaining use: ``send_message`` consumes in the mailbox transaction
+that inserts the message; every other granted verb reserves its use
+(:meth:`Mailbox.consume_grant`) before its handler runs and gives it back
+(:meth:`Mailbox.refund_grant`) only when the handler failed before any effect
+(:func:`failed_before_effect`). Every result is validated against its
 ``<verb>.response`` schema before it is returned; a result that does not
 conform is an ``internal`` error. Every request whose origin and verb are known
 gets one ``call`` audit row.
@@ -42,6 +45,7 @@ from __future__ import annotations
 import hmac
 import importlib.metadata
 import json
+import socket
 import sys
 import threading
 import time
@@ -71,6 +75,112 @@ DEFAULT_REPLIES_LIMIT = 50
 
 _ERROR_OUTCOMES = frozenset({"internal", "upstream_unavailable", "machine_unreachable"})
 _MAX_SCHEMA_ERRORS = 20
+
+#: Failed-authentication audit bounds (protocol section 20, "Audit"). At most
+#: one ``unauthenticated`` call row per origin per window (the requests it stands for are
+#: counted in one closing row), at most ``AUTH_AUDIT_MAX_ROWS_PER_WINDOW`` such rows per window
+#: over all origins, and at most ``AUTH_AUDIT_MAX_TOTAL_ROWS`` in the whole audit table. Audit
+#: rows are never deleted, so the total cap is a stop, not a rotation.
+AUTH_AUDIT_WINDOW_S = 60.0
+AUTH_AUDIT_MAX_ROWS_PER_WINDOW = 60
+AUTH_AUDIT_MAX_TOTAL_ROWS = 10_000
+
+#: Error codes of a handler that ran an effect: a use reserved for such a call stays spent.
+_AFTER_EFFECT_CODES = frozenset({"too_large", "internal"})
+
+
+def failed_before_effect(exc: BaseException) -> bool:
+    """Whether a handler failure proves the operation had no effect, so its reserved grant use is refunded.
+
+    Only a :class:`~llm_kit.relay.protocol.RelayError` can; any other exception
+    is a defect after which the effect is unknown. ``upstream_unavailable``
+    counts only when its cause chain shows the connection was never made
+    (``ConnectionRefusedError`` or a name-resolution failure): a timeout or a
+    dropped connection may have followed a request the endpoint processed.
+    ``too_large`` and ``internal`` come from a handler that already ran.
+    """
+    if not isinstance(exc, P.RelayError):
+        return False
+    if exc.code == "upstream_unavailable":
+        seen: set[int] = set()
+        cause: Optional[BaseException] = exc.__cause__ or exc.__context__
+        while cause is not None and id(cause) not in seen:
+            if isinstance(cause, (ConnectionRefusedError, socket.gaierror)):
+                return True
+            seen.add(id(cause))
+            cause = cause.__cause__ or cause.__context__
+        return False
+    return exc.code not in _AFTER_EFFECT_CODES
+
+
+@dataclass
+class _AuthSummary:
+    origin: str
+    verb: str
+    suppressed: int
+    overflow: bool
+
+
+class _AuthAuditLimiter:
+    """Decides which ``unauthenticated`` requests get an audit row (bounds in the constants above)."""
+
+    def __init__(self, machine: str) -> None:
+        self._machine = machine
+        self._lock = threading.Lock()
+        self._window_start: Optional[float] = None
+        self._rows = 0
+        self._seen: dict[str, list[Any]] = {}  # origin -> [verb, suppressed]
+        self._overflow = 0
+        self._overflow_verb: Optional[str] = None
+        self._total: Optional[int] = None
+        self._capped_reported = False
+
+    def _roll(self, now: float) -> list[_AuthSummary]:
+        if self._window_start is None:
+            self._window_start = now
+            return []
+        if 0 <= now - self._window_start < AUTH_AUDIT_WINDOW_S:
+            return []
+        summaries = [_AuthSummary(origin, entry[0], entry[1], False) for origin, entry in self._seen.items() if entry[1]]
+        if self._overflow and self._overflow_verb is not None:
+            summaries.append(_AuthSummary(f"relay:{self._machine}", self._overflow_verb, self._overflow, True))
+        room = max(0, AUTH_AUDIT_MAX_TOTAL_ROWS - (self._total or 0))
+        summaries = summaries[:room]
+        self._total = (self._total or 0) + len(summaries)
+        self._window_start, self._rows = now, 0
+        self._seen.clear()
+        self._overflow, self._overflow_verb = 0, None
+        return summaries
+
+    def admit(self, now: float, origin: str, verb: str, load_total: Callable[[], int]) -> tuple[bool, list[_AuthSummary]]:
+        """``(write this request's row, closing rows now due)``."""
+        with self._lock:
+            if self._total is None:
+                self._total = load_total()
+            summaries = self._roll(now)
+            entry = self._seen.get(origin)
+            if entry is not None:
+                entry[1] += 1
+                return False, summaries
+            if self._rows >= AUTH_AUDIT_MAX_ROWS_PER_WINDOW or self._total >= AUTH_AUDIT_MAX_TOTAL_ROWS:
+                if self._total >= AUTH_AUDIT_MAX_TOTAL_ROWS and not self._capped_reported:
+                    self._capped_reported = True
+                    print(f"llm-kit relay: the audit table holds {self._total} unauthenticated call rows, the cap; "
+                          "further failed-authentication requests are not recorded", file=sys.stderr)
+                self._overflow += 1
+                self._overflow_verb = self._overflow_verb or verb
+                return False, summaries
+            self._seen[origin] = [verb, 0]
+            self._rows += 1
+            self._total += 1
+            return True, summaries
+
+    def due(self, now: float) -> list[_AuthSummary]:
+        """Closing rows for a window that has ended with no later failed request to close it."""
+        with self._lock:
+            if self._window_start is None or self._total is None:
+                return []
+            return self._roll(now)
 
 
 def _bad(message: str, **details: Any) -> P.RelayError:
@@ -177,6 +287,7 @@ class RelayService:
         self._poll_interval_s = poll_interval_s
         self._version = version if version is not None else library_version()
         self._schemas = _Schemas()
+        self._auth_audit = _AuthAuditLimiter(machine)
         self._local = threading.local()
         self._wake = threading.Condition()
         self._generation = 0
@@ -217,6 +328,7 @@ class RelayService:
         self._table.expire_lapsed()
         if self._mailbox.expire():
             self._notify()
+        self._write_auth_summaries(self._auth_audit.due(self._clock()), "relay")
 
     def _notify(self) -> None:
         with self._wake:
@@ -295,12 +407,20 @@ class RelayService:
             try:
                 granted = self._grant_stage(spec, identity, params, grant)
                 target = granted.target if granted.target is not None else target
-                result = self._handlers[spec.name](call, params, granted, ingress)
+                reserved: Optional[str] = None
                 if granted.use is not None and spec.name != "send_message":
+                    # Reserve the use before the effect: of two concurrent calls on the last use, one is refused here.
                     self._mailbox.consume_grant(
                         session=granted.use.session, verb=spec.name, target=granted.target,
                         grant_id=granted.use.grant_id,
                     )
+                    reserved = granted.use.grant_id
+                try:
+                    result = self._handlers[spec.name](call, params, granted, ingress)
+                except BaseException as failure:
+                    if reserved is not None and failed_before_effect(failure):
+                        self._mailbox.refund_grant(reserved)
+                    raise
             finally:
                 self._local.call = None
             if spec.name in _WAKES:
@@ -318,17 +438,41 @@ class RelayService:
             outcome, code, detail = "error", "internal", error.message
         if identity is not None and verb is not None:
             try:
-                self._mailbox.append_audit(
-                    event="call", origin=identity, verb=verb, outcome=outcome, ingress=ingress,
-                    request_id=request_id, target=target[:1100] if isinstance(target, str) else None,
-                    grant_id=granted.use.grant_id if granted is not None and granted.use is not None else None,
-                    code=code, detail=detail,
-                )
+                if code != "unauthenticated" or self._admit_auth_failure(identity, verb, ingress):
+                    self._mailbox.append_audit(
+                        event="call", origin=identity, verb=verb, outcome=outcome, ingress=ingress,
+                        request_id=request_id, target=target[:1100] if isinstance(target, str) else None,
+                        grant_id=granted.use.grant_id if granted is not None and granted.use is not None else None,
+                        code=code, detail=detail,
+                    )
             except Exception as exc:  # noqa: BLE001 -- an unaudited call is a relay defect, answered as internal
                 traceback.print_exc(file=sys.stderr)
                 error = P.RelayError("internal", f"relay defect: the call audit row was not written: {type(exc).__name__}")
                 status, response = error.http_status, P.make_error(request_id, error)
         return status, response
+
+    def _admit_auth_failure(self, identity: P.Identity, verb: str, ingress: str) -> bool:
+        """Whether this failed-authentication request gets its own row; closes due windows as a side effect."""
+        write, due = self._auth_audit.admit(
+            self._clock(), str(identity), verb,
+            lambda: len(self._mailbox.audit_rows(code="unauthenticated", limit=AUTH_AUDIT_MAX_TOTAL_ROWS)),
+        )
+        self._write_auth_summaries(due, ingress)
+        return write
+
+    def _write_auth_summaries(self, summaries: Sequence[_AuthSummary], ingress: str) -> None:
+        for item in summaries:
+            what = ("unauthenticated requests from further origins" if item.overflow
+                    else "further unauthenticated requests from this origin")
+            self._mailbox.append_audit(
+                event="call", origin=item.origin, verb=item.verb, outcome="refused", ingress=ingress,
+                code="unauthenticated",
+                detail=f"{item.suppressed} {what} in the last {AUTH_AUDIT_WINDOW_S:g} s window were not recorded individually",
+            )
+
+    def relay_token_ok(self, presented: Optional[str]) -> bool:
+        """Whether ``presented`` is the relay token (constant time); the transport asks before it reads a body."""
+        return token_matches(presented, self._relay_token)
 
     def transport_error(self, code: str, message: str, **details: Any) -> tuple[int, dict[str, Any]]:
         """``(status, envelope)`` for a refusal the transport makes before a body is read."""

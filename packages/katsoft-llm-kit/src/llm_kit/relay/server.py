@@ -15,9 +15,11 @@
    serves ``POST /v1/<verb>`` with uvicorn.
 
 The ASGI application here is a minimal callable rather than a framework: it
-checks the method, the path, the content type and the body size, reads the
-three auth headers, and hands the body to the service on a worker thread (a
-long poll waits up to 25 seconds there). A maintenance thread ends lapsed
+checks the method, the path and ``X-Relay-Token`` (constant time) BEFORE it
+reads anything, then the content type and the declared body size; it takes one
+of a bounded number of in-flight slots, reads the body under a deadline,
+reads the other two auth headers, and hands the body to the service on a
+worker thread (a long poll waits up to 25 seconds there). A maintenance thread ends lapsed
 registrations and lapses expired messages every few seconds; if it fails, the
 server stops and the failure is raised.
 
@@ -50,6 +52,11 @@ ROLE = "relay"
 PATH_PREFIX = "/v1/"
 DEFAULT_MAINTAIN_INTERVAL_S = 5.0
 DEFAULT_WORKERS = 32
+#: Seconds a request body may take to arrive in full (the body is at most ``MAX_REQUEST_BYTES``).
+DEFAULT_BODY_DEADLINE_S = 10.0
+#: Requests past the relay token check that may be reading a body or running at once; one more is
+#: refused ``rate_limited``. Twice the worker count: a full set of workers plus an equal queue.
+DEFAULT_MAX_IN_FLIGHT = 2 * DEFAULT_WORKERS
 _STARTUP_TIMEOUT_S = 15.0
 _JSON_TYPES = ("application/json",)
 _STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
@@ -94,9 +101,50 @@ def _bearer(value: Optional[str]) -> Optional[str]:
 class RelayApp:
     """The ASGI callable: ``POST /v1/<verb>`` -> :meth:`RelayService.handle` on a worker thread."""
 
-    def __init__(self, service: RelayService, executor: concurrent.futures.Executor) -> None:
+    def __init__(
+        self,
+        service: RelayService,
+        executor: concurrent.futures.Executor,
+        *,
+        body_deadline_s: float = DEFAULT_BODY_DEADLINE_S,
+        max_in_flight: int = DEFAULT_MAX_IN_FLIGHT,
+    ) -> None:
+        if body_deadline_s <= 0:
+            raise ValueError("body_deadline_s must be positive")
+        if isinstance(max_in_flight, bool) or not isinstance(max_in_flight, int) or max_in_flight < 1:
+            raise ValueError("max_in_flight must be a positive integer")
         self._service = service
         self._executor = executor
+        self._body_deadline_s = body_deadline_s
+        self._max_in_flight = max_in_flight
+        self._in_flight = 0
+        self._slots = threading.Lock()
+
+    def _take_slot(self) -> bool:
+        with self._slots:
+            if self._in_flight >= self._max_in_flight:
+                return False
+            self._in_flight += 1
+            return True
+
+    def _free_slot(self, _future: Any = None) -> None:
+        with self._slots:
+            self._in_flight -= 1
+
+    async def _read_body(self, receive: Callable[..., Any]) -> "bytes | tuple[int, dict[str, Any]]":
+        service = self._service
+        body = bytearray()
+        more = True
+        while more:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return service.transport_error("bad_request", "the client disconnected before the body was read")
+            body += message.get("body", b"")
+            more = message.get("more_body", False)
+            if len(body) > P.MAX_REQUEST_BYTES:
+                return service.transport_error("too_large", f"the request is over {P.MAX_REQUEST_BYTES} bytes",
+                                               limit=P.MAX_REQUEST_BYTES, what="request")
+        return bytes(body)
 
     async def __call__(self, scope: dict[str, Any], receive: Callable[..., Any], send: Callable[..., Any]) -> None:
         if scope["type"] == "lifespan":
@@ -133,6 +181,9 @@ class RelayApp:
         headers: dict[str, str] = {}
         for raw_name, raw_value in scope.get("headers", []):
             headers[raw_name.decode("latin-1").lower()] = raw_value.decode("latin-1")
+        # Authenticate before reading a byte of the body: a caller without the relay token holds nothing open.
+        if not service.relay_token_ok(headers.get(P.HEADER_RELAY_TOKEN.lower())):
+            return service.transport_error("unauthenticated", f"missing or wrong {P.HEADER_RELAY_TOKEN}")
         content_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if content_type not in _JSON_TYPES:
             return service.transport_error("bad_request", f"Content-Type must be {P.CONTENT_TYPE}")
@@ -140,25 +191,32 @@ class RelayApp:
         if declared.isdigit() and int(declared) > P.MAX_REQUEST_BYTES:
             return service.transport_error("too_large", f"the request is over {P.MAX_REQUEST_BYTES} bytes",
                                            limit=P.MAX_REQUEST_BYTES, what="request")
-        body = bytearray()
-        more = True
-        while more:
-            message = await receive()
-            if message["type"] == "http.disconnect":
-                return service.transport_error("bad_request", "the client disconnected before the body was read")
-            body += message.get("body", b"")
-            more = message.get("more_body", False)
-            if len(body) > P.MAX_REQUEST_BYTES:
-                return service.transport_error("too_large", f"the request is over {P.MAX_REQUEST_BYTES} bytes",
-                                               limit=P.MAX_REQUEST_BYTES, what="request")
-        call = functools.partial(
-            service.handle, bytes(body), path_verb=verb,
-            relay_token=headers.get(P.HEADER_RELAY_TOKEN.lower()),
-            hub_bearer=_bearer(headers.get(P.HEADER_AUTHORIZATION.lower())),
-            grant=headers.get(P.HEADER_GRANT.lower()) or None,
-            ingress="relay",
-        )
-        return await asyncio.get_running_loop().run_in_executor(self._executor, call)
+        if not self._take_slot():
+            return service.transport_error("rate_limited", f"the relay has {self._max_in_flight} requests in flight; retry shortly",
+                                           limit=self._max_in_flight, what="in_flight")
+        handed_off = False
+        try:
+            try:
+                body = await asyncio.wait_for(self._read_body(receive), timeout=self._body_deadline_s)
+            except asyncio.TimeoutError:
+                return service.transport_error(
+                    "bad_request", f"the request body did not arrive within {self._body_deadline_s:g} s")
+            if isinstance(body, tuple):
+                return body
+            call = functools.partial(
+                service.handle, body, path_verb=verb,
+                relay_token=headers.get(P.HEADER_RELAY_TOKEN.lower()),
+                hub_bearer=_bearer(headers.get(P.HEADER_AUTHORIZATION.lower())),
+                grant=headers.get(P.HEADER_GRANT.lower()) or None,
+                ingress="relay",
+            )
+            work = self._executor.submit(call)
+            work.add_done_callback(self._free_slot)  # the slot is held until the worker is done, even if the client leaves
+            handed_off = True
+            return await asyncio.wrap_future(work)
+        finally:
+            if not handed_off:
+                self._free_slot()
 
 
 class RelayServer:
@@ -187,6 +245,8 @@ class RelayServer:
         poll_interval_s: float = 1.0,
         maintain_interval_s: float = DEFAULT_MAINTAIN_INTERVAL_S,
         workers: int = DEFAULT_WORKERS,
+        body_deadline_s: float = DEFAULT_BODY_DEADLINE_S,
+        max_in_flight: int = DEFAULT_MAX_IN_FLIGHT,
     ) -> None:
         self.config = config
         host, configured_port = config.bind(ROLE)
@@ -201,6 +261,8 @@ class RelayServer:
         self._poll_interval_s = poll_interval_s
         self._maintain_interval_s = maintain_interval_s
         self._workers = workers
+        self._body_deadline_s = body_deadline_s
+        self._max_in_flight = max_in_flight
         self.prepared: Optional[PreparedState] = None
         self.service: Optional[RelayService] = None
         self.mailbox: Optional[Mailbox] = None
@@ -270,7 +332,8 @@ class RelayServer:
                                                                thread_name_prefix="llm-kit-relay-call")
         import uvicorn
 
-        app = RelayApp(self.service, self._executor)
+        app = RelayApp(self.service, self._executor, body_deadline_s=self._body_deadline_s,
+                       max_in_flight=self._max_in_flight)
         self._uvicorn = uvicorn.Server(uvicorn.Config(
             app, lifespan="off", http="h11", ws="none", log_config=None, log_level="warning",
             access_log=False, proxy_headers=False, server_header=False, timeout_graceful_shutdown=5,
@@ -379,7 +442,9 @@ class RelayServer:
 
 
 __all__ = [
+    "DEFAULT_BODY_DEADLINE_S",
     "DEFAULT_MAINTAIN_INTERVAL_S",
+    "DEFAULT_MAX_IN_FLIGHT",
     "PATH_PREFIX",
     "RelayApp",
     "RelayServer",
