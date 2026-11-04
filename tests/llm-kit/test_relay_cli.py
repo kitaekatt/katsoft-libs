@@ -82,9 +82,9 @@ def paths(tmp_path: Path, home) -> SimpleNamespace:
                            args=["--env-json", str(env_json), "--config", str(config), "--state-dir", str(state)])
 
 
-@pytest.fixture
-def relay(paths) -> Iterator[SimpleNamespace]:
-    config = C.load_config(env_json=paths.env_json, environ={}, config_path=paths.config, state_root=paths.state)
+def _serve(paths, ledgers=()) -> Iterator[SimpleNamespace]:
+    config = C.load_config(env_json=paths.env_json, environ={}, config_path=paths.config, state_root=paths.state,
+                           ledgers=ledgers)
     server = S.RelayServer(
         config, port=0, roots=paths.roots, probe=D.PsutilProbe(), poll_interval_s=0.05, maintain_interval_s=3600,
         backend_factory=lambda entry: SimpleNamespace(backend=Backend(), model=entry.model),
@@ -98,6 +98,24 @@ def relay(paths) -> Iterator[SimpleNamespace]:
         yield SimpleNamespace(server=server, port=port, client=client)
     finally:
         server.stop()
+
+
+@pytest.fixture
+def relay(paths) -> Iterator[SimpleNamespace]:
+    yield from _serve(paths)
+
+
+@pytest.fixture
+def question_relay(paths) -> Iterator[SimpleNamespace]:
+    """A relay watching one real ledger with one open question (``relay.qid``)."""
+    from test_relay_questions import _ledger
+
+    ledger = paths.tmp / "ledgers" / "jobs.sqlite3"
+    ledger.parent.mkdir()
+    _ledger(ledger)
+    for served in _serve(paths, ledgers=(ledger,)):
+        served.qid = "q:testbox/jobs:run:1"
+        yield served
 
 
 def cli(argv: list[str], capsys) -> Any:
@@ -125,7 +143,7 @@ def test_the_group_needs_a_verb_and_lists_them(paths, capsys):
     assert out.code == 2 and "required: verb" in out.err
     out = cli(["--help"], capsys)
     assert out.code == 0 and "usage: llm-kit relay" in out.out
-    for verb in ("serve", "pause", "resume", "status", "client"):
+    for verb in ("serve", "hub", "pause", "resume", "status", "client"):
         assert verb in out.out
 
 
@@ -222,11 +240,29 @@ def test_client_sessions_and_ask_with_grants(relay, paths, capsys):
     assert calls[-1]["grant_id"] == grant and calls[-1]["origin"] == f"direct:{LABEL}/claude/{SESSION}"
 
 
-def test_client_verbs_the_build_does_not_serve(relay, paths, capsys):
+def test_client_questions_and_answer_are_served_with_grants(question_relay, paths, capsys):
+    relay = question_relay
     out = cli(["client", "questions", "--session", SESSION, *paths.args], capsys)
-    assert out.code == 1
-    error = json.loads(out.err)["error"]
-    assert error["code"] == "unknown_verb" and error["details"] == {"verb": "list_questions", "not_implemented": True}
+    assert out.code == 1 and json.loads(out.err)["error"]["code"] == "grant_required"
+
+    mint(relay, "list_questions")
+    out = cli(["client", "questions", "--session", SESSION, *paths.args], capsys)
+    assert (out.code, out.err) == (0, "")
+    listed = json.loads(out.out)
+    assert [q["id"] for q in listed["questions"]] == [relay.qid]
+    assert listed["machines"] == [{"machine": LABEL, "status": "up"}]
+
+    grant = mint(relay, "answer_question", [relay.qid])
+    out = cli(["client", "answer", relay.qid, "--decision", "answer", "--input", '{"approved": true}',
+               "--session", SESSION, "--grant", grant, *paths.args], capsys)
+    assert (out.code, out.err) == (0, "")
+    assert scrub(json.loads(out.out), paths.tmp) == {
+        "id": relay.qid, "decision": "answer", "state": "answered", "replayed": False, "resolved_at": "<t>",
+        "job_id": "job", "job_state": "waiting",
+    }
+    out = cli(["client", "answer", relay.qid, "--decision", "reject", "--session", SESSION, "--grant", grant,
+               *paths.args], capsys)
+    assert out.code == 1 and json.loads(out.err)["error"]["code"] == "grant_used_up"
 
 
 def test_a_malformed_session_is_a_usage_error(paths, capsys):
@@ -276,6 +312,70 @@ def test_serve_runs_in_the_foreground_until_sigterm(paths):
         status = HttpRelayClient(f"http://127.0.0.1:{port}", machine=LABEL, relay_token=token).status(
             {}, origin=f"operator:{LABEL}")
         assert status["machine"] == LABEL
+        child.send_signal(signal.SIGTERM)
+        assert child.wait(timeout=30) == 0
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        child.stdout.close()
+        child.stderr.close()
+
+
+# --------------------------------------------------------------------------
+# hub
+# --------------------------------------------------------------------------
+
+def test_hub_takes_host_and_port_like_serve(paths, capsys):
+    out = cli(["hub", "--help"], capsys)
+    assert out.code == 0
+    for flag in ("--host", "--port", "--env-json", "--config", "--state-dir"):
+        assert flag in out.out
+
+
+def test_hub_refuses_a_non_loopback_host(paths, capsys):
+    out = cli(["hub", "--host", "0.0.0.0", *paths.args], capsys)
+    assert out.code == 2 and out.out == ""
+    error = json.loads(out.err)["error"]
+    assert error["kind"] == "configuration" and "not a loopback address" in error["message"]
+    assert not paths.state.exists()
+
+
+def test_hub_refuses_the_relays_own_address(paths, capsys):
+    out = cli(["hub", "--port", "4710", *paths.args], capsys)
+    assert out.code == 2 and "would both bind" in json.loads(out.err)["error"]["message"]
+
+
+def test_a_second_hub_is_refused_already_running(paths, capsys):
+    from llm_kit.relay.hub import HubServer
+
+    config = C.load_config(env_json=paths.env_json, environ={}, config_path=paths.config, state_root=paths.state)
+    with HubServer(config, port=0):
+        out = cli(["hub", "--port", str(_free_port()), *paths.args], capsys)
+    assert out.code == 1 and out.out == ""
+    error = json.loads(out.err)["error"]
+    assert error["code"] == "already_running" and error["details"]["role"] == "hub"
+    assert error["details"]["pid"] == os.getpid()
+
+
+def test_hub_runs_in_the_foreground_until_sigterm(paths):
+    port = _free_port()
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("XDG_", "CLAUDE_", "MODEL_ENDPOINTS"))}
+    env.update({"HOME": str(paths.tmp / "home"), "PYTHONPATH": os.pathsep.join([str(LIB), str(CONTRACTS)]),
+                "_BOOTSTRAP_GUARD_SKIP_REEXEC": "1"})
+    child = subprocess.Popen([sys.executable, "-m", "llm_kit.cli", "relay", "hub", "--port", str(port), *paths.args],
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        line = child.stdout.readline()
+        assert line, child.stderr.read()
+        ready = scrub(json.loads(line), paths.tmp, port)
+        assert ready == {"serving": "http://127.0.0.1:<port>/mcp", "machine": LABEL, "protocol": P.PROTOCOL}
+        bearer = (paths.state / "hub.bearer").read_text(encoding="ascii").strip()
+        assert bearer
+        import httpx
+
+        refused = httpx.post(f"http://127.0.0.1:{port}/mcp", json={}, trust_env=False)
+        assert refused.status_code == 401 and refused.json()["error"]["code"] == "unauthenticated"
         child.send_signal(signal.SIGTERM)
         assert child.wait(timeout=30) == 0
     finally:

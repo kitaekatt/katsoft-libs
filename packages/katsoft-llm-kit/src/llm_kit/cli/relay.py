@@ -1,4 +1,4 @@
-"""``llm-kit relay``: serve this machine's relay, pause or resume it, show its status, call it as a client.
+"""``llm-kit relay``: serve this machine's relay or hub, pause or resume it, show its status, call it as a client.
 
 Verbs:
 
@@ -8,6 +8,15 @@ Verbs:
     Prints one JSON object once the socket listens, then serves until SIGINT
     or SIGTERM. A second ``serve`` on the same state directory exits 1 with
     ``already_running``.
+``hub [--host H] [--port N]``
+    Run the hub (the MCP server the claude.ai connector talks to) in the
+    foreground on ``RelayConfig.bind("hub")`` (``127.0.0.1:4711`` unless
+    ``relay.yaml`` says otherwise; loopback only), in front of this machine's
+    relay. Prints one JSON object (``serving`` is the MCP endpoint URL) once
+    the socket listens, then serves until SIGINT or SIGTERM. A second ``hub``
+    on the same state directory exits 1 with ``already_running``. The hub
+    creates its bearer token if missing; it does not need the relay to be up
+    (an unreachable relay is reported per call).
 ``pause [--scope relay|hub] [--reason TEXT]`` / ``resume [--scope relay|hub]``
     Set or clear a pause flag through the running relay, as
     ``operator:<machine>`` (audited). ``--offline`` writes the pause file in the
@@ -105,13 +114,16 @@ def _client_common() -> argparse.ArgumentParser:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="llm-kit relay",
-        description="Serve this machine's relay, pause or resume it, show its status, or call it as a /direct client.",
+        description="Serve this machine's relay or hub, pause or resume it, show its status, or call it as a /direct client.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True, metavar="verb")
     common = _common()
     serve = sub.add_parser("serve", parents=[common], help="Run the relay in the foreground (loopback only).")
     serve.add_argument("--host", help="Loopback host to bind instead of relay.yaml's (a literal loopback address).")
     serve.add_argument("--port", type=int, help="Port to bind instead of relay.yaml's.")
+    hub = sub.add_parser("hub", parents=[common], help="Run the hub MCP server in the foreground (loopback only).")
+    hub.add_argument("--host", help="Loopback host to bind instead of relay.yaml's (a literal loopback address).")
+    hub.add_argument("--port", type=int, help="Port to bind instead of relay.yaml's.")
     for name, text in (("pause", "Set a pause flag."), ("resume", "Clear a pause flag.")):
         verb = sub.add_parser(name, parents=[common], help=text)
         verb.add_argument("--scope", choices=P.PAUSE_SCOPES, default="relay", help="relay (default) or hub.")
@@ -198,6 +210,19 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         })
 
     RelayServer(config).serve_forever(on_ready=ready)
+    return EXIT_OK
+
+
+def _cmd_hub(args: argparse.Namespace) -> int:
+    from llm_kit.relay.hub import HubServer
+
+    overrides = {key: value for key, value in (("hub_host", args.host), ("hub_port", args.port)) if value is not None}
+    config = _config(args, **overrides)
+
+    def ready(server: HubServer) -> None:
+        _emit({"serving": server.url, "machine": config.machine_label, "protocol": P.PROTOCOL})
+
+    HubServer(config).serve_forever(on_ready=ready)
     return EXIT_OK
 
 
@@ -291,6 +316,7 @@ def _cmd_client(args: argparse.Namespace) -> int:
 
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "serve": _cmd_serve,
+    "hub": _cmd_hub,
     "pause": _cmd_control,
     "resume": _cmd_control,
     "status": _cmd_control,

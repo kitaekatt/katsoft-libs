@@ -539,7 +539,7 @@ def test_every_request_with_a_known_verb_and_origin_writes_a_call_row(relay):
 # envelope, transport and origin refusals
 # --------------------------------------------------------------------------
 
-def test_envelope_and_transport_refusals(relay):
+def test_envelope_and_transport_refusals(relay, monkeypatch):
     def error(response: httpx.Response) -> tuple[int, str]:
         return response.status_code, response.json()["error"]["code"]
 
@@ -554,6 +554,7 @@ def test_envelope_and_transport_refusals(relay):
     assert error(raw_post(relay, "/v1/status", b"x" * (P.MAX_REQUEST_BYTES + 1))) == (413, "too_large")
     assert error(raw_post(relay, "/v1/status", envelope("status", {"extra": 1}))) == (400, "bad_request")
     assert error(raw_post(relay, "/v1/status", envelope("status", {}, origin="nobody"))) == (400, "bad_request")
+    monkeypatch.setattr(SV, "NOT_SERVED", frozenset({"list_questions", "answer_question"}))  # a verb the build lacks
     for verb in ("list_questions", "answer_question"):
         response = raw_post(relay, f"/v1/{verb}", envelope(verb, {}, origin=f"direct:{addr(DIRECT)}"))
         assert error(response) == (404, "unknown_verb") and response.json()["error"]["details"]["not_implemented"] is True
@@ -846,3 +847,132 @@ def test_failed_auth_audit_rows_stop_at_a_total_cap_that_survives_a_restart(conf
         assert len(_unauth_rows(relay)) == 5
     finally:
         second.close()
+
+
+# --------------------------------------------------------------------------
+# list_questions and answer_question (units Q10 + S3 wiring)
+# --------------------------------------------------------------------------
+
+def _question_relay(config, roots, backend, tmp_path, **kw) -> Iterator[tuple[Relay, Path, str]]:
+    """A served relay watching one real ledger with one open question; yields ``(relay, ledger path, question id)``."""
+    from test_relay_questions import _ledger
+
+    ledger = tmp_path / "ledgers" / "jobs.sqlite3"
+    ledger.parent.mkdir()
+    _ledger(ledger)
+    watched = dataclasses.replace(config, ledgers=(ledger,))
+    for relay in _served(watched, roots, backend, tmp_path, **kw):
+        qid = relay.hub("list_questions", {})["questions"][0]["id"]
+        yield relay, ledger, qid
+
+
+def _resolutions(ledger: Path) -> list:
+    from test_relay_questions import _resolution_rows
+
+    return _resolution_rows(ledger)
+
+
+def test_every_protocol_verb_is_served():
+    assert SV.NOT_SERVED == frozenset()
+
+
+def test_list_questions_is_served_to_hub_and_granted_direct_callers(config, roots, backend, tmp_path):
+    from test_relay_questions import _schema_errors
+
+    gen = _question_relay(config, roots, backend, tmp_path)
+    relay, ledger, qid = next(gen)
+    try:
+        assert qid == "q:m5pro/jobs:run:1"
+        relay.refused("grant_required", relay.direct, "list_questions", {})
+        relay.mint("list_questions")
+        result = relay.direct("list_questions", {})
+        assert [q["id"] for q in result["questions"]] == [qid]
+        assert result["machines"] == [{"machine": MACHINE, "status": "up"}]
+        assert result["ledgers"] == [{"ledger": "jobs", "status": "ok"}]
+        assert _schema_errors("list_questions.response", result) == []
+        assert relay.hub("list_questions", {"state": "all"})["questions"][0]["state"] == "open"
+        relay.refused("origin_not_allowed", relay.operator, "list_questions", {})
+        calls = [r for r in relay.mailbox.audit_rows() if r["event"] == "call" and r["verb"] == "list_questions"]
+        assert calls and all(r["outcome"] in ("ok", "refused") for r in calls)
+    finally:
+        gen.close()
+
+
+def test_answer_question_needs_a_grant_on_the_question_id_and_reserves_its_use(config, roots, backend, tmp_path, monkeypatch):
+    from llm_kit.relay import questions as Q
+
+    gen = _question_relay(config, roots, backend, tmp_path)
+    relay, ledger, qid = next(gen)
+    try:
+        answer = {"id": qid, "decision": "answer", "input": {"approved": True}}
+        relay.refused("grant_required", relay.direct, "answer_question", answer)
+        wrong = relay.mint("answer_question", ["q:m5pro/jobs:run:99"])
+        relay.refused("grant_wrong_target", relay.direct, "answer_question", answer, grant=wrong["grant_id"])
+        assert _resolutions(ledger) == []
+
+        grant = relay.mint("answer_question", [qid])
+        seen: list[int] = []
+        original = Q.QuestionService.answer_question
+
+        def spy(self, params):
+            seen.append(relay.mailbox.get_grant(grant["grant_id"])["uses_remaining"])
+            return original(self, params)
+
+        monkeypatch.setattr(Q.QuestionService, "answer_question", spy)
+        result = relay.direct("answer_question", answer, grant=grant["grant_id"])
+        assert seen == [0], "the grant use must be reserved before the answer is written"
+        assert (result["id"], result["state"], result["replayed"]) == (qid, "answered", False)
+        assert [row[:2] for row in _resolutions(ledger)] == [(1, "answered")]
+        assert relay.mailbox.get_grant(grant["grant_id"])["state"] == "used-up"
+        row = [r for r in relay.mailbox.audit_rows() if r["event"] == "call" and r["verb"] == "answer_question"][-1]
+        assert (row["outcome"], row["target"], row["grant_id"]) == ("ok", qid, grant["grant_id"])
+        assert relay.hub("list_questions", {})["questions"] == []
+    finally:
+        gen.close()
+
+
+def test_a_refused_answer_gives_its_reserved_use_back(config, roots, backend, tmp_path):
+    gen = _question_relay(config, roots, backend, tmp_path)
+    relay, ledger, qid = next(gen)
+    try:
+        grant = relay.mint("answer_question", [qid], uses=2)
+        gid = grant["grant_id"]
+        left = lambda: relay.mailbox.get_grant(gid)["uses_remaining"]
+
+        relay.refused("answer_invalid", relay.direct, "answer_question",
+                      {"id": qid, "decision": "answer", "input": {"approved": False}}, grant=gid)
+        assert left() == 2 and _resolutions(ledger) == []
+
+        relay.direct("answer_question", {"id": qid, "decision": "answer", "input": {"approved": True}}, grant=gid)
+        assert left() == 1
+        relay.refused("invalid_transition", relay.direct, "answer_question", {"id": qid, "decision": "reject"}, grant=gid)
+        assert left() == 1, "a refusal that changed nothing keeps the grant whole"
+        assert [row[1] for row in _resolutions(ledger)] == ["answered"]
+    finally:
+        gen.close()
+
+
+def test_a_hub_answer_is_refused_and_a_paused_relay_refuses_answers_and_reports_paused(config, roots, backend, tmp_path):
+    gen = _question_relay(config, roots, backend, tmp_path)
+    relay, ledger, qid = next(gen)
+    try:
+        answer = {"id": qid, "decision": "answer", "input": {"approved": True}}
+        relay.refused("grant_required", relay.hub, "answer_question", answer)
+        relay.refused("origin_not_allowed", relay.operator, "answer_question", answer)
+        grant = relay.mint("answer_question", [qid])
+        relay.operator("pause", {"scope": "relay"})
+        relay.refused("paused", relay.direct, "answer_question", answer, grant=grant["grant_id"])
+        assert relay.mailbox.get_grant(grant["grant_id"])["uses_remaining"] == 1
+        assert relay.hub("list_questions", {})["machines"] == [{"machine": MACHINE, "status": "paused"}]
+        assert _resolutions(ledger) == []
+        relay.operator("resume", {"scope": "relay"})
+        assert relay.direct("answer_question", answer, grant=grant["grant_id"])["state"] == "answered"
+    finally:
+        gen.close()
+
+
+def test_a_verb_that_is_still_unserved_keeps_the_not_implemented_refusal(relay, monkeypatch):
+    monkeypatch.setattr(SV, "NOT_SERVED", frozenset({"list_questions"}))
+    error = relay.refused("unknown_verb", relay.hub, "list_questions", {})
+    assert error.details == {"verb": "list_questions", "not_implemented": True}
+    assert relay.hub("list_machines", {})["machines"][0]["machine"] == MACHINE

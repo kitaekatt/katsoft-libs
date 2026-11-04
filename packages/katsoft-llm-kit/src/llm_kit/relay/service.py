@@ -51,18 +51,21 @@ import threading
 import time
 import traceback
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from llm_kit.relay import protocol as P
 from llm_kit.relay.discovery import Discovery, EndEvent, RegistrationTable, SessionInfo
 from llm_kit.relay.lifecycle import PauseStore, token_matches
 from llm_kit.relay.mailbox import GrantUse, Mailbox
+from llm_kit.relay.questions import QuestionService
 from llm_kit.schema import json_schema as JS
 
-#: Verbs the frozen contract defines that this build does not serve yet. They
-#: are refused ``unknown_verb`` with ``details.not_implemented`` true (the
-#: questions verbs belong to unit Q10).
-NOT_SERVED: frozenset[str] = frozenset({"list_questions", "answer_question"})
+#: Verbs the frozen contract defines that this build does not serve. They are
+#: refused ``unknown_verb`` with ``details.not_implemented`` true. Every verb of
+#: relay-protocol/1 is served, so the set is empty; a verb added to the verb
+#: table before its handler exists is listed here until the handler lands.
+NOT_SERVED: frozenset[str] = frozenset()
 
 #: Verbs whose target param names a session (a selector there is resolved).
 _SESSION_TARGET_PARAMS = frozenset({("read_session", "address"), ("send_message", "to"), ("get_replies", "address")})
@@ -247,7 +250,10 @@ class RelayService:
     ``table`` must be the registration table ``discovery`` merges; the service
     subscribes the mailbox's ``end_session`` to its end events. ``endpoints``
     are the loopback registry entry names ``list_machines`` advertises.
-    ``poll_interval_s`` bounds how long a waiting ``poll`` or ``get_replies``
+    ``ledgers`` are the watched job-ledger paths (``RelayConfig.ledgers``) the
+    questions verbs read and answer; the service builds one
+    :class:`~llm_kit.relay.questions.QuestionService` over them, with this
+    relay's clock and reachability. ``poll_interval_s`` bounds how long a waiting ``poll`` or ``get_replies``
     sleeps between mailbox reads when no local write wakes it (a write by
     another process is seen within that interval).
     """
@@ -264,6 +270,7 @@ class RelayService:
         llm: Any,
         pause: PauseStore,
         endpoints: Sequence[str] = (),
+        ledgers: Sequence[Path] = (),
         clock: Callable[[], float] = time.time,
         poll_interval_s: float = 1.0,
         version: Optional[str] = None,
@@ -284,6 +291,7 @@ class RelayService:
         self._pause = pause
         self._endpoints = tuple(endpoints)
         self._clock = clock
+        self._questions = QuestionService(machine=machine, ledgers=ledgers, clock=clock, reach=self._reach)
         self._poll_interval_s = poll_interval_s
         self._version = version if version is not None else library_version()
         self._schemas = _Schemas()
@@ -305,6 +313,8 @@ class RelayService:
             "ask_llm": self._ask_llm,
             "send_message": self._send_message,
             "get_replies": self._get_replies,
+            "list_questions": self._list_questions,
+            "answer_question": self._answer_question,
             "grant_mint": self._grant_mint,
             "grant_check": self._grant_check,
             "pause": self._pause_verb,
@@ -798,6 +808,14 @@ class RelayService:
             records = self._replies_snapshot(params, address, limit)
             if [(m["id"], m["state"], m["updated_at"]) for m in records] != signature:
                 return {"messages": records}
+
+    # -- questions ----------------------------------------------------------------------
+
+    def _list_questions(self, call: _Call, params: Mapping[str, Any], granted: _Granted, ingress: str) -> dict[str, Any]:
+        return self._questions.list_questions(params)
+
+    def _answer_question(self, call: _Call, params: Mapping[str, Any], granted: _Granted, ingress: str) -> dict[str, Any]:
+        return self._questions.answer_question(params)
 
     # -- grants -------------------------------------------------------------------------
 

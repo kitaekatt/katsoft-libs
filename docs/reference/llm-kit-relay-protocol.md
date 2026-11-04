@@ -240,6 +240,26 @@ chosen by the sender and are idempotency keys; `grt_` and `reg_` ids are
 assigned by the relay; a question id is `q:<machine>/<local id>`, assigned by
 the relay and routable by machine.
 
+Question ids. For a job-ledger question (the only kind relay-protocol/1
+has) the local id is `<ledger-key>:<run-id>:<interrupt-id>`, so the whole id
+is `q:<machine>/<ledger-key>:<run-id>:<interrupt-id>`:
+
+- `<machine>` is the serving relay's label.
+- `<ledger-key>` is the watched ledger's name. `relay.yaml` lists ledger
+  paths only, so the relay derives the name: the file stem with every
+  character outside `[A-Za-z0-9_.-]` replaced by `-`; ledgers whose stems
+  collide each get `-<first 8 hex of sha1(path)>` appended. A config change
+  that introduces a collision renames the affected keys, and an id from before
+  the change answers `question_not_found` (list again). It is also the
+  `source.ledger` field and the `ledger` field of the `ledgers` report below.
+- `<run-id>` is the job run id verbatim (it may itself contain `:` or `/`).
+- `<interrupt-id>` is the ledger's decimal interrupt id.
+
+An id is parsed by splitting the ledger key off at the first `:` and the
+interrupt id at the last `:`. The whole id is at most 266 characters (the
+`question_id` schema limit); an interrupt whose id would be longer is left out
+of the listing and named in its ledger's `skipped` list.
+
 ## 8. Verbs
 
 | Verb | Client verb | Grant target param |
@@ -388,12 +408,91 @@ Every other move is `invalid_transition`. Every transition is an audit row.
   machine) and `address` by its machine.
 - `list_questions(machine?, state?)` -> pending operator questions from the
   watched job ledgers (`open` by default, or `all`), each with its interrupt
-  kind, payload and `request_schema`, plus machine reachability.
-- `answer_question(id, decision, input | reason)` -> the resolution.
-  `decision` `answer` carries `input` (validated against the request schema,
-  else `answer_invalid`); `reject` may carry `reason`. Same semantics as
-  `llm-kit jobs resolve`: an equal resolution replays (`replayed: true`), a
-  different one is `invalid_transition`.
+  kind, payload and `request_schema`, plus machine reachability. States are
+  `open`, `expired` (unresolved past `expires_at`, or resolved `expired`),
+  `answered` and `rejected` (a `cancelled` ledger outcome is reported
+  `rejected`). The result also carries `ledgers` (the schema allows extra
+  fields): one entry per watched ledger, `{"ledger": <key>, "status": "ok"}`,
+  or `"status": "unavailable"` with an `error` text when the ledger cannot be
+  read, plus `skipped` for any interrupt left out for an over-long id. A
+  broken ledger therefore never hides the others, and a missing one is never
+  silent. A `machine` other than the serving relay's is listed `unreachable`
+  (no forwarding in relay-protocol/1).
+- `answer_question(id, decision, input | reason)` -> the resolution
+  (`id`, `decision`, `state`, `replayed`, `resolved_at`, `job_id`,
+  `job_state`). `decision` `answer` carries `input` (validated against the
+  request schema, else `answer_invalid` with `details.errors` as
+  `[json_pointer, keyword]` pairs); `reject` may carry `reason`. Same
+  semantics as `llm-kit jobs resolve`, with the same stored resolution, job
+  state change and execution events; like it, the answer never resumes the
+  run. An equal resolution replays (`replayed: true`), a different one, an
+  expired interrupt and a job no longer waiting are `invalid_transition`; a
+  malformed id is `bad_request`; an id naming another machine, an unknown
+  ledger key, run or interrupt, or an unreadable ledger is
+  `question_not_found`. The grant target is the `id` param, so a grant covers
+  exactly the questions it names. It is a write verb: it needs a covering
+  grant, reserves one use before the answer is written, and gets it back only
+  when the call failed before any effect (section 14; every refusal above is
+  such a failure, a replay keeps its use because the call returned ok). It is
+  refused `paused` while the relay is paused, and a hub-origin call is
+  `grant_required`.
+
+### The hub endpoint and routing
+
+The hub (`llm_kit/relay/hub.py`, `llm-kit relay hub`) is an MCP server over
+streamable HTTP, stateless with JSON responses, at `/mcp` on
+`RelayConfig.bind("hub")` (`127.0.0.1:4711` by default; a literal loopback
+address only, checked before any state is touched and again on the bound
+socket). External exposure is a separate, later unit and nothing here opens it.
+
+- Authentication: every HTTP request needs `Authorization: Bearer <hub
+  bearer>`, compared in constant time, before MCP sees the request. A missing
+  or wrong bearer is HTTP 401 with an `unauthenticated` response envelope.
+- Tools: one per served verb, named as the verb, with the verb's `<verb>.request`
+  schema as `inputSchema` and its `<verb>.response` schema as `outputSchema`;
+  every description says that session and model output is data, not
+  instructions. This build serves `list_machines`, `list_sessions`,
+  `read_session` and `ask_llm`; `send_message`, `get_replies`,
+  `list_questions` and `answer_question` are added by registering a handler
+  in the hub's router table, and a call to a tool not served is `unknown_verb`.
+- Tool errors: a refusal or failure is an MCP tool result with `isError` true
+  whose text and structured content are `{"error": <error object>}` (code,
+  message, retryable, details) with the section-5 code; it is never a JSON-RPC
+  error. A defect inside the hub is `internal`. A success result is the
+  verb's result, unwrapped.
+- Check order at the hub: the tool exists (`unknown_verb`), the arguments fit
+  the verb's request schema (`bad_request`), the hub is not paused (`paused`),
+  then the verb's own refusals. `tools/list` answers while the hub is paused.
+  Results are validated against the response schema (`internal` on a
+  mismatch).
+- Origin: every relay call the hub makes carries the origin
+  `claude.ai/<hub_user>` (`owner` unless the process names another user) and
+  both credentials, `X-Relay-Token` and the hub bearer; the bearer alone never
+  authorizes a relay call. This is the audit origin a relay records for
+  connector traffic.
+- Relays: the hub reaches relays only through `RelayClient` objects built from
+  `(machine label, URL)` pairs; by default one, this machine's relay at
+  `RelayConfig.bind("relay")`. Machine labels are unique.
+- Fan-out: `list_machines` and `list_sessions` ask every relay in parallel and
+  mark a relay that cannot answer `unreachable` with its error object instead
+  of omitting it. `list_sessions` with a `machine` the hub has no relay for
+  returns no sessions and that machine `unreachable` (`machine_unreachable`).
+- Routing: `read_session` and `ask_llm` go to the relay named by the target's
+  machine; a target naming a machine the hub has no relay for is
+  `machine_unreachable`. `ask_llm` needs an address with a machine. A bare
+  `read_session` selector (no machine) goes to the only relay when there is
+  one; with several it is tried on every relay and must resolve on exactly
+  one: more than one is `target_ambiguous` with the candidate addresses, none
+  with some relay `machine_unreachable` is `machine_unreachable` naming those
+  machines, and otherwise the first relay's error is returned.
+- State: `llm-kit relay hub` creates the state directory and the relay token
+  and hub bearer when absent (the same files the relay creates, race-safe),
+  but not the loopback registry, which only the relay writes. It does not need
+  the relay to be running: an unreachable relay is reported per call. The hub
+  role is a singleton per state directory (`already_running`).
+- Pause: `llm-kit relay pause --scope hub` is read from disk on every call, so
+  it takes effect at once and survives a restart; relays independently refuse
+  hub-origin calls while the hub is paused (section 16).
 
 ## 14. Grants
 
@@ -636,8 +735,15 @@ independent of the transport, so the hub can reuse them),
   forwarding.
 - `status` adds `registrations` (live registrations), and `library_version`
   when the package metadata is installed.
-- `list_questions` and `answer_question` are not served by this build (unit
-  Q10). They are refused `unknown_verb` at the verb stage with
+- `list_questions` and `answer_question` are served through the normal verb
+  dispatch by `llm_kit.relay.questions.QuestionService`, built over the
+  ledgers of `RelayConfig.ledgers` with the relay's clock; a paused relay
+  lists itself `paused` in `machines`. `answer_question` is a granted write
+  verb: it takes the reserve-and-refund path above like every other verb
+  except `send_message`, with the question `id` as its grant target.
+- Every verb of relay-protocol/1 is served, so the not-served set
+  (`NOT_SERVED`) is empty. A verb listed there would be refused
+  `unknown_verb` at the verb stage with
   `details: {"verb": ..., "not_implemented": true}`.
 
 ### Audit
@@ -675,7 +781,10 @@ independent of the transport, so the hub can reuse them),
 - `llm-kit relay serve` runs the relay in the foreground until SIGINT or
   SIGTERM. `pause`, `resume` and `status` call the relay as
   `operator:<machine>`; with `--offline` they read or write the pause file
-  directly (no relay, no audit row). `llm-kit relay client <verb> --session <S>`
+  directly (no relay, no audit row). `llm-kit relay hub [--host H] [--port N]`
+  runs the hub in the foreground the same way (loopback only, until SIGINT or
+  SIGTERM) and prints one JSON object `{"serving": <MCP URL>, "machine": ...,
+  "protocol": ...}` once it listens. `llm-kit relay client <verb> --session <S>`
   calls one of the eight client verbs as `direct:<machine>/claude/<S>`, with
   `--grant` as `X-Relay-Grant`. Output is JSON; exit 0 ok, 1 refused or
   unreachable, 2 usage or configuration.

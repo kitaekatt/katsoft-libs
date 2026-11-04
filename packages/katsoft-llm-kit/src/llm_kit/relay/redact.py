@@ -24,7 +24,9 @@ or a short value is not a secret shape.
 ``is_secret_path_use`` answers a different question: does a tool call READ a
 path under a secrets location (``~/.ssh``, ``.env`` files, keychains, cloud
 and package-manager credential files, secrets-kit stores, the relay's own
-``relay.token`` and ``hub.bearer``)? The transcript
+``relay.token`` and ``hub.bearer``, and the relay state directory
+``llm-kit/relay`` named as a path, which a glob read reaches them through; a
+custom ``--state-dir`` has no such name and is not covered)? The transcript
 reader withholds the whole output of such a call, because the output of
 ``cat ~/.ssh/id_rsa`` has no shape a pattern can be trusted to catch.
 :data:`SECRET_PATH_PATTERNS` is the list.
@@ -171,6 +173,12 @@ SECRET_PATH_PATTERNS: tuple[str, ...] = (
     r"\bauth\.json\b",
     # The relay's own credentials (the state directory's relay token and hub bearer).
     r"(?:^|[\s\"'=:(/\\<])(?:relay\.token|hub\.bearer)(?=$|[\s\"'),;:/\\])",
+    # The relay state directory itself (<XDG state dir>/llm-kit/relay), named as a path: a glob or a
+    # directory read such as `cat ~/.local/state/llm-kit/relay/*` reaches the two files above without
+    # naming them. The two segments must be adjacent, `llm-kit` must start a path segment (so
+    # `katsoft-llm-kit` and `llm_kit/relay` do not match), and `relay` must end it (so
+    # `llm-kit/relay-notes.md`, `llm-kit/relay.py` and the words `llm-kit relay serve` do not).
+    r"(?:^|[\s\"'=:(/\\<~])llm-kit[\\/]relay(?=$|[\s\"'),;:/\\*?\[{])",
 )
 _SECRET_PATH_RES = tuple(re.compile(p, re.IGNORECASE | re.MULTILINE) for p in SECRET_PATH_PATTERNS)
 

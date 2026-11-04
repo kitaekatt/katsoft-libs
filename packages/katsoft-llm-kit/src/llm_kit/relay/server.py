@@ -319,8 +319,8 @@ class RelayServer:
             self.service = RelayService(
                 machine=machine, relay_token=self.prepared.relay_token, hub_bearer=self.prepared.hub_bearer,
                 mailbox=mailbox, table=table, discovery=discovery, llm=llm,
-                pause=self.prepared.pause_store(clock=self._clock), endpoints=endpoints, clock=self._clock,
-                poll_interval_s=self._poll_interval_s,
+                pause=self.prepared.pause_store(clock=self._clock), endpoints=endpoints,
+                ledgers=self.config.ledgers, clock=self._clock, poll_interval_s=self._poll_interval_s,
             )
             self.mailbox, self.table = mailbox, table
             self._sock = bind_loopback(self._host, self._port)

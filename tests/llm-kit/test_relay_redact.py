@@ -132,6 +132,43 @@ def test_ordinary_calls_are_not_secret_locations(name: str, tool_input: object) 
     assert R.is_secret_path_use(name, tool_input) is False
 
 
+@pytest.mark.parametrize(
+    "name,tool_input",
+    [
+        ("Bash", "cat ~/.local/state/llm-kit/relay/*"),
+        ("Bash", "ls -la /home/u/.local/state/llm-kit/relay/"),
+        ("Bash", 'tail -c +1 "$XDG_STATE_HOME"/llm-kit/relay/*'),
+        ("Bash", "cat $XDG_STATE_HOME/llm-kit/relay/h*"),
+        ("Bash", "cd ~/.local/state && cat llm-kit/relay/*"),
+        ("Bash", "cd /Users/u/.local/state/llm-kit/relay"),
+        ("Bash", "grep -r . /Users/u/.local/state/llm-kit/relay"),
+        ("Read", {"file_path": "/Users/u/.local/state/llm-kit/relay"}),
+        ("Read", {"file_path": "C:\\Users\\u\\AppData\\llm-kit\\relay\\"}),
+    ],
+)
+def test_reads_of_the_relay_state_directory_are_detected(name: str, tool_input: object) -> None:
+    assert R.is_secret_path_use(name, tool_input) is True
+
+
+@pytest.mark.parametrize(
+    "name,tool_input",
+    [
+        ("Bash", "uv run llm-kit relay serve"),
+        ("Bash", "llm-kit relay client sessions --session abc"),
+        ("Bash", "pytest tests/llm-kit/test_relay_cli.py -q"),
+        ("Bash", "cat docs/reference/llm-kit-relay-protocol.md"),
+        ("Bash", "cat ~/.local/state/llm-kit/relay-notes.md"),
+        ("Bash", "cat ~/.local/state/llm-kit/relay.py"),
+        ("Bash", "ls ~/.local/state/llm-kit/jobs"),
+        ("Read", {"file_path": "/Users/u/Dev/katsoft-libs/packages/katsoft-llm-kit/relay/notes.md"}),
+        ("Read", {"file_path": "/Users/u/Dev/katsoft-libs/packages/katsoft-llm-kit/src/llm_kit/relay/hub.py"}),
+        ("Bash", "echo relay is the word"),
+    ],
+)
+def test_unrelated_relay_words_and_paths_are_not_secret_locations(name: str, tool_input: object) -> None:
+    assert R.is_secret_path_use(name, tool_input) is False
+
+
 def test_redact_all_sums_counts() -> None:
     out, total = R.redact_all([f"a {SK}", "plain", f"b {GHP}"])
     assert total == 2 and out[1] == "plain" and SK not in out[0]
