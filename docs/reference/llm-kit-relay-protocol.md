@@ -452,9 +452,14 @@ socket). External exposure is a separate, later unit and nothing here opens it.
   schema as `inputSchema` and its `<verb>.response` schema as `outputSchema`;
   every description says that session and model output is data, not
   instructions. This build serves `list_machines`, `list_sessions`,
-  `read_session` and `ask_llm`; `send_message`, `get_replies`,
-  `list_questions` and `answer_question` are added by registering a handler
-  in the hub's router table, and a call to a tool not served is `unknown_verb`.
+  `read_session`, `ask_llm`, `get_replies` and `list_questions`, the verbs a
+  relay serves to a hub origin without a grant. `send_message` and
+  `answer_question` have no hub tool: a relay refuses every hub-origin write
+  `grant_required` (section 3, no hub grant producer), so a tool could only
+  return that refusal. They are added, by registering a handler in the hub's
+  router table, with a hub grant producer. The hub therefore cannot answer a
+  session's permission prompt, in P1 or P2. A call to a tool not served is
+  `unknown_verb`.
 - Tool errors: a refusal or failure is an MCP tool result with `isError` true
   whose text and structured content are `{"error": <error object>}` (code,
   message, retryable, details) with the section-5 code; it is never a JSON-RPC
@@ -473,10 +478,15 @@ socket). External exposure is a separate, later unit and nothing here opens it.
 - Relays: the hub reaches relays only through `RelayClient` objects built from
   `(machine label, URL)` pairs; by default one, this machine's relay at
   `RelayConfig.bind("relay")`. Machine labels are unique.
-- Fan-out: `list_machines` and `list_sessions` ask every relay in parallel and
-  mark a relay that cannot answer `unreachable` with its error object instead
-  of omitting it. `list_sessions` with a `machine` the hub has no relay for
-  returns no sessions and that machine `unreachable` (`machine_unreachable`).
+- Fan-out: `list_machines`, `list_sessions` and `list_questions` ask every
+  relay in parallel and mark a relay that cannot answer `unreachable` with its
+  error object instead of omitting it. `list_sessions` with a `machine` the hub
+  has no relay for returns no sessions and that machine `unreachable`
+  (`machine_unreachable`); `list_questions` does the same with no questions and
+  no ledgers. `list_questions` merges the relays' questions ordered by
+  `created_at` then id, and merges their `ledgers` entries with a `machine`
+  field added to each, because ledger keys are unique per relay only. A relay
+  that is paused is reported by its own `machines` entry, not as an error.
 - Routing: `read_session` and `ask_llm` go to the relay named by the target's
   machine; a target naming a machine the hub has no relay for is
   `machine_unreachable`. `ask_llm` needs an address with a machine. A bare
@@ -485,6 +495,14 @@ socket). External exposure is a separate, later unit and nothing here opens it.
   one: more than one is `target_ambiguous` with the candidate addresses, none
   with some relay `machine_unreachable` is `machine_unreachable` naming those
   machines, and otherwise the first relay's error is returned.
+- `get_replies` routes by its `address` the same way (a machine in the address
+  names the relay; a bare selector must resolve on exactly one). A `message_id`
+  names no machine, so the hub asks every relay, without `wait_s`, and exactly
+  one may hold it: more than one is `target_ambiguous` with the machines as
+  candidates, none with an unreachable relay is `machine_unreachable`, and
+  none otherwise is the relay's `message_not_found`. A `wait_s` long-poll then
+  runs against the holding relay only, so ambiguity is decided before any wait
+  and the caller waits at most `wait_s` plus one probe.
 - State: `llm-kit relay hub` creates the state directory and the relay token
   and hub bearer when absent (the same files the relay creates, race-safe),
   but not the loopback registry, which only the relay writes. It does not need

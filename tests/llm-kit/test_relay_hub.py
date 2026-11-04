@@ -13,6 +13,8 @@ import asyncio
 import dataclasses
 import json
 import socket
+import threading
+import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +34,8 @@ from llm_kit.relay import hub as H
 from llm_kit.relay import lifecycle as L
 from llm_kit.relay import protocol as P
 from llm_kit.relay import server as S
+
+from test_relay_questions import _ledger as question_ledger
 
 A, B, GHOST = "m5pro", "tower", "ghost"
 ENV_JSON = {"machines": {
@@ -63,13 +67,19 @@ class FakeBackend:
 class Machine:
     """One machine: config, harness homes, backend and a running relay."""
 
-    def __init__(self, label: str, tmp_path: Path) -> None:
+    def __init__(self, label: str, tmp_path: Path, *, question: bool = False) -> None:
         self.label = label
         self.root = tmp_path / label
         env_json = tmp_path / "env.json"
         env_json.write_text(json.dumps(ENV_JSON), encoding="utf-8")
         self.config = C.load_config(env_json=env_json, environ={}, hostname=lambda: f"{label}.local",
                                     config_path=self.root / "config" / "relay.yaml", state_root=self.root / "state")
+        self.registrations: dict[str, dict[str, Any]] = {}
+        if question:  # one real ledger with one open question, watched by this relay
+            ledger = self.root / "ledgers" / "jobs.sqlite3"
+            ledger.parent.mkdir(parents=True)
+            question_ledger(ledger)
+            self.config = dataclasses.replace(self.config, ledgers=(ledger,))
         claude, codex = self.root / "claude-home", self.root / "codex-home"
         (claude / "sessions").mkdir(parents=True)
         (claude / "projects" / "-tmp-proj").mkdir(parents=True)
@@ -95,7 +105,8 @@ class Machine:
     def address(self, session: str, harness: str = "claude") -> str:
         return f"{self.label}/{harness}/{session}"
 
-    def session(self, texts: list[str], *, task: Optional[str] = None) -> str:
+    def session(self, texts: list[str], *, task: Optional[str] = None,
+                accepts: tuple[str, ...] = ("note",)) -> str:
         """Register a live channel session with a transcript; returns its session id."""
         session = sid()
         lines = []
@@ -111,16 +122,50 @@ class Machine:
         transcript.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
         params: dict[str, Any] = {
             "session_id": session, "harness": "claude", "pid": __import__("os").getpid(), "cwd": "/Users/u/Dev/app",
-            "version": "2.1.316", "accepts": ["note"], "channel_nonce": NONCE, "transcript_path": str(transcript),
+            "version": "2.1.316", "accepts": list(accepts), "channel_nonce": NONCE, "transcript_path": str(transcript),
         }
         if task is not None:
             params["task"] = task
         client = H.HttpRelayClient(self.url, machine=self.label, relay_token=self.server.prepared.relay_token)
         try:
-            client.call("register", params, origin=f"channel:{self.address(session)}")
+            self.registrations[session] = client.call("register", params, origin=f"channel:{self.address(session)}")
         finally:
             client.close()
         return session
+
+    def _client(self) -> H.HttpRelayClient:
+        return H.HttpRelayClient(self.url, machine=self.label, relay_token=self.server.prepared.relay_token)
+
+    def send(self, session: str, *, kind: str = "note", body: str = "hello", id: Optional[str] = None) -> dict[str, Any]:
+        """A message to ``session`` from a /direct session holding a covering grant; returns the message record."""
+        sender = self.address(sid())
+        origin = f"direct:{sender}"
+        to = self.address(session)
+        client = self._client()
+        try:
+            client.call("grant_mint", {"session": sender, "verb": "send_message", "targets": [to], "expires_in_s": 120,
+                                       "uses": 1, "origin_proof": {"type": "none"}, "command": "/direct send"},
+                        origin=origin)
+            params: dict[str, Any] = {"to": to, "kind": kind, "body": body}
+            if id is not None:
+                params["id"] = id
+            return client.call("send_message", params, origin=origin)["message"]
+        finally:
+            client.close()
+
+    def reply(self, session: str, message_id: str, body: str) -> dict[str, Any]:
+        """The channel's side: poll, ack and answer one delivered message."""
+        creds = {"registration_id": self.registrations[session]["registration_id"], "session_id": session,
+                 "channel_nonce": NONCE}
+        origin = f"channel:{self.address(session)}"
+        client = self._client()
+        try:
+            polled = client.call("poll", dict(creds, wait_s=0), origin=origin)
+            assert [m["id"] for m in polled["messages"]] == [message_id]
+            client.call("ack", dict(creds, message_id=message_id), origin=origin)
+            return client.call("reply", dict(creds, in_reply_to=message_id, state="answered", body=body), origin=origin)
+        finally:
+            client.close()
 
 
 @pytest.fixture
@@ -139,6 +184,17 @@ def machine_b(tmp_path: Path) -> Iterator[Machine]:
         yield machine
     finally:
         machine.server.stop()
+
+
+@pytest.fixture
+def question_machines(tmp_path: Path) -> Iterator[tuple[Machine, Machine]]:
+    """Two machines whose relays each watch one ledger holding one open question."""
+    a, b = Machine(A, tmp_path, question=True), Machine(B, tmp_path, question=True)
+    try:
+        yield a, b
+    finally:
+        a.server.stop()
+        b.server.stop()
 
 
 def dead_url() -> str:
@@ -224,9 +280,12 @@ def hub_two(machine_a, machine_b) -> Iterator[Hub]:
 # the tools and their schemas
 # --------------------------------------------------------------------------
 
-def test_the_hub_serves_the_p1_tools_with_the_verbs_schemas(hub):
+def test_the_hub_serves_the_p1_and_p2_read_tools_with_the_verbs_schemas(hub):
     tools = {t.name: t for t in hub.run(lambda c: c.list_tools()).tools}
-    assert tuple(tools) == H.P1_TOOLS == ("list_machines", "list_sessions", "read_session", "ask_llm")
+    assert H.P1_TOOLS == ("list_machines", "list_sessions", "read_session", "ask_llm")
+    assert H.P2_TOOLS == ("get_replies", "list_questions")
+    assert tuple(tools) == H.SERVED_TOOLS == (
+        "list_machines", "list_sessions", "read_session", "ask_llm", "get_replies", "list_questions")
     for name, tool in tools.items():
         wanted_in = P.load_schema(P.request_schema_name(name))
         wanted_out = P.load_schema(P.response_schema_name(name))
@@ -378,15 +437,263 @@ def test_ask_llm_needs_a_machine_and_a_llm_address(hub_two):
     ("list_sessions", {"harness": "vim"}),
     ("list_machines", {"machine": "m5pro"}),
     ("ask_llm", {"endpoint": "m5pro/llm/x"}),
+    ("get_replies", {}),
+    ("get_replies", {"message_id": "msg_x", "address": "m5pro/claude/x"}),
+    ("get_replies", {"message_id": "msg_x", "wait_s": P.MAX_REPLY_WAIT_S + 1}),
+    ("list_questions", {"state": "closed"}),
+    ("list_questions", {"bogus": 1}),
 ])
 def test_arguments_that_fail_the_verbs_schema_are_bad_request(hub_two, tool, arguments):
     error = hub_two.refused(tool, arguments)
     assert error["code"] == "bad_request" and error["details"]["schema_errors"]
 
 
-def test_an_unserved_tool_is_unknown_verb(hub_two):
-    error = hub_two.refused("send_message", {"to": "m5pro/claude/x", "kind": "note", "body": "hi"})
-    assert error["code"] == "unknown_verb"
+@pytest.mark.parametrize("tool,arguments", [
+    ("send_message", {"to": "m5pro/claude/x", "kind": "note", "body": "hi"}),
+    ("answer_question", {"id": "q:m5pro/jobs:run:1", "decision": "reject"}),
+])
+def test_the_write_verbs_have_no_hub_tool(hub_two, tool, arguments):
+    assert tool not in {t.name for t in hub_two.run(lambda c: c.list_tools()).tools}
+    assert hub_two.refused(tool, arguments)["code"] == "unknown_verb"
+
+
+def test_the_relay_refuses_every_hub_write_so_the_hub_has_no_write_tool(machine_a):
+    """The premise behind the missing tools: relay-protocol/1 has no hub grant producer (protocol section 3).
+
+    When this test fails, a hub grant producer exists and ``send_message`` / ``answer_question`` can be added
+    to the hub router; until then a tool for them could only return this refusal.
+    """
+    session = machine_a.session(["x", "y"])
+    hub_client = H.HttpRelayClient(machine_a.url, machine=A, relay_token=machine_a.server.prepared.relay_token,
+                                   hub_bearer=machine_a.server.prepared.hub_bearer)
+    try:
+        for verb, params in (
+            ("send_message", {"to": machine_a.address(session), "kind": "note", "body": "hi"}),
+            ("answer_question", {"id": "q:m5pro/jobs:run:1", "decision": "reject"}),
+        ):
+            with pytest.raises(P.RelayError) as caught:
+                hub_client.call(verb, params, origin="claude.ai/owner")
+            assert caught.value.code == "grant_required", verb
+    finally:
+        hub_client.close()
+
+
+# --------------------------------------------------------------------------
+# get_replies (U12): reads, routed by the address's machine or found by message id
+# --------------------------------------------------------------------------
+
+def test_get_replies_by_address_goes_to_the_relay_that_owns_it(hub_two, machine_a, machine_b):
+    a_session, b_session = machine_a.session(["a1", "a2"]), machine_b.session(["b1", "b2"])
+    a_message = machine_a.send(a_session, body="to a")
+    b_message = machine_b.send(b_session, body="to b")
+    a_records = hub_two.ok("get_replies", {"address": machine_a.address(a_session)})["messages"]
+    b_records = hub_two.ok("get_replies", {"address": machine_b.address(b_session)})["messages"]
+    assert [m["id"] for m in a_records] == [a_message["id"]] and a_records[0]["body"] == "to a"
+    assert [m["id"] for m in b_records] == [b_message["id"]] and b_records[0]["body"] == "to b"
+    assert a_records[0]["state"] == "queued"
+
+
+def test_get_replies_by_message_id_asks_every_relay_and_the_holder_answers(hub_two, machine_a, machine_b):
+    session = machine_b.session(["b1", "b2"], accepts=("note", "question"))
+    message = machine_b.send(session, kind="question", body="ready?")
+    machine_b.reply(session, message["id"], "yes")
+    records = hub_two.ok("get_replies", {"message_id": message["id"]})["messages"]
+    assert records[0]["id"] == message["id"] and records[0]["state"] == "answered"
+    assert records[0]["reply"]["body"] == "yes"
+
+
+def test_get_replies_arguments_equal_the_verbs_params(hub_two, machine_a):
+    session = machine_a.session(["a1", "a2"])
+    message = machine_a.send(session)
+    via_hub = hub_two.ok("get_replies", {"message_id": message["id"], "limit": 5})
+    direct = H.HttpRelayClient(machine_a.url, machine=A, relay_token=machine_a.server.prepared.relay_token,
+                               hub_bearer=machine_a.server.prepared.hub_bearer)
+    try:
+        assert direct.call("get_replies", {"message_id": message["id"], "limit": 5}, origin="claude.ai/owner") == via_hub
+    finally:
+        direct.close()
+
+
+def test_get_replies_by_bare_selector_resolves_on_exactly_one_relay(hub_two, machine_a, machine_b):
+    machine_a.session(["a1", "a2"])
+    b_session = machine_b.session(["b1", "b2"], task="plugins-kit/harness-messaging")
+    message = machine_b.send(b_session)
+    records = hub_two.ok("get_replies", {"address": "task:plugins-kit/harness-messaging"})["messages"]
+    assert [m["id"] for m in records] == [message["id"]]
+
+
+def test_a_bare_selector_that_resolves_on_two_relays_is_ambiguous_without_waiting(hub_two, machine_a, machine_b):
+    machine_a.session(["a1", "a2"], task="plugins-kit/both")
+    machine_b.session(["b1", "b2"], task="plugins-kit/both")
+    started = time.monotonic()
+    error = hub_two.refused("get_replies", {"address": "task:plugins-kit/both", "wait_s": 20})
+    assert error["code"] == "target_ambiguous" and len(error["details"]["candidates"]) == 2
+    assert time.monotonic() - started < 10, "ambiguity is decided before any long-poll starts"
+
+
+def test_a_message_id_held_by_two_relays_is_ambiguous(hub_two, machine_a, machine_b):
+    a_session, b_session = machine_a.session(["a1", "a2"]), machine_b.session(["b1", "b2"])
+    machine_a.send(a_session, id="msg_same")
+    machine_b.send(b_session, id="msg_same")
+    error = hub_two.refused("get_replies", {"message_id": "msg_same"})
+    assert error["code"] == "target_ambiguous"
+    assert sorted(error["details"]["candidates"]) == [A, B]
+
+
+def test_get_replies_passes_the_relays_refusal_through(hub_two, machine_a):
+    assert hub_two.refused("get_replies", {"message_id": "msg_nobody_has_this"})["code"] == "message_not_found"
+    machine_a.session(["a1", "a2"])
+    assert hub_two.refused("get_replies", {"address": "task:plugins-kit/nowhere"})["code"] == "target_not_found"
+
+
+def test_get_replies_with_an_unreachable_relay_does_not_claim_the_message_is_missing(hub, machine_a):
+    error = hub.refused("get_replies", {"message_id": "msg_nobody_has_this"})
+    assert error["code"] == "machine_unreachable" and error["details"]["machines"] == [GHOST]
+    assert hub.refused("get_replies", {"address": f"{GHOST}/claude/{sid()}"})["code"] == "machine_unreachable"
+    assert hub.refused("get_replies", {"address": f"elsewhere/claude/{sid()}"})["details"] == {"machine": "elsewhere"}
+
+
+def test_get_replies_long_polls_on_the_relay_that_holds_the_message(hub_two, machine_a, machine_b):
+    session = machine_b.session(["b1", "b2"], accepts=("note", "question"))
+    message = machine_b.send(session, kind="question", body="ready?")
+    timer = threading.Timer(0.5, lambda: machine_b.reply(session, message["id"], "yes"))
+    timer.start()
+    try:
+        started = time.monotonic()
+        records = hub_two.ok("get_replies", {"message_id": message["id"], "wait_s": 20})["messages"]
+        took = time.monotonic() - started
+    finally:
+        timer.join()
+    assert records[0]["state"] != "queued", "the long-poll returns when the message changes state"
+    assert took < 10
+    final = hub_two.ok("get_replies", {"message_id": message["id"]})["messages"]
+    assert final[0]["state"] == "answered" and final[0]["reply"]["body"] == "yes"
+
+
+def test_get_replies_long_poll_returns_unchanged_at_the_wait(hub_two, machine_a):
+    session = machine_a.session(["a1", "a2"])
+    message = machine_a.send(session)
+    started = time.monotonic()
+    records = hub_two.ok("get_replies", {"message_id": message["id"], "wait_s": 1})["messages"]
+    assert records[0]["state"] == "queued" and time.monotonic() - started >= 0.9
+
+
+def test_the_relay_audits_get_replies_with_the_hub_origin(hub_two, machine_a):
+    message = machine_a.send(machine_a.session(["a1", "a2"]))
+    hub_two.ok("get_replies", {"message_id": message["id"]})
+    rows = machine_a.server.mailbox.audit_rows()
+    assert any(r["origin"] == "claude.ai/owner" and r["verb"] == "get_replies" and r["outcome"] == "ok" for r in rows)
+
+
+# --------------------------------------------------------------------------
+# list_questions (U12): fans out like list_sessions
+# --------------------------------------------------------------------------
+
+def question_hub(machines, *extra) -> H.HubServer:
+    return make_hub(machines[0].config, [m.peer for m in machines] + list(extra)).start()
+
+
+def test_list_questions_merges_every_relay_and_names_each_ledgers_machine(question_machines, ghost):
+    a, b = question_machines
+    server = question_hub(question_machines, ghost)
+    try:
+        listed = Hub(server).ok("list_questions")
+    finally:
+        server.stop()
+    assert [q["id"] for q in listed["questions"]] == ["q:m5pro/jobs:run:1", "q:tower/jobs:run:1"]
+    assert [q["machine"] for q in listed["questions"]] == [A, B]
+    assert all(q["state"] == "open" and q["request_schema"] and q["payload"] for q in listed["questions"])
+    reach = {m["machine"]: m for m in listed["machines"]}
+    assert reach[A]["status"] == "up" and reach[B]["status"] == "up"
+    assert reach[GHOST]["status"] == "unreachable" and reach[GHOST]["error"]["code"] == "machine_unreachable"
+    assert listed["ledgers"] == [{"ledger": "jobs", "status": "ok", "machine": A},
+                                 {"ledger": "jobs", "status": "ok", "machine": B}]
+
+
+def test_list_questions_arguments_equal_the_verbs_params(question_machines):
+    a, _ = question_machines
+    server = question_hub([a])
+    try:
+        via_hub = Hub(server).ok("list_questions", {"state": "all"})
+    finally:
+        server.stop()
+    direct = H.HttpRelayClient(a.url, machine=A, relay_token=a.server.prepared.relay_token,
+                               hub_bearer=a.server.prepared.hub_bearer)
+    try:
+        expected = direct.call("list_questions", {"state": "all"}, origin="claude.ai/owner")
+    finally:
+        direct.close()
+    assert via_hub["questions"] == expected["questions"] and via_hub["machines"] == expected["machines"]
+
+
+def test_list_questions_for_one_machine_asks_only_its_relay(question_machines):
+    server = question_hub(question_machines)
+    try:
+        listed = Hub(server).ok("list_questions", {"machine": B})
+    finally:
+        server.stop()
+    assert [q["machine"] for q in listed["questions"]] == [B]
+    assert [m["machine"] for m in listed["machines"]] == [B]
+    assert [entry["machine"] for entry in listed["ledgers"]] == [B]
+
+
+def test_list_questions_for_a_machine_without_a_relay_is_listed_unreachable(hub_two):
+    listed = hub_two.ok("list_questions", {"machine": "elsewhere"})
+    assert listed["questions"] == [] and listed["ledgers"] == []
+    assert listed["machines"][0]["machine"] == "elsewhere" and listed["machines"][0]["status"] == "unreachable"
+    assert listed["machines"][0]["error"]["code"] == "machine_unreachable"
+
+
+def test_list_questions_lists_a_relay_that_refuses_the_hub_with_its_code(question_machines):
+    a, _ = question_machines
+    wrong = dataclasses.replace(a.peer, hub_bearer="not-the-hub-bearer")
+    server = make_hub(a.config, [wrong]).start()
+    try:
+        listed = Hub(server).ok("list_questions")
+    finally:
+        server.stop()
+    assert listed["questions"] == []
+    assert listed["machines"][0]["status"] == "unreachable" and listed["machines"][0]["error"]["code"] == "unauthenticated"
+
+
+def test_list_questions_reports_a_paused_relay_not_an_error(question_machines):
+    a, b = question_machines
+    store = L.PauseStore(a.config.paths)
+    store.pause("relay", "testing")
+    server = question_hub(question_machines)
+    try:
+        listed = Hub(server).ok("list_questions")
+    finally:
+        server.stop()
+        store.resume("relay")
+    assert {m["machine"]: m["status"] for m in listed["machines"]} == {A: "paused", B: "up"}
+
+
+def test_the_relay_audits_list_questions_with_the_hub_origin(question_machines):
+    a, _ = question_machines
+    server = question_hub([a])
+    try:
+        Hub(server).ok("list_questions")
+    finally:
+        server.stop()
+    assert any(r["origin"] == "claude.ai/owner" and r["verb"] == "list_questions" and r["outcome"] == "ok"
+               for r in a.server.mailbox.audit_rows())
+
+
+# --------------------------------------------------------------------------
+# the P2 tools need the bearer too
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("tool,arguments", [
+    ("get_replies", {"message_id": "msg_x"}),
+    ("list_questions", {}),
+])
+def test_a_p2_tool_call_without_the_bearer_is_refused_unauthenticated(hub_two, tool, arguments):
+    with httpx.Client(trust_env=False) as http:
+        response = http.post(hub_two.url, json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                "params": {"name": tool, "arguments": arguments}},
+                             headers={"Accept": "application/json, text/event-stream"})
+    assert response.status_code == 401 and response.json()["error"]["code"] == "unauthenticated"
 
 
 # --------------------------------------------------------------------------
@@ -517,12 +824,15 @@ def test_a_paused_hub_refuses_every_tool_call(hub, machine_a):
             ("list_machines", {}), ("list_sessions", {}),
             ("read_session", {"address": machine_a.address(session)}),
             ("ask_llm", {"endpoint": f"{A}/llm/qwen38-m5-32k-local", "prompt": "ping"}),
+            ("get_replies", {"address": machine_a.address(session)}),
+            ("get_replies", {"message_id": "msg_x"}),
+            ("list_questions", {}),
         ]:
             error = hub.refused(tool, arguments)
             assert error["code"] == "paused" and error["retryable"] is True, tool
             assert error["details"]["scope"] == "hub" and error["details"]["paused_since"] is not None
         assert machine_a.backend.calls == []
-        assert len(hub.run(lambda c: c.list_tools()).tools) == 4  # listing is not a call
+        assert len(hub.run(lambda c: c.list_tools()).tools) == 6  # listing is not a call
     finally:
         store.resume("hub")
     assert hub.ok("list_machines")["machines"][0]["status"] == "up"
