@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..adapters.account import probe_entry
+from ..completion.halt import FRONTDOOR_DEPLOYMENT_HEADER
 from ..completion.types import (
     COST_SOURCE_PROVIDER,
     COST_SOURCE_REGISTRY_UNMETERED,
@@ -122,7 +123,9 @@ def _error(message: str) -> dict[str, Any]:
 
 
 def _header_value(entry: EndpointEntry) -> dict[str, str]:
-    return {"x-frontdoor-deployment": entry.id}
+    # A client recognises this server's group-exhausted 502 by this header
+    # (llm_kit.completion.halt.is_frontdoor_group_exhausted).
+    return {FRONTDOOR_DEPLOYMENT_HEADER: entry.id}
 
 
 def _usage_from_json(body: bytes) -> tuple[Optional[int], Optional[int]]:

@@ -289,6 +289,138 @@ def classify_backpressure(exc: BaseException) -> Optional[Backpressure]:
     return Backpressure(status=status, retry_after_s=retry_after)
 
 
+# -- endpoint transport failures ----------------------------------------------
+#
+# Not a halt kind: a refused connection, a failed DNS lookup or a timeout says
+# THIS endpoint is not serving right now, not that the next work item would
+# fail identically on another endpoint. A declaration caller moves the unit on
+# to its next endpoint (llm_kit.dispatch.declaration.fallthrough_reason).
+
+ENDPOINT_UNREACHABLE = "unreachable"
+"""The endpoint could not be connected to: refused, DNS failure, or a connect timeout."""
+
+ENDPOINT_TIMEOUT = "timeout"
+"""The request to the endpoint timed out after the connection phase (or the phase is unknown)."""
+
+#: How many ``raise ... from`` links :func:`classify_endpoint_failure` follows
+#: below an SDK connection wrapper before it gives up.
+_ENDPOINT_CHAIN_LIMIT = 4
+
+
+def _httpx_classes(name: str) -> "tuple[type, ...]":
+    """``name`` from each importable HTTP client module (httpx2, httpx), as a tuple."""
+    found = []
+    for module_name in ("httpx2", "httpx"):
+        try:
+            module = __import__(module_name)
+        except ImportError:
+            continue
+        cls = getattr(module, name, None)
+        if isinstance(cls, type):
+            found.append(cls)
+    return tuple(found)
+
+
+def _openai_class(name: str) -> Optional[type]:
+    try:
+        import openai  # noqa: PLC0415
+    except ImportError:
+        return None
+    cls = getattr(openai, name, None)
+    return cls if isinstance(cls, type) else None
+
+
+def _direct_endpoint_failure(exc: BaseException) -> Optional[str]:
+    """The verdict an exception's OWN type gives, without reading any cause."""
+    import socket  # noqa: PLC0415
+
+    if isinstance(exc, _httpx_classes("ConnectTimeout")):
+        return ENDPOINT_UNREACHABLE
+    if isinstance(exc, _httpx_classes("ConnectError")):
+        # Refused, DNS failure (a wrapped socket.gaierror) and an unroutable host
+        # all surface as ConnectError: the connect phase failed.
+        return ENDPOINT_UNREACHABLE
+    if isinstance(exc, _httpx_classes("TimeoutException")):
+        return ENDPOINT_TIMEOUT
+    if isinstance(exc, (ConnectionRefusedError, socket.gaierror)):
+        return ENDPOINT_UNREACHABLE
+    if isinstance(exc, TimeoutError):
+        return ENDPOINT_TIMEOUT
+    return None
+
+
+def classify_endpoint_failure(exc: BaseException) -> Optional[str]:
+    """Report whether ``exc`` is an endpoint transport failure, else None.
+
+    Returns :data:`ENDPOINT_UNREACHABLE` for a refused connection, a DNS
+    failure or a connect timeout, and :data:`ENDPOINT_TIMEOUT` for any other
+    timeout. Everything else is None -- notably client configuration errors
+    (``UnsupportedProtocol``, ``LocalProtocolError``, an invalid URL), a dropped
+    connection after the request was sent, HTTP status errors, bad responses
+    and programming errors.
+
+    Classification precedence, explicit because a cause chain can mislead:
+
+    1. the exception's own type (httpx/httpx2 ``ConnectTimeout``,
+       ``ConnectError``, ``TimeoutException``; stdlib ``ConnectionRefusedError``,
+       ``socket.gaierror``, ``TimeoutError``), matched with ``isinstance`` so a
+       subclass is recognised;
+    2. an OpenAI-SDK ``APIConnectionError`` (``APITimeoutError`` included) is a
+       wrapper: its ``__cause__`` -- the transport exception the SDK raised it
+       from -- is classified instead, following at most
+       :data:`_ENDPOINT_CHAIN_LIMIT` links and never revisiting one. An
+       ``APITimeoutError`` whose cause decides nothing is still a timeout; an
+       ``APIConnectionError`` whose cause decides nothing is None;
+    3. any other exception is None. Its ``__cause__`` and ``__context__`` are
+       never read, so an unrelated error raised while handling an earlier
+       connection failure is not mistaken for one.
+    """
+    connection_wrapper = _openai_class("APIConnectionError")
+    timeout_wrapper = _openai_class("APITimeoutError")
+    seen: set = set()
+    current: Optional[BaseException] = exc
+    wrapped_timeout = False
+    for _ in range(_ENDPOINT_CHAIN_LIMIT):
+        if current is None or id(current) in seen:
+            break
+        seen.add(id(current))
+        verdict = _direct_endpoint_failure(current)
+        if verdict is not None:
+            return verdict
+        if connection_wrapper is None or not isinstance(current, connection_wrapper):
+            break
+        if timeout_wrapper is not None and isinstance(current, timeout_wrapper):
+            wrapped_timeout = True
+        current = current.__cause__
+    return ENDPOINT_TIMEOUT if wrapped_timeout else None
+
+
+#: The header the LLM front door (``llm_kit.frontdoor.server``) puts on every
+#: response it relays or ends, naming the deployment that answered last.
+FRONTDOOR_DEPLOYMENT_HEADER = "x-frontdoor-deployment"
+
+
+def is_frontdoor_group_exhausted(exc: BaseException) -> bool:
+    """True when ``exc`` is the front door's own "every deployment failed" answer.
+
+    The front door walks its group's deployments itself and, when every one
+    failed, answers HTTP 502 carrying :data:`FRONTDOOR_DEPLOYMENT_HEADER`. That
+    is the only 502 it sends: an upstream deployment's 5xx is never relayed (it
+    rules the deployment out and walks on). The body's message is the last
+    walk error, or "all deployments failed" when none raised, so it is not
+    the marker. Any other 502 or 5xx -- without the header -- is False.
+    """
+    if _exception_status(exc) != 502:
+        return False
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    if headers is None:
+        return False
+    try:
+        return headers.get(FRONTDOOR_DEPLOYMENT_HEADER) is not None
+    except (AttributeError, TypeError):
+        return False
+
+
 def halt_payload(kind: str, exc: Optional[BaseException] = None) -> Dict[str, Any]:
     """The ``{"kind": ..., ...}`` object a CLI envelope carries for a halt.
 
@@ -534,6 +666,11 @@ __all__ = [
     "HALT_BACKPRESSURE",
     "Backpressure",
     "classify_backpressure",
+    "ENDPOINT_UNREACHABLE",
+    "ENDPOINT_TIMEOUT",
+    "classify_endpoint_failure",
+    "FRONTDOOR_DEPLOYMENT_HEADER",
+    "is_frontdoor_group_exhausted",
     "halt_payload",
     "HaltError",
     "classify_halt_text",
