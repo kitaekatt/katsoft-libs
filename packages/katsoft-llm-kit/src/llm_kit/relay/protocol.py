@@ -970,7 +970,10 @@ class VerbSpec:
 
     ``origins`` are the identity kinds that may originate the verb (anything
     else is ``origin_not_allowed``). ``grant_for`` are the origin kinds for
-    which a covering grant is required; it is a subset of ``origins``.
+    which a covering grant is required; it is a subset of ``origins``. A hub
+    write needs no grant: the session's opt-in is its permission (owner ruling
+    2026-11-11, protocol section 3), so a write verb's ``grant_for`` is
+    ``direct`` only.
     ``target_params`` name the params whose value is the grant target (at most
     one is present in a request); a verb without one is covered only by a
     grant with an empty ``targets`` list. ``client_verb`` is the ``/direct``
@@ -1023,13 +1026,13 @@ VERBS: Mapping[str, VerbSpec] = {
               ReadSessionParams, ReadSessionResult, "A capped, redacted tail of one session."),
         _verb("ask_llm", "llm", _HUB_SIDE, ("direct",), ("endpoint",), "ask", True,
               AskLlmParams, AskLlmResult, "A completion from a local LLM endpoint."),
-        _verb("send_message", "write", _HUB_SIDE, _HUB_SIDE, ("to",), "send", True,
+        _verb("send_message", "write", _HUB_SIDE, ("direct",), ("to",), "send", True,
               SendMessageParams, SendMessageResult, "Queue a message for an opted-in session."),
         _verb("get_replies", "read", _HUB_SIDE, ("direct",), ("message_id", "address"), "replies", True,
               GetRepliesParams, GetRepliesResult, "Messages and their replies, with a capped long-poll."),
         _verb("list_questions", "read", _HUB_SIDE, ("direct",), ("machine",), "questions", True,
               ListQuestionsParams, ListQuestionsResult, "Pending operator questions (job interrupts)."),
-        _verb("answer_question", "write", _HUB_SIDE, _HUB_SIDE, ("id",), "answer", True,
+        _verb("answer_question", "write", _HUB_SIDE, ("direct",), ("id",), "answer", True,
               AnswerQuestionParams, AnswerQuestionResult,
               "Answer or reject one question, as `llm-kit jobs resolve` would."),
         _verb("grant_mint", "grant", ("direct",), (), (), None, False, GrantMintParams, GrantMintResult,

@@ -280,12 +280,20 @@ def hub_two(machine_a, machine_b) -> Iterator[Hub]:
 # the tools and their schemas
 # --------------------------------------------------------------------------
 
-def test_the_hub_serves_the_p1_and_p2_read_tools_with_the_verbs_schemas(hub):
+def test_the_hub_serves_every_hub_verb_with_the_verbs_schemas(hub):
     tools = {t.name: t for t in hub.run(lambda c: c.list_tools()).tools}
     assert H.P1_TOOLS == ("list_machines", "list_sessions", "read_session", "ask_llm")
-    assert H.P2_TOOLS == ("get_replies", "list_questions")
-    assert tuple(tools) == H.SERVED_TOOLS == (
-        "list_machines", "list_sessions", "read_session", "ask_llm", "get_replies", "list_questions")
+    assert H.P2_TOOLS == ("send_message", "get_replies", "list_questions", "answer_question")
+    assert tuple(tools) == H.SERVED_TOOLS == P.HUB_TOOLS == (
+        "list_machines", "list_sessions", "read_session", "ask_llm", "send_message", "get_replies",
+        "list_questions", "answer_question")
+    assert H.WRITE_TOOLS == {"send_message", "answer_question"} == set(H.WRITE_NOTES)
+    for name, tool in tools.items():
+        write = name in H.WRITE_TOOLS
+        assert tool.annotations.read_only_hint is (not write and name != "ask_llm"), name
+        assert tool.annotations.destructive_hint is False, name
+        if write:
+            assert "not_opted_in" in tool.description and H.WRITE_NOTES[name] in tool.description, name
     for name, tool in tools.items():
         wanted_in = P.load_schema(P.request_schema_name(name))
         wanted_out = P.load_schema(P.response_schema_name(name))
@@ -448,34 +456,57 @@ def test_arguments_that_fail_the_verbs_schema_are_bad_request(hub_two, tool, arg
     assert error["code"] == "bad_request" and error["details"]["schema_errors"]
 
 
-@pytest.mark.parametrize("tool,arguments", [
-    ("send_message", {"to": "m5pro/claude/x", "kind": "note", "body": "hi"}),
-    ("answer_question", {"id": "q:m5pro/jobs:run:1", "decision": "reject"}),
-])
-def test_the_write_verbs_have_no_hub_tool(hub_two, tool, arguments):
-    assert tool not in {t.name for t in hub_two.run(lambda c: c.list_tools()).tools}
-    assert hub_two.refused(tool, arguments)["code"] == "unknown_verb"
+# --------------------------------------------------------------------------
+# writes: accepted by a relay only for an opted-in session (owner ruling 2026-11-11)
+# --------------------------------------------------------------------------
+
+def test_send_message_reaches_an_opted_in_session_on_the_named_machine_only(hub_two, machine_a, machine_b):
+    session = machine_b.session(["x", "y"], accepts=("note", "instruction"))
+    message = hub_two.ok("send_message", {"to": machine_b.address(session), "kind": "instruction", "body": "go"})
+    assert message["message"]["state"] == "queued" and message["message"]["sender"] == "claude.ai/owner"
+    assert machine_b.server.mailbox.messages_to(machine_b.address(session))[0]["body"] == "go"
+    assert not any(r["verb"] == "send_message" for r in machine_a.server.mailbox.audit_rows())
+    replied = machine_b.reply(session, message["message"]["id"], "done")
+    assert replied["message_state"] == "answered"
 
 
-def test_the_relay_refuses_every_hub_write_so_the_hub_has_no_write_tool(machine_a):
-    """The premise behind the missing tools: relay-protocol/1 has no hub grant producer (protocol section 3).
+def test_send_message_to_a_session_that_did_not_opt_in_is_refused_by_the_relay(hub_two, machine_a):
+    notes_only = machine_a.session(["x", "y"], accepts=("note",))
+    error = hub_two.refused("send_message", {"to": machine_a.address(notes_only), "kind": "instruction", "body": "x"})
+    assert error["code"] == "not_opted_in"
+    stored = machine_a.server.mailbox.get_message(error["details"]["message_id"])
+    assert stored["state"] == "refused" and stored["sender"] == "claude.ai/owner"
 
-    When this test fails, a hub grant producer exists and ``send_message`` / ``answer_question`` can be added
-    to the hub router; until then a tool for them could only return this refusal.
-    """
-    session = machine_a.session(["x", "y"])
-    hub_client = H.HttpRelayClient(machine_a.url, machine=A, relay_token=machine_a.server.prepared.relay_token,
-                                   hub_bearer=machine_a.server.prepared.hub_bearer)
+
+def test_send_message_never_fans_out_a_selector(hub_two, machine_a, machine_b):
+    machine_a.session(["x", "y"])
+    machine_b.session(["x", "y"])
+    error = hub_two.refused("send_message", {"to": "latest", "kind": "note", "body": "x"})
+    assert error["code"] == "target_invalid"
+    for machine in (machine_a, machine_b):
+        assert not any(r["verb"] == "send_message" for r in machine.server.mailbox.audit_rows())
+
+
+def test_send_message_to_a_machine_without_a_relay_is_machine_unreachable(hub_two):
+    error = hub_two.refused("send_message", {"to": f"{GHOST}/claude/{sid()}", "kind": "note", "body": "x"})
+    assert error["code"] == "machine_unreachable"
+
+
+def test_answer_question_goes_to_the_named_relay_which_refuses_a_job_question(question_machines):
+    a, b = question_machines
+    server = make_hub(a.config, [a.peer, b.peer]).start()
     try:
-        for verb, params in (
-            ("send_message", {"to": machine_a.address(session), "kind": "note", "body": "hi"}),
-            ("answer_question", {"id": "q:m5pro/jobs:run:1", "decision": "reject"}),
-        ):
-            with pytest.raises(P.RelayError) as caught:
-                hub_client.call(verb, params, origin="claude.ai/owner")
-            assert caught.value.code == "grant_required", verb
+        hub = Hub(server)
+        question = next(q for q in hub.ok("list_questions")["questions"] if q["machine"] == B)
+        error = hub.refused("answer_question", {"id": question["id"], "decision": "reject", "reason": "no"})
+        assert error["code"] == "not_opted_in" and error["details"] == {"id": question["id"]}
+        assert hub.refused("answer_question", {"id": "q:nomachine", "decision": "reject"})["code"] == "bad_request"
+        assert [q["state"] for q in hub.ok("list_questions", {"machine": B})["questions"]] == ["open"]
     finally:
-        hub_client.close()
+        server.stop()
+    rows = [(r["origin"], r["code"]) for r in b.server.mailbox.audit_rows() if r["verb"] == "answer_question"]
+    assert rows == [("claude.ai/owner", "not_opted_in")]
+    assert not any(r["verb"] == "answer_question" for r in a.server.mailbox.audit_rows())
 
 
 # --------------------------------------------------------------------------
@@ -685,8 +716,10 @@ def test_the_relay_audits_list_questions_with_the_hub_origin(question_machines):
 # --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("tool,arguments", [
+    ("send_message", {"to": "m5pro/claude/x", "kind": "note", "body": "hi"}),
     ("get_replies", {"message_id": "msg_x"}),
     ("list_questions", {}),
+    ("answer_question", {"id": "q:m5pro/jobs:run:1", "decision": "reject"}),
 ])
 def test_a_p2_tool_call_without_the_bearer_is_refused_unauthenticated(hub_two, tool, arguments):
     with httpx.Client(trust_env=False) as http:
@@ -827,12 +860,15 @@ def test_a_paused_hub_refuses_every_tool_call(hub, machine_a):
             ("get_replies", {"address": machine_a.address(session)}),
             ("get_replies", {"message_id": "msg_x"}),
             ("list_questions", {}),
+            ("send_message", {"to": machine_a.address(session), "kind": "note", "body": "x"}),
+            ("answer_question", {"id": f"q:{A}/jobs:run:1", "decision": "reject"}),
         ]:
             error = hub.refused(tool, arguments)
             assert error["code"] == "paused" and error["retryable"] is True, tool
             assert error["details"]["scope"] == "hub" and error["details"]["paused_since"] is not None
         assert machine_a.backend.calls == []
-        assert len(hub.run(lambda c: c.list_tools()).tools) == 6  # listing is not a call
+        assert machine_a.server.mailbox.messages_to(machine_a.address(session)) == []
+        assert len(hub.run(lambda c: c.list_tools()).tools) == 8  # listing is not a call
     finally:
         store.resume("hub")
     assert hub.ok("list_machines")["machines"][0]["status"] == "up"

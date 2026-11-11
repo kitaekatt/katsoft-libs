@@ -326,17 +326,53 @@ def test_grant_mint_is_direct_only_for_its_own_session(relay):
     relay.refused("bad_request", relay.direct, "grant_mint", dict(params, session=addr(DIRECT), expires_in_s=601))
 
 
-def test_hub_reads_need_the_bearer_and_no_grant_and_hub_writes_are_refused(relay, roots):
+def test_hub_calls_need_the_bearer_and_no_grant(relay, roots):
     channel = sid()
     relay.register(channel)
     assert any(s["session_id"] == channel for s in relay.hub("list_sessions", {})["sessions"])
     no_bearer = HttpRelayClient(relay.server.url, machine=MACHINE, relay_token=relay.server.prepared.relay_token)
     relay.refused("unauthenticated", no_bearer.call, "list_sessions", {}, origin="claude.ai/owner@example.com")
+    relay.refused("unauthenticated", no_bearer.call, "send_message", {"to": addr(channel), "kind": "note", "body": "hi"},
+                  origin="claude.ai/owner@example.com")
     wrong = HttpRelayClient(relay.server.url, machine=MACHINE, relay_token=relay.server.prepared.relay_token,
                             hub_bearer="not-the-bearer")
     relay.refused("unauthenticated", wrong.call, "status", {}, origin="claude.ai/owner@example.com")
-    relay.refused("grant_required", relay.hub, "send_message", {"to": addr(channel), "kind": "note", "body": "hi"})
     assert relay.mailbox.messages_to(addr(channel)) == []
+
+
+def test_a_hub_send_reaches_an_opted_in_session_without_a_grant(relay):
+    """Owner ruling 2026-11-11 ("opt-in session = grant"): the channel registration is the hub's permission."""
+    channel = sid()
+    registration = relay.register(channel)
+    message = relay.hub("send_message", {"to": addr(channel), "kind": "instruction", "body": "run the tests"})["message"]
+    assert message["state"] == "queued" and message["sender"] == "claude.ai/owner@example.com"
+    polled = relay.channel(channel, "poll", dict(relay.creds(registration, channel), wait_s=0))
+    assert [(m["id"], m["body"]) for m in polled["messages"]] == [(message["id"], "run the tests")]
+    assert not any(row["verb"] == "grant_mint" for row in relay.mailbox.audit_rows())
+
+
+def test_a_hub_send_to_a_session_that_did_not_opt_in_is_refused(relay, roots, sleeper):
+    read_only = sid()
+    write_session_file(roots, sleeper.pid, read_only)  # live, scanned, never registered
+    err = relay.refused("not_opted_in", relay.hub, "send_message", {"to": addr(read_only), "kind": "note", "body": "x"})
+    assert relay.mailbox.get_message(err.details["message_id"])["state"] == "refused"
+
+    idle = sid()
+    write_transcript(roots, idle, ["old work"], mtime=time.time() - 3600)  # process gone, transcript recent
+    relay.refused("session_ended", relay.hub, "send_message", {"to": addr(idle), "kind": "note", "body": "x"})
+
+    notes_only = sid()
+    relay.register(notes_only, accepts=("note",))
+    relay.refused("not_opted_in", relay.hub, "send_message", {"to": addr(notes_only), "kind": "instruction", "body": "x"})
+
+
+def test_a_hub_answer_is_refused_because_no_session_raised_a_job_question(relay):
+    err = relay.refused("not_opted_in", relay.hub, "answer_question",
+                        {"id": f"q:{MACHINE}/jobs:run-1:7", "decision": "reject"})
+    assert err.details == {"id": f"q:{MACHINE}/jobs:run-1:7"} and "job interrupts" in err.message
+    rows = [r for r in relay.mailbox.audit_rows() if r["verb"] == "answer_question"]
+    assert [(r["origin"], r["outcome"], r["code"]) for r in rows] == [
+        ("claude.ai/owner@example.com", "refused", "not_opted_in")]
 
 
 def test_the_relay_token_is_required_on_every_origin(relay):
@@ -957,7 +993,9 @@ def test_a_hub_answer_is_refused_and_a_paused_relay_refuses_answers_and_reports_
     relay, ledger, qid = next(gen)
     try:
         answer = {"id": qid, "decision": "answer", "input": {"approved": True}}
-        relay.refused("grant_required", relay.hub, "answer_question", answer)
+        # an open, answerable question; the hub still may not answer it: no opted-in session raised it
+        relay.refused("not_opted_in", relay.hub, "answer_question", answer)
+        assert _resolutions(ledger) == []
         relay.refused("origin_not_allowed", relay.operator, "answer_question", answer)
         grant = relay.mint("answer_question", [qid])
         relay.operator("pause", {"scope": "relay"})

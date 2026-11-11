@@ -470,17 +470,17 @@ def test_transition_allowed_matches_the_frozen_table(kind):
 # --------------------------------------------------------------------------
 
 
-def test_every_write_ingress_needs_a_grant():
+def test_grants_are_for_direct_and_a_hub_write_rests_on_the_sessions_opt_in():
     for name, spec in P.VERBS.items():
         assert spec.grant_for <= spec.origins, name
         assert spec.origins <= set(P.REQUEST_ORIGIN_KINDS), name
         props = schema(P.request_schema_name(name))["properties"]
         assert set(spec.target_params) <= set(props), name
+        # Hub reads are policy-only (design 9.4); a hub write's permission is the target session's
+        # channel opt-in, enforced by the relay's messaging refusals (owner ruling 2026-11-11).
+        assert "hub" not in spec.grant_for, name
         if spec.tier == "write":
-            # No write path that only needs the hub bearer or the relay token.
-            assert spec.grant_for == spec.origins and "hub" in spec.grant_for, name
-        elif "hub" in spec.origins:
-            assert "hub" not in spec.grant_for, f"{name}: hub reads are policy-only (design 9.4)"
+            assert spec.origins == {"direct", "hub"} and spec.grant_for == {"direct"}, name
     for client, verb in P.CLIENT_VERBS.items():
         assert "direct" in P.VERBS[verb].grant_for, f"/direct {client} must need a grant (ruling 9)"
     assert {v for v, s in P.VERBS.items() if s.tier == "write"} == {"send_message", "answer_question"}

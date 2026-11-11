@@ -18,6 +18,8 @@ import signal
 import socket
 import subprocess
 import sys
+import time
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator
@@ -226,7 +228,8 @@ def test_a_client_verb_without_a_grant_is_refused(relay, paths, capsys):
 def test_client_sessions_and_ask_with_grants(relay, paths, capsys):
     mint(relay, "list_sessions")
     out = cli(["client", "sessions", "--session", SESSION, *paths.args], capsys)
-    assert out.code == 0 and json.loads(out.out) == {"sessions": [], "machines": [{"machine": LABEL, "status": "up"}]}
+    assert out.code == 0 and json.loads(out.out) == {
+        "sessions": [], "machines": [{"machine": LABEL, "status": "up"}], "omitted": {"idle": 0, "ended": 0}}
 
     endpoint = f"{LABEL}/llm/qwen38-m5-32k-local"
     grant = mint(relay, "ask_llm", [endpoint])
@@ -238,6 +241,45 @@ def test_client_sessions_and_ask_with_grants(relay, paths, capsys):
     }
     calls = [r for r in relay.server.mailbox.audit_rows() if r["event"] == "call" and r["verb"] == "ask_llm"]
     assert calls[-1]["grant_id"] == grant and calls[-1]["origin"] == f"direct:{LABEL}/claude/{SESSION}"
+
+
+def _transcript(paths, session: str, age_s: float) -> None:
+    folder = paths.roots.claude_projects / "-tmp-proj"
+    folder.mkdir(exist_ok=True)
+    path = folder / f"{session}.jsonl"
+    path.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "old work"},
+                                "timestamp": "2026-11-03T10:00:00.000Z", "cwd": "/tmp/proj"}) + "\n", encoding="utf-8")
+    stamp = time.time() - age_s
+    os.utime(path, (stamp, stamp))
+
+
+def test_client_sessions_shows_live_sessions_by_default_and_counts_the_rest(relay, paths, capsys):
+    live, idle, ended = (str(uuid.uuid4()) for _ in range(3))
+    relay.client.call("register", {
+        "session_id": live, "harness": "claude", "pid": os.getpid(), "cwd": "/tmp/proj", "version": "2.1.317",
+        "accepts": ["note"], "channel_nonce": "nonce-" + "x" * 20,
+    }, origin=f"channel:{LABEL}/claude/{live}")
+    _transcript(paths, idle, 3600)              # process gone, written within 7 days
+    _transcript(paths, ended, 8 * 86400)        # older than 7 days
+
+    def listed(*extra: str) -> dict:
+        mint(relay, "list_sessions")
+        out = cli(["client", "sessions", "--session", SESSION, *extra, *paths.args], capsys)
+        assert (out.code, out.err) == (0, ""), out
+        return json.loads(out.out)
+
+    default = listed()
+    assert [s["session_id"] for s in default["sessions"]] == [live]
+    assert default["omitted"] == {"idle": 1, "ended": 1}
+    every = listed("--state", "all")
+    assert {s["session_id"]: s["state"] for s in every["sessions"]} == {
+        live: "live-accepting", idle: "idle", ended: "ended"}
+    assert "omitted" not in every
+    one = listed("--state", "idle")
+    assert [s["session_id"] for s in one["sessions"]] == [idle] and "omitted" not in one
+    # the relay was asked without a state filter by default and with "all" (only "idle" is a relay state)
+    calls = [r for r in relay.server.mailbox.audit_rows() if r["event"] == "call" and r["verb"] == "list_sessions"]
+    assert [r["outcome"] for r in calls] == ["ok", "ok", "ok"]
 
 
 def test_client_questions_and_answer_are_served_with_grants(question_relay, paths, capsys):

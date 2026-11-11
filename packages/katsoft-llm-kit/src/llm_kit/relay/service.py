@@ -20,10 +20,15 @@ code and no effect:
    that names the session in its params;
 6. pause: a hub-origin call while the hub is paused, and ``send_message`` while
    the relay is paused (``poll`` returns empty instead, in its own handler);
-7. grant: a covering grant for the origin kinds the verb table names; a hub
-   write is always ``grant_required`` (no hub grant producer in
-   relay-protocol/1);
-8. the verb's own refusals.
+7. grant: a covering grant for the origin kinds the verb table names (the
+   ``direct`` origin; a hub call needs none);
+8. the verb's own refusals. A hub ``send_message`` is accepted only for a
+   session that opted in through a channel (``not_opted_in`` and
+   ``session_ended`` otherwise, as for every origin); a hub
+   ``answer_question`` is accepted only for a question an opted-in session
+   raised, and relay-protocol/1 questions are job interrupts that no session
+   raised, so it is ``not_opted_in`` (owner ruling 2026-11-11, protocol
+   section 3).
 
 A grant use is reserved before the effect, so two concurrent calls cannot
 share one remaining use: ``send_message`` consumes in the mailbox transaction
@@ -610,11 +615,6 @@ class RelayService:
                      grant: Optional[str]) -> _Granted:
         if identity.kind not in spec.grant_for:
             return _Granted(None, None)
-        if identity.kind == "hub":
-            raise P.RelayError(
-                "grant_required",
-                f"relay-protocol/1 defines no grant producer for the hub origin, so a hub {spec.name} is refused",
-            )
         target = self._target_param(spec, params)
         name = next((n for n in spec.target_params if n in params), None)
         if target is not None and (spec.name, name) in _SESSION_TARGET_PARAMS:
@@ -815,6 +815,15 @@ class RelayService:
         return self._questions.list_questions(params)
 
     def _answer_question(self, call: _Call, params: Mapping[str, Any], granted: _Granted, ingress: str) -> dict[str, Any]:
+        if call.origin.kind == "hub":
+            # Owner ruling 2026-11-11: the hub may answer only a question raised by a session that opted in
+            # through a channel. Every question here is a job interrupt, which carries no raising session.
+            raise P.RelayError(
+                "not_opted_in",
+                "a hub answer is accepted only for a question raised by a session that opted in through the "
+                "llm-kit channel; this relay's questions are job interrupts, which no session raised",
+                details={"id": params["id"]},
+            )
         return self._questions.answer_question(params)
 
     # -- grants -------------------------------------------------------------------------

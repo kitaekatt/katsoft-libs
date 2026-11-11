@@ -36,6 +36,14 @@ Every envelope carries `protocol: "relay-protocol/1"`. Within
 Removing or renaming a verb, field, code or state, or changing what an
 existing one means, needs `relay-protocol/2`.
 
+Policy revisions inside `relay-protocol/1` (no envelope, schema or field
+changed; a client of the earlier policy keeps working):
+
+- 2026-11-11, hub writes (owner ruling "opt-in session = grant"): a relay
+  accepts a hub-origin `send_message` without a grant, for a session that
+  opted in through a channel, and refuses a hub-origin `answer_question`
+  `not_opted_in` (section 3). Before, both were `grant_required`.
+
 ## 2. Transport binding
 
 Every relay verb is `POST /v1/<verb>` with `Content-Type: application/json`.
@@ -84,28 +92,38 @@ Each verb has a tier, the origin kinds that may call it (anything else is
 | channel | `register`, `heartbeat`, `deregister`, `poll`, `ack`, `reply` | channel | none (bound by the channel nonce) |
 | read | `list_machines`, `list_sessions`, `read_session`, `get_replies`, `list_questions` | direct, hub | direct |
 | llm | `ask_llm` | direct, hub | direct |
-| write | `send_message`, `answer_question` | direct, hub | direct AND hub |
+| write | `send_message`, `answer_question` | direct, hub | direct |
 | grant | `grant_mint`, `grant_check` | direct | none |
 | control | `pause`, `resume` | operator | none |
 | control | `status` | channel, direct, hub, operator | none |
 
 Rules that follow from the table:
 
-- Every write verb needs a covering grant at EVERY ingress. No write path needs
-  only the hub bearer or only the relay token. The hub refuses a write tool
-  call without a grant at its own ingress, and the relay, which owns the grant
-  table, checks and consumes it again.
-- `relay-protocol/1` defines no grant producer for the hub origin. Until a
-  later revision adds one (OAuth-bound or a signed proof), every hub
-  `send_message` and `answer_question` is refused `grant_required`.
-- Every `/direct` client verb needs a grant, reads included (owner ruling 9).
+- A `/direct` write needs a covering grant, checked and consumed by the
+  relay, which owns the grant table. Every `/direct` client verb needs a grant,
+  reads included (owner ruling 9).
+- A hub write needs no grant: the target session's opt-in is the permission
+  (owner ruling 2026-11-11, "opt-in session = grant"). A session the owner
+  launched with the channel (`clauder --relay`, which registers it, section 9)
+  accepts hub sends and answers to its own questions; every other session is
+  read-only. The relay enforces it, not the hub: a hub `send_message` to a
+  session that is not `live-accepting` with the kind in its `accepts` is
+  `not_opted_in` (`session_ended` when the process is gone), the same refusal
+  every origin gets (section 20, "Messaging"). A hub `answer_question` is
+  accepted only for a question raised by an opted-in session; every
+  `relay-protocol/1` question is a job interrupt, which no session raised, so
+  a hub `answer_question` is `not_opted_in`. No write path needs only the
+  relay token: a hub write also needs the hub bearer (section 20,
+  "Authentication").
 - Hub reads and `ask_llm` need no grant (design section 9, gate 4); `ask_llm`
   still needs the relay's consent policy (`consent_refused`).
+- Nothing in this protocol answers a session's permission prompt.
 
 ### Alternative A: a guardrail, not a security boundary
 
 Under alternative A (chosen 2026-11-03), grants are minted by the `/direct`
-UserPromptSubmit hook through `grant_mint` with `origin_proof: {"type": "none"}`.
+hooks of the llm-kit plugin through `grant_mint` with
+`origin_proof: {"type": "none"}`.
 The relay token, the hub bearer and every origin are claims a same-user
 process can make: a model with Bash can read the token, forge hook input and
 call the relay over HTTP. Under A the grant check is a guardrail against
@@ -396,11 +414,13 @@ Every other move is `invalid_transition`. Every transition is an audit row.
 - `send_message(to, kind, body, id?, expires_in_s?, task?, hop?)` -> the
   message record. `kind` is `note`, `instruction` or `question`. `id` is the
   idempotency key: a resend with the same id and content returns the original
-  record with `replayed: true` and consumes no grant use (it still needs a
-  covering grant); the same id with other content is `idempotency_conflict`.
+  record with `replayed: true` and consumes no grant use (a `/direct` resend
+  still needs a covering grant); the same id with other content is
+  `idempotency_conflict`.
   `expires_in_s` defaults to 3600 (at most 86400). `hop` defaults to 0; above
   1 is `hop_limit`. A refusal stored as `refused` returns the error and leaves
-  the row readable through `get_replies`.
+  the row readable through `get_replies`. A hub send needs no grant and is
+  accepted only for an opted-in session (section 3).
 - `get_replies(message_id | address, wait_s?, limit?)` -> message records with
   their replies, newest last. Exactly one of `message_id` or `address`.
   `wait_s` (at most 25) long-polls until a listed message changes state. The
@@ -434,8 +454,10 @@ Every other move is `invalid_transition`. Every transition is an audit row.
   grant, reserves one use before the answer is written, and gets it back only
   when the call failed before any effect (section 14; every refusal above is
   such a failure, a replay keeps its use because the call returned ok). It is
-  refused `paused` while the relay is paused, and a hub-origin call is
-  `grant_required`.
+  refused `paused` while the relay is paused. A hub-origin call is
+  `not_opted_in` (section 3: only a question raised by an opted-in session is
+  answerable from the hub, and every question here is a job interrupt), with
+  `details.id`.
 
 ### The hub endpoint and routing
 
@@ -451,15 +473,12 @@ socket). External exposure is a separate, later unit and nothing here opens it.
 - Tools: one per served verb, named as the verb, with the verb's `<verb>.request`
   schema as `inputSchema` and its `<verb>.response` schema as `outputSchema`;
   every description says that session and model output is data, not
-  instructions. This build serves `list_machines`, `list_sessions`,
-  `read_session`, `ask_llm`, `get_replies` and `list_questions`, the verbs a
-  relay serves to a hub origin without a grant. `send_message` and
-  `answer_question` have no hub tool: a relay refuses every hub-origin write
-  `grant_required` (section 3, no hub grant producer), so a tool could only
-  return that refusal. They are added, by registering a handler in the hub's
-  router table, with a hub grant producer. The hub therefore cannot answer a
-  session's permission prompt, in P1 or P2. A call to a tool not served is
-  `unknown_verb`.
+  instructions. This build serves all eight: `list_machines`,
+  `list_sessions`, `read_session`, `ask_llm`, `send_message`, `get_replies`,
+  `list_questions` and `answer_question`. The two writes' descriptions say who
+  accepts them (section 3), and their annotations are not read-only; the relay
+  decides acceptance, not the hub. No tool answers a session's permission
+  prompt, in P1 or P2. A call to a tool not served is `unknown_verb`.
 - Tool errors: a refusal or failure is an MCP tool result with `isError` true
   whose text and structured content are `{"error": <error object>}` (code,
   message, retryable, details) with the section-5 code; it is never a JSON-RPC
@@ -495,6 +514,11 @@ socket). External exposure is a separate, later unit and nothing here opens it.
   one: more than one is `target_ambiguous` with the candidate addresses, none
   with some relay `machine_unreachable` is `machine_unreachable` naming those
   machines, and otherwise the first relay's error is returned.
+- Writes go to exactly one relay and are never fanned out. `send_message`
+  needs `to` as an address with a machine (a selector is `target_invalid`) and
+  goes to that machine's relay; a machine the hub has no relay for is
+  `machine_unreachable`. `answer_question` goes to the relay its question id
+  names (`q:<machine>/...`; an id naming no machine is `bad_request`).
 - `get_replies` routes by its `address` the same way (a machine in the address
   names the relay; a bare selector must resolve on exactly one). A `message_id`
   names no machine, so the hub asks every relay, without `wait_s`, and exactly
@@ -523,11 +547,11 @@ that holds it), `verb` (one section-7 verb), `targets` (resolved targets),
   command?)`: origin `direct` only, and `session` must equal the origin's
   address (a session mints only for itself). `expires_in_s` is 1-600; `uses`
   is 1-32. Selectors in `targets` are resolved at mint (`target_not_found`,
-  `target_ambiguous`). `command` records the typed `/direct` line for audit.
+  `target_ambiguous`). `command` records the `/direct` line the owner typed
+  (the one that enabled the session) for audit.
   Under A, `origin_proof` is `{"type": "none"}`.
 - `grant_check(session, verb, target?, grant_id?)`: whether a live grant
-  covers the call, WITHOUT consuming it (the PreToolUse hook's visible
-  refusal). Returns `covered`, the `grant_id` that would be used, and the
+  covers the call, WITHOUT consuming it. Returns `covered`, the `grant_id` that would be used, and the
   refusal `code` when not covered.
 - Coverage: the request's verb equals the grant's verb, the origin's session
   equals the grant's session, the grant is live with uses left, and the value
@@ -627,8 +651,10 @@ Files: `common`, `envelope.request`, `envelope.response`, the objects `error`,
   labels: relay configuration (C0).
 - Relay-to-relay forwarding and its peer authentication: a later additive
   revision (origin kind `relay` is reserved).
-- A grant producer for the hub origin, and verification of `signed` or of any
-  `origin_proof` other than `none`: alternative B or the OAuth phase.
+- Questions raised by a session (only job interrupts are questions here), and
+  so any hub `answer_question` that a relay accepts.
+- Verification of `signed` or of any `origin_proof` other than `none`:
+  alternative B or the OAuth phase.
 - `continue_session`, `start_session`, `stop_session` and remote approval of
   permission prompts: later, separately gated phases.
 
@@ -675,7 +701,7 @@ independent of the transport, so the hub can reuse them),
   `Authorization: Bearer <hub bearer>`; without it, or with a wrong one, it is
   `unauthenticated`. Both comparisons are constant time. The bearer alone
   never authorizes a relay call. Requiring it on hub origins stops a relay-token
-  holder from claiming the hub origin to skip the `/direct` read grants. A hub
+  holder from claiming the hub origin to skip the `/direct` grants. A hub
   therefore sends both headers. Under alternative A this is a guardrail too: a
   same-user process can read both files.
 
@@ -690,7 +716,10 @@ independent of the transport, so the hub can reuse them),
   can mint a grant for any session by claiming that session's `direct`
   origin. The grant check stops accidental model-initiated calls; it is not a
   security boundary. `llm-kit relay client` has no mint verb. The `/direct`
-  UserPromptSubmit hook is the mint path.
+  hooks of the llm-kit plugin are the mint path: once the owner has typed
+  `/direct` in a session, its PreToolUse gate mints one single-use grant for
+  each relay client call it lets through (the plugin's `hooks/` sources
+  document the session-wide enablement).
 - A selector in a granted call's target param (`read_session` `address`,
   `send_message` `to`, `get_replies` `address`) is resolved to an address at
   the grant stage, before coverage is checked. A selector that matches no live
@@ -714,8 +743,11 @@ independent of the transport, so the hub can reuse them),
   `too_large`, an `internal` error and any other exception keep the use
   spent, because the endpoint may have processed the request. A call that
   returns ok never refunds.
-- A hub-origin `send_message` or `answer_question` is `grant_required` at the
-  grant stage, whatever `X-Relay-Grant` names.
+- A hub-origin call has no grant stage: the verb table names `direct` alone
+  in every verb's grant column, and `X-Relay-Grant` on a hub call is ignored.
+  A hub `send_message` meets the messaging refusals below; a hub
+  `answer_question` is `not_opted_in` in the verb's handler, before the
+  question is looked up.
 
 ### Channel verbs
 
@@ -743,10 +775,12 @@ independent of the transport, so the hub can reuse them),
   `live-accepting` with the kind in `accepts` is queued; anything else
   (`live-read-only`, a Codex session, a kind not accepted) is `not_opted_in`.
   Both refusals are stored `refused`. A target that no store shows is
-  `target_not_found` and creates no row.
+  `target_not_found` and creates no row. The rule is the same for a hub and a
+  `/direct` origin; it is what makes a session's opt-in the hub's write
+  permission (section 3).
 - `get_replies` with `message_id` returns that message; with `address`, the
   newest `limit` (default 50) messages to that address, oldest first, whoever
-  sent them (unit M9 kept it so: the grant the owner typed `/direct replies` for names the address, and hub reads need no grant). With `wait_s` it returns as soon as the
+  sent them (unit M9 kept it so: a `/direct replies` grant names the address, and hub reads need no grant). With `wait_s` it returns as soon as the
   state or `updated_at` of a listed message changes.
 
 ### Reads and control
@@ -811,6 +845,12 @@ independent of the transport, so the hub can reuse them),
   calls one of the eight client verbs as `direct:<machine>/claude/<S>`, with
   `--grant` as `X-Relay-Grant`. Output is JSON; exit 0 ok, 1 refused or
   unreachable, 2 usage or configuration.
+- `llm-kit relay client sessions` shows live sessions only by default
+  (`live-accepting`, `live-read-only`) and adds `omitted`, the count of the
+  others by state (an unfiltered listing was about 158 KB, mostly ended
+  sessions). `--state all` lists every session; `--state <state>` sends that
+  one state to the relay. The filter is the CLI's: the verb and the hub tool
+  are unchanged.
 
 ## 21. Session discovery decisions (unit D2)
 

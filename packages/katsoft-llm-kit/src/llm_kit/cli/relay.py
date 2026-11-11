@@ -29,8 +29,11 @@ Verbs:
     ``send``, ``replies``, ``questions``, ``answer``. The origin is
     ``direct:<machine>/claude/<id>``; ``--grant`` is sent as ``X-Relay-Grant``.
     Every client verb needs a covering grant at the relay. There is no mint
-    verb here: under alternative A grants are minted by the ``/direct`` hook,
-    and the CLI offers no convenience path to mint one.
+    verb here: under alternative A grants are minted by the ``/direct`` hooks,
+    and the CLI offers no convenience path to mint one. ``sessions`` shows the
+    live sessions (``live-accepting`` and ``live-read-only``) by default and
+    counts the rest under ``omitted``; ``--state all`` lists every session and
+    ``--state <state>`` exactly one state.
 
 Every verb takes ``--env-json`` (the fleet machine registry), ``--config``
 (``relay.yaml``) and ``--state-dir``. Output is one JSON object on stdout.
@@ -57,6 +60,11 @@ from llm_kit.relay.config import RelayConfig, RelayConfigError, load_config
 EXIT_OK = 0
 EXIT_REFUSED = 1
 EXIT_USAGE = 2
+
+#: Session states ``client sessions`` shows by default (running sessions).
+LIVE_SESSION_STATES = ("live-accepting", "live-read-only")
+#: ``client sessions --state`` values: ``live`` (the default), ``all``, or one session state.
+SESSIONS_STATE_CHOICES = ("live", "all", *P.SESSION_STATES)
 
 #: client verb -> one-line help (the /direct client verbs, protocol section 8).
 CLIENT_VERBS = {
@@ -140,7 +148,10 @@ def _parser() -> argparse.ArgumentParser:
     sessions = verbs.add_parser("sessions", parents=[cc], help=CLIENT_VERBS["sessions"])
     sessions.add_argument("--machine")
     sessions.add_argument("--harness", choices=P.SESSION_HARNESSES)
-    sessions.add_argument("--state", choices=P.SESSION_STATES)
+    sessions.add_argument(
+        "--state", choices=SESSIONS_STATE_CHOICES, default="live",
+        help="live (default: running sessions only), all, or one session state.",
+    )
     read = verbs.add_parser("read", parents=[cc], help=CLIENT_VERBS["read"])
     read.add_argument("address", help="A session address or selector.")
     read.add_argument("--since", help="Cursor from a previous read.")
@@ -266,7 +277,8 @@ def _client_params(args: argparse.Namespace, machine: str) -> tuple[str, dict[st
     if verb == "sessions":
         put("machine", args.machine)
         put("harness", args.harness)
-        put("state", args.state)
+        if args.state in P.SESSION_STATES:
+            params["state"] = args.state
     elif verb == "read":
         params["address"] = args.address
         put("since", args.since)
@@ -310,8 +322,29 @@ def _cmd_client(args: argparse.Namespace) -> int:
     origin = f"direct:{machine}/claude/{args.session}"
     wire, params = _client_params(args, machine)
     with _local_client(config) as client:
-        _emit(client.call(wire, params, origin=origin, grant=args.grant))
+        result = client.call(wire, params, origin=origin, grant=args.grant)
+    if args.client_verb == "sessions" and args.state == "live":
+        result = live_sessions_only(result)
+    _emit(result)
     return EXIT_OK
+
+
+def live_sessions_only(result: dict[str, Any]) -> dict[str, Any]:
+    """A ``list_sessions`` result narrowed to running sessions, with the others counted per state.
+
+    An unfiltered listing is mostly ended sessions (about 158 KB on the owner's
+    machine), so ``client sessions`` shows the live ones unless ``--state`` asks
+    for more. ``omitted`` counts what was left out, by state, so a caller knows
+    to ask with ``--state all``.
+    """
+    kept: list[Any] = []
+    omitted = {state: 0 for state in P.SESSION_STATES if state not in LIVE_SESSION_STATES}
+    for session in result["sessions"]:
+        if session.get("state") in LIVE_SESSION_STATES:
+            kept.append(session)
+        else:
+            omitted[session["state"]] = omitted.get(session["state"], 0) + 1
+    return {**result, "sessions": kept, "omitted": omitted}
 
 
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
@@ -335,4 +368,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         return _config_error(str(exc))
 
 
-__all__ = ["CLIENT_VERBS", "EXIT_OK", "EXIT_REFUSED", "EXIT_USAGE", "run"]
+__all__ = [
+    "CLIENT_VERBS", "EXIT_OK", "EXIT_REFUSED", "EXIT_USAGE", "LIVE_SESSION_STATES", "SESSIONS_STATE_CHOICES",
+    "live_sessions_only", "run",
+]
