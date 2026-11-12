@@ -31,8 +31,14 @@ Session output is DATA. Every tool description says so; the server
 ``instructions`` say so; the hub never interprets what a session said.
 
 Relays. The hub reaches relays only through :class:`~llm_kit.relay.protocol.RelayClient`
-instances built from a list of ``(machine label, URL)`` pairs (:class:`RelayPeer`),
-the slot where peer relays attach later. ``list_machines`` and ``list_sessions``
+instances built from a list of ``(machine label, URL)`` pairs (:class:`RelayPeer`).
+By default that is this machine's relay plus the peers ``relay.peers`` names in
+relay.yaml; each peer is reached over https with its OWN relay token and hub
+bearer, read from ``peers/<machine>/`` in the state directory (a missing
+credential stops the hub at start, naming the import command). This machine's
+credentials are never sent to a peer. A relay that answers as a machine other
+than the label configured for it is refused ``internal``, naming both labels,
+and is listed ``unreachable`` by the fan-out verbs. ``list_machines`` and ``list_sessions``
 fan out to every relay in parallel and mark a relay that cannot answer
 ``unreachable`` with its error instead of omitting it; ``read_session`` and
 ``ask_llm`` go to the relay named by the address's machine; a target with no
@@ -84,6 +90,7 @@ import asyncio
 import contextvars
 import concurrent.futures
 import json
+import os
 import signal
 import socket
 import sys
@@ -94,10 +101,24 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from llm_kit.relay import protocol as P
-from llm_kit.relay.client import DEFAULT_LLM_TIMEOUT_S, HttpRelayClient, base_url
-from llm_kit.relay.config import RelayConfig, RelayConfigError, is_loopback_host, parse_public_url, require_enabled
+from llm_kit.relay.client import DEFAULT_LLM_TIMEOUT_S, PEER_CONNECT_TIMEOUT_S, HttpRelayClient, base_url
+from llm_kit.relay.config import (
+    RelayConfig,
+    RelayConfigError,
+    is_loopback_host,
+    is_loopback_url,
+    parse_public_url,
+    require_enabled,
+)
 from llm_kit.relay.hub_oauth import CLIENT_ORIGINS, HubOAuth
-from llm_kit.relay.lifecycle import PauseStore, RoleLock, ensure_state_dir, ensure_token, token_matches
+from llm_kit.relay.lifecycle import (
+    PauseStore,
+    RoleLock,
+    ensure_state_dir,
+    ensure_token,
+    peer_credentials,
+    token_matches,
+)
 from llm_kit.schema import json_schema as JS
 
 ROLE = "hub"
@@ -147,8 +168,9 @@ class RelayPeer:
 
     ``relay_token`` and ``hub_bearer`` default to the hub's own state
     credentials, which is right for this machine's relay. A peer relay on
-    another machine (a later phase) carries its own; the client then refuses
-    any URL that is not loopback until that phase defines forwarding.
+    another machine carries its own, both of them: a non-loopback URL with
+    either missing is refused (:class:`RelayConfigError`), never filled in from
+    this machine's credentials.
     """
 
     machine: str
@@ -285,7 +307,34 @@ class HubRouter:
     # -- relay access ---------------------------------------------------------------------
 
     def _send(self, client: Any, verb: str, params: Mapping[str, Any]) -> dict[str, Any]:
-        return getattr(client, verb)(dict(params), origin=self._origin)
+        result = getattr(client, verb)(dict(params), origin=self._origin)
+        self._check_label(client, result)
+        return result
+
+    @staticmethod
+    def _check_label(client: Any, result: Mapping[str, Any]) -> None:
+        """The machine a relay reports must be the label it is configured under (``internal`` otherwise).
+
+        A relay names itself in the ``machine`` of each entry it reports and in
+        the machine of each address it returns; one that names another machine
+        is a mis-pointed URL or a wrong peer, and nothing it says is believed.
+        """
+        configured = client.machine
+        reported = [entry["machine"] for entry in result.get("machines") or ()
+                    if isinstance(entry, Mapping) and isinstance(entry.get("machine"), str)]
+        addresses = [result.get("address")] + [s.get("address") for s in result.get("sessions") or ()
+                                               if isinstance(s, Mapping)]
+        for address in addresses:
+            if isinstance(address, str):
+                reported.append(address.split("/", 1)[0])
+        for label in reported:
+            if label != configured:
+                raise P.RelayError(
+                    "internal",
+                    f"the relay configured as machine {configured!r} reports machine {label!r}; "
+                    "check its URL and the label in relay.yaml",
+                    details={"machine": configured, "reported": label},
+                )
 
     def _client_for(self, machine: str) -> Any:
         client = self._clients.get(machine)
@@ -596,13 +645,24 @@ def require_loopback(host: object, *, what: str = "hub") -> str:
     return str(host).strip().strip("[]")
 
 
+def _on_nt() -> bool:
+    return os.name == "nt"
+
+
 def bind_loopback(host: str, port: int) -> socket.socket:
-    """A listening TCP socket on loopback ``host``:``port`` (``port`` 0 picks a free one)."""
+    """A listening TCP socket on loopback ``host``:``port`` (``port`` 0 picks a free one).
+
+    On Windows the bind is exclusive (``SO_EXCLUSIVEADDRUSE``): there
+    ``SO_REUSEADDR`` would let a second process bind a port that is in use.
+    """
     address = require_loopback(host)
     family = socket.AF_INET6 if ":" in address else socket.AF_INET
     sock = socket.socket(family, socket.SOCK_STREAM)
     try:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if _on_nt():
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((address, port))
         require_loopback(sock.getsockname()[0], what="bound hub")
         sock.listen(128)
@@ -789,19 +849,41 @@ class HubServer:
     # -- opening and closing --------------------------------------------------------
 
     def _build_clients(self, relay_token: str, hub_bearer: str) -> list[HttpRelayClient]:
+        """One client per relay: the explicit ``peers`` list, else this machine's relay plus ``relay.peers``.
+
+        A configured peer's credentials come from ``peers/<machine>/`` (a
+        missing one is a :class:`RelayConfigError` naming the import command).
+        This machine's credentials go only to loopback URLs: a peer URL that
+        is not loopback needs both of its own.
+        """
         peers = self._peers
         if peers is None:
             relay_host, relay_port = self.config.bind("relay")
             peers = [RelayPeer(self.config.machine_label, base_url(relay_host, relay_port))]
-        return [
-            HttpRelayClient(
-                peer.url, machine=peer.machine,
-                relay_token=peer.relay_token if peer.relay_token is not None else relay_token,
-                hub_bearer=peer.hub_bearer if peer.hub_bearer is not None else hub_bearer,
-                timeout_s=self._client_timeout_s, llm_timeout_s=self._llm_timeout_s,
-            )
-            for peer in peers
-        ]
+            for configured in self.config.peers:
+                token, bearer = peer_credentials(self.config.paths, configured.machine)
+                peers.append(RelayPeer(configured.machine, configured.url, token, bearer))
+        clients: list[HttpRelayClient] = []
+        try:
+            for peer in peers:
+                remote = not is_loopback_url(peer.url)
+                if remote and (peer.relay_token is None or peer.hub_bearer is None):
+                    raise RelayConfigError(
+                        f"relay {peer.machine!r} at {peer.url} is not on loopback, so it needs its own relay token "
+                        "and hub bearer; this machine's credentials are never sent to a peer"
+                    )
+                clients.append(HttpRelayClient(
+                    peer.url, machine=peer.machine,
+                    relay_token=peer.relay_token if peer.relay_token is not None else relay_token,
+                    hub_bearer=peer.hub_bearer if peer.hub_bearer is not None else hub_bearer,
+                    timeout_s=self._client_timeout_s, llm_timeout_s=self._llm_timeout_s,
+                    connect_timeout_s=PEER_CONNECT_TIMEOUT_S if remote or peer.machine != self.config.machine_label else None,
+                ))
+        except BaseException:
+            for client in clients:
+                client.close()
+            raise
+        return clients
 
     def _open(self) -> None:
         if self._sock is not None:

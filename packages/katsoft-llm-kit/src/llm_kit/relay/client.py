@@ -8,9 +8,16 @@ relay token (``X-Relay-Token``), the optional grant reference
 :class:`llm_kit.relay.protocol.RelayError` with the error envelope's code. A
 transport failure (refused connection, timeout) is ``machine_unreachable``.
 
-The URL must be a loopback ``http`` URL: the relay token is this machine's and
-is never sent elsewhere (cross-machine reach is a later phase). Proxy
-variables in the environment are ignored for the same reason.
+A loopback URL must be ``http`` (this machine's relay). A non-loopback URL is
+a PEER relay on another machine: it must be ``https`` (TLS verified against
+the system trust roots, never disabled) and the caller must give that peer's
+own relay token and hub bearer explicitly. This machine's credentials are
+never sent to a peer URL and there is no fallback to them. Redirects are never
+followed and proxy variables in the environment are ignored, for peers and
+loopback alike. A peer connection that cannot be opened within 3 seconds
+(``PEER_CONNECT_TIMEOUT_S``) is ``machine_unreachable``, and so is a gateway
+answer (HTTP 502, 503 or 504) that carries no relay envelope, which is what a
+tunnel in front of a relay that is down returns.
 
 :meth:`HttpRelayClient.local` builds a client for this machine's relay from
 the relay configuration: the bound address from ``RelayConfig.bind("relay")``
@@ -30,6 +37,10 @@ DEFAULT_TIMEOUT_S = 30.0
 #: ``ask_llm`` waits for a completion; a cold local model load is slow (L4 caps a call at 600 s).
 DEFAULT_LLM_TIMEOUT_S = 660.0
 _LONG_POLL_VERBS = frozenset({"poll", "get_replies"})
+#: A peer relay that does not accept a connection within this long is unreachable.
+PEER_CONNECT_TIMEOUT_S = 3.0
+#: HTTP statuses a gateway (a tunnel, a proxy) answers with, as text, when the relay behind it is down.
+_GATEWAY_STATUSES = frozenset({502, 503, 504})
 
 
 def base_url(host: str, port: int) -> str:
@@ -43,7 +54,11 @@ class HttpRelayClient:
 
     ``machine`` is the relay's machine label (reported by :attr:`machine` and
     named in ``machine_unreachable``). ``hub_bearer`` is sent only on
-    hub-origin calls. ``transport`` is an optional ``httpx`` transport.
+    hub-origin calls and is required for a peer (non-loopback) URL.
+    ``transport`` is an optional ``httpx`` transport. ``connect_timeout_s``
+    bounds opening a connection; it defaults to
+    :data:`PEER_CONNECT_TIMEOUT_S` for a peer URL and to the call timeout
+    for a loopback one.
     """
 
     def __init__(
@@ -56,9 +71,17 @@ class HttpRelayClient:
         timeout_s: float = DEFAULT_TIMEOUT_S,
         llm_timeout_s: float = DEFAULT_LLM_TIMEOUT_S,
         transport: Any = None,
+        connect_timeout_s: Optional[float] = None,
     ) -> None:
-        if not is_loopback_url(url) or not url.startswith("http://"):
-            raise ValueError(f"relay URL {url!r} is not a loopback http URL; the relay token never leaves this machine")
+        peer = not is_loopback_url(url)
+        if peer:
+            if not isinstance(url, str) or not url.startswith("https://"):
+                raise ValueError(f"relay URL {url!r} is not a loopback URL, so it must be an https URL; "
+                                 "a credential never crosses a network in clear text")
+            if not hub_bearer:
+                raise ValueError(f"relay URL {url!r} is a peer; its own hub bearer must be given explicitly")
+        elif not url.startswith("http://"):
+            raise ValueError(f"relay URL {url!r} is not a loopback http URL (a peer relay takes an https URL)")
         if not P.is_machine_label(machine):
             raise ValueError(f"{machine!r} is not a machine label")
         if not relay_token:
@@ -72,6 +95,9 @@ class HttpRelayClient:
         self._bearer = hub_bearer
         self._timeout_s = timeout_s
         self._llm_timeout_s = llm_timeout_s
+        self._connect_timeout_s = connect_timeout_s if connect_timeout_s is not None else (
+            PEER_CONNECT_TIMEOUT_S if peer else None)
+        # verify defaults to True (system trust roots); no redirects, no proxy variables, for every URL
         self._http = httpx.Client(transport=transport, trust_env=False, follow_redirects=False)
 
     @classmethod
@@ -101,13 +127,17 @@ class HttpRelayClient:
 
     # -- the one call ------------------------------------------------------------
 
-    def _timeout(self, verb: str, params: Mapping[str, Any]) -> float:
+    def _timeout(self, verb: str, params: Mapping[str, Any]) -> Any:
         if verb == "ask_llm":
-            return self._llm_timeout_s
-        if verb in _LONG_POLL_VERBS:
+            total = self._llm_timeout_s
+        elif verb in _LONG_POLL_VERBS:
             wait = params.get("wait_s", 0)
-            return self._timeout_s + (wait if isinstance(wait, (int, float)) else 0)
-        return self._timeout_s
+            total = self._timeout_s + (wait if isinstance(wait, (int, float)) else 0)
+        else:
+            total = self._timeout_s
+        if self._connect_timeout_s is None:
+            return total
+        return self._httpx.Timeout(total, connect=min(total, self._connect_timeout_s))
 
     def call(self, verb: str, params: Mapping[str, Any], *, origin: str,
              grant: Optional[str] = None) -> dict[str, Any]:
@@ -131,8 +161,12 @@ class HttpRelayClient:
         try:
             reply = response.json()
         except ValueError as exc:
+            if response.status_code in _GATEWAY_STATUSES:
+                raise self._gateway_error(response.status_code) from exc
             raise P.RelayError("internal", f"relay {self._machine} answered HTTP {response.status_code} with a body that is not JSON") from exc
         if not isinstance(reply, dict) or reply.get("protocol") != P.PROTOCOL:
+            if response.status_code in _GATEWAY_STATUSES:
+                raise self._gateway_error(response.status_code)
             raise P.RelayError("internal", f"relay {self._machine} answered HTTP {response.status_code} without a {P.PROTOCOL} envelope")
         if reply.get("id") not in (request_id, None):
             raise P.RelayError("internal", f"relay {self._machine} answered request {reply.get('id')!r}, not {request_id!r}")
@@ -145,6 +179,13 @@ class HttpRelayClient:
             raise P.RelayError.from_error_object(reply.get("error") or {})
         except ValueError as exc:
             raise P.RelayError("internal", f"relay {self._machine} sent a malformed error object: {exc}") from exc
+
+    def _gateway_error(self, status: int) -> P.RelayError:
+        return P.RelayError(
+            "machine_unreachable",
+            f"relay {self._machine} at {self._url} is not answering: a gateway answered HTTP {status} without a relay envelope",
+            details={"machine": self._machine},
+        )
 
     # -- one method per verb (protocol.RelayClient) ------------------------------------
 
@@ -206,4 +247,4 @@ class HttpRelayClient:
         return self.call("status", params, origin=origin, grant=grant)
 
 
-__all__ = ["DEFAULT_LLM_TIMEOUT_S", "DEFAULT_TIMEOUT_S", "HttpRelayClient", "base_url"]
+__all__ = ["DEFAULT_LLM_TIMEOUT_S", "DEFAULT_TIMEOUT_S", "HttpRelayClient", "PEER_CONNECT_TIMEOUT_S", "base_url"]

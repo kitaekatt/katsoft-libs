@@ -146,7 +146,26 @@ Rules that follow from the table:
     (section 14, `origin_proof` type `none`); the `/direct` enablement that
     the llm-kit hooks check is a file such a process can also write;
   - the Claude in a `/direct` session can send a message the owner did not
-    write.
+    write;
+  - the hub's machine holds each peer relay's token and hub bearer
+    (`peers/<machine>/` in its state directory, section 13), so any process
+    there that can read them can send a message as `claude.ai/<user>` to that
+    peer's opted-in sessions. The first risk above is extended from the hub
+    machine's own relay to every peer the hub reaches.
+
+### Peer credentials
+
+A relay on another machine (a peer) authenticates exactly as the local one
+does: every hub call to it carries that relay's own relay token and hub bearer
+(section 20, "Authentication"). The hub keeps copies per peer and never reuses
+its own machine's credentials for a peer. This machine's relay token and hub
+bearer are never sent to a non-loopback URL, there is no fallback to them when
+a peer's are missing (the hub refuses to start instead), and a peer's
+credentials are never sent over plain `http` or anywhere but that peer's URL.
+Provisioning is a pull by the hub's machine over a channel the owner already
+trusts, for example `ssh <peer> llm-kit relay peer export`, piped into
+`llm-kit relay peer import <peer>` (section 20, "Client and CLI"); no
+credential is written into a configuration file, a task record or a transcript.
 
   The llm-kit channel server states the rule and these risks to the
   receiving session.
@@ -535,8 +554,28 @@ single-user OAuth sign-in for the claude.ai connector, specified in
   authorizes a relay call. This is the audit origin a relay records for
   connector traffic.
 - Relays: the hub reaches relays only through `RelayClient` objects built from
-  `(machine label, URL)` pairs; by default one, this machine's relay at
-  `RelayConfig.bind("relay")`. Machine labels are unique.
+  `(machine label, URL)` pairs. By default that is this machine's relay at
+  `RelayConfig.bind("relay")` plus the peers `relay.yaml` names under
+  `relay: {peers: [{machine: <label>, url: <origin>}]}` (nested in the `relay`
+  block, never a new top-level key). Each peer label must name an enabled
+  `env.json` machine other than this one, once; the URL is an `https` origin (a
+  plain `http` origin only for a literal loopback address). Without `peers`
+  the hub is the one-relay hub. Machine labels are unique.
+- Peers: each peer is reached with its own relay token and hub bearer, read
+  from `peers/<machine>/relay.token` and `peers/<machine>/hub.bearer` under the
+  hub's state directory (section 3, "Peer credentials"). The directories are
+  private and the files are validated on every read like the state root. A
+  missing directory or file is a configuration error at hub start that names
+  `llm-kit relay peer import <machine>`. The connection verifies the peer's
+  TLS certificate, follows no redirect and ignores proxy environment
+  variables. A connection that cannot be opened within 3 seconds, and an HTTP
+  502, 503 or 504 answer that carries no relay envelope (a tunnel in front of
+  a relay that is down), are `machine_unreachable` for that peer.
+- Label check: the machine a relay reports (the `machine` of each entry in its
+  `machines` list, and the machine of each address it returns) must equal the
+  label the hub configured for it. A relay that reports another machine is
+  refused `internal`, naming both labels, and the fan-out verbs list that
+  machine `unreachable` with that error; nothing else the relay said is used.
 - Fan-out: `list_machines`, `list_sessions` and `list_questions` ask every
   relay in parallel and mark a relay that cannot answer `unreachable` with its
   error object instead of omitting it. `list_sessions` with a `machine` the hub
@@ -569,7 +608,8 @@ single-user OAuth sign-in for the claude.ai connector, specified in
   and the caller waits at most `wait_s` plus one probe.
 - State: `llm-kit relay hub` creates the state directory and the relay token
   and hub bearer when absent (the same files the relay creates, race-safe),
-  but not the loopback registry, which only the relay writes. It does not need
+  but not the loopback registry, which only the relay writes, and not the
+  `peers/` tree, which only the peer import command creates. It does not need
   the relay to be running: an unreachable relay is reported per call. The hub
   role is a singleton per state directory (`already_running`).
 - Pause: `llm-kit relay pause --scope hub` is read from disk on every call, so
@@ -716,7 +756,9 @@ independent of the transport, so the hub can reuse them),
 - The relay binds only a literal loopback address, `RelayConfig.bind("relay")`
   (`127.0.0.1:4710` by default). The server checks the host before it creates
   any state, and again on the address the socket bound. A non-loopback host is
-  a configuration error and nothing is bound.
+  a configuration error and nothing is bound. The hub binds the same way. On
+  Windows both listeners bind with `SO_EXCLUSIVEADDRUSE`, because there
+  `SO_REUSEADDR` would let a second process bind a port that is in use.
 - Start order: prepare the state (directory, relay token, hub bearer, loopback
   registry), take the relay role lock, bind. A second relay on the same state
   directory is refused `already_running` before it binds.
@@ -875,10 +917,15 @@ independent of the transport, so the hub can reuse them),
 
 ### Client and CLI
 
-- `HttpRelayClient` accepts only a loopback `http` URL (the relay token never
-  leaves this machine) and ignores proxy environment variables. A transport
-  failure is `machine_unreachable`. `poll` and `get_replies` timeouts grow by
-  `wait_s`; `ask_llm` waits up to 660 seconds.
+- `HttpRelayClient` accepts a loopback `http` URL (this machine's relay), or a
+  peer: a non-loopback URL, which must be `https` and comes with that peer's
+  own relay token and hub bearer, both given explicitly (this machine's
+  credentials never go to a peer). TLS is verified against the system trust
+  roots and cannot be turned off. Redirects are never followed and proxy
+  environment variables are ignored, for loopback and peers alike. A transport
+  failure is `machine_unreachable`, as is an HTTP 502, 503 or 504 answer with no
+  relay envelope; a peer's connect timeout is 3 seconds. `poll` and
+  `get_replies` timeouts grow by `wait_s`; `ask_llm` waits up to 660 seconds.
 - `llm-kit relay serve` runs the relay in the foreground until SIGINT or
   SIGTERM. `pause`, `resume` and `status` call the relay as
   `operator:<machine>`; with `--offline` they read or write the pause file
@@ -889,6 +936,19 @@ independent of the transport, so the hub can reuse them),
   calls one of the eight client verbs as `direct:<machine>/claude/<S>`, with
   `--grant` as `X-Relay-Grant`. Output is JSON; exit 0 ok, 1 refused or
   unreachable, 2 usage or configuration.
+- `llm-kit relay peer export` prints this machine's relay token and hub bearer
+  as one JSON object, `{"format": "llm-kit-relay-peer/1", "machine": <label>,
+  "relay_token": ..., "hub_bearer": ...}`, and refuses (exit 2) when standard
+  output is a terminal. `llm-kit relay peer import <machine>` reads that
+  object from standard input (never a terminal, at most 4096 bytes), requires
+  its `machine` to equal `<machine>`, which must be an enabled `env.json`
+  machine other than this one, and writes `peers/<machine>/relay.token` and
+  `hub.bearer` through the private-file helpers (private directories, `0600`
+  files, a protected owner-plus-SYSTEM ACL on Windows). It prints the file
+  names and whether the peer is configured in `relay.peers`, never a
+  credential. `llm-kit relay status` adds `peers` (each peer's machine, URL and
+  whether its two credentials are `stored` or `missing`) when `relay.peers` is
+  configured, and adds nothing otherwise.
 - `llm-kit relay client sessions` shows live sessions only by default
   (`live-accepting`, `live-read-only`) and adds `omitted`, the count of the
   others by state (an unfiltered listing was about 158 KB, mostly ended

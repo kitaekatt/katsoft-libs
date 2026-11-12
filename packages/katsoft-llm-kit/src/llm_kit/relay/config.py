@@ -44,6 +44,15 @@ Paths follow the XDG convention and read the environment on every call:
 
 An ``XDG_*`` value is honoured only when absolute.
 
+Peers. ``relay: {peers: [{machine: <label>, url: <origin>}]}`` lists other
+machines' relays the hub reaches (nested in the ``relay`` block, never a new
+top-level key). Each label must name a non-disabled ``env.json`` machine other
+than this one, once; the URL is an ``https`` origin (or an ``http`` literal
+loopback origin). Without ``peers`` the hub fronts this machine's relay only.
+A peer has its own credentials under ``peers/<machine>/`` in the state
+directory (:meth:`StatePaths.peer_relay_token`); this machine's credentials
+are never sent to a peer.
+
 Loopback model registry. ``ask_llm`` may reach only endpoints on this
 machine. The relay therefore owns a registry file of its own (served to the
 registry reader through ``MODEL_ENDPOINTS_REGISTRY``), never the user's
@@ -77,6 +86,7 @@ NEUTRAL_DIRNAME = "llm-kit"
 RELAY_STATE_DIRNAME = "relay"
 CONFIG_FILENAME = "relay.yaml"
 REGISTRY_FILENAME = "model-endpoints.yaml"
+PEERS_DIRNAME = "peers"
 
 DEFAULT_RELAY_HOST = "127.0.0.1"
 DEFAULT_RELAY_PORT = 4710
@@ -262,6 +272,104 @@ def is_loopback_url(url: object) -> bool:
 
 
 # --------------------------------------------------------------------------
+# peers
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PeerConfig:
+    """One other machine's relay the hub reaches: its machine label and origin URL."""
+
+    machine: str
+    url: str
+
+
+_PEER_KEYS = frozenset({"machine", "url"})
+
+
+def parse_peer_url(value: object, *, what: str) -> str:
+    """The normalized peer origin: ``https://<host>[:port]``, or ``http://<literal loopback>[:port]``.
+
+    No user info, path, query or fragment. Plain ``http`` is accepted only for a
+    literal loopback address (a peer on this machine, for tests); any other
+    host must be ``https``, so a credential never crosses a network in clear
+    text. :class:`RelayConfigError` otherwise.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise RelayConfigError(f"{what} url {value!r} is not a non-empty string")
+    text = value.strip()
+    try:
+        parts = urlsplit(text)
+        port = parts.port
+    except ValueError as exc:
+        raise RelayConfigError(f"{what} url {text!r} is not a URL: {exc}") from exc
+    if parts.scheme not in ("http", "https"):
+        raise RelayConfigError(f"{what} url {text!r} must use https")
+    if not parts.hostname:
+        raise RelayConfigError(f"{what} url {text!r} has no host")
+    if parts.scheme == "http" and not is_loopback_host(parts.hostname):
+        raise RelayConfigError(f"{what} url {text!r} must use https (plain http is only for a loopback address)")
+    if parts.username is not None or parts.password is not None or "@" in parts.netloc:
+        raise RelayConfigError(f"{what} url {text!r} must not carry user info")
+    if parts.path not in ("", "/") or parts.query or parts.fragment or text.endswith(("?", "#")):
+        raise RelayConfigError(f"{what} url {text!r} must be an origin only (no path, query or fragment)")
+    host = parts.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    default_port = 443 if parts.scheme == "https" else 80
+    return f"{parts.scheme}://{host}" + (f":{port}" if port is not None and port != default_port else "")
+
+
+def fleet_machine_labels(env_json: Optional[Path]) -> dict[str, bool]:
+    """``{label: disabled}`` for every ``env.json`` machine that has a usable ``tailscale_hostname``."""
+    path = Path(env_json) if env_json is not None else default_env_json_path()
+    try:
+        machines = json.loads(path.read_text(encoding="utf-8")).get("machines")
+    except (OSError, ValueError, AttributeError) as exc:
+        raise RelayConfigError(f"cannot read machine registry {path}: {exc}") from exc
+    if not isinstance(machines, dict):
+        raise RelayConfigError(f"machine registry {path} has no 'machines' mapping")
+    labels: dict[str, bool] = {}
+    for entry in machines.values():
+        tailscale = entry.get("tailscale_hostname") if isinstance(entry, dict) else None
+        if isinstance(tailscale, str) and P.is_machine_label(tailscale.strip().lower()):
+            labels[tailscale.strip().lower()] = entry.get("disabled") is True
+    return labels
+
+
+def _peers(raw: object, cfg_path: Path, env_json: Optional[Path], own_label: str) -> tuple[PeerConfig, ...]:
+    """Validate ``relay.peers``: a list of ``{machine, url}``, each machine a distinct enabled fleet machine but this one."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise RelayConfigError(f"relay config {cfg_path}: 'relay.peers' is not a list")
+    if not raw:
+        return ()
+    known = fleet_machine_labels(env_json)
+    peers: list[PeerConfig] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise RelayConfigError(f"relay config {cfg_path}: peer {item!r} is not a mapping with 'machine' and 'url'")
+        unknown = sorted(set(item) - _PEER_KEYS)
+        if unknown:
+            raise RelayConfigError(f"relay config {cfg_path}: peer has unknown keys: {', '.join(map(str, unknown))}")
+        machine, url = item.get("machine"), item.get("url")
+        if not isinstance(machine, str) or not P.is_machine_label(machine.strip()):
+            raise RelayConfigError(f"relay config {cfg_path}: peer machine {machine!r} is not a machine label")
+        machine = machine.strip()
+        what = f"relay config {cfg_path}: peer {machine!r}"
+        if machine == own_label:
+            raise RelayConfigError(f"{what} is this machine; a hub does not list itself as a peer")
+        if machine not in known:
+            raise RelayConfigError(f"{what} is not a machine in the fleet registry (no env.json machine has that tailscale_hostname)")
+        if known[machine]:
+            raise RelayConfigError(f"{what} is disabled in the fleet registry")
+        if any(peer.machine == machine for peer in peers):
+            raise RelayConfigError(f"{what} is configured twice")
+        peers.append(PeerConfig(machine, parse_peer_url(url, what=what)))
+    return tuple(peers)
+
+
+# --------------------------------------------------------------------------
 # paths
 # --------------------------------------------------------------------------
 
@@ -314,6 +422,25 @@ class StatePaths:
     def pidfile(self, role: str) -> Path:
         _require_role(role)
         return self.root / f"{role}.pid"
+
+    @property
+    def peers_dir(self) -> Path:
+        """The directory of per-peer credential directories (private)."""
+        return self.root / PEERS_DIRNAME
+
+    def peer_dir(self, machine: str) -> Path:
+        """``peers/<machine>``: where the hub keeps one peer relay's credentials (private)."""
+        if not P.is_machine_label(machine):
+            raise RelayConfigError(f"{machine!r} is not a machine label; no peer directory exists for it")
+        return self.peers_dir / machine
+
+    def peer_relay_token(self, machine: str) -> Path:
+        """The PEER relay's token, as that relay reported it (never this machine's own ``relay.token``)."""
+        return self.peer_dir(machine) / "relay.token"
+
+    def peer_hub_bearer(self, machine: str) -> Path:
+        """The PEER relay's hub bearer (sent only to that peer; never this machine's own ``hub.bearer``)."""
+        return self.peer_dir(machine) / "hub.bearer"
 
 
 ROLES = ("relay", "hub")
@@ -441,6 +568,8 @@ class RelayConfig:
     llm_endpoints: Mapping[str, Mapping[str, Any]] = field(default_factory=lambda: dict(DEFAULT_LLM_ENDPOINTS))
     #: The hub's public https origin (:func:`parse_public_url`), or None: no tunnel, no OAuth sign-in.
     hub_public_url: Optional[str] = None
+    #: Other machines' relays the hub reaches (``relay.peers``); empty means this machine's relay only.
+    peers: tuple[PeerConfig, ...] = ()
 
     def bind(self, role: str) -> tuple[str, int]:
         """The ``(host, port)`` ``role`` listens on."""
@@ -454,6 +583,7 @@ class RelayConfig:
 _CONFIG_KEYS = frozenset({"enabled", "relay", "hub", "ledgers", "llm_endpoints"})
 _LISTENER_KEYS = frozenset({"host", "port"})
 _HUB_KEYS = _LISTENER_KEYS | {"enabled", "public_url"}
+_RELAY_KEYS = _LISTENER_KEYS | {"peers"}
 
 
 def _read_config_file(path: Path) -> dict[str, Any]:
@@ -487,7 +617,7 @@ def _block(data: Mapping[str, Any], key: str, path: Path) -> Mapping[str, Any]:
 
 def _listener(data: Mapping[str, Any], key: str, default_host: str, default_port: int, path: Path) -> tuple[str, int]:
     block = _block(data, key, path)
-    unknown = sorted(set(block) - (_HUB_KEYS if key == "hub" else _LISTENER_KEYS))
+    unknown = sorted(set(block) - (_HUB_KEYS if key == "hub" else _RELAY_KEYS))
     if unknown:
         raise RelayConfigError(f"relay config {path}: '{key}' has unknown keys: {', '.join(map(str, unknown))}")
     return block.get("host", default_host), block.get("port", default_port)
@@ -620,6 +750,8 @@ def load_config(
         endpoints = DEFAULT_LLM_ENDPOINTS
     endpoints = validate_llm_endpoints(endpoints)
 
+    peers = _peers(_block(data, "relay", cfg_path).get("peers"), cfg_path, env_json, machine.label)
+
     root = Path(state_root) if state_root is not None else state_dir(env)
     return RelayConfig(
         machine=machine,
@@ -632,6 +764,7 @@ def load_config(
         ledgers=watched,
         llm_endpoints=endpoints,
         hub_public_url=public,
+        peers=peers,
     )
 
 
@@ -644,6 +777,8 @@ __all__ = [
     "DEFAULT_RELAY_PORT",
     "Enablement",
     "MachineIdentity",
+    "PEERS_DIRNAME",
+    "PeerConfig",
     "REGISTRY_FILENAME",
     "ROLES",
     "RelayConfig",
@@ -653,11 +788,13 @@ __all__ = [
     "config_file",
     "default_env_json_path",
     "enablement",
+    "fleet_machine_labels",
     "hub_enabled",
     "is_loopback_host",
     "is_loopback_url",
     "load_config",
     "load_loopback_registry",
+    "parse_peer_url",
     "parse_public_url",
     "relay_enabled",
     "render_registry_yaml",

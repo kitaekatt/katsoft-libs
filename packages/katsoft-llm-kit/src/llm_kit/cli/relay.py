@@ -12,7 +12,9 @@ Verbs:
     Run the hub (the MCP server the claude.ai connector talks to) in the
     foreground on ``RelayConfig.bind("hub")`` (``127.0.0.1:4711`` unless
     ``relay.yaml`` says otherwise; loopback only), in front of this machine's
-    relay. Prints one JSON object (``serving`` is the loopback MCP endpoint
+    relay and of the peers ``relay: {peers: [...]}`` names (each over https with
+    its own credentials from ``peers/<machine>/``; a missing credential stops
+    the hub at start and names ``peer import``). Prints one JSON object (``serving`` is the loopback MCP endpoint
     URL, ``public_url`` the connector URL or null) once the socket listens,
     then serves until SIGINT or SIGTERM. A second ``hub`` on the same state
     directory exits 1 with ``already_running``. The hub creates its bearer
@@ -27,7 +29,20 @@ Verbs:
     state directory instead, for when no relay is running (no audit row).
 ``status``
     The relay's ``status`` result, as ``operator:<machine>``; ``--offline``
-    prints the persisted pause state only.
+    prints the persisted pause state only. With ``relay.peers`` configured the
+    output also carries ``peers``: each peer's machine, URL and whether its
+    credentials are stored (never the credentials).
+``peer export``
+    Print this machine's relay token and hub bearer as one JSON object, for the
+    hub machine to import (``ssh <machine> llm-kit relay peer export | llm-kit
+    relay peer import <machine>``). Refuses a terminal on standard output, so a
+    credential is never printed to a screen or a scrollback.
+``peer import <machine>``
+    Read that JSON object from standard input (never a terminal) and store the
+    credentials as ``peers/<machine>/relay.token`` and ``hub.bearer`` in the
+    state directory, private files in private directories. The object's
+    ``machine`` must equal ``<machine>``, which must be an enabled fleet
+    machine other than this one.
 ``client <verb> --session <id> [--grant <grant id>] ...``
     One ``/direct`` client verb: ``machines``, ``sessions``, ``read``, ``ask``,
     ``send``, ``replies``, ``questions``, ``answer``. The origin is
@@ -59,7 +74,12 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
 from llm_kit.relay import protocol as P
-from llm_kit.relay.config import RelayConfig, RelayConfigError, load_config
+from llm_kit.relay.config import RelayConfig, RelayConfigError, fleet_machine_labels, load_config
+
+#: The ``format`` of the object ``peer export`` prints and ``peer import`` reads.
+PEER_FORMAT = "llm-kit-relay-peer/1"
+_PEER_OBJECT_KEYS = frozenset({"format", "machine", "relay_token", "hub_bearer"})
+_MAX_PEER_OBJECT_BYTES = 4096
 
 EXIT_OK = 0
 EXIT_REFUSED = 1
@@ -146,6 +166,13 @@ def _parser() -> argparse.ArgumentParser:
         verb.add_argument("--offline", action="store_true", help="Write the pause file directly; no relay needed, no audit row.")
     status = sub.add_parser("status", parents=[common], help="The relay's status.")
     status.add_argument("--offline", action="store_true", help="Print the persisted pause state; no relay needed.")
+    peer = sub.add_parser("peer", help="Hand this machine's relay credentials to a hub machine, or store a peer's.")
+    peer_verbs = peer.add_subparsers(dest="peer_verb", required=True, metavar="peer-verb")
+    peer_verbs.add_parser("export", parents=[common],
+                          help="Print this machine's relay token and hub bearer as JSON (refuses a terminal).")
+    peer_import = peer_verbs.add_parser("import", parents=[common],
+                                        help="Store a peer's credentials, read as JSON from standard input.")
+    peer_import.add_argument("machine", help="The peer's machine label; must equal the JSON object's machine.")
 
     client = sub.add_parser("client", help="Call one /direct client verb.")
     verbs = client.add_subparsers(dest="client_verb", required=True, metavar="client-verb")
@@ -248,8 +275,21 @@ def _cmd_hub(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _peer_status(config: RelayConfig) -> list[dict[str, Any]]:
+    """Each configured peer with whether its credentials are stored; never a credential."""
+    paths = config.paths
+    return [{
+        "machine": peer.machine, "url": peer.url,
+        "credentials": {
+            "relay_token": "stored" if paths.peer_relay_token(peer.machine).exists() else "missing",
+            "hub_bearer": "stored" if paths.peer_hub_bearer(peer.machine).exists() else "missing",
+        },
+    } for peer in config.peers]
+
+
 def _cmd_control(args: argparse.Namespace) -> int:
     config = _config(args)
+    peers = {"peers": _peer_status(config)} if args.cmd == "status" and config.peers else {}
     if args.offline:
         from llm_kit.relay.lifecycle import PauseStore, ensure_state_dir
 
@@ -261,7 +301,7 @@ def _cmd_control(args: argparse.Namespace) -> int:
         elif args.cmd == "resume":
             _emit({"pause": store.resume(args.scope), "via": "state"})
         else:
-            _emit({"machine": config.machine_label, "pause": store.state(), "via": "state"})
+            _emit({"machine": config.machine_label, "pause": store.state(), "via": "state", **peers})
         return EXIT_OK
     origin = f"operator:{config.machine_label}"
     if args.cmd == "pause":
@@ -273,7 +313,60 @@ def _cmd_control(args: argparse.Namespace) -> int:
     else:
         params = {}
     with _local_client(config) as client:
-        _emit(client.call(args.cmd, params, origin=origin))
+        _emit({**client.call(args.cmd, params, origin=origin), **peers})
+    return EXIT_OK
+
+
+def _is_tty(stream: Any) -> bool:
+    return bool(getattr(stream, "isatty", lambda: False)())
+
+
+def _cmd_peer(args: argparse.Namespace) -> int:
+    from llm_kit.relay.lifecycle import read_token, write_peer_credentials
+
+    config = _config(args)
+    if args.peer_verb == "export":
+        if _is_tty(sys.stdout):
+            return _config_error("refusing to print relay credentials to a terminal; pipe the output "
+                                 "(for example `ssh <machine> llm-kit relay peer export | llm-kit relay peer import "
+                                 f"{config.machine_label}`)")
+        paths = config.paths
+        for file in (paths.relay_token, paths.hub_bearer):
+            if not file.exists():
+                raise RelayConfigError(
+                    f"{file} does not exist: no relay has run on this state directory (start one with `llm-kit relay serve`)"
+                )
+        _emit({"format": PEER_FORMAT, "machine": config.machine_label, "relay_token": read_token(paths.relay_token),
+               "hub_bearer": read_token(paths.hub_bearer)})
+        return EXIT_OK
+    machine = args.machine
+    if not P.is_machine_label(machine):
+        raise RelayConfigError(f"{machine!r} is not a machine label")
+    if machine == config.machine_label:
+        raise RelayConfigError(f"{machine!r} is this machine; a peer is another machine")
+    known = fleet_machine_labels(args.env_json)
+    if machine not in known:
+        raise RelayConfigError(f"{machine!r} is not a machine in the fleet registry (no env.json machine has that tailscale_hostname)")
+    if known[machine]:
+        raise RelayConfigError(f"{machine!r} is disabled in the fleet registry")
+    if _is_tty(sys.stdin):
+        raise RelayConfigError("peer import reads the exported JSON object from standard input; pipe it in, do not type it")
+    raw = sys.stdin.read(_MAX_PEER_OBJECT_BYTES + 1)
+    if len(raw) > _MAX_PEER_OBJECT_BYTES:
+        raise RelayConfigError("peer import input is not a peer export object (too large)")
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise RelayConfigError("peer import input is not a JSON object (the output of `llm-kit relay peer export`)") from None
+    if not isinstance(data, dict) or set(data) != _PEER_OBJECT_KEYS or data.get("format") != PEER_FORMAT:
+        raise RelayConfigError(f"peer import input is not a {PEER_FORMAT} object")
+    if data["machine"] != machine:
+        raise RelayConfigError(
+            f"the exported credentials are for machine {data['machine']!r}, not {machine!r}; nothing was stored"
+        )
+    write_peer_credentials(config.paths, machine, data["relay_token"], data["hub_bearer"])
+    _emit({"imported": machine, "files": [str(config.paths.peer_relay_token(machine)), str(config.paths.peer_hub_bearer(machine))],
+           "configured": any(peer.machine == machine for peer in config.peers)})
     return EXIT_OK
 
 
@@ -364,6 +457,7 @@ _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "pause": _cmd_control,
     "resume": _cmd_control,
     "status": _cmd_control,
+    "peer": _cmd_peer,
     "client": _cmd_client,
 }
 

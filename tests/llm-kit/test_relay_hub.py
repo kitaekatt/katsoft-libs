@@ -986,8 +986,10 @@ def test_a_relay_configured_twice_or_a_bad_entry_is_refused(machine_a, tmp_path)
 
 
 def test_a_non_loopback_relay_url_is_refused(machine_a):
-    with pytest.raises(ValueError, match="loopback"):
+    with pytest.raises(C.RelayConfigError, match="not on loopback"):  # a peer URL needs its own credentials (A2)
         make_hub(machine_a.config, [(A, "http://192.168.1.5:4710")]).start()
+    with pytest.raises(ValueError, match="https"):  # and, even with them, https
+        make_hub(machine_a.config, [H.RelayPeer(A, "http://192.168.1.5:4710", "t", "b")]).start()
     # the failed open released the lock
     make_hub(machine_a.config, [machine_a.peer]).start().stop()
 

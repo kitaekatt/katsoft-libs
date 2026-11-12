@@ -138,6 +138,25 @@ def ensure_state_dir(paths: StatePaths) -> Path:
     return root
 
 
+def ensure_private_dir(path: Path, *, kind: str) -> Path:
+    """Create ``path`` private (``0700``; owner-plus-SYSTEM protected ACL on Windows) or validate the existing one.
+
+    The parent must exist. A loose, foreign-owned or (on Windows) broadly
+    shared directory is refused, not repaired.
+    """
+    if _on_nt():
+        try:
+            path.mkdir()
+        except FileExistsError:
+            pass
+        else:
+            winacl.provision(path, True)
+    else:
+        path.mkdir(exist_ok=True, mode=_DIR_MODE)
+    _refuse_loose(path, kind=kind)
+    return path
+
+
 def read_private_file(path: Path) -> str:
     """The text of a ``0600`` file of this user's; a loose mode or a foreign owner is refused."""
     _refuse_loose(path, kind="private state file")
@@ -168,6 +187,61 @@ def write_private_file(path: Path, text: str) -> None:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp)
         raise
+
+
+# --------------------------------------------------------------------------
+# peer credentials (the hub's copies of other machines' relay credentials)
+# --------------------------------------------------------------------------
+
+def _require_real_dir(path: Path, *, kind: str) -> None:
+    if path.is_symlink():
+        raise RelayConfigError(f"{kind} {path} is a symbolic link; peer credential directories are never redirected")
+    if not path.is_dir():
+        raise RelayConfigError(f"{kind} {path} is not a directory")
+
+
+def peer_import_command(machine: str) -> str:
+    """The command that stores ``machine``'s credentials (named in every missing-credential error)."""
+    return f"llm-kit relay peer import {machine}"
+
+
+def peer_credentials(paths: StatePaths, machine: str) -> tuple[str, str]:
+    """``(relay token, hub bearer)`` of peer ``machine``, read from ``peers/<machine>/``.
+
+    Reads only; creates nothing. ``peers/`` and ``peers/<machine>/`` must be
+    private directories of this user's (POSIX ``0700``, Windows protected
+    ACL) and the two files private too (:func:`read_token`). A missing
+    directory or file is a :class:`RelayConfigError` naming the import command,
+    never a fallback to this machine's own credentials.
+    """
+    how = f"; store them with `{peer_import_command(machine)}`"
+    peers_dir, peer_dir = paths.peers_dir, paths.peer_dir(machine)
+    if not peer_dir.exists():
+        raise RelayConfigError(f"no credentials for peer {machine!r}: {peer_dir} does not exist{how}")
+    for directory, kind in ((peers_dir, "peers directory"), (peer_dir, "peer directory")):
+        _require_real_dir(directory, kind=kind)
+        _refuse_loose(directory, kind=kind)
+    values = []
+    for name, file in (("relay token", paths.peer_relay_token(machine)), ("hub bearer", paths.peer_hub_bearer(machine))):
+        if not file.exists():
+            raise RelayConfigError(f"no {name} for peer {machine!r}: {file} does not exist{how}")
+        values.append(read_token(file))
+    return values[0], values[1]
+
+
+def write_peer_credentials(paths: StatePaths, machine: str, relay_token: str, hub_bearer: str) -> None:
+    """Store peer ``machine``'s credentials: private directories, then each file through :func:`write_private_file`."""
+    for name, value in (("relay token", relay_token), ("hub bearer", hub_bearer)):
+        if not isinstance(value, str) or not value or len(value) > 512 or not value.isascii() or not value.isprintable() \
+                or any(ch.isspace() for ch in value):
+            raise RelayConfigError(f"the {name} for peer {machine!r} is not a single printable ASCII token")
+    ensure_state_dir(paths)
+    for directory, kind in ((paths.peers_dir, "peers directory"), (paths.peer_dir(machine), "peer directory")):
+        if directory.is_symlink():
+            raise RelayConfigError(f"{kind} {directory} is a symbolic link; peer credential directories are never redirected")
+        ensure_private_dir(directory, kind=kind)
+    write_private_file(paths.peer_relay_token(machine), relay_token + "\n")
+    write_private_file(paths.peer_hub_bearer(machine), hub_bearer + "\n")
 
 
 # --------------------------------------------------------------------------
@@ -538,11 +612,15 @@ __all__ = [
     "PreparedState",
     "RoleLock",
     "SingletonHeld",
+    "ensure_private_dir",
     "ensure_state_dir",
     "ensure_token",
+    "peer_credentials",
+    "peer_import_command",
     "prepare_state",
     "read_private_file",
     "read_token",
     "token_matches",
+    "write_peer_credentials",
     "write_private_file",
 ]
