@@ -384,7 +384,7 @@ def _cmd_codex(args: argparse.Namespace) -> int:
         turn_timeout_s=args.turn_timeout, accepts=args.accepts,
     )
     try:
-        return CodexChannel(config, options).run()
+        return CodexChannel(config, options, hard_exit=True).run()
     except ChannelExit as exc:
         if exc.code == EXIT_USAGE:
             return _config_error(exc.message)

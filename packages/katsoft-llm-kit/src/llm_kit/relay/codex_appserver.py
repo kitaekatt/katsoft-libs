@@ -514,15 +514,15 @@ class CodexAppServer:
                 self._refused_threads[info.thread_id] = mismatch
             raise mismatch
 
-    @staticmethod
-    def _allowed_roots(policy: ThreadPolicy) -> List[str]:
-        """Roots an effective writable root may lie under: the workspace, plus ``/tmp`` and
-        ``$TMPDIR`` only when the policy leaves them writable."""
+    def _allowed_roots(self, policy: ThreadPolicy) -> List[str]:
+        """Roots an effective writable root may lie under: the workspace, plus ``/tmp`` and ``$TMPDIR``
+        only when the policy leaves them writable. ``$TMPDIR`` is read from the environment the CHILD
+        runs with (the one passed to it, else the inherited one), never from this process's own
+        notion of a temporary directory."""
         roots = [os.path.realpath(policy.cwd)]
         if not policy.exclude_tmp:
-            import tempfile
-
-            for tmp in ("/tmp", os.environ.get("TMPDIR"), tempfile.gettempdir()):
+            child_env = self._env if self._env is not None else os.environ
+            for tmp in ("/tmp", child_env.get("TMPDIR")):
                 if tmp:
                     real = os.path.realpath(tmp)
                     if real not in roots:

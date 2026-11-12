@@ -83,6 +83,18 @@ HEARTBEAT_FALLBACK_S = 30
 #: Retry limits for the calls a delivered message depends on.
 ACK_ATTEMPTS = 6
 REPLY_DEADLINE_S = 120.0
+#: Cleanup (close the app-server, last outbox drain, deregister) has this long in all; when it runs out the
+#: app-server's process group is killed and the channel exits non-zero.
+CLEANUP_DEADLINE_S = 10.0
+#: How long cleanup waits for a graceful app-server close before it kills the process group.
+CLOSE_WAIT_S = 4.0
+CLOSE_GRACE_S = 2.0
+#: A write to the terminal waits this long for the output lock, then drops the line (a stalled terminal
+#: must not hold up cleanup).
+OUTPUT_LOCK_TIMEOUT_S = 1.0
+#: Replies kept for redelivery. At either limit the channel stops polling for new messages.
+OUTBOX_MAX_ENTRIES = 64
+OUTBOX_MAX_BYTES = 8 * 1024 * 1024
 
 PROTOCOL_DOC = "katsoft-libs docs/reference/llm-kit-relay-protocol.md section 3"
 OWNER_RULE = f"this sender counts as the owner's own words ({PROTOCOL_DOC})"
@@ -218,7 +230,8 @@ class CodexChannel:
     resolved ``codex`` launcher (tests point it at a stub). ``poll_wait_s``
     caps the long-poll (default: the relay's ``max_wait_s``); a smaller value
     only makes :meth:`stop` quicker. From the main thread ``run`` also handles
-    SIGINT/SIGTERM/SIGHUP.
+    SIGINT/SIGTERM/SIGHUP. ``hard_exit`` (the CLI sets it) lets the cleanup watchdog end the process with
+    ``os._exit(1)`` once :data:`CLEANUP_DEADLINE_S` has passed; tests leave it off.
     """
 
     def __init__(
@@ -232,6 +245,7 @@ class CodexChannel:
         stderr: Optional[TextIO] = None,
         poll_wait_s: Optional[float] = None,
         backoff_s: tuple = (1.0, 30.0),
+        hard_exit: bool = False,
     ) -> None:
         self._config = config
         self._opt = options
@@ -246,8 +260,13 @@ class CodexChannel:
         self._stop = threading.Event()
         self._out_lock = threading.RLock()
         self._outbox: "collections.OrderedDict[str, dict]" = collections.OrderedDict()
+        self._hard_exit = hard_exit
         self._cleaning = False
+        self._cleanup_failed = False
         self._signalled = False
+        self._dropped_output = 0
+        self._outbox_blocked = False
+        self._app_pgid = 0
         self._ready = False  # the ready line is the first stdout line: earlier events are held until it is printed
         self._held: list = []
         self._reg_lock = threading.RLock()
@@ -266,16 +285,26 @@ class CodexChannel:
 
     # -- output --------------------------------------------------------------------
 
+    def _write(self, stream: TextIO, text: str) -> None:
+        """Write one line under the output lock, waiting at most :data:`OUTPUT_LOCK_TIMEOUT_S` for it.
+
+        A terminal that stops draining holds the lock inside its write; every other writer (the app-server
+        reader thread, cleanup) gives up on the line instead of blocking behind it.
+        """
+        if not self._out_lock.acquire(timeout=OUTPUT_LOCK_TIMEOUT_S):
+            self._dropped_output += 1
+            return
+        try:
+            stream.write(text)
+            stream.flush()
+        finally:
+            self._out_lock.release()
+
     def _emit(self, value: Mapping[str, Any]) -> None:
-        line = json.dumps(value, sort_keys=True, default=str)
-        with self._out_lock:
-            self._stdout.write(line + "\n")
-            self._stdout.flush()
+        self._write(self._stdout, json.dumps(value, sort_keys=True, default=str) + "\n")
 
     def _log(self, text: str) -> None:
-        with self._out_lock:
-            self._stderr.write(f"codex-channel: {text}\n")
-            self._stderr.flush()
+        self._write(self._stderr, f"codex-channel: {text}\n")
 
     def _on_event(self, event: AppServerEvent) -> None:
         """Reader thread: mirror one app-server event. stderr lines go to stderr, the rest to stdout."""
@@ -291,10 +320,15 @@ class CodexChannel:
                           "data": _shorten(dict(event.data))})
 
     def _emit_event(self, value: Mapping[str, Any]) -> None:
-        with self._out_lock:
+        if not self._out_lock.acquire(timeout=OUTPUT_LOCK_TIMEOUT_S):
+            self._dropped_output += 1  # the terminal stopped draining: the reader thread must not wait behind it
+            return
+        try:
             if not self._ready:
                 self._held.append(value)
                 return
+        finally:
+            self._out_lock.release()
         self._emit(value)
 
     def _emit_ready(self, value: Mapping[str, Any]) -> None:
@@ -414,7 +448,11 @@ class CodexChannel:
                 raise ChannelExit(EXIT_REFUSED, f"{exc}; start the relay with `llm-kit relay serve`") from exc
         try:
             self._probe_relay()  # before anything is spawned
-            return self._serve(argv)
+            code = self._serve(argv)
+            if self._cleanup_failed:
+                raise ChannelExit(EXIT_REFUSED, "cleanup did not finish within "
+                                  f"{CLEANUP_DEADLINE_S:g}s; the app-server's process group was killed")
+            return code
         except KeyboardInterrupt:
             return EXIT_OK  # cleanup already ran in _serve's finally
         finally:
@@ -432,6 +470,7 @@ class CodexChannel:
             except CodexAppServerError as exc:
                 raise ChannelExit(EXIT_REFUSED, f"codex app-server did not start: {exc}") from exc
             self._app_pid = app_info.pid
+            self._app_pgid = app_info.pgid
             self._version = ("codex-cli " + app_info.codex_version)[:64] if app_info.codex_version else "codex"
             policy = ThreadPolicy(cwd=opt.cd, sandbox=opt.sandbox, network=opt.network, exclude_tmp=not opt.allow_tmp)
             try:
@@ -480,25 +519,89 @@ class CodexChannel:
                 self._restore_signals(previous)
 
     def _shutdown(self) -> None:
-        """Deregister, then close the app-server (in that order). The close always runs: the child
-        has its own process group and would outlive this process."""
+        """Close the app-server, then drain the outbox and deregister, all inside :data:`CLEANUP_DEADLINE_S`.
+
+        The child comes first and nothing before its close may wait on output: it has its own process group
+        and would outlive this process. A watchdog kills that group and (``hard_exit``) ends the process when
+        the deadline passes with cleanup still running.
+        """
+        deadline = time.monotonic() + CLEANUP_DEADLINE_S
+        watchdog = threading.Timer(CLEANUP_DEADLINE_S, self._cleanup_expired)
+        watchdog.daemon = True
+        watchdog.start()
+        notes: list = []
         try:
-            if self._outbox and self._client is not None and self._origin is not None:
-                self._flush_outbox(attempts=2)  # one last try before deregistering ends the open messages
-            self._report_lost_replies()
+            self._close_app(deadline, notes)
+            self._finish_with_relay(deadline, notes)
+        finally:
+            watchdog.cancel()
+            for note in notes:
+                self._log(note)
+            if self._dropped_output:
+                self._log(f"{self._dropped_output} output line(s) were dropped because the terminal stopped accepting output")
+
+    def _cleanup_expired(self) -> None:
+        """Watchdog thread: cleanup overran its deadline."""
+        self._cleanup_failed = True
+        self._kill_app_group()
+        if self._hard_exit:
+            os._exit(EXIT_REFUSED)
+
+    def _kill_app_group(self) -> None:
+        if self._app_pgid > 1:
+            try:
+                os.killpg(self._app_pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass  # nothing left in the group
+        if self._app_pid > 1:
+            try:
+                os.waitpid(self._app_pid, os.WNOHANG)  # reap it if the client's own close did not
+            except ChildProcessError:
+                pass
+
+    def _close_app(self, deadline: float, notes: list) -> None:
+        app = self._app
+        if app is None:
+            return
+
+        def close() -> None:
+            try:
+                app.close(grace_s=CLOSE_GRACE_S)
+            except CodexAppServerError as exc:
+                notes.append(f"closing the app-server raised: {exc}")
+
+        closer = threading.Thread(target=close, name="codex-channel-close", daemon=True)
+        closer.start()
+        closer.join(max(0.0, min(CLOSE_WAIT_S, deadline - time.monotonic())))
+        if closer.is_alive():
+            notes.append("the app-server did not close in time; its process group was killed")
+            self._cleanup_failed = True
+            self._kill_app_group()
+            closer.join(1.0)
+
+    def _finish_with_relay(self, deadline: float, notes: list) -> None:
+        """Last outbox drain, then deregister, in a worker the deadline can abandon."""
+        if self._client is None or self._origin is None:
+            return
+
+        def work() -> None:
+            if self._outbox:
+                self._flush_outbox(attempts=1, deadline=deadline)  # before deregistering ends the open messages
             reg = self._reg
-            if reg is not None and self._client is not None and self._origin is not None:
+            if reg is not None:
                 try:
                     self._call("deregister", {**self._creds(reg), "reason": "codex channel closed"})
-                    self._log("deregistered")
+                    notes.append("deregistered")
                 except P.RelayError as exc:
-                    self._log(f"deregister failed: {exc}")
-        finally:
-            if self._app is not None:
-                try:
-                    self._app.close()
-                except CodexAppServerError as exc:
-                    self._log(f"closing the app-server raised: {exc}")
+                    notes.append(f"deregister failed: {exc}")
+
+        worker = threading.Thread(target=work, name="codex-channel-cleanup", daemon=True)
+        worker.start()
+        worker.join(max(0.0, deadline - time.monotonic()))
+        if worker.is_alive():
+            self._cleanup_failed = True
+            notes.append("cleanup deadline passed with the relay not answering; deregistration and the outbox drain were abandoned")
+        self._report_lost_replies()
 
     def _install_signals(self) -> dict:
         previous: dict = {}
@@ -554,6 +657,18 @@ class CodexChannel:
         failures = 0
         while not self._stop.is_set():
             self._flush_outbox()
+            if self._outbox_full():
+                if not self._outbox_blocked:
+                    self._outbox_blocked = True
+                    self._log(f"{len(self._outbox)} replies are waiting for the relay (limit {OUTBOX_MAX_ENTRIES} "
+                              f"entries or {OUTBOX_MAX_BYTES} bytes): not polling for new messages until they are delivered")
+                    self._emit({"event": "outbox_full", "entries": len(self._outbox)})
+                self._stop.wait(MIN_EMPTY_POLL_S)
+                continue
+            if self._outbox_blocked:
+                self._outbox_blocked = False
+                self._log("the reply backlog is delivered; polling again")
+                self._emit({"event": "outbox_drained"})
             if self._foreign_turn_running():
                 self._stop.wait(MIN_EMPTY_POLL_S)  # long-poll only while no turn runs
                 continue
@@ -654,6 +769,10 @@ class CodexChannel:
         body = fit_reply(body if body.strip() else "(empty)", address)
         self._outbox[mid] = {"state": state, "body": body, "id": "rpl_" + secrets.token_hex(12)}
         self._flush_outbox(attempts=ACK_ATTEMPTS, deadline=time.monotonic() + REPLY_DEADLINE_S)
+
+    def _outbox_full(self) -> bool:
+        return (len(self._outbox) >= OUTBOX_MAX_ENTRIES
+                or sum(len(item["body"].encode("utf-8")) for item in self._outbox.values()) >= OUTBOX_MAX_BYTES)
 
     def _flush_outbox(self, *, attempts: int = 1, deadline: Optional[float] = None) -> None:
         for mid in list(self._outbox):

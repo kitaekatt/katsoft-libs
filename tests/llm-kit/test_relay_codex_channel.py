@@ -463,6 +463,9 @@ class FakeRelay:
         self.calls: list[tuple] = []
         self.registrations = 0
         self.fail_next: dict[str, list] = collections.defaultdict(list)  # verb -> errors to raise once each
+        self.hang: set = set()  # verbs that block until ``release`` is set
+        self.release = threading.Event()
+        self.always_fail: dict[str, Exception] = {}  # verb -> error raised on every call
         self.lock = threading.Lock()
 
     def call(self, verb: str, params, *, origin: str, grant=None) -> dict:
@@ -470,6 +473,11 @@ class FakeRelay:
             self.calls.append((verb, dict(params), origin))
             if self.fail_next[verb]:
                 raise self.fail_next[verb].pop(0)
+            always = self.always_fail.get(verb)
+        if verb in self.hang:
+            self.release.wait(60)
+        if always is not None:
+            raise always
         if verb == "status":
             return {"harnesses": self.harnesses}
         if verb == "register":
@@ -736,16 +744,22 @@ def test_a_hub_origin_without_the_bearer_is_unauthenticated(relay):
 # cleanup is guaranteed; an undeliverable reply is kept, not dropped
 # --------------------------------------------------------------------------
 
-def test_an_interruption_during_deregistration_still_closes_the_child(config, launcher, tmp_path, monkeypatch):
+def test_cleanup_closes_the_child_first_and_is_bounded_when_the_relay_hangs(config, launcher, tmp_path, monkeypatch):
+    monkeypatch.setattr(CC, "CLEANUP_DEADLINE_S", 1.5)
     fake = FakeRelay()
-    fake.fail_next["deregister"].append(KeyboardInterrupt())  # a signal landing in the middle of deregistering
+    fake.hang.add("deregister")
     c = Chan(config, None, launcher, tmp_path, monkeypatch, client=fake).start()
     c.ready()
     assert stub_children() != []
+    started = time.monotonic()
     c.channel.stop()
-    c.thread.join(20)
-    assert not c.thread.is_alive() and len(fake.of("deregister")) == 1
-    wait_for(lambda: stub_children() == [], 10, "the child to be closed")
+    wait_for(lambda: fake.of("deregister"), 10, "the deregister call")
+    assert stub_children() == []  # the child was closed before the relay was bothered
+    c.thread.join(10)
+    assert not c.thread.is_alive() and time.monotonic() - started < 8  # the hung call did not hold cleanup up
+    assert isinstance(c.exc, ChannelExit) and c.exc.code == 1 and "cleanup did not finish" in c.exc.message
+    assert "cleanup deadline passed" in c.err.getvalue()
+    fake.release.set()
 
 
 class Flaky:
@@ -807,4 +821,23 @@ def test_a_refusal_from_the_relay_is_recorded_and_not_retried_forever(config, la
     wait_for(lambda: c.events("reply_failed"), 15, "the refusal to be recorded")
     time.sleep(0.5)
     assert len(fake.of("reply")) == 1 and c.events("reply_failed")[0]["error"] == "invalid_transition"
+    c.finish()
+
+
+def test_a_full_outbox_stops_polling_until_it_drains_and_nothing_is_dropped(config, launcher, tmp_path, monkeypatch):
+    monkeypatch.setattr(CC, "OUTBOX_MAX_ENTRIES", 2)
+    fake = FakeRelay(batches=[[message(f"msg_{i}", f"n{i}")] for i in range(4)])
+    fake.always_fail["reply"] = P.RelayError("machine_unreachable", "relay did not answer (test double)")
+    c = Chan(config, None, launcher, tmp_path, monkeypatch, client=fake).start()
+    c.ready()
+    wait_for(lambda: c.events("outbox_full"), 20, "the outbox to fill")
+    polls_at_capacity = len(fake.of("poll"))
+    time.sleep(1.0)
+    assert len(fake.of("poll")) == polls_at_capacity  # backpressure: no new messages are fetched
+    assert len(turn_texts(c.log)) == 2 and len(fake.batches) == 2
+    assert "not polling for new messages" in c.err.getvalue()
+    del fake.always_fail["reply"]  # the relay accepts replies again
+    wait_for(lambda: len(fake.of("reply")) >= 4 and c.events("outbox_drained"), 20, "the backlog to drain")
+    wait_for(lambda: len({p["in_reply_to"] for _, p, _ in fake.of("reply")}) == 4, 20, "all four replies")
+    assert len(turn_texts(c.log)) == 4
     c.finish()

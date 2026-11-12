@@ -414,6 +414,36 @@ def test_writable_roots_inside_the_workspace_and_tmp_when_allowed_are_accepted(m
         rig2.client.start_thread(rig2.policy, developer_instructions="x")
 
 
+def test_a_cached_python_temp_dir_is_not_an_allowed_root(make_rig, tmp_path, monkeypatch):
+    """Rule: under --allow-tmp only /tmp and the CHILD's $TMPDIR are extra roots; tempfile's choice is not."""
+    import tempfile
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.delenv("TMPDIR", raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", str(home))  # what tempfile.gettempdir() would return
+    rig = make_rig({"thread_overrides": {"sandbox": {"writableRoots": [str(home)], "excludeSlashTmp": False,
+                                                       "excludeTmpdirEnvVar": False}}})
+    rig.client.start()
+    allow_tmp = ThreadPolicy(cwd=str(rig.tmp), sandbox="workspace-write", network=False, exclude_tmp=False)
+    with pytest.raises(CodexConfigMismatch) as exc:
+        rig.client.start_thread(allow_tmp, developer_instructions="x")
+    assert "writable_roots" in exc.value.requested
+
+
+def test_the_childs_own_tmpdir_is_an_allowed_root_under_allow_tmp(make_rig, tmp_path, monkeypatch):
+    child_tmp = tmp_path / "child-tmp"
+    child_tmp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(child_tmp))
+    rig = make_rig({"thread_overrides": {"sandbox": {"writableRoots": [str(child_tmp)], "excludeSlashTmp": False,
+                                                       "excludeTmpdirEnvVar": False}}})
+    rig.client.start()
+    allow_tmp = ThreadPolicy(cwd=str(rig.tmp), sandbox="workspace-write", network=False, exclude_tmp=False)
+    assert rig.client.start_thread(allow_tmp, developer_instructions="x").writable_roots == (str(child_tmp),)
+    with pytest.raises(CodexConfigMismatch):  # with /tmp excluded the same root is not allowed
+        rig.client.start_thread(rig.policy, developer_instructions="x")
+
+
 def test_effective_config_mismatch_on_resume(make_rig):
     rig = make_rig({"thread_overrides": {"approvalsReviewer": "auto_review"}})
     rig.client.start()

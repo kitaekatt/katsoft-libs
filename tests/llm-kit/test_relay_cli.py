@@ -731,3 +731,59 @@ def test_a_second_sigterm_during_deregistration_neither_skips_it_nor_leaves_the_
             child.wait()
         child.stdout.close()
         child.stderr.close()
+
+
+_STALLED_TERMINAL_DRIVER = """
+import json, sys, threading, time
+from pathlib import Path
+from llm_kit.relay import codex_channel as CC, config as C
+
+a = json.loads(sys.argv[1])
+config = C.load_config(env_json=Path(a["env_json"]), config_path=Path(a["config"]), state_root=Path(a["state"]))
+CC.CLEANUP_DEADLINE_S = 6.0
+channel = CC.CodexChannel(config, CC.CodexChannelOptions(cd=a["cd"]), hard_exit=True)
+
+def stall():  # a terminal that stopped draining: the output lock is taken and never given back
+    while not channel._ready or not channel._app_pid:
+        time.sleep(0.02)
+    channel._out_lock.acquire()
+    Path(a["flag"]).write_text(str(channel._app_pid))
+    time.sleep(3600)
+
+threading.Thread(target=stall, daemon=True).start()
+sys.exit(channel.run())
+"""
+
+
+def test_a_stalled_terminal_does_not_keep_the_app_server_alive_after_sigterm(relay, paths, codex_launcher):
+    import psutil
+
+    driver = paths.tmp / "driver.py"
+    driver.write_text(_STALLED_TERMINAL_DRIVER, encoding="utf-8")
+    flag = paths.tmp / "app.pid"
+    args = {"env_json": str(paths.env_json), "config": str(paths.config), "state": str(paths.state),
+            "cd": str(paths.tmp / "work"), "flag": str(flag)}
+    child = subprocess.Popen([sys.executable, str(driver), json.dumps(args)], env=_codex_env(paths, codex_launcher),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not flag.exists():
+            assert child.poll() is None, child.stderr.read()
+            time.sleep(0.05)
+        app_pid = int(flag.read_text())
+        assert psutil.pid_exists(app_pid)
+        started = time.monotonic()
+        child.send_signal(signal.SIGTERM)
+        assert child.wait(timeout=20) == 0  # the bounded path, not the watchdog (which exits 1)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and psutil.pid_exists(app_pid):
+            time.sleep(0.1)
+        assert not psutil.pid_exists(app_pid)
+        assert time.monotonic() - started < 12
+        assert relay.client.status({}, origin=f"operator:{LABEL}")["registrations"] == 0
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        child.stdout.close()
+        child.stderr.close()
