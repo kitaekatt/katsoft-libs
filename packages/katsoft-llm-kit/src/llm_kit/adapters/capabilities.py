@@ -13,7 +13,17 @@ of truth that can disagree with the adapter, which is the drift this replaces.
 from __future__ import annotations
 
 from dataclasses import fields
+from typing import Any
 
+from llm_kit.registry.adapter_names import (
+    ADAPTER_CLAUDE_CLI,
+    ADAPTER_CODEX_CLI,
+    ADAPTER_OPENAI_COMPAT,
+    ADAPTER_OPENCODE_CLI,
+    NEW_CAPABILITIES_NAME,
+    OLD_CAPABILITIES_NAME,
+    warn_renamed,
+)
 from llm_kit.completion.capabilities import (
     FILESYSTEM_WRITE,
     MODE_COMPLETION,
@@ -108,7 +118,7 @@ def _output_contract_param(emits: "str | None" = None) -> ParamCapability:
 #: before the caller's system text and any schema instruction. Asserted
 #: against the captured request by
 #: tests/llm-scripting-kit/test_completion_skill_context_adapters.py.
-_OPENROUTER_SKILL_CONTEXT_EMITS = "messages[system] leading skill context block"
+_OPENAI_COMPAT_SKILL_CONTEXT_EMITS = "messages[system] leading skill context block"
 
 
 def _skill_context_param(emits: "str | None" = None) -> ParamCapability:
@@ -138,21 +148,21 @@ def _skill_context_param(emits: "str | None" = None) -> ParamCapability:
 #: of the two adapters that deliver a contract in this module. Each names the
 #: concrete element the delivery produces, asserted byte for byte by
 #: tests/llm-scripting-kit/test_completion_contract_conformance.py.
-_OPENROUTER_CONTRACT_EMITS = "messages[system] schema instruction"
+_OPENAI_COMPAT_CONTRACT_EMITS = "messages[system] schema instruction"
 _CODEX_CONTRACT_EMITS = "--output-schema <temp schema file>"
 _CLAUDE_CONTRACT_EMITS = "--json-schema <canonical schema json>"
 _OPENCODE_CONTRACT_EMITS = "stdin schema instruction"
 
 
-# -- openrouter (OpenAI-compatible HTTP) -----------------------------------
+# -- openai-compat (OpenAI-compatible HTTP; OpenRouter is one endpoint it serves) --
 #
-# OpenRouterBackend.complete builds chat-completions kwargs directly. It reads
+# OpenAICompatBackend.complete builds chat-completions kwargs directly. It reads
 # temperature, max_tokens, timeout_s, user_cache_prefix, client_id and extras
 # unconditionally, and effort only for an endpoint whose effort style delivers
 # it (the conditional params below) -- never cwd or allowed_tools, which is
 # why cwd is not a core param of this seam.
 
-_OPENROUTER_PARAMS = {
+_OPENAI_COMPAT_PARAMS = {
     "max_tokens": ParamCapability(
         type="integer",
         default=None,
@@ -204,16 +214,16 @@ _OPENROUTER_PARAMS = {
             "them"
         ),
     ),
-    "output_contract": _output_contract_param(_OPENROUTER_CONTRACT_EMITS),
-    "skill_context": _skill_context_param(_OPENROUTER_SKILL_CONTEXT_EMITS),
+    "output_contract": _output_contract_param(_OPENAI_COMPAT_CONTRACT_EMITS),
+    "skill_context": _skill_context_param(_OPENAI_COMPAT_SKILL_CONTEXT_EMITS),
 }
 
-#: Params openrouter emits only for an endpoint whose profile enables them.
+#: Params openai-compat emits only for an endpoint whose profile enables them.
 #: ``effort`` stays in the family record's dropped_params -- the truth for an
 #: endpoint nothing is known about -- and
 #: ``endpoint_profile.endpoint_capabilities`` moves it into ``params`` with the
 #: concrete emission once an endpoint resolves a delivering effort style.
-_OPENROUTER_CONDITIONAL_PARAMS = {
+_OPENAI_COMPAT_CONDITIONAL_PARAMS = {
     "effort": ParamCapability(
         type="string",
         emits="reasoning_effort | chat_template_kwargs.reasoning_effort | reasoning",
@@ -230,11 +240,11 @@ _OPENROUTER_CONDITIONAL_PARAMS = {
     ),
 }
 
-OPENROUTER_CAPABILITIES = Capabilities(
-    adapter="openrouter",
-    params=_OPENROUTER_PARAMS,
-    dropped_params=_dropped(_OPENROUTER_PARAMS),
-    conditional_params=_OPENROUTER_CONDITIONAL_PARAMS,
+OPENAI_COMPAT_CAPABILITIES = Capabilities(
+    adapter=ADAPTER_OPENAI_COMPAT,
+    params=_OPENAI_COMPAT_PARAMS,
+    dropped_params=_dropped(_OPENAI_COMPAT_PARAMS),
+    conditional_params=_OPENAI_COMPAT_CONDITIONAL_PARAMS,
     execution_controls=(),
     # A transport adapter exposes no tools, so there is no filesystem write to
     # deny and nothing that could turn one back on. The strongest form of the
@@ -255,7 +265,7 @@ OPENROUTER_CAPABILITIES = Capabilities(
         # seam. No response_format is sent, so native-required is not listed.
         policies=(POLICY_VALIDATED_RESULT, POLICY_TEXT_ONLY),
         contract_delivery=DELIVERY_PROMPT,
-        contract_emits=_OPENROUTER_CONTRACT_EMITS,
+        contract_emits=_OPENAI_COMPAT_CONTRACT_EMITS,
         # The instruction carries any schema in the supported subset.
         contract_schema_class=SCHEMA_CLASS_SUBSET,
     ),
@@ -271,7 +281,7 @@ OPENROUTER_CAPABILITIES = Capabilities(
     # carry no block, so each refuses it before dispatch.
     skill_context=SkillContextCapability(
         delivery=DELIVERY_SYSTEM_MESSAGE,
-        emits=_OPENROUTER_SKILL_CONTEXT_EMITS,
+        emits=_OPENAI_COMPAT_SKILL_CONTEXT_EMITS,
     ),
 )
 
@@ -398,7 +408,7 @@ _CLAUDE_PARAMS = {
 }
 
 CLAUDE_CAPABILITIES = Capabilities(
-    adapter="claude-cli",
+    adapter=ADAPTER_CLAUDE_CLI,
     params=_CLAUDE_PARAMS,
     dropped_params=_dropped(_CLAUDE_PARAMS),
     execution_controls=(
@@ -655,7 +665,7 @@ _CODEX_PARAMS = {
 }
 
 CODEX_CAPABILITIES = Capabilities(
-    adapter="codex-cli",
+    adapter=ADAPTER_CODEX_CLI,
     # extras IS read, but only for the keys above; every other extras key is
     # dropped, which the note records rather than the coarse field name.
     params=_CODEX_PARAMS,
@@ -825,7 +835,7 @@ _OPENCODE_PARAMS = {
 }
 
 OPENCODE_CAPABILITIES = Capabilities(
-    adapter="opencode-cli",
+    adapter=ADAPTER_OPENCODE_CLI,
     params=_OPENCODE_PARAMS,
     dropped_params=_dropped(_OPENCODE_PARAMS),
     execution_controls=(
@@ -946,7 +956,7 @@ OPENCODE_CAPABILITIES = Capabilities(
 
 
 ADAPTER_CAPABILITIES = {
-    OPENROUTER_CAPABILITIES.adapter: OPENROUTER_CAPABILITIES,
+    OPENAI_COMPAT_CAPABILITIES.adapter: OPENAI_COMPAT_CAPABILITIES,
     CLAUDE_CAPABILITIES.adapter: CLAUDE_CAPABILITIES,
     CODEX_CAPABILITIES.adapter: CODEX_CAPABILITIES,
     OPENCODE_CAPABILITIES.adapter: OPENCODE_CAPABILITIES,
@@ -954,14 +964,27 @@ ADAPTER_CAPABILITIES = {
 
 
 def adapter_capabilities() -> dict:
-    """Every adapter family's advertisement, keyed by the backend's own name."""
+    """Every adapter family's advertisement, keyed by the backend's own name.
+
+    Keyed by the current names. Look one up with
+    :func:`llm_kit.registry.adapter_names.lookup_by_adapter` to also accept the
+    retired ``openrouter`` spelling.
+    """
     return dict(ADAPTER_CAPABILITIES)
+
+
+def __getattr__(name: str) -> Any:
+    """Keep the retired ``OPENROUTER_CAPABILITIES`` name resolving, with a warning."""
+    if name == OLD_CAPABILITIES_NAME:
+        warn_renamed(__name__, OLD_CAPABILITIES_NAME, NEW_CAPABILITIES_NAME)
+        return OPENAI_COMPAT_CAPABILITIES
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
     "ADAPTER_CAPABILITIES",
     "adapter_capabilities",
-    "OPENROUTER_CAPABILITIES",
+    "OPENAI_COMPAT_CAPABILITIES",
     "CLAUDE_CAPABILITIES",
     "CODEX_CAPABILITIES",
     "OPENCODE_CAPABILITIES",

@@ -37,7 +37,7 @@
       },
       "protocol": 2,
       "resolved": {
-        "adapter": "openrouter",
+        "adapter": "openai-compat",
         "effort": {
           "requested": "max",
           "sent": "max",

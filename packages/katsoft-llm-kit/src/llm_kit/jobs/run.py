@@ -35,6 +35,7 @@ from llm_kit.completion.results import (
 )
 from llm_kit.completion.types import COMPLETED, ERROR, TIMEOUT, BackendOptions
 from llm_kit.dispatch.factory import BackendSelection
+from llm_kit.registry.adapter_names import lookup_by_adapter
 from . import interrupts as _interrupts
 from .model import (
     Acceptance,
@@ -619,10 +620,7 @@ def _capabilities_for(
     advertised: Mapping[str, Capabilities],
 ) -> Optional[Capabilities]:
     """Find the selected backend's advertisement."""
-    backend_name = getattr(selection.backend, "name", None)
-    if not isinstance(backend_name, str):
-        return None
-    return advertised.get(backend_name)
+    return lookup_by_adapter(advertised, getattr(selection.backend, "name", None))
 
 
 def _validate_disallowed_tools(value: Optional[str]) -> Optional[str]:
@@ -1160,7 +1158,7 @@ def _run_job_attempt(
             selection.backend,
             options,
             selection_job.effective_requirements(selection.endpoint),
-            advertised.get(getattr(selection.backend, "name", None)),
+            lookup_by_adapter(advertised, getattr(selection.backend, "name", None)),
         )
         options = armed_call.options
         if armed_call.backend is not selection.backend:

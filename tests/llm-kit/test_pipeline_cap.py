@@ -1,7 +1,7 @@
 """The content-pipeline runtime's output cap and its spend reservation.
 
 Precedence under test, for a pipeline call through a transport wrapper
-(``OpenRouterBackend`` / ``ModelEndpointBackend``): the call's ``options.max_tokens`` > the
+(``OpenAICompatBackend`` / ``ModelEndpointBackend``): the call's ``options.max_tokens`` > the
 selected model's ``max_output_tokens`` (the project model file row for the wrapper's endpoint
 and the call's model) > that row's ``request_defaults.extras.max_tokens`` > no cap on
 openrouter.ai (any other OpenAI-compatible endpoint keeps 4096). The spend reservation prices
@@ -27,7 +27,7 @@ import pytest
 from llm_kit.adapters import backends as adapter_backends
 from llm_kit.pipeline.runtime import backends as pipeline_backends
 from llm_kit.pipeline.runtime import platform
-from llm_kit.pipeline.runtime.backends import ModelEndpointBackend, OpenRouterBackend
+from llm_kit.pipeline.runtime.backends import ModelEndpointBackend, OpenAICompatBackend
 from llm_kit.pipeline.runtime.platform import (
     UNDECLARED_RESERVATION_OUTPUT_TOKENS,
     BackendOptions,
@@ -94,7 +94,7 @@ class Project:
         return client
 
     def backend(self, endpoint="orr"):
-        return OpenRouterBackend(endpoint=endpoint, project_root=self.root, client=self.client())
+        return OpenAICompatBackend(endpoint=endpoint, project_root=self.root, client=self.client())
 
     def rewrite(self, document):
         pm.write_project_models(document, project_root=str(self.root))
@@ -270,7 +270,7 @@ def test_an_edit_to_the_file_is_followed_by_the_next_call(project):
 
 def test_the_working_directory_is_the_project_root_when_the_wrapper_names_none(project, monkeypatch):
     monkeypatch.chdir(project.root)
-    backend = OpenRouterBackend(endpoint="orr", client=project.client())
+    backend = OpenAICompatBackend(endpoint="orr", client=project.client())
     _call(project, backend, "a/big")
     assert _cap_sent(project) == 65536
 

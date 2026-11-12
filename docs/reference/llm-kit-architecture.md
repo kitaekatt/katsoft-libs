@@ -160,7 +160,7 @@ Dispatch requires a new construction builder, not a rename of llm_scripting_kit.
 
 The old llm_scripting_kit.completion facade is split, not copied. Neutral result, option, halt, requirement, output-contract, skill-context, and capability TYPE exports move to llm_kit.completion. The other exports move as follows:
 
-- ADAPTER_CAPABILITIES, adapter_capabilities, OpenRouterBackend, ClaudeCliBackend, CodexCliBackend, OpencodeCliBackend, CodexRunError, OpencodeRunError, run_cli_streaming, run_claude_streaming, looks_like_hard_stop, compose_prompt, and their transport constants -> llm_kit.adapters.
+- ADAPTER_CAPABILITIES, adapter_capabilities, OpenAICompatBackend (formerly OpenRouterBackend), ClaudeCliBackend, CodexCliBackend, OpencodeCliBackend, CodexRunError, OpencodeRunError, run_cli_streaming, run_claude_streaming, looks_like_hard_stop, compose_prompt, and their transport constants -> llm_kit.adapters.
 - EndpointProfile and endpoint-profile functions -> llm_kit.adapters; llm_kit.dispatch may re-export them for policy callers.
 - BackendSelection, create_backend, and create_transport_backend -> llm_kit.dispatch.
 - EffortDelivery, EffortPlan, and plan_effort -> llm_kit.registry.effort.

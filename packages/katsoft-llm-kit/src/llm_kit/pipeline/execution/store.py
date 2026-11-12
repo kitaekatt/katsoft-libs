@@ -70,6 +70,8 @@ from pathlib import Path
 from typing import Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
 
 from llm_kit.pipeline.execution import interrupts as _interrupts
+# The import graph lets this component reach the registry only through pipeline.runtime.
+from llm_kit.pipeline.runtime.backends import canonical_adapter_name_or_none
 from llm_kit.storage import connection as _connection
 from llm_kit.storage import network as _network
 from llm_kit.storage import schema_version as _schema_version
@@ -361,7 +363,7 @@ def _row_to_run(row: sqlite3.Row) -> RunRecord:
     return RunRecord(
         id=row["id"],
         driver=row["driver"],
-        backend=row["backend"],
+        backend=canonical_adapter_name_or_none(row["backend"]),
         model=row["model"],
         adapter_version=row["adapter_version"],
         created_at=row["created_at"],

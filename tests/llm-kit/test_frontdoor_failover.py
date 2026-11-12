@@ -9,7 +9,7 @@ R41  a busy endpoint (``classify_backpressure``) is skipped at once: no SDK retr
      wait, no quota halt recorded.
 
 Transport failures are REAL OpenAI-SDK exceptions: a real ``openai.OpenAI`` client
-over an ``httpx2.MockTransport`` raises them through a real ``OpenRouterBackend``
+over an ``httpx2.MockTransport`` raises them through a real ``OpenAICompatBackend``
 and its real halt classifier, so no test opens a socket. The three dispatch paths
 covered are ``declaration.run``, the pipeline's ``route`` (``DeclarationBackend``)
 and the code-review lane.
@@ -29,7 +29,7 @@ import pytest
 from test_cli_harness import home, write  # noqa: F401 -- home is a fixture
 
 from llm_kit import _runtime
-from llm_kit.adapters.backends import OpenRouterBackend
+from llm_kit.adapters.backends import OpenAICompatBackend
 from llm_kit.completion import halt
 from llm_kit.completion.types import BackendOptions, LLMResponse
 from llm_kit.dispatch import declaration as d
@@ -172,7 +172,7 @@ class Endpoint:
         )
 
     def backend(self):
-        return OpenRouterBackend(client=self.client())
+        return OpenAICompatBackend(client=self.client())
 
 
 def sdk_error(behaviour):
@@ -896,7 +896,7 @@ class FrontDoorApp:
     def backend(self):
         client = openai.OpenAI(api_key="test", base_url="http://door.invalid/v1",
                                http_client=httpx2.Client(transport=httpx2.MockTransport(self.handler)))
-        return OpenRouterBackend(client=client)
+        return OpenAICompatBackend(client=client)
 
     def error(self):
         client = openai.OpenAI(api_key="test", base_url="http://door.invalid/v1", max_retries=0,

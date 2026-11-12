@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from llm_kit.adapters.backends import ClaudeCliBackend, OpenRouterBackend
-from llm_kit.adapters.capabilities import OPENROUTER_CAPABILITIES
+from llm_kit.adapters.backends import ClaudeCliBackend, OpenAICompatBackend
+from llm_kit.adapters.capabilities import OPENAI_COMPAT_CAPABILITIES
 from llm_kit.adapters.codex_backend import CodexCliBackend
 from llm_kit.adapters.endpoint_profile import endpoint_capabilities, profile_from_resolved
 from llm_kit.adapters.opencode_backend import OpencodeCliBackend
@@ -124,11 +124,11 @@ def create_backend(
     return BackendSelection(
         endpoint=name,
         kind="transport",
-        backend=OpenRouterBackend(endpoint=name, project_root=Path(root) if root else None),
+        backend=OpenAICompatBackend(endpoint=name, project_root=Path(root) if root else None),
         model=selected_model,
         effort=(resolved.get("request_defaults") or {}).get("reasoning_effort"),
         capabilities=endpoint_capabilities(
-            OPENROUTER_CAPABILITIES, profile_from_resolved(resolved, endpoint=name)
+            OPENAI_COMPAT_CAPABILITIES, profile_from_resolved(resolved, endpoint=name)
         ),
     )
 

@@ -15,7 +15,7 @@ install and use.
 The base install depends on `katsoft-contracts` (execution-event envelope,
 interrupt contract, model declaration parser) and nothing else. Extras:
 `config`, `jobs` and `pipeline` bring PyYAML; `sdk` brings the OpenAI client
-(the OpenRouter HTTP path); `local` brings psutil; `frontdoor` brings
+(the OpenAI-compatible HTTP path, which serves OpenRouter and any other compatible endpoint); `local` brings psutil; `frontdoor` brings
 FastAPI, uvicorn and httpx.
 
 ## Supervised local jobs
@@ -128,6 +128,25 @@ A scope overrides the global default for the classes it states, in either direct
 llm-kit consent show [--scope NAME] [--json]
 llm-kit consent set [--scope NAME] --local|--subscription|--metered on|off
 ```
+
+## Adapter names
+
+The adapter for every non-harness entry is the OpenAI-compatible HTTP completion, and its name
+is `openai-compat`. OpenRouter is one endpoint it serves, not its name. `llm-kit models`,
+`llm-kit models catalog`, `llm-kit invoke` results, ledger events and the capability table
+(`llm_kit.adapters.capabilities.adapter_capabilities()`) report `openai-compat`. The
+`openrouter` registry entry, openrouter.ai URLs and `llm-kit account` keep their names.
+
+Unreleased (ships in the next minor release, 1.17.0): before it the adapter was named
+`openrouter`. The old name is still read: a capability table, constructor table or catalog
+`modes_by_adapter` keyed by `openrouter` serves `openai-compat`; a `BackendSpec` that says
+`backend="openrouter"` builds the same backend; job-ledger and pipeline-run rows that store
+`openrouter` read back as `openai-compat`. New writes use `openai-compat`. The response-cache
+key is unchanged, so a stored cache keeps hitting. A custom `BackendFactory` should accept
+both spellings. The Python names `OpenRouterBackend` (in `llm_kit.adapters.backends`,
+`llm_kit.pipeline.runtime` and `llm_kit.pipeline.runtime.backends`) and
+`OPENROUTER_CAPABILITIES` are deprecated aliases of `OpenAICompatBackend` and
+`OPENAI_COMPAT_CAPABILITIES` that warn on use and are removable after 1.19.0.
 
 ## Output cap
 

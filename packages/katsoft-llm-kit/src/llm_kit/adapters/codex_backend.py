@@ -1,7 +1,7 @@
 """``codex exec`` completion transport.
 
 The third backend behind the shared :class:`~.types.LLMBackend` protocol,
-alongside :class:`~.backends.OpenRouterBackend` and
+alongside :class:`~.backends.OpenAICompatBackend` and
 :class:`~.backends.ClaudeCliBackend`. Auth and billing come from the Codex
 CLI's own login, so a run is subscription-billed rather than metered per call
 and no cost is produced.

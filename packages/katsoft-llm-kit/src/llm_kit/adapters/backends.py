@@ -3,7 +3,8 @@
 The seam that lets a pipeline run the same completion-shaped task on either
 transport, selected by configuration:
 
-- :class:`OpenRouterBackend` -- an OpenAI-compatible HTTP completion via
+- :class:`OpenAICompatBackend` -- an OpenAI-compatible HTTP completion (OpenRouter is one
+  endpoint it serves) via
   ``make_openai_client(endpoint=...)`` + ``chat.completions.create``. Costs
   real money per the provider's pricing. Consumes ``llm_kit.adapters``'s own
   client factory and model resolver so a named endpoint is honored end to end.
@@ -50,7 +51,7 @@ from .capabilities import (
     _CLAUDE_SYSTEM_PROMPT_FLAGS,
     _CLAUDE_TEXT_ONLY_ARGS,
     CLAUDE_CAPABILITIES,
-    OPENROUTER_CAPABILITIES,
+    OPENAI_COMPAT_CAPABILITIES,
 )
 from llm_kit.registry.effort import OUTCOME_TRANSLATED, REASONING_KEY, EffortPlan, plan_effort
 from llm_kit.completion.capabilities import Capabilities
@@ -77,6 +78,12 @@ from llm_kit.completion.types import (
     LLMResponse,
     valid_reported_cost,
 )
+from llm_kit.registry.adapter_names import (
+    ADAPTER_OPENAI_COMPAT,
+    NEW_BACKEND_CLASS,
+    OLD_BACKEND_CLASS,
+    warn_renamed,
+)
 from llm_kit.registry.effort import CLAUDE_EFFORT_ORDER, CLAUDE_HARNESS
 from llm_kit.registry.model_profiles import ROUTE_OPENROUTER, check_effort, route_of_base_url
 
@@ -93,7 +100,7 @@ ESTIMATE_SOURCE_CLAUDE_CLI = "claude-cli.total_cost_usd"
 
 
 # ---------------------------------------------------------------------------
-# OpenRouter (OpenAI-compatible HTTP) backend
+# OpenAI-compatible HTTP backend (the ``openai-compat`` adapter)
 # ---------------------------------------------------------------------------
 
 
@@ -120,7 +127,7 @@ def _untrusted_native_cost(
 ) -> "tuple[Optional[float], Optional[str]]":
     """A valid native ``usage.cost`` the endpoint is NOT trusted for, as an estimate.
 
-    The trusted case is :meth:`OpenRouterBackend._reported_cost`; this is its
+    The trusted case is :meth:`OpenAICompatBackend._reported_cost`; this is its
     complement, so a figure lands in exactly one of the two places and is never
     both. ``trusts`` is asked only when a valid figure is present, so a call
     without one reads no configuration.
@@ -132,7 +139,7 @@ def _untrusted_native_cost(
 
 
 @dataclass
-class OpenRouterBackend:
+class OpenAICompatBackend:
     """OpenAI-compatible HTTP completion via an ``llm_kit.adapters.client`` client.
 
     A caller may inject a pre-built ``client`` (the test seam / a custom HTTP
@@ -157,8 +164,8 @@ class OpenRouterBackend:
     endpoint: Optional[str] = None
     project_root: Optional[Path] = None
     client: Any = None
-    name: str = field(default="openrouter", init=False)
-    capabilities: ClassVar[Capabilities] = OPENROUTER_CAPABILITIES
+    name: str = field(default=ADAPTER_OPENAI_COMPAT, init=False)
+    capabilities: ClassVar[Capabilities] = OPENAI_COMPAT_CAPABILITIES
     _build_lock: "threading.Lock" = field(
         default_factory=threading.Lock, init=False, repr=False, compare=False
     )
@@ -1040,4 +1047,12 @@ class ClaudeCliBackend:
             )
 
 
-__all__ = ["OpenRouterBackend", "ClaudeCliBackend"]
+def __getattr__(name: str) -> Any:
+    """Keep the retired ``OpenRouterBackend`` name resolving, with a warning."""
+    if name == OLD_BACKEND_CLASS:
+        warn_renamed(__name__, OLD_BACKEND_CLASS, NEW_BACKEND_CLASS)
+        return OpenAICompatBackend
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = ["OpenAICompatBackend", "ClaudeCliBackend"]

@@ -25,7 +25,7 @@ import types
 import pytest
 
 from llm_kit.adapters import backends as backends_mod
-from llm_kit.adapters.capabilities import OPENROUTER_CAPABILITIES
+from llm_kit.adapters.capabilities import OPENAI_COMPAT_CAPABILITIES
 from llm_kit.completion.types import BackendOptions
 from llm_kit.registry import catalog as catalog_mod
 from llm_kit.registry import project_models as pm
@@ -67,7 +67,7 @@ def _client_returning(world, *, content, finish_reason, completion_tokens=7):
 
 def test_the_library_default_is_no_cap():
     assert BackendOptions().max_tokens is None
-    assert OPENROUTER_CAPABILITIES.params["max_tokens"].default is None
+    assert OPENAI_COMPAT_CAPABILITIES.params["max_tokens"].default is None
 
 
 def test_an_openrouter_call_with_no_cap_anywhere_sends_no_max_tokens(world, capsys):
@@ -115,7 +115,7 @@ def endpoints(home, tmp_path, monkeypatch):  # noqa: F811
 @pytest.mark.parametrize("endpoint,expected", [("orr", None), ("eu", None), ("local", 4096), ("lookalike", 4096)])
 def test_only_openrouter_goes_uncapped_other_endpoints_keep_a_finite_cap(endpoints, endpoint, expected):
     client, sent = _local_backend(None)
-    backends_mod.OpenRouterBackend(endpoint=endpoint, client=client).complete(
+    backends_mod.OpenAICompatBackend(endpoint=endpoint, client=client).complete(
         "s", "u", model="a/b", options=BackendOptions()
     )
     assert ("max_tokens" in sent[0]) == (expected is not None)
@@ -123,14 +123,14 @@ def test_only_openrouter_goes_uncapped_other_endpoints_keep_a_finite_cap(endpoin
 
 
 def test_an_unresolvable_endpoint_keeps_the_finite_cap():
-    backend = backends_mod.OpenRouterBackend(endpoint="nowhere", client=object())
-    backend._resolved_cache = backends_mod.OpenRouterBackend._UNRESOLVED  # noqa: SLF001
+    backend = backends_mod.OpenAICompatBackend(endpoint="nowhere", client=object())
+    backend._resolved_cache = backends_mod.OpenAICompatBackend._UNRESOLVED  # noqa: SLF001
     assert backend._default_max_tokens() == 4096  # noqa: SLF001
 
 
 def test_an_explicit_cap_reaches_a_non_openrouter_endpoint_unchanged(endpoints):
     client, sent = _local_backend(None)
-    backends_mod.OpenRouterBackend(endpoint="local", client=client).complete(
+    backends_mod.OpenAICompatBackend(endpoint="local", client=client).complete(
         "s", "u", model="a/b", options=BackendOptions(max_tokens=99999)
     )
     assert sent[0]["max_tokens"] == 99999

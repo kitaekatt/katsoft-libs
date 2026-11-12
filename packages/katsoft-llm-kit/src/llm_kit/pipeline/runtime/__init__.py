@@ -19,7 +19,7 @@ Submodules:
   model == hard ``KeyError``), the budget guards, ``call_llm`` (the single
   entry point), and ``submit_validated`` (the validate-until-valid loop over
   ``validate.contract`` validators).
-- ``backends`` -- the five live transports (``OpenRouterBackend``,
+- ``backends`` -- the five live transports (``OpenAICompatBackend``,
   ``ClaudeCliBackend``, ``CodexCliBackend``, ``OpencodeCliBackend``,
   ``ModelEndpointBackend``), the ``MockBackend``, and process-level ``route``.
   The live transports are THIN WRAPPERS: each keeps its constructor options
@@ -132,7 +132,7 @@ The surface (both live under ``platform`` unless noted):
   ``__all__``: a star import must never load the completion contract modules.
 - ``CallAttempt`` / ``AttemptObserver`` -- the per-attempt record and the
   ``on_attempt`` callback type ``call_llm`` and ``submit_validated`` report to.
-- ``OpenRouterBackend`` / ``ClaudeCliBackend`` / ``CodexCliBackend`` /
+- ``OpenAICompatBackend`` / ``ClaudeCliBackend`` / ``CodexCliBackend`` /
   ``OpencodeCliBackend`` / ``ModelEndpointBackend`` / ``MockBackend`` /
   ``route`` / ``routed_model`` -- the transports and process-level routing
   (from ``backends``).
@@ -141,13 +141,14 @@ The ``yaml_extract`` and ``budget`` submodules are imported directly (their
 top-level names would be less discoverable flattened here).
 """
 
+from llm_kit.registry.adapter_names import NEW_BACKEND_CLASS, OLD_BACKEND_CLASS, warn_renamed
 from llm_kit.pipeline.runtime.backends import (
     ClaudeCliBackend,
     CodexCliBackend,
     MockBackend,
     ModelEndpointBackend,
     OpencodeCliBackend,
-    OpenRouterBackend,
+    OpenAICompatBackend,
     declared_backend_and_model,
     declared_model_names,
     resolve_declaration,
@@ -204,7 +205,7 @@ __all__ = [
     "HALT_UNREACHABLE",
     "ResponseCache",
     "CostBudget",
-    "OpenRouterBackend",
+    "OpenAICompatBackend",
     "ClaudeCliBackend",
     "MockBackend",
     "route",
@@ -223,4 +224,7 @@ def __getattr__(name: str):
     # The lazy OutputContract re-export, resolved through the one probe.
     if name == "OutputContract":
         return _contract_seam().OutputContract
+    if name == OLD_BACKEND_CLASS:
+        warn_renamed(__name__, OLD_BACKEND_CLASS, NEW_BACKEND_CLASS)
+        return OpenAICompatBackend
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

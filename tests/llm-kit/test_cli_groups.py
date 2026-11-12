@@ -195,7 +195,7 @@ class TestComposition:
 
     def test_the_real_factory_path_builds_the_openrouter_backend_over_a_fake_client(self, final_mods, home,
                                                                                     tmp_path, capsys, monkeypatch):
-        """No patched seam: dispatch.factory -> OpenRouterBackend -> a recording fake client."""
+        """No patched seam: dispatch.factory -> OpenAICompatBackend -> a recording fake client."""
         calls = []
 
         class _Resp:

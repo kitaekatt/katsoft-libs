@@ -375,6 +375,114 @@
             "separator": "\n\n---\n\n"
           }
         },
+        "openai-compat": {
+          "adapter": "openai-compat",
+          "call_modes": [
+            "completion"
+          ],
+          "conditional_params": {
+            "effort": {
+              "emits": "reasoning_effort | chat_template_kwargs.reasoning_effort | reasoning",
+              "handling": "mapped",
+              "note": "emitted only for a transport entry that resolves a delivering effort_style (entry effort_style, frontdoor: true, or a declared routing.effort_style); an effort already in extras (top-level or chat_template_kwargs) wins verbatim and an explicit null there sends none; the ninfer style maps high to xhigh; the opt-in reasoning-object style sends reasoning={effort: value} (none sends reasoning={enabled: false}) and lets a caller extras.reasoning object win as a whole",
+              "type": "string"
+            }
+          },
+          "dropped_params": [
+            "cache_salt",
+            "effort",
+            "allowed_tools",
+            "disallowed_tools",
+            "system_prompt_mode",
+            "cwd",
+            "log_prefix"
+          ],
+          "execution_controls": [],
+          "guarantees": [
+            "filesystem-write",
+            "shell-exec",
+            "subagent-spawn"
+          ],
+          "params": {
+            "client_id": {
+              "emits": "user",
+              "handling": "mapped",
+              "note": "uses the caller id, a process identity when None, nothing when empty",
+              "type": "string"
+            },
+            "extras": {
+              "emits": "extra_body",
+              "handling": "passthrough",
+              "note": "every key rides as a TOP-LEVEL request parameter, unvalidated and unfiltered; the adapter makes no claim the provider accepts any of them",
+              "type": "json-object"
+            },
+            "max_retries": {
+              "emits": "client.with_options(max_retries=...)",
+              "handling": "mapped",
+              "note": "SDK retries per call; unset keeps the client default of 2",
+              "type": "integer"
+            },
+            "max_tokens": {
+              "emits": "max_tokens",
+              "handling": "mapped",
+              "note": "unset: omitted for an openrouter.ai endpoint, so the provider's own limit for the model applies; any other OpenAI-compatible endpoint is sent 4096",
+              "type": "integer"
+            },
+            "output_contract": {
+              "emits": "messages[system] schema instruction",
+              "handling": "mapped",
+              "note": "a listed schema policy is delivered as emitted and the answer is validated at the seam; text-only emits nothing; a policy structured_output.policies does not list is refused before dispatch",
+              "type": "output-contract"
+            },
+            "skill_context": {
+              "emits": "messages[system] leading skill context block",
+              "handling": "mapped",
+              "note": "the materialized block leads the system message, followed by the caller's system text and then any output-contract instruction",
+              "type": "skill-context"
+            },
+            "temperature": {
+              "emits": "temperature",
+              "handling": "mapped",
+              "note": "server/model default when unset; omitted from the request",
+              "type": "number"
+            },
+            "timeout_s": {
+              "emits": "timeout",
+              "handling": "mapped",
+              "note": "omitted from the request entirely when None",
+              "type": "number"
+            },
+            "user_cache_prefix": {
+              "default": "",
+              "emits": "messages[user].content[0].cache_control",
+              "handling": "mapped",
+              "note": "when set, the user message becomes a two-part content list with an ephemeral cache breakpoint on the static prefix",
+              "type": "string"
+            }
+          },
+          "skill_context": {
+            "delivery": "system-message",
+            "emits": "messages[system] leading skill context block"
+          },
+          "structured_output": {
+            "contract_delivery": "prompt",
+            "contract_emits": "messages[system] schema instruction",
+            "contract_schema_class": "json-schema-subset",
+            "mode": "passthrough",
+            "note": "the adapter neither defines nor validates a schema; it forwards a caller-supplied response_format through extras and always reads the result as message.content",
+            "policies": [
+              "validated-result",
+              "text-only"
+            ],
+            "request_param": "extras.response_format",
+            "result": "text"
+          },
+          "system_prompt": {
+            "emits": "messages[system]",
+            "mode": "native-role",
+            "note": "a distinct system-role message, not an append: the adapter supplies the system prompt rather than adding to an existing one"
+          }
+        },
         "opencode-cli": {
           "adapter": "opencode-cli",
           "call_modes": [
@@ -550,114 +658,6 @@
             "mode": "prompt-fold",
             "separator": "\n\n---\n\n"
           }
-        },
-        "openrouter": {
-          "adapter": "openrouter",
-          "call_modes": [
-            "completion"
-          ],
-          "conditional_params": {
-            "effort": {
-              "emits": "reasoning_effort | chat_template_kwargs.reasoning_effort | reasoning",
-              "handling": "mapped",
-              "note": "emitted only for a transport entry that resolves a delivering effort_style (entry effort_style, frontdoor: true, or a declared routing.effort_style); an effort already in extras (top-level or chat_template_kwargs) wins verbatim and an explicit null there sends none; the ninfer style maps high to xhigh; the opt-in reasoning-object style sends reasoning={effort: value} (none sends reasoning={enabled: false}) and lets a caller extras.reasoning object win as a whole",
-              "type": "string"
-            }
-          },
-          "dropped_params": [
-            "cache_salt",
-            "effort",
-            "allowed_tools",
-            "disallowed_tools",
-            "system_prompt_mode",
-            "cwd",
-            "log_prefix"
-          ],
-          "execution_controls": [],
-          "guarantees": [
-            "filesystem-write",
-            "shell-exec",
-            "subagent-spawn"
-          ],
-          "params": {
-            "client_id": {
-              "emits": "user",
-              "handling": "mapped",
-              "note": "uses the caller id, a process identity when None, nothing when empty",
-              "type": "string"
-            },
-            "extras": {
-              "emits": "extra_body",
-              "handling": "passthrough",
-              "note": "every key rides as a TOP-LEVEL request parameter, unvalidated and unfiltered; the adapter makes no claim the provider accepts any of them",
-              "type": "json-object"
-            },
-            "max_retries": {
-              "emits": "client.with_options(max_retries=...)",
-              "handling": "mapped",
-              "note": "SDK retries per call; unset keeps the client default of 2",
-              "type": "integer"
-            },
-            "max_tokens": {
-              "emits": "max_tokens",
-              "handling": "mapped",
-              "note": "unset: omitted for an openrouter.ai endpoint, so the provider's own limit for the model applies; any other OpenAI-compatible endpoint is sent 4096",
-              "type": "integer"
-            },
-            "output_contract": {
-              "emits": "messages[system] schema instruction",
-              "handling": "mapped",
-              "note": "a listed schema policy is delivered as emitted and the answer is validated at the seam; text-only emits nothing; a policy structured_output.policies does not list is refused before dispatch",
-              "type": "output-contract"
-            },
-            "skill_context": {
-              "emits": "messages[system] leading skill context block",
-              "handling": "mapped",
-              "note": "the materialized block leads the system message, followed by the caller's system text and then any output-contract instruction",
-              "type": "skill-context"
-            },
-            "temperature": {
-              "emits": "temperature",
-              "handling": "mapped",
-              "note": "server/model default when unset; omitted from the request",
-              "type": "number"
-            },
-            "timeout_s": {
-              "emits": "timeout",
-              "handling": "mapped",
-              "note": "omitted from the request entirely when None",
-              "type": "number"
-            },
-            "user_cache_prefix": {
-              "default": "",
-              "emits": "messages[user].content[0].cache_control",
-              "handling": "mapped",
-              "note": "when set, the user message becomes a two-part content list with an ephemeral cache breakpoint on the static prefix",
-              "type": "string"
-            }
-          },
-          "skill_context": {
-            "delivery": "system-message",
-            "emits": "messages[system] leading skill context block"
-          },
-          "structured_output": {
-            "contract_delivery": "prompt",
-            "contract_emits": "messages[system] schema instruction",
-            "contract_schema_class": "json-schema-subset",
-            "mode": "passthrough",
-            "note": "the adapter neither defines nor validates a schema; it forwards a caller-supplied response_format through extras and always reads the result as message.content",
-            "policies": [
-              "validated-result",
-              "text-only"
-            ],
-            "request_param": "extras.response_format",
-            "result": "text"
-          },
-          "system_prompt": {
-            "emits": "messages[system]",
-            "mode": "native-role",
-            "note": "a distinct system-role message, not an append: the adapter supplies the system prompt rather than adding to an existing one"
-          }
         }
       },
       "default": "openrouter",
@@ -703,7 +703,7 @@
           "name": null
         },
         "local": {
-          "adapter": "openrouter",
+          "adapter": "openai-compat",
           "base_url": "http://h.invalid/v1",
           "effort_delivery": {
             "deliverable": true,
@@ -730,7 +730,7 @@
           "name": null
         },
         "openrouter": {
-          "adapter": "openrouter",
+          "adapter": "openai-compat",
           "base_url": "https://openrouter.ai/api/v1",
           "default_model": "gpt-mini",
           "effort_delivery": {
@@ -752,7 +752,7 @@
           "name": null
         },
         "or-gemini-lite": {
-          "adapter": "openrouter",
+          "adapter": "openai-compat",
           "base_url": "https://openrouter.ai/api/v1",
           "effort_delivery": {
             "deliverable": false,
@@ -768,7 +768,7 @@
           "reasoning_effort": null
         },
         "or-gpt-mini": {
-          "adapter": "openrouter",
+          "adapter": "openai-compat",
           "base_url": "https://openrouter.ai/api/v1",
           "effort_delivery": {
             "deliverable": false,
@@ -784,7 +784,7 @@
           "reasoning_effort": null
         },
         "or-qwen": {
-          "adapter": "openrouter",
+          "adapter": "openai-compat",
           "base_url": "https://openrouter.ai/api/v1",
           "effort_delivery": {
             "deliverable": false,
@@ -800,7 +800,7 @@
           "reasoning_effort": null
         },
         "other": {
-          "adapter": "openrouter",
+          "adapter": "openai-compat",
           "base_url": "http://h.invalid/v1",
           "effort_delivery": {
             "deliverable": false,

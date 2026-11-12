@@ -5,7 +5,7 @@ static data, no network, no subprocess, always instant. This module answers a
 different question -- is a configured endpoint ACTUALLY USABLE right now --
 and it NEVER issues a completion to answer it. Zero LLM calls, always:
 
-- **transport** entries (the ``openrouter`` adapter, including a self-hosted
+- **transport** entries (the ``openai-compat`` adapter, including a self-hosted
   OpenAI-compatible server): a ``GET {base_url}/models`` metadata request
   (:func:`llm_kit.adapters.account.probe_endpoint`). This proves the server
   is up and answering HTTP -- it does NOT prove a completion would succeed. A
@@ -125,7 +125,7 @@ class Reachability:
 def check_transport(
     name: str, *, timeout: float = DEFAULT_VERIFY_TIMEOUT_S, project_root: Optional[str] = None
 ) -> Reachability:
-    """Metadata-only liveness check for a transport (openrouter-adapter) endpoint.
+    """Metadata-only liveness check for a transport (openai-compat-adapter) endpoint.
 
     Delegates to :func:`llm_kit.adapters.account.probe_endpoint`, which never
     raises and never sends more than a ``GET {base_url}/models`` request. When

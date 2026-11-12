@@ -614,7 +614,7 @@ def _answer_text(response: LLMResponse) -> str:
 def _params_report(backend: Any, options: BackendOptions) -> Optional[tuple]:
     """The adapter's own ``(dropped, forwarded)`` report for ``options``, if it has one.
 
-    ``OpenRouterBackend.params_report`` derives both from the call's effort
+    ``OpenAICompatBackend.params_report`` derives both from the call's effort
     plan -- the same derivation its successful response uses -- so the family
     record's blanket "effort is dropped" never contradicts an endpoint that
     delivered it, and a suppressed extras key is never reported as forwarded.

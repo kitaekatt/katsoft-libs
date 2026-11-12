@@ -32,9 +32,11 @@ class BackendSpec:
     """An immutable description of one backend to construct.
 
     ``backend`` is the adapter family name the concrete backend carries
-    (``"openrouter"``, ``"claude-cli"``, ``"codex-cli"``, ``"opencode-cli"``)
+    (``"openai-compat"``, ``"claude-cli"``, ``"codex-cli"``, ``"opencode-cli"``)
     or ``"model-endpoint"`` for an OpenAI-compatible completion against a
-    registry entry; ``endpoint`` then names that entry.
+    registry entry; ``endpoint`` then names that entry. ``"openrouter"`` is the
+    pre-1.11.0 name of ``"openai-compat"`` and is still accepted. A custom
+    factory should accept both spellings.
 
     ``default_timeout_s``, ``retry_max_attempts`` and ``retry_cooldown_s`` are
     omitted from the constructor call when None, so the adapter's own default

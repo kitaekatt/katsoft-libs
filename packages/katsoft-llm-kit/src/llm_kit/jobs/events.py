@@ -28,6 +28,7 @@ from types import ModuleType
 from typing import Any, Iterable, Mapping, Optional
 
 from llm_kit.execution import event_probe, probe
+from llm_kit.registry.adapter_names import canonical_adapter_name
 from llm_kit.execution.event_probe import EventProbeSpec
 from llm_kit.execution.probe import CallShape, ProbeFailure
 
@@ -215,7 +216,7 @@ def build_event(
         at=at,
         unit_id=job_id,
         attempt_id=(str(attempt_no) if attempt_no is not None else None),
-        adapter=adapter or None,
+        adapter=canonical_adapter_name(adapter) if adapter else None,
         model=model or None,
         payload=dict(payload) if payload is not None else None,
         schema=SCHEMA_V1 if schema is None else schema,

@@ -93,7 +93,7 @@
           ]
         },
         {
-          "adapter": "openrouter",
+          "adapter": "openai-compat",
           "cost": {
             "class": "metered",
             "reason": "billing not declared unmetered (billing unverified)"

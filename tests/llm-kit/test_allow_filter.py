@@ -26,7 +26,7 @@ from llm_kit.registry.model_endpoints import HARNESS_KIND, TRANSPORT_KIND, Endpo
 # (commit a82c0b45), for the declaration built by ``_baseline_entries``.
 PRE_RENDER = (
     'Declared models (ordered by pace): choose one; default is marked.\n'
-    '  qwen   transport/openrouter n/a (unpaced)   [default]\n'
+    '  qwen   transport/openai-compat n/a (unpaced)   [default]\n'
     '  sol    codex          n/a (unpaced)\n'
     '  opus   claude/claude-cli n/a (unpaced)\n'
     '  haiku  claude/claude-cli n/a (unpaced)\n'
@@ -40,7 +40,7 @@ PRE_TO_JSON = json.loads(r'''{
     {
       "declared_index": 0,
       "default": true,
-      "drive": "openrouter",
+      "drive": "openai-compat",
       "family": null,
       "harness": null,
       "id": "qwen",

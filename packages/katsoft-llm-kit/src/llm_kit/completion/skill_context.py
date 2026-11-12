@@ -291,7 +291,7 @@ def prepare_skill_context(capabilities: Any, options: Any) -> Optional[SkillCont
         raise SkillContextUnsatisfiable(
             f"{adapter} does not deliver skill context: a harness loads skills "
             "itself, and this seam cannot see what it loads. Nothing was "
-            "dispatched. Use a transport entry (adapter openrouter), or omit "
+            "dispatched. Use a transport entry (adapter openai-compat), or omit "
             "skill_context and place your own text in system."
         )
     return SkillContextPlan(

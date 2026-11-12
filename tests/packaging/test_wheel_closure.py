@@ -161,7 +161,7 @@ def test_models_resolve(cli, via):
     proc = cli(via, ["models", "resolve", "--models", "local"])
     assert proc.returncode == 0, (proc.stdout, proc.stderr)
     out = _json(proc)
-    assert (out["endpoint"], out["backend"], out["model"]) == ("local", "openrouter", "m-local")
+    assert (out["endpoint"], out["backend"], out["model"]) == ("local", "openai-compat", "m-local")
 
 
 @pytest.mark.parametrize("via", VIAS)
