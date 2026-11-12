@@ -2,7 +2,7 @@
 
 The transport adapter is the OpenAI-compatible HTTP completion. OpenRouter is
 one endpoint it serves, not its name, so the family is ``openai-compat``.
-Before llm-kit 1.11.0 the family was named ``openrouter``. Stored rows, caller
+Before llm-kit 1.17.0 the family was named ``openrouter``. Stored rows, caller
 declarations and injected tables still carry that name, so every lookup and
 read-back maps it to the current name, and every new write uses the current
 name.
@@ -57,8 +57,8 @@ def lookup_by_adapter(table: Mapping[str, _T], name: Optional[str]) -> Optional[
 
 
 #: First release carrying the rename, and the last release that keeps the old class name.
-RENAMED_SINCE = "1.11.0"
-REMOVE_AFTER = "1.13.0"
+RENAMED_SINCE = "1.17.0"
+REMOVE_AFTER = "1.19.0"
 
 OLD_BACKEND_CLASS = "OpenRouterBackend"
 NEW_BACKEND_CLASS = "OpenAICompatBackend"

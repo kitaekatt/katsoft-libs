@@ -137,7 +137,7 @@ is `openai-compat`. OpenRouter is one endpoint it serves, not its name. `llm-kit
 (`llm_kit.adapters.capabilities.adapter_capabilities()`) report `openai-compat`. The
 `openrouter` registry entry, openrouter.ai URLs and `llm-kit account` keep their names.
 
-Unreleased (ships in the next minor release, 1.11.0): before it the adapter was named
+Unreleased (ships in the next minor release, 1.17.0): before it the adapter was named
 `openrouter`. The old name is still read: a capability table, constructor table or catalog
 `modes_by_adapter` keyed by `openrouter` serves `openai-compat`; a `BackendSpec` that says
 `backend="openrouter"` builds the same backend; job-ledger and pipeline-run rows that store
@@ -146,7 +146,7 @@ key is unchanged, so a stored cache keeps hitting. A custom `BackendFactory` sho
 both spellings. The Python names `OpenRouterBackend` (in `llm_kit.adapters.backends`,
 `llm_kit.pipeline.runtime` and `llm_kit.pipeline.runtime.backends`) and
 `OPENROUTER_CAPABILITIES` are deprecated aliases of `OpenAICompatBackend` and
-`OPENAI_COMPAT_CAPABILITIES` that warn on use and are removable after 1.13.0.
+`OPENAI_COMPAT_CAPABILITIES` that warn on use and are removable after 1.19.0.
 
 ## Output cap
 

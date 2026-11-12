@@ -1214,8 +1214,8 @@
     {
       "name": "llm_kit.pipeline.runtime.OpenRouterBackend",
       "status": "deprecated",
-      "since": "1.11.0",
-      "remove_after": "1.13.0",
+      "since": "1.17.0",
+      "remove_after": "1.19.0",
       "replacement": "llm_kit.pipeline.runtime.OpenAICompatBackend"
     },
     {
@@ -1269,8 +1269,8 @@
     {
       "name": "llm_kit.pipeline.runtime.backends.OpenRouterBackend",
       "status": "deprecated",
-      "since": "1.11.0",
-      "remove_after": "1.13.0",
+      "since": "1.17.0",
+      "remove_after": "1.19.0",
       "replacement": "llm_kit.pipeline.runtime.backends.OpenAICompatBackend"
     },
     {

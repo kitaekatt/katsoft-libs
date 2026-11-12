@@ -1,7 +1,7 @@
 """The transport adapter is named ``openai-compat``; ``openrouter`` is still read.
 
 The adapter is the OpenAI-compatible HTTP completion. OpenRouter is one endpoint
-it serves, so the family name says what the adapter is. Before llm-kit 1.11.0 the
+it serves, so the family name says what the adapter is. Before llm-kit 1.17.0 the
 family was named ``openrouter``. These tests pin three things:
 
 * every new write and every report uses ``openai-compat``, including for a real
@@ -197,7 +197,7 @@ def test_the_response_cache_key_does_not_move_with_the_rename():
     ],
 )
 def test_a_retired_python_name_resolves_to_the_renamed_object_with_a_warning(module, old, new):
-    with pytest.warns(DeprecationWarning, match=f"{old} is deprecated since 1.11.0.*{new}") as seen:
+    with pytest.warns(DeprecationWarning, match=f"{old} is deprecated since 1.17.0.*{new}") as seen:
         value = getattr(module, old)
     assert value is getattr(module, new)
     assert seen[0].filename == __file__  # stacklevel points at the caller
@@ -240,7 +240,7 @@ def test_the_deprecated_entries_are_listed_in_the_public_surface():
         }
         old = entries[f"{module}.OpenRouterBackend"]
         assert old["status"] == "deprecated"
-        assert (old["since"], old["remove_after"]) == ("1.11.0", "1.13.0")
+        assert (old["since"], old["remove_after"]) == ("1.17.0", "1.19.0")
         assert old["replacement"] == f"{module}.OpenAICompatBackend"
 
 
