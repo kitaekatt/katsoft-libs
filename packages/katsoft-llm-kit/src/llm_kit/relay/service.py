@@ -17,7 +17,7 @@ code and no effect:
 3. verb: known, equal to the path verb, and served by this build;
 4. params: the envelope and ``<verb>.request`` JSON Schemas;
 5. origin: the verb's origin kinds, this machine only, and a channel origin
-   that names the session in its params;
+   that names the harness and the session in its params;
 6. pause: a hub-origin call while the hub is paused, and ``send_message`` while
    the relay is paused (``poll`` returns empty instead, in its own handler);
 7. grant: a covering grant for the origin kinds the verb table names (the
@@ -592,6 +592,8 @@ class RelayService:
                 allowed.add(params["previous_session_id"])
             if session not in allowed:
                 raise P.RelayError("origin_not_allowed", f"origin {identity} does not name the session in the params")
+            if spec.name == "register" and identity.subject.split("/", 2)[1] != params.get("harness"):
+                raise P.RelayError("origin_not_allowed", f"origin {identity} does not name the harness in the params")
 
     def _check_pause(self, spec: P.VerbSpec, identity: P.Identity) -> None:
         if identity.kind in P.HUB_PAUSE_REFUSES_ORIGINS:
@@ -626,9 +628,14 @@ class RelayService:
 
     # -- channel verbs ------------------------------------------------------------
 
-    def _registration(self, params: Mapping[str, Any]):
+    @staticmethod
+    def _harness(call: _Call) -> str:
+        """The harness a channel origin names (``channel:<machine>/<harness>/<session>``)."""
+        return call.origin.subject.split("/", 2)[1]
+
+    def _registration(self, call: _Call, params: Mapping[str, Any]):
         """The live registration named by the params, without renewing its lease (ack, reply)."""
-        registration = self._table.get(params["session_id"])
+        registration = self._table.get(params["session_id"], self._harness(call))
         if registration is None or not _same(registration.registration_id, params["registration_id"]):
             raise P.RelayError("registration_unknown", "unknown or lapsed registration; register again")
         if not _same(registration.channel_nonce, params["channel_nonce"]):
@@ -644,7 +651,7 @@ class RelayService:
         registration = outcome.registration
         return {
             "registration_id": registration.registration_id,
-            "address": self._table.address(registration.session_id),
+            "address": self._table.address(registration.session_id, registration.harness),
             "machine": self.machine,
             "heartbeat_s": P.HEARTBEAT_INTERVAL_S,
             "lease_s": int(round(registration.lease_expires_at - registration.last_seen_at)),
@@ -660,12 +667,13 @@ class RelayService:
             params["registration_id"], params["session_id"], params["channel_nonce"],
             previous_session_id=params.get("previous_session_id"), cwd=params.get("cwd"),
             title=params.get("title"), task=params.get("task"), accepts=params.get("accepts"),
+            harness=self._harness(call),
         )
         registration = outcome.registration
         ended = call.ended.get(outcome.old_address, 0) if outcome.old_address else 0
         return {
             "registration_id": registration.registration_id,
-            "address": self._table.address(registration.session_id),
+            "address": self._table.address(registration.session_id, registration.harness),
             "lease_expires_at": registration.lease_expires_at,
             "paused": self._pause.is_paused("relay"),
             "session_changed": outcome.session_changed,
@@ -673,7 +681,8 @@ class RelayService:
         }
 
     def _deregister(self, call: _Call, params: Mapping[str, Any], granted: _Granted, ingress: str) -> dict[str, Any]:
-        event = self._table.deregister(params["registration_id"], params["session_id"], params["channel_nonce"])
+        event = self._table.deregister(params["registration_id"], params["session_id"], params["channel_nonce"],
+                                       self._harness(call))
         return {
             "registration_id": event.registration_id,
             "address": event.address,
@@ -681,8 +690,9 @@ class RelayService:
         }
 
     def _poll(self, call: _Call, params: Mapping[str, Any], granted: _Granted, ingress: str) -> dict[str, Any]:
-        registration = self._table.touch(params["registration_id"], params["session_id"], params["channel_nonce"])
-        address = self._table.address(registration.session_id)
+        registration = self._table.touch(params["registration_id"], params["session_id"], params["channel_nonce"],
+                                         self._harness(call))
+        address = self._table.address(registration.session_id, registration.harness)
         max_messages = params.get("max_messages", P.MAX_POLL_BATCH)
         deadline = time.monotonic() + params["wait_s"]
         while True:
@@ -696,13 +706,14 @@ class RelayService:
             self._wait(min(remaining, self._poll_interval_s), seen)
 
     def _ack(self, call: _Call, params: Mapping[str, Any], granted: _Granted, ingress: str) -> dict[str, Any]:
-        registration = self._registration(params)
-        return dict(self._mailbox.ack(self._table.address(registration.session_id), params["message_id"]))
+        registration = self._registration(call, params)
+        return dict(self._mailbox.ack(self._table.address(registration.session_id, registration.harness),
+                                      params["message_id"]))
 
     def _reply(self, call: _Call, params: Mapping[str, Any], granted: _Granted, ingress: str) -> dict[str, Any]:
-        registration = self._registration(params)
+        registration = self._registration(call, params)
         return dict(self._mailbox.reply(
-            self._table.address(registration.session_id), params["in_reply_to"], params["state"], params["body"],
+            self._table.address(registration.session_id, registration.harness), params["in_reply_to"], params["state"], params["body"],
             id=params.get("id"),
         ))
 
@@ -777,9 +788,9 @@ class RelayService:
             parsed = P.parse_target(target)
         except P.RelayError:
             return None
-        if not isinstance(parsed, P.Address) or parsed.machine != self.machine or parsed.harness != "claude":
+        if not isinstance(parsed, P.Address) or parsed.machine != self.machine or parsed.harness not in P.CHANNEL_HARNESSES:
             return None
-        return str(parsed) if self._table.ended_reason(parsed.session) is not None else None
+        return str(parsed) if self._table.ended_reason(parsed.session, parsed.harness) is not None else None
 
     def _replies_snapshot(self, params: Mapping[str, Any], address: Optional[str], limit: int) -> list[dict[str, Any]]:
         if "message_id" in params:

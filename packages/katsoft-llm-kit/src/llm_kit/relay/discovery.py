@@ -38,12 +38,20 @@ agree with the process creation time within a second); for a registration it
 is the process creation time read when ``register`` arrived. A scanned Claude
 file with no usable ``startedAt`` cannot be verified and is not live.
 
-Codex. Liveness of a Codex session is NOT detected: a Codex process does not
-hold its rollout file open between writes (checked with ``psutil.open_files``
-on a machine running Codex; no process listed an open rollout), and the
-processes found are shared app-servers that serve many sessions. Scanned Codex
-sessions are therefore ``idle`` when the rollout was written within
-``idle_window_s`` and ``ended`` otherwise; never ``live-*``.
+Codex. A Codex process does not hold its rollout file open between writes, so
+the rollout says nothing about liveness. The writer lock does:
+``<codex_home>/thread-writer-locks/<thread id>.lock`` is held OPEN by the
+process that owns the thread, from ``thread/start`` until it exits. A scanned
+Codex thread is ``live-read-only`` while some process holds its lock open
+(:class:`CodexLockProbe`, over ``psutil.open_files`` with a realpath compare:
+``~/.codex`` may be a symlink); the lock FILE merely existing never counts,
+because a killed process leaves it behind unheld. A held lock whose thread has
+no rollout yet (no turn run) is listed from the lock alone. Otherwise a
+scanned thread is ``idle`` when the rollout was written within
+``idle_window_s`` and ``ended`` after. A scanned thread is never
+``live-accepting``; a channel registration (harness ``codex``) is, and wins
+over the scan of the same id. A registered thread whose rollout does not exist
+yet reads as zero turns.
 
 The Claude session-file format is undocumented. Each file is parsed
 defensively (unknown fields ignored); a file that does not parse, or whose
@@ -87,6 +95,7 @@ _CODEX_HEAD_BYTES = 2 * 1024 * 1024
 _NONCE_MIN, _NONCE_MAX = 16, 128
 
 _SESSION_ID_RE = re.compile(P.SESSION_ID)
+_CODEX_LOCK_RE = re.compile(r"([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\.lock")
 _CODEX_ID_RE = re.compile(
     r"rollout-.+-([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\.jsonl"
 )
@@ -147,6 +156,10 @@ class DiscoveryRoots:
     def codex_sessions(self) -> Path:
         return self.codex_home / "sessions"
 
+    @property
+    def codex_locks(self) -> Path:
+        return self.codex_home / "thread-writer-locks"
+
 
 class ProbeError(Exception):
     """A process could not be examined (permission, platform), as opposed to not existing."""
@@ -181,6 +194,55 @@ class PsutilProbe:
             return None
         except psutil.Error as exc:
             raise ProbeError(f"cannot examine pid {pid}: {exc}") from exc
+
+
+class CodexLockProbe(Protocol):
+    def held(self, locks: Mapping[str, Path]) -> frozenset[str]:
+        """The keys of ``locks`` (thread id -> lock file path) whose file some process holds open.
+
+        Existence of the file is not an answer. Raises :class:`ProbeError` when the answer cannot be had."""
+
+
+class PsutilCodexLockProbe:
+    """:class:`CodexLockProbe` over ``psutil.open_files`` of every process this user may examine.
+
+    Paths are compared by realpath (``~/.codex`` is a symlink on some machines, and the open
+    file is reported through the target). A process that vanishes or is not ours to examine
+    (``AccessDenied``) cannot hold a lock of ours and is skipped.
+    """
+
+    def __init__(self) -> None:
+        try:
+            import psutil  # noqa: WPS433 - optional dependency, absence reported loudly
+        except ImportError as exc:  # pragma: no cover - environment specific
+            raise RuntimeError(
+                "session discovery needs psutil; install katsoft-llm-kit[relay] (or [local])"
+            ) from exc
+        self._psutil = psutil
+
+    @staticmethod
+    def _key(path: Any) -> str:
+        return os.path.normcase(os.path.realpath(path))
+
+    def held(self, locks: Mapping[str, Path]) -> frozenset[str]:
+        if not locks:
+            return frozenset()
+        psutil = self._psutil
+        wanted = {self._key(path): thread_id for thread_id, path in locks.items()}
+        found: set[str] = set()
+        try:
+            for proc in psutil.process_iter():
+                try:
+                    opened = proc.open_files()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+                for entry in opened:
+                    thread_id = wanted.get(self._key(entry.path))
+                    if thread_id is not None:
+                        found.add(thread_id)
+        except psutil.Error as exc:
+            raise ProbeError(f"cannot list the files open in processes: {exc}") from exc
+        return frozenset(found)
 
 
 def process_matches(
@@ -249,7 +311,11 @@ class HeartbeatOutcome:
 
 
 class RegistrationTable:
-    """In-memory channel registrations, keyed by session id (protocol section 9).
+    """In-memory channel registrations, keyed by harness and session id (protocol section 9).
+
+    The harness (``claude`` or ``codex``) is part of the key, of the address and of the
+    tombstone: the same id under another harness is another session. Methods that take a
+    ``harness`` default to ``claude``.
 
     Thread-safe. State is committed before end listeners run; a listener that
     raises propagates its exception after every listener has run.
@@ -279,8 +345,8 @@ class RegistrationTable:
         self._id_factory = id_factory
         self._tolerance = start_tolerance_s
         self._lock = threading.RLock()
-        self._by_session: dict[str, Registration] = {}
-        self._tombstones: dict[str, tuple[str, float]] = {}
+        self._by_session: dict[tuple[str, str], Registration] = {}
+        self._tombstones: dict[tuple[str, str], tuple[str, float]] = {}
         self._listeners: list[Callable[[EndEvent], None]] = []
 
     # -- listeners --------------------------------------------------------
@@ -318,13 +384,14 @@ class RegistrationTable:
 
     # -- helpers ----------------------------------------------------------
 
-    def address(self, session_id: str) -> str:
-        return f"{self.machine}/claude/{session_id}"
+    def address(self, session_id: str, harness: str = "claude") -> str:
+        return f"{self.machine}/{harness}/{session_id}"
 
     def _end(self, registration: Registration, reason: str, now: float) -> EndEvent:
-        self._by_session.pop(registration.session_id, None)
-        self._tombstones[registration.session_id] = (reason, now)
-        return EndEvent(self.address(registration.session_id), registration.session_id,
+        key = (registration.harness, registration.session_id)
+        self._by_session.pop(key, None)
+        self._tombstones[key] = (reason, now)
+        return EndEvent(self.address(registration.session_id, registration.harness), registration.session_id,
                         registration.registration_id, reason, now)
 
     def _sweep(self, now: float) -> list[EndEvent]:
@@ -333,21 +400,21 @@ class RegistrationTable:
             for r in list(self._by_session.values())
             if r.lease_expires_at <= now
         ]
-        for session_id, (_, at) in list(self._tombstones.items()):
+        for key, (_, at) in list(self._tombstones.items()):
             if now - at > self._tombstone_s:
-                del self._tombstones[session_id]
+                del self._tombstones[key]
         return events
 
-    def _by_id(self, registration_id: str, nonce: str) -> Registration:
+    def _by_id(self, registration_id: str, nonce: str, harness: str = "claude") -> Registration:
         for registration in self._by_session.values():
-            if registration.registration_id == registration_id:
+            if registration.registration_id == registration_id and registration.harness == harness:
                 if not hmac.compare_digest(registration.channel_nonce.encode(), str(nonce).encode()):
                     raise P.RelayError("nonce_mismatch", "channel nonce does not match the registration")
                 return registration
         raise P.RelayError("registration_unknown", "unknown or lapsed registration; register again")
 
-    def _find(self, registration_id: str, session_id: str, nonce: str) -> Registration:
-        registration = self._by_id(registration_id, nonce)
+    def _find(self, registration_id: str, session_id: str, nonce: str, harness: str = "claude") -> Registration:
+        registration = self._by_id(registration_id, nonce, harness)
         if registration.session_id != session_id:
             raise P.RelayError(
                 "registration_unknown", "the registration belongs to another session id; register again"
@@ -383,8 +450,8 @@ class RegistrationTable:
     ) -> RegisterOutcome:
         """Register a session. A same-session same-pid register replaces the old registration
         (``replaced``); one from another live pid with an unexpired lease is ``registration_conflict``."""
-        if harness != "claude":
-            raise P.RelayError("bad_request", "only harness claude registers")
+        if harness not in P.CHANNEL_HARNESSES:
+            raise P.RelayError("bad_request", f"harness must be one of {P.CHANNEL_HARNESSES}")
         if not isinstance(session_id, str) or not _SESSION_ID_RE.fullmatch(session_id) or session_id == "latest":
             raise P.RelayError("bad_request", f"{session_id!r} is not a session id")
         if not isinstance(pid, int) or isinstance(pid, bool) or pid < 1:
@@ -401,7 +468,7 @@ class RegistrationTable:
         now = self._clock()
         with self._locked(now) as events:
             replaced = False
-            existing = self._by_session.get(session_id)
+            existing = self._by_session.get((harness, session_id))
             if existing is not None:
                 if existing.pid != pid and self._alive(existing):
                     raise P.RelayError(
@@ -409,17 +476,17 @@ class RegistrationTable:
                         "a live registration from another process holds this session",
                         details={"pid": existing.pid},
                     )
-                del self._by_session[session_id]
+                del self._by_session[(harness, session_id)]
                 replaced = True
             for other in list(self._by_session.values()):
-                if other.pid == pid and other.session_id != session_id:
+                if other.pid == pid and (other.harness, other.session_id) != (harness, session_id):
                     # one process, one registration: the process moved on to another session id
                     events.append(self._end(other, "session_changed", now))
-            self._tombstones.pop(session_id, None)
+            self._tombstones.pop((harness, session_id), None)
             registration = Registration(
                 registration_id=self._id_factory(),
                 session_id=session_id,
-                harness="claude",
+                harness=harness,
                 pid=pid,
                 pid_start=pid_start,
                 cwd=cwd,
@@ -433,7 +500,7 @@ class RegistrationTable:
                 last_seen_at=now,
                 lease_expires_at=now + self._lease_s,
             )
-            self._by_session[session_id] = registration
+            self._by_session[(harness, session_id)] = registration
         return RegisterOutcome(registration, replaced)
 
     def heartbeat(
@@ -447,6 +514,7 @@ class RegistrationTable:
         title: Optional[str] = None,
         task: Optional[str] = None,
         accepts: Optional[Sequence[str]] = None,
+        harness: str = "claude",
     ) -> HeartbeatOutcome:
         """Renew the lease and update metadata; with ``previous_session_id`` rename the session.
 
@@ -454,11 +522,15 @@ class RegistrationTable:
         ``session_changed`` and an :class:`EndEvent` for it is emitted (the mailbox then ends
         that address's open messages). A heartbeat repeated after a successful rename (the new
         id already registered, ``previous_session_id`` stale) is an ordinary heartbeat.
+        A Codex thread id does not change in a running channel, so a ``codex`` heartbeat with a
+        ``previous_session_id`` that differs is ``bad_request``.
         """
         kinds = self._check_accepts(accepts) if accepts is not None else None
         now = self._clock()
         with self._locked(now) as events:
-            current = self._by_id(registration_id, channel_nonce)
+            current = self._by_id(registration_id, channel_nonce, harness)
+            if harness == "codex" and previous_session_id is not None and previous_session_id != session_id:
+                raise P.RelayError("bad_request", "a codex thread id does not change: previous_session_id is refused")
             if (
                 previous_session_id is not None
                 and previous_session_id != session_id
@@ -467,20 +539,20 @@ class RegistrationTable:
                 registration = current
                 if not _SESSION_ID_RE.fullmatch(session_id) or session_id == "latest":
                     raise P.RelayError("bad_request", f"{session_id!r} is not a session id")
-                clash = self._by_session.get(session_id)
+                clash = self._by_session.get((harness, session_id))
                 if clash is not None:
                     raise P.RelayError("registration_conflict", "another registration holds the new session id")
-                del self._by_session[previous_session_id]
-                self._tombstones[previous_session_id] = ("session_changed", now)
-                self._tombstones.pop(session_id, None)
+                del self._by_session[(harness, previous_session_id)]
+                self._tombstones[(harness, previous_session_id)] = ("session_changed", now)
+                self._tombstones.pop((harness, session_id), None)
                 events.append(
-                    EndEvent(self.address(previous_session_id), previous_session_id,
+                    EndEvent(self.address(previous_session_id, harness), previous_session_id,
                              registration.registration_id, "session_changed", now)
                 )
-                changed, old = True, self.address(previous_session_id)
+                changed, old = True, self.address(previous_session_id, harness)
                 registration = replace(registration, session_id=session_id)
             else:
-                registration = self._find(registration_id, session_id, channel_nonce)
+                registration = self._find(registration_id, session_id, channel_nonce, harness)
                 changed, old = False, None
             registration = replace(
                 registration,
@@ -491,7 +563,7 @@ class RegistrationTable:
                 last_seen_at=now,
                 lease_expires_at=now + self._lease_s,
             )
-            self._by_session[registration.session_id] = registration
+            self._by_session[(harness, registration.session_id)] = registration
         return HeartbeatOutcome(registration, changed, old)
 
     def peek(self, registration_id: str) -> Optional[Registration]:
@@ -505,23 +577,25 @@ class RegistrationTable:
                     return registration
         return None
 
-    def touch(self, registration_id: str, session_id: str, channel_nonce: str) -> Registration:
+    def touch(self, registration_id: str, session_id: str, channel_nonce: str,
+              harness: str = "claude") -> Registration:
         """Renew the lease (``poll`` does this)."""
         now = self._clock()
         with self._locked(now) as events:
             registration = replace(
-                self._find(registration_id, session_id, channel_nonce),
+                self._find(registration_id, session_id, channel_nonce, harness),
                 last_seen_at=now,
                 lease_expires_at=now + self._lease_s,
             )
-            self._by_session[session_id] = registration
+            self._by_session[(harness, session_id)] = registration
         return registration
 
-    def deregister(self, registration_id: str, session_id: str, channel_nonce: str) -> EndEvent:
+    def deregister(self, registration_id: str, session_id: str, channel_nonce: str,
+                   harness: str = "claude") -> EndEvent:
         """End a registration on a clean exit."""
         now = self._clock()
         with self._locked(now) as events:
-            registration = self._find(registration_id, session_id, channel_nonce)
+            registration = self._find(registration_id, session_id, channel_nonce, harness)
             event = self._end(registration, "deregistered", now)
             events.append(event)
         return event
@@ -541,16 +615,16 @@ class RegistrationTable:
         with self._lock:
             return list(self._by_session.values())
 
-    def get(self, session_id: str) -> Optional[Registration]:
+    def get(self, session_id: str, harness: str = "claude") -> Optional[Registration]:
         self.expire_lapsed()
         with self._lock:
-            return self._by_session.get(session_id)
+            return self._by_session.get((harness, session_id))
 
-    def ended_reason(self, session_id: str) -> Optional[str]:
-        """Why ``session_id`` ended, while its tombstone is retained."""
+    def ended_reason(self, session_id: str, harness: str = "claude") -> Optional[str]:
+        """Why ``session_id`` of ``harness`` ended, while its tombstone is retained."""
         self.expire_lapsed()
         with self._lock:
-            tomb = self._tombstones.get(session_id)
+            tomb = self._tombstones.get((harness, session_id))
             return tomb[0] if tomb else None
 
     def is_alive(self, registration: Registration) -> bool:
@@ -636,6 +710,7 @@ class Discovery:
         *,
         table: Optional[RegistrationTable] = None,
         probe: Optional[ProcessProbe] = None,
+        codex_lock_probe: Optional[CodexLockProbe] = None,
         clock: Callable[[], float] = time.time,
         idle_window_s: int = DEFAULT_IDLE_WINDOW_S,
         max_transcripts: int = DEFAULT_MAX_TRANSCRIPTS,
@@ -650,6 +725,7 @@ class Discovery:
         self.table = table if table is not None else RegistrationTable(
             machine, probe=self._probe, clock=clock, start_tolerance_s=start_tolerance_s
         )
+        self._codex_lock_probe = codex_lock_probe
         self._clock = clock
         self._idle_window_s = idle_window_s
         self._max_transcripts = max_transcripts
@@ -797,7 +873,61 @@ class Discovery:
         payload = obj.get("payload") if isinstance(obj, Mapping) else None
         return payload if isinstance(payload, Mapping) else None
 
+    def _held_codex_threads(self, skipped: list[SkippedEntry]) -> dict[str, float]:
+        """Thread id -> lock file mtime for every writer lock some process holds open.
+
+        ``<codex_home>/thread-writer-locks/<id>.lock``; any other entry (``.coordination.lock``)
+        is ignored. The lock file existing is not enough: a killed process leaves it unheld.
+        A probe that cannot answer is reported in ``skipped`` and nothing counts as held.
+        """
+        directory = self.roots.codex_locks
+        if not directory.is_dir():
+            return {}
+        locks: dict[str, Path] = {}
+        mtimes: dict[str, float] = {}
+        try:
+            entries = sorted(directory.iterdir())
+        except OSError as exc:
+            skipped.append(SkippedEntry(str(directory), f"unreadable: {exc.strerror or exc}"))
+            return {}
+        for entry in entries:
+            match = _CODEX_LOCK_RE.fullmatch(entry.name)
+            if match is None:
+                continue
+            try:
+                if not entry.is_file():
+                    continue
+                mtimes[match.group(1).lower()] = entry.stat().st_mtime
+            except OSError as exc:
+                skipped.append(SkippedEntry(str(entry), f"unreadable: {exc.strerror or exc}"))
+                continue
+            locks[match.group(1).lower()] = entry
+        if not locks:
+            return {}
+        if self._codex_lock_probe is None:
+            self._codex_lock_probe = PsutilCodexLockProbe()
+        try:
+            held = self._codex_lock_probe.held(locks)
+        except ProbeError as exc:
+            skipped.append(SkippedEntry(str(directory), str(exc)))
+            return {}
+        return {thread_id: mtimes[thread_id] for thread_id in sorted(held) if thread_id in mtimes}
+
     def _scan_codex(self, now: float, skipped: list[SkippedEntry]) -> list[SessionInfo]:
+        held = self._held_codex_threads(skipped)
+        sessions = self._scan_codex_rollouts(now, skipped, held)
+        seen = {s.session_id for s in sessions}
+        # a held lock whose thread has no rollout (no turn run yet): listed from the lock alone
+        for thread_id, mtime in held.items():
+            if thread_id not in seen:
+                sessions.append(
+                    SessionInfo("codex", thread_id, "live-read-only", False, (), None, None, None, None, None, mtime, None)
+                )
+        return sessions
+
+    def _scan_codex_rollouts(
+        self, now: float, skipped: list[SkippedEntry], held: Mapping[str, float]
+    ) -> list[SessionInfo]:
         root = self.roots.codex_sessions
         if not root.is_dir():
             return []
@@ -841,9 +971,9 @@ class Discovery:
                     continue
                 cwd = _short(meta.get("cwd"), 1000)
             version = _short(meta.get("cli_version"), 64) if meta is not None else None
+            state = "live-read-only" if session_id in held else self._state_without_process(mtime, now)
             sessions.append(
-                SessionInfo("codex", session_id, self._state_without_process(mtime, now), False, (),
-                            cwd, None, None, None, version, mtime, path)
+                SessionInfo("codex", session_id, state, False, (), cwd, None, None, None, version, mtime, path)
             )
         return sessions
 
@@ -854,15 +984,19 @@ class Discovery:
                 alive = self.table.is_alive(registration)
             except ProbeError:
                 alive = False
-            base = by_id.get(("claude", registration.session_id))
+            key = (registration.harness, registration.session_id)
+            base = by_id.get(key)
             tpath = Path(registration.transcript_path) if registration.transcript_path else (base.transcript if base else None)
+            if (registration.harness == "codex" and base is not None and base.transcript is not None
+                    and (tpath is None or not tpath.exists())):
+                tpath = base.transcript  # the rollout appeared at another path than the registration named
             last = base.last_activity_at if base and base.last_activity_at is not None else registration.last_seen_at
             if alive:
                 state = "live-accepting" if registration.accepts else "live-read-only"
             else:
                 state = self._state_without_process(last, now)
-            by_id[("claude", registration.session_id)] = SessionInfo(
-                "claude", registration.session_id, state, True, registration.accepts,
+            by_id[key] = SessionInfo(
+                registration.harness, registration.session_id, state, True, registration.accepts,
                 registration.cwd or (base.cwd if base else None),
                 registration.title or (base.title if base else None),
                 registration.task, registration.pid,
@@ -871,8 +1005,8 @@ class Discovery:
             )
         merged: list[SessionInfo] = []
         for info in by_id.values():
-            if info.harness == "claude" and info.state not in LIVE_STATES and not info.registered:
-                if self.table.ended_reason(info.session_id) == "session_changed":
+            if info.state not in LIVE_STATES and not info.registered:
+                if self.table.ended_reason(info.session_id, info.harness) == "session_changed":
                     info = replace(info, state="ended")
             merged.append(info)
         return merged
@@ -942,6 +1076,13 @@ class Discovery:
     ) -> dict[str, Any]:
         """``read_session``: a capped, redacted transcript tail as the protocol result object."""
         info = self.resolve(address)
+        if info.harness == "codex" and info.registered and (info.transcript is None or not info.transcript.exists()):
+            # a registered thread has no rollout until its first turn: zero turns, not an error
+            if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= P.MAX_READ_TURNS:
+                raise P.RelayError("bad_request", f"limit must be an integer in 1..{P.MAX_READ_TURNS}")
+            if since is not None:
+                T.parse_cursor(since)
+            return T.TailResult(info.address(self.machine), [], T.format_cursor(0), False, 0).to_result()
         if info.transcript is None:
             raise P.RelayError("target_not_found", f"session {info.address(self.machine)} has no transcript")
         return T.read_transcript(

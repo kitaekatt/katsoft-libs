@@ -747,9 +747,9 @@ def bind_loopback(host: str, port: int) -> socket.socket:
 #: What a write tool's description adds: who accepts it (the relay enforces this, module docstring).
 WRITE_NOTES: Mapping[str, str] = {
     "send_message": (
-        "Accepted only by a session the user opted in (launched with the llm-kit channel, clauder --relay); "
-        "any other session refuses it not_opted_in, and one whose process is gone session_ended. `to` must be "
-        "a full address <machine>/claude/<session> from list_sessions."
+        "Accepted only by a session the user opted in (launched with the llm-kit channel, clauder --relay, or "
+        "`llm-kit relay codex`); any other session refuses it not_opted_in, and one whose process is gone "
+        "session_ended. `to` must be a full address <machine>/<claude|codex>/<session> from list_sessions."
     ),
     "answer_question": (
         "Answers or rejects any open question as the user would with `llm-kit jobs resolve` (the job is not "

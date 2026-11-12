@@ -286,6 +286,14 @@ def hub_two(machine_a, machine_b) -> Iterator[Hub]:
 # the tools and their schemas
 # --------------------------------------------------------------------------
 
+def test_the_send_message_note_names_both_session_harnesses_and_the_codex_channel_command(hub):
+    note = H.WRITE_NOTES["send_message"]
+    assert "<machine>/<claude|codex>/<session>" in note and "`llm-kit relay codex`" in note
+    assert "<machine>/claude/<session>" not in note
+    tools = {t.name: t for t in hub.run(lambda c: c.list_tools()).tools}
+    assert note in tools["send_message"].description
+
+
 def test_the_hub_serves_every_hub_verb_with_the_verbs_schemas(hub):
     tools = {t.name: t for t in hub.run(lambda c: c.list_tools()).tools}
     assert H.P1_TOOLS == ("list_machines", "list_sessions", "read_session", "ask_llm")
