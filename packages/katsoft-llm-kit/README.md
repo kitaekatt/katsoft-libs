@@ -137,7 +137,7 @@ is `openai-compat`. OpenRouter is one endpoint it serves, not its name. `llm-kit
 (`llm_kit.adapters.capabilities.adapter_capabilities()`) report `openai-compat`. The
 `openrouter` registry entry, openrouter.ai URLs and `llm-kit account` keep their names.
 
-Unreleased (ships in the next minor release, 1.17.0): before it the adapter was named
+Since 1.17.0: before it the adapter was named
 `openrouter`. The old name is still read: a capability table, constructor table or catalog
 `modes_by_adapter` keyed by `openrouter` serves `openai-compat`; a `BackendSpec` that says
 `backend="openrouter"` builds the same backend; job-ledger and pipeline-run rows that store
