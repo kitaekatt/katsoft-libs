@@ -160,6 +160,14 @@ SERVER_NAMES = frozenset({"ninfer-serve", "llama-server"})
 #: interpreter, so it is recognised by argv only, and only for reporting.
 MLX_SERVER_MODULE = "mlx_lm.server"
 
+#: Basalt (Flash-Next) runs as two processes that no process name identifies.
+#: The engine is process name ``basalt`` with argv ``<dir>/bin/basalt --serve ...``;
+#: the server is the venv Python with argv ``python -m serve.server --engine-bin
+#: <dir>/bin/basalt ...``. Both match by argv ANCHORED at argv[0], so a shell or
+#: wrapper that merely mentions the strings never matches.
+BASALT_ENGINE_NAME = "basalt"
+BASALT_SERVER_MODULE = "serve.server"
+
 #: llama-swap endpoint that unloads every resident model (POST, no body).
 UNLOAD_PATH = "/api/models/unload"
 
@@ -510,6 +518,28 @@ def terminate_model(
 # ---------------------------------------------------------------------------
 
 
+def _is_basalt(name: str, cmdline: Tuple[str, ...]) -> bool:
+    """True for the Basalt engine or server, matched by anchored argv."""
+    if not cmdline:
+        return False
+    argv0 = cmdline[0].replace("\\", "/")
+    if name == BASALT_ENGINE_NAME:
+        return (
+            argv0.endswith("/bin/" + BASALT_ENGINE_NAME)
+            and len(cmdline) > 1
+            and cmdline[1] == "--serve"
+        )
+    if name.lower().startswith("python") and argv0.rsplit("/", 1)[-1].lower().startswith("python"):
+        if cmdline[1:3] != ("-m", BASALT_SERVER_MODULE) or "--engine-bin" not in cmdline[3:]:
+            return False
+        i = cmdline.index("--engine-bin", 3)
+        return (
+            i + 1 < len(cmdline)
+            and cmdline[i + 1].replace("\\", "/").endswith("/bin/" + BASALT_ENGINE_NAME)
+        )
+    return False
+
+
 def classify_server(rec: "ProcessRecord") -> Optional[bool]:
     """True for a recognised model server, False if not, None if unreadable."""
     name = _norm(rec.name)
@@ -519,6 +549,8 @@ def classify_server(rec: "ProcessRecord") -> Optional[bool]:
         return True
     if rec.cmdline is None:
         return None if name.lower().startswith("python") else False
+    if _is_basalt(name, rec.cmdline):
+        return True
     for arg in rec.cmdline:
         base = arg.replace("\\", "/").rstrip("/")
         if base == MLX_SERVER_MODULE or base.endswith("/" + MLX_SERVER_MODULE):
@@ -848,6 +880,8 @@ __all__ = [
     "SWAPPER_NAME",
     "SERVER_NAMES",
     "MLX_SERVER_MODULE",
+    "BASALT_ENGINE_NAME",
+    "BASALT_SERVER_MODULE",
     "UNLOAD_PATH",
     "SwapperClient",
     "is_loopback_url",
