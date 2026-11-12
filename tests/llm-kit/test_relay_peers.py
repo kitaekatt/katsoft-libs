@@ -701,24 +701,37 @@ def test_peer_dirs_validated(machine_a, machine_b, tmp_path):
         L.write_peer_credentials(paths, B, "a", "b")
 
 
+def _nt_private_file_events(acl: FakeWinacl, name_prefix: str) -> list[list[tuple[str, int]]]:
+    """For each temp file whose name starts with ``name_prefix``: its ordered ``(operation, size)`` events."""
+    by_path: dict[str, list[tuple[str, int]]] = {}
+    for kind, path, _directory, size in acl.events:
+        if Path(path).name.startswith(name_prefix):
+            by_path.setdefault(path, []).append((kind, size))
+    return list(by_path.values())
+
+
 def test_peer_credentials_are_private_on_nt_through_winacl(monkeypatch, tmp_path):
     acl = FakeWinacl()
     monkeypatch.setattr(L, "_on_nt", lambda: True)
     monkeypatch.setattr(L, "winacl", acl)
     paths = C.StatePaths(tmp_path / "relay")
     L.write_peer_credentials(paths, B, "peer-relay-token", "peer-hub-bearer")
-    provisioned = {p: (d, size) for p, d, size in acl.of("provision")}
-    assert provisioned[str(paths.root)][0] is True                        # state root, then both peer directories
-    assert provisioned[str(paths.peers_dir)][0] is True and provisioned[str(paths.peer_dir(B))][0] is True
-    temps = [p for p in provisioned if Path(p).name.startswith(".relay.token.") or Path(p).name.startswith(".hub.bearer.")]
-    assert len(temps) == 2 and all(provisioned[t] == (False, 0) for t in temps)  # a temp file is private before its first byte
+    assert [p for p, _, _ in acl.of("create_dir")] == [str(paths.root)]          # the state root: created private, atomically
+    provisioned = {p for p, d, _ in acl.of("provision") if d}
+    assert {str(paths.peers_dir), str(paths.peer_dir(B))} <= provisioned          # both peer directories are provisioned ...
     validated = {p for p, _, _ in acl.of("validate")}
-    assert {str(paths.peer_relay_token(B)), str(paths.peer_hub_bearer(B)), str(paths.peers_dir), str(paths.peer_dir(B))} <= validated
+    assert {str(paths.peers_dir), str(paths.peer_dir(B))} <= validated            # ... and validated
+    for prefix in (".relay.token.", ".hub.bearer."):
+        # each credential temp file is created with the private descriptor (size 0: no secret byte yet), then
+        # provisioned and validated through the creating handle, in that order, before anything is written
+        (events,) = _nt_private_file_events(acl, prefix)
+        assert events == [("create_file", 0), ("provision_fd", 0), ("validate_fd", 0)], prefix
+    assert str(paths.peer_relay_token(B)) in validated and str(paths.peer_hub_bearer(B)) in validated  # and at the final path
     assert paths.peer_relay_token(B).read_text(encoding="ascii") == "peer-relay-token\n"
     acl.events.clear()
     assert L.peer_credentials(paths, B) == ("peer-relay-token", "peer-hub-bearer")
-    assert {p for p, _, _ in acl.of("validate")} == {str(paths.peers_dir), str(paths.peer_dir(B)),
-                                                    str(paths.peer_relay_token(B)), str(paths.peer_hub_bearer(B))}
+    assert {p for p, _, _ in acl.of("validate")} == {str(paths.peers_dir), str(paths.peer_dir(B))}
+    assert {p for p, _, _ in acl.of("validate_fd")} == {str(paths.peer_relay_token(B)), str(paths.peer_hub_bearer(B))}  # read through the judged handle
 
 
 # --------------------------------------------------------------------------
@@ -768,11 +781,12 @@ def test_hub_oauth_store_is_written_through_the_private_file_helpers(monkeypatch
     store._clients["client-1"] = {"redirect_uris": []}
     store._save_locked()
     assert json.loads(path.read_text(encoding="utf-8"))["clients"] == {"client-1": {"redirect_uris": []}}
-    provisioned = [(p, size) for p, d, size in acl.of("provision")]
-    temps = [(p, size) for p, size in provisioned if Path(p).name.startswith(".hub-oauth.json.")]
-    assert len(temps) == 1 and temps[0][1] == 0                      # private before the first byte
+    (events,) = _nt_private_file_events(acl, ".hub-oauth.json.")      # the temp file: created private, judged by its handle,
+    assert events == [("create_file", 0), ("provision_fd", 0), ("validate_fd", 0)]  # all before the first byte
     assert str(path) in {p for p, _, _ in acl.of("validate")}        # and validated at its final path
-    reloaded = HO.TokenStore(path)                                    # a read validates it again
+    acl.events.clear()
+    reloaded = HO.TokenStore(path)                                    # a read validates it again, by handle
+    assert [p for p, _, _ in acl.of("validate_fd")] == [str(path)]
     assert reloaded.client("client-1") == {"redirect_uris": []}
 
 
