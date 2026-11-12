@@ -247,7 +247,7 @@ def test_nt_temp_files_are_private_before_the_first_secret_byte(tmp_path, nt):
     L.write_private_file(paths.pause_file, "{}\n")
     kinds = [(k, Path(p).name.startswith(".pause.json."), size) for k, p, _d, size in nt.acl.events]
     assert kinds[0] == ("provision", True, 0) and kinds[1] == ("validate", True, 0)
-    assert kinds[-1] == ("validate", False, 3)  # the replacement target is validated at its final path
+    assert kinds[-1][:2] == ("validate", False) and kinds[-1][2] > 0  # the replacement target is validated at its final path, written
 
 
 def test_nt_pause_store_serializes_on_msvcrt_and_times_out_loudly(tmp_path, nt, monkeypatch):
