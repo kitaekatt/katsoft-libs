@@ -571,11 +571,21 @@ single-user OAuth sign-in for the claude.ai connector, specified in
   variables. A connection that cannot be opened within 3 seconds, and an HTTP
   502, 503 or 504 answer that carries no relay envelope (a tunnel in front of
   a relay that is down), are `machine_unreachable` for that peer.
-- Label check: the machine a relay reports (the `machine` of each entry in its
-  `machines` list, and the machine of each address it returns) must equal the
-  label the hub configured for it. A relay that reports another machine is
-  refused `internal`, naming both labels, and the fan-out verbs list that
-  machine `unreachable` with that error; nothing else the relay said is used.
+- Label check: every machine a relay's result names must equal the label the
+  hub configured for it, in each field that carries one: the `machine` and
+  `endpoints` of `list_machines`; the `machine` and `address` of each session
+  and the `machine` of each reach entry in `list_sessions`; the `machine` and
+  the `q:<machine>/...` id of each question in `list_questions`; the `address`
+  of `read_session`; the `endpoint` of `ask_llm`; the `to` and `sender` of
+  each message and the `sender` of its reply in `send_message` and
+  `get_replies`; the id of `answer_question`. A hub-origin sender
+  (`claude.ai/<user>`) names no machine. A relay that names another machine,
+  or a machine field that is not well formed, is refused `internal`, naming
+  both labels and the field, before the hub aggregates, routes or shows any of
+  the result; the fan-out verbs list that machine `unreachable` with that
+  error. Free text (turns, bodies) is never read. The table of fields is
+  `LABELED_FIELDS` in `hub.py`, and a test fails when a response schema gains
+  a machine-bearing field that is not in it.
 - Fan-out: `list_machines`, `list_sessions` and `list_questions` ask every
   relay in parallel and mark a relay that cannot answer `unreachable` with its
   error object instead of omitting it. `list_sessions` with a `machine` the hub

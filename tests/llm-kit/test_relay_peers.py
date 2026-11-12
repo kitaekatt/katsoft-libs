@@ -137,7 +137,8 @@ class CannedServer:
 
 def status_envelope(machine: str) -> bytes:
     """A valid ``list_machines`` response envelope for ``machine`` (the schema's own up example)."""
-    entry = dict(P.load_schema("machine")["examples"][0], machine=machine)
+    base = P.load_schema("machine")["examples"][0]
+    entry = dict(base, machine=machine, endpoints=[e.replace("m5pro/", f"{machine}/", 1) for e in base.get("endpoints", [])])
     return json.dumps({"protocol": P.PROTOCOL, "id": None, "ok": True, "result": {"machines": [entry]}}).encode("ascii")
 
 
@@ -329,6 +330,195 @@ def test_the_hub_builds_every_configured_peer_with_the_short_connect_timeout(mac
     finally:
         for client in clients:
             client.close()
+
+
+# --------------------------------------------------------------------------
+# the label check covers every machine-bearing field of every result
+# --------------------------------------------------------------------------
+
+SESSION_UUID = "7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11"
+
+
+class FakeRelay:
+    """A relay that answers each verb with a canned result (a deep copy) and records nothing else."""
+
+    def __init__(self, machine: str, results: dict[str, Any]) -> None:
+        self.machine = machine
+        self.results = results
+
+    def close(self) -> None:
+        pass
+
+    def __getattr__(self, verb: str):
+        def call(params: Any, *, origin: str, grant: Any = None) -> Any:
+            import copy
+
+            return copy.deepcopy(self.results[verb])
+        return call
+
+
+def example(verb: str) -> dict[str, Any]:
+    """The schema's own valid example of ``verb``'s result (every machine in it is ``m5pro``), with a reply on its message."""
+    import copy
+
+    result = copy.deepcopy(P.load_schema(P.response_schema_name(verb))["examples"][0])
+    reply = {"id": P.load_schema("reply_record")["examples"][0]["id"], "in_reply_to": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW",
+             "sender": f"channel:m5pro/claude/{SESSION_UUID}", "state": "answered", "body": "yes", "at": 1793664010.0}
+    if verb in ("list_machines", "list_sessions", "list_questions"):
+        result["machines"] = result["machines"][:1]  # the schema's example also lists a second, unreachable machine
+    for message in ([result["message"]] if verb == "send_message" else result.get("messages", []) if verb == "get_replies" else []):
+        message["reply"] = reply
+    return result
+
+
+def hub_call(tmp: Path, clients: list[Any], tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    paths = C.StatePaths(tmp / "router-state")
+    L.ensure_state_dir(paths)
+    router = H.HubRouter(clients, pause=L.PauseStore(paths), origin="claude.ai/owner")
+    try:
+        return router.call(tool, arguments)
+    finally:
+        router.close()
+
+
+ROUTED_ARGUMENTS = {
+    "read_session": {"address": f"m5pro/claude/{SESSION_UUID}"},
+    "ask_llm": {"endpoint": "m5pro/llm/qwen38-m5-32k-local", "prompt": "hi"},
+    "send_message": {"to": f"m5pro/claude/{SESSION_UUID}", "kind": "note", "body": "hi"},
+    "get_replies": {"address": f"m5pro/claude/{SESSION_UUID}"},
+    "answer_question": {"id": "q:m5pro/jobs-main:run-20261103-01:7", "decision": "reject"},
+}
+FAN_OUT = ("list_machines", "list_sessions", "list_questions")
+
+
+def spoof(kind: str, value: str) -> str:
+    """``value`` with its machine replaced by ``tower``."""
+    if kind == "label":
+        return "tower"
+    if kind == "question_id":
+        return value.replace("q:m5pro/", "q:tower/", 1)
+    if kind == "identity":
+        return value.replace(":m5pro", ":tower", 1)
+    return "tower" + value[len("m5pro"):]
+
+
+def set_values(result: Any, path: str, kind: str) -> int:
+    """Rewrite every value at ``path`` to name ``tower``; the number rewritten."""
+    nodes, count = [result], 0
+    segments = path.split(".")
+    for index, segment in enumerate(segments):
+        each, key = segment.endswith("[]"), segment.rstrip("[]")
+        last = index == len(segments) - 1
+        stepped = []
+        for node in nodes:
+            if not isinstance(node, dict) or key not in node:
+                continue
+            if last and each:
+                node[key] = [spoof(kind, v) for v in node[key]]
+                count += len(node[key])
+            elif last:
+                node[key] = spoof(kind, node[key])
+                count += 1
+            else:
+                stepped.extend(node[key] if each else [node[key]])
+        nodes = stepped
+    return count
+
+
+ALL_FIELDS = [(verb, path, kind) for verb, fields in H.LABELED_FIELDS.items() for path, kind in fields]
+
+
+@pytest.mark.parametrize("verb", list(H.LABELED_FIELDS))
+def test_a_result_naming_only_its_own_machine_passes_the_label_check(tmp_path, verb):
+    relay = FakeRelay("m5pro", {verb: example(verb)})
+    args = ROUTED_ARGUMENTS.get(verb, {})
+    result = hub_call(tmp_path, [relay], verb, args)
+    expected = example(verb)  # the control: the schema's own example is accepted whole, nothing marked unreachable
+    if verb == "list_questions":
+        expected["ledgers"] = []  # the hub adds this merged list
+    assert result == expected
+
+
+@pytest.mark.parametrize("verb,path,kind", ALL_FIELDS, ids=[f"{v}.{p}" for v, p, _ in ALL_FIELDS])
+def test_every_machine_bearing_field_is_checked(tmp_path, verb, path, kind):
+    forged = example(verb)
+    assert set_values(forged, path, kind) >= 1, f"the example of {verb} has no value at {path}"
+    relay = FakeRelay("m5pro", {verb: forged})
+    if verb in FAN_OUT:
+        result = hub_call(tmp_path, [relay], verb, {})
+        assert not result.get("sessions") and not result.get("questions")  # nothing the peer said is passed on
+        reach = [m for m in result["machines"] if m["machine"] == "m5pro"]
+        assert [(m["status"], m["error"]["code"]) for m in reach] == [("unreachable", "internal")]
+        assert "tower" in reach[0]["error"]["message"] and "'m5pro'" in reach[0]["error"]["message"]
+    else:
+        with pytest.raises(P.RelayError) as caught:
+            hub_call(tmp_path, [relay], verb, ROUTED_ARGUMENTS[verb])
+        assert caught.value.code == "internal" and f"{verb}.{path}" in caught.value.message
+
+
+def test_a_peer_cannot_spoof_a_local_approval_prompt(tmp_path):
+    """The reproducer: a 5090w peer answers list_questions with a question that carries a local (m5pro) id."""
+    local = FakeRelay("m5pro", {"list_questions": {"questions": [], "machines": [
+        {"machine": "m5pro", "status": "up", "protocol": P.PROTOCOL}]}})
+    spoofed = example("list_questions")  # q:m5pro/..., machine m5pro, but served by the peer labelled 5090w
+    spoofed["machines"] = [{"machine": "5090w", "status": "up", "protocol": P.PROTOCOL}]
+    peer = FakeRelay("5090w", {"list_questions": spoofed})
+    result = hub_call(tmp_path, [local, peer], "list_questions", {})
+    assert result["questions"] == []
+    reach = {m["machine"]: m for m in result["machines"]}
+    assert reach["5090w"]["status"] == "unreachable" and reach["5090w"]["error"]["code"] == "internal"
+    assert reach["m5pro"]["status"] == "up"
+
+
+def _schema_machine_fields(verb: str) -> set[str]:
+    """Paths of every field in ``verb``'s response schema that is a machine label, address, identity or question id."""
+    schema = P.load_schema(P.response_schema_name(verb))
+    defs = schema.get("$defs", {})
+    kinds = {"machine_label", "address", "identity", "question_id"}
+    found: set[str] = set()
+
+    def walk(node: Any, path: str, seen: tuple[str, ...]) -> None:
+        if not isinstance(node, dict):
+            return
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            name = ref.rsplit("/", 1)[1]
+            if name in kinds:
+                found.add(path)
+                return
+            if name not in seen:
+                walk(defs[name], path, seen + (name,))
+            return
+        for key, child in (node.get("properties") or {}).items():
+            walk(child, f"{path}.{key}" if path else key, seen)
+        if isinstance(node.get("items"), dict):
+            walk(node["items"], f"{path}[]", seen)
+        for branch in node.get("oneOf", []) + node.get("anyOf", []) + node.get("allOf", []):
+            walk(branch, path, seen)
+
+    walk(schema, "", ())
+    return found
+
+
+@pytest.mark.parametrize("verb", list(H.LABELED_FIELDS))
+def test_the_label_table_covers_every_machine_bearing_schema_field(verb):
+    """Fail closed: a machine-bearing field added to a response schema must be added to LABELED_FIELDS."""
+    listed = {path for path, _ in H.LABELED_FIELDS[verb]}
+    assert _schema_machine_fields(verb) - listed == set(), f"{verb}: schema fields the label check does not read"
+    # the one machine-bearing list the schema types as plain strings
+    assert ("machines[].endpoints[]" in listed) == (verb == "list_machines")
+
+
+def test_every_hub_tool_has_a_label_table_entry():
+    assert set(H.LABELED_FIELDS) == {t for t in H.SERVED_TOOLS}
+
+
+def test_free_text_is_never_read_by_the_label_check(tmp_path):
+    """A transcript turn that happens to hold keys named like machine fields must not refuse the read."""
+    result = example("read_session")
+    result["turns"][0]["tool_calls"] = [{"name": "x", "input": {"machine": "tower", "address": "tower/x", "to": "tower"}}]
+    assert hub_call(tmp_path, [FakeRelay("m5pro", {"read_session": result})], "read_session",
+                    ROUTED_ARGUMENTS["read_session"])["address"].startswith("m5pro/")
 
 
 # --------------------------------------------------------------------------

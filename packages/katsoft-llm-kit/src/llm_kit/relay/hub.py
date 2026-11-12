@@ -221,6 +221,73 @@ class _Schemas:
 
 
 # --------------------------------------------------------------------------
+# the label check: which result fields carry a machine
+# --------------------------------------------------------------------------
+
+#: Per hub tool, every field of the verb's result that names a machine, as ``(path, kind)``. ``[]`` iterates a
+#: list. Kinds: ``label`` (a machine label), ``address`` (``<machine>/...``), ``identity`` (a relay identity),
+#: ``question_id`` (``q:<machine>/...``). The check is fail closed: a test compares this table to the response
+#: schemas, so a new machine-bearing field that is not listed here fails there.
+LABELED_FIELDS: Mapping[str, tuple[tuple[str, str], ...]] = {
+    "list_machines": (("machines[].machine", "label"), ("machines[].endpoints[]", "address")),
+    "list_sessions": (("sessions[].machine", "label"), ("sessions[].address", "address"), ("machines[].machine", "label")),
+    "list_questions": (("questions[].machine", "label"), ("questions[].id", "question_id"), ("machines[].machine", "label")),
+    "read_session": (("address", "address"),),
+    "ask_llm": (("endpoint", "address"),),
+    "send_message": (("message.to", "address"), ("message.sender", "identity"), ("message.reply.sender", "identity")),
+    "get_replies": (("messages[].to", "address"), ("messages[].sender", "identity"), ("messages[].reply.sender", "identity")),
+    "answer_question": (("id", "question_id"),),
+}
+
+
+def _field_values(result: Any, path: str) -> list[Any]:
+    """The values at ``path`` (``a.b[].c``) in ``result``; nothing where the shape does not match."""
+    nodes = [result]
+    for segment in path.split("."):
+        each = segment.endswith("[]")
+        key = segment[:-2] if each else segment
+        stepped = []
+        for node in nodes:
+            if isinstance(node, Mapping) and key in node:
+                value = node[key]
+                if each:
+                    stepped.extend(value if isinstance(value, list) else [])
+                else:
+                    stepped.append(value)
+        nodes = stepped
+    return nodes
+
+
+def _is_hub_identity(value: object) -> bool:
+    try:
+        return isinstance(value, str) and P.parse_identity(value).kind == "hub"
+    except P.RelayError:
+        return False
+
+
+def _machine_in(kind: str, value: object) -> Optional[str]:
+    """The machine a labeled field's value names, or None when it names none or is malformed."""
+    if not isinstance(value, str):
+        return None
+    if kind == "label":
+        return value
+    if kind == "address":
+        return value.split("/", 1)[0]
+    if kind == "question_id":
+        try:
+            return question_machine(value)
+        except P.RelayError:
+            return None
+    try:
+        identity = P.parse_identity(value)
+    except P.RelayError:
+        return None
+    if identity.kind == "hub":
+        return None
+    return identity.subject.split("/", 1)[0]
+
+
+# --------------------------------------------------------------------------
 # routing (transport independent)
 # --------------------------------------------------------------------------
 
@@ -308,33 +375,34 @@ class HubRouter:
 
     def _send(self, client: Any, verb: str, params: Mapping[str, Any]) -> dict[str, Any]:
         result = getattr(client, verb)(dict(params), origin=self._origin)
-        self._check_label(client, result)
+        self._check_label(client, verb, result)
         return result
 
     @staticmethod
-    def _check_label(client: Any, result: Mapping[str, Any]) -> None:
-        """The machine a relay reports must be the label it is configured under (``internal`` otherwise).
+    def _check_label(client: Any, verb: str, result: Mapping[str, Any]) -> None:
+        """Every machine a relay's result names must be the label it is configured under (``internal`` otherwise).
 
-        A relay names itself in the ``machine`` of each entry it reports and in
-        the machine of each address it returns; one that names another machine
-        is a mis-pointed URL or a wrong peer, and nothing it says is believed.
+        :data:`LABELED_FIELDS` lists, per verb, each field of the result that
+        carries a machine: machine labels, addresses, endpoints, identities and
+        question ids. A relay that names another machine in any of them is a
+        mis-pointed URL or a wrong or hostile peer, and the whole result is
+        refused before the hub aggregates, routes or shows any of it. A value
+        that is present but not a well-formed machine-bearing string is refused
+        too. Free text (session turns, bodies) is never read.
         """
         configured = client.machine
-        reported = [entry["machine"] for entry in result.get("machines") or ()
-                    if isinstance(entry, Mapping) and isinstance(entry.get("machine"), str)]
-        addresses = [result.get("address")] + [s.get("address") for s in result.get("sessions") or ()
-                                               if isinstance(s, Mapping)]
-        for address in addresses:
-            if isinstance(address, str):
-                reported.append(address.split("/", 1)[0])
-        for label in reported:
-            if label != configured:
-                raise P.RelayError(
-                    "internal",
-                    f"the relay configured as machine {configured!r} reports machine {label!r}; "
-                    "check its URL and the label in relay.yaml",
-                    details={"machine": configured, "reported": label},
-                )
+        for path, kind in LABELED_FIELDS.get(verb, ()):
+            for value in _field_values(result, path):
+                reported = _machine_in(kind, value)
+                if reported != configured and not (reported is None and kind == "identity" and _is_hub_identity(value)):
+                    shown = repr(reported) if reported is not None else f"{str(value)[:80]!r} (no machine)"
+                    raise P.RelayError(
+                        "internal",
+                        f"the relay configured as machine {configured!r} reports machine {shown} in {verb}.{path}; "
+                        "check its URL and the label in relay.yaml",
+                        details={"machine": configured, "reported": reported if reported is not None else str(value)[:80],
+                                 "field": f"{verb}.{path}"},
+                    )
 
     def _client_for(self, machine: str) -> Any:
         client = self._clients.get(machine)
@@ -1025,6 +1093,7 @@ __all__ = [
     "DEFAULT_HUB_USER",
     "HubRouter",
     "HubServer",
+    "LABELED_FIELDS",
     "MCP_PATH",
     "P1_TOOLS",
     "P2_TOOLS",
