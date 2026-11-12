@@ -59,6 +59,8 @@ class FakeWinacl:
     def __init__(self) -> None:
         self.events: list[tuple[str, str, bool, int]] = []
         self.refuse: dict[str, str] = {}  # operation -> message to refuse with
+        self.fds: list[tuple[str, int, int]] = []
+        self.after_validate_fd = None  # called after a handle was judged: the point a pathname could be re-pointed
 
     def _note(self, kind: str, path, directory: bool = False) -> None:
         if kind in self.refuse:
@@ -83,8 +85,16 @@ class FakeWinacl:
     def validate(self, path) -> None:
         self._note("validate", path)
 
+    def provision_fd(self, fd: int, path) -> None:
+        self.fds.append(("provision_fd", os.fstat(fd).st_ino, os.stat(path).st_ino))
+        self._note("provision_fd", path)
+
     def validate_fd(self, fd: int, path) -> None:
+        # which object was judged: the open handle's inode and the pathname's inode at this moment
+        self.fds.append(("validate_fd", os.fstat(fd).st_ino, os.stat(path).st_ino))
         self._note("validate_fd", path)
+        if self.after_validate_fd is not None:
+            self.after_validate_fd(path)
 
     def of(self, kind: str) -> list[tuple[str, bool, int]]:
         return [(p, d, s) for k, p, d, s in self.events if k == kind]
@@ -261,14 +271,14 @@ def test_nt_temp_files_are_private_before_the_first_secret_byte(tmp_path, nt):
     token = L.ensure_token(paths.relay_token)
     tmp_events = [(k, size) for k, p, _d, size in nt.acl.events if Path(p).name.startswith(".relay.token.")]
     # born private (create_file), normalized and checked while still empty: no secret byte had been written
-    assert tmp_events[:3] == [("create_file", 0), ("provision", 0), ("validate", 0)]
-    assert str(paths.relay_token) in [p for k, p, *_ in nt.acl.events if k == "validate"]
+    assert tmp_events[:3] == [("create_file", 0), ("provision_fd", 0), ("validate_fd", 0)]
+    assert str(paths.relay_token) in [p for k, p, *_ in nt.acl.events if k == "validate_fd"]  # read back by handle
     assert L.read_token(paths.relay_token) == token
 
     nt.acl.events.clear()
     L.write_private_file(paths.pause_file, "{}\n")
     kinds = [(k, Path(p).name.startswith(".pause.json."), size) for k, p, _d, size in nt.acl.events]
-    assert kinds[:3] == [("create_file", True, 0), ("provision", True, 0), ("validate", True, 0)]
+    assert kinds[:3] == [("create_file", True, 0), ("provision_fd", True, 0), ("validate_fd", True, 0)]
     assert kinds[-1][:2] == ("validate", False) and kinds[-1][2] > 0  # the replacement target is validated at its final path, written
 
 
@@ -362,44 +372,77 @@ def test_descriptor_policy_refuses_a_conditional_grant_even_with_the_rest_correc
 # --------------------------------------------------------------------------
 
 HOME_ACL = desc(ace(USER), ace("S-1-5-18"), ace("S-1-5-32-544"))
+TI = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+USERS = "S-1-5-32-545"
+AUTH = "S-1-5-11"
+ADD_FILE_SUBDIR = 0x2 | 0x4
+MODIFY = 0x1301BF  # FILE_GENERIC_READ|WRITE|EXECUTE + DELETE: what Authenticated Users hold on a Modify ACE
 
 
 def test_ancestor_check_accepts_a_stock_profile_chain():
-    winacl.check_ancestor(HOME_ACL, USER, "home")
-    winacl.check_ancestor(desc(ace(USER), ace("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")), USER, "x")
-    # read-only access for everyone, and inherit-only ACEs, do not let anyone replace the child
-    winacl.check_ancestor(desc(ace(USER), ace("S-1-1-0", mask=0x1200A9)), USER, "x")
-    winacl.check_ancestor(desc(ace(USER), ace("S-1-5-32-545", flags=0x0B, mask=0x1F01FF)), USER, "x")
+    for strict in (True, False):
+        winacl.check_ancestor(HOME_ACL, USER, "home", strict=strict)
+        winacl.check_ancestor(desc(ace(USER), ace(TI), owner=TI), USER, "x", strict=strict)
+        winacl.check_ancestor(desc(ace(USER), ace("S-1-1-0", mask=0x1200A9), owner="S-1-5-18"), USER, "x", strict=strict)
+        winacl.check_ancestor(desc(ace(USER), ace(USERS, flags=0x0B, mask=0x1F01FF)), USER, "x", strict=strict)  # inherit-only
+
+
+@pytest.mark.parametrize("mask", [0x2, 0x4, 0x40, 0x10000, 0x40000, 0x80000, 0x40000000, 0x10000000, 0x1F01FF, MODIFY])
+def test_strict_ancestor_refuses_another_trustee_that_can_write(mask):
+    with pytest.raises(C.RelayConfigError, match="S-1-5-32-545 write to it"):
+        winacl.check_ancestor(desc(ace(USER), ace(USERS, mask=mask)), USER, "parent", strict=True)
+
+
+def test_lenient_ancestor_allows_adding_entries_but_not_replacing_one():
+    """Above the state root's own container, Authenticated Users may create entries (as on C:\\) -- that cannot
+    move the existing directory the path runs through -- but may not delete it, delete its children or re-ACL it."""
+    winacl.check_ancestor(desc(ace(USER), ace(AUTH, mask=ADD_FILE_SUBDIR)), USER, "C:/", strict=False)
+    winacl.check_ancestor(desc(ace(USER), ace(AUTH, mask=0x1200A9 | 0x4)), USER, "C:/", strict=False)
+    for mask in (0x40, 0x10000, 0x40000, 0x80000, 0x40000000, 0x10000000, 0x1F01FF, MODIFY):
+        with pytest.raises(C.RelayConfigError, match="S-1-5-11 write to it"):
+            winacl.check_ancestor(desc(ace(USER), ace(AUTH, mask=mask)), USER, "high", strict=False)
+    with pytest.raises(C.RelayConfigError, match="S-1-5-11 write to it"):  # the same ACE, in the strict zone
+        winacl.check_ancestor(desc(ace(USER), ace(AUTH, mask=ADD_FILE_SUBDIR)), USER, "near", strict=True)
+
+
+@pytest.mark.parametrize("strict", [True, False])
+def test_ancestor_check_refuses_an_untrusted_owner_even_with_a_clean_dacl(strict):
+    """The owner holds WRITE_DAC implicitly, so a DACL granting only the user and SYSTEM is no protection."""
+    clean = desc(ace(USER), ace("S-1-5-18"), owner="S-1-5-21-9-9-9-1002")
+    with pytest.raises(C.RelayConfigError, match="owned by S-1-5-21-9-9-9-1002"):
+        winacl.check_ancestor(clean, USER, "parent", strict=strict)
+    with pytest.raises(C.RelayConfigError, match="owned by None"):
+        winacl.check_ancestor(desc(ace(USER), owner=None), USER, "parent", strict=strict)
+    for owner in (USER, "S-1-5-18", "S-1-5-32-544", TI):
+        winacl.check_ancestor(desc(ace(USER), owner=owner), USER, "parent", strict=strict)
 
 
 def test_ancestor_check_trusts_owner_rights_only_for_a_trusted_owner():
     """Python 3.13 gives os.mkdir(mode=0o700) directories an OWNER RIGHTS (S-1-3-4) full-control ACE, as pytest's tmp dirs have."""
     owner_rights = ace("S-1-3-4")
     winacl.check_ancestor(desc(ace(USER), owner_rights, ace("S-1-5-18")), USER, "pytest-tmp")
-    with pytest.raises(C.RelayConfigError, match="S-1-3-4 write to it"):
+    with pytest.raises(C.RelayConfigError, match="owned by"):
         winacl.check_ancestor(desc(ace(USER), owner_rights, owner="S-1-5-21-9-9-9-1002"), USER, "foreign-owned")
 
 
-@pytest.mark.parametrize("mask", [0x2, 0x4, 0x40, 0x10000, 0x40000, 0x80000, 0x40000000, 0x10000000, 0x1F01FF])
-def test_ancestor_check_refuses_another_trustee_that_can_write(mask):
-    with pytest.raises(C.RelayConfigError, match="S-1-5-32-545 write to it"):
-        winacl.check_ancestor(desc(ace(USER), ace("S-1-5-32-545", mask=mask)), USER, "parent")
-
-
 def test_ancestor_check_fails_closed_on_null_dacl_and_unknown_ace():
-    with pytest.raises(C.RelayConfigError, match="null DACL"):
-        winacl.check_ancestor(desc(present=False), USER, "parent")
-    with pytest.raises(C.RelayConfigError, match="does not understand"):
-        winacl.check_ancestor(desc(ace(USER), winacl.Ace(9, 0, 0x2, None)), USER, "parent")
+    for strict in (True, False):
+        with pytest.raises(C.RelayConfigError, match="null DACL"):
+            winacl.check_ancestor(desc(present=False), USER, "parent", strict=strict)
+        with pytest.raises(C.RelayConfigError, match="does not understand"):
+            winacl.check_ancestor(desc(ace(USER), winacl.Ace(9, 0, 0x2, None)), USER, "parent", strict=strict)
 
 
-def test_ancestor_chain_stops_at_the_profile_or_runs_to_the_root(tmp_path):
+def test_ancestor_chain_walks_to_the_root_and_splits_at_the_profile(tmp_path):
     home = tmp_path / "home"
     inside = home / "AppData" / "state" / "relay"
-    assert winacl.ancestor_chain(inside, home) == [home / "AppData" / "state", home / "AppData", home]
-    outside = tmp_path / "elsewhere" / "relay"
-    chain = winacl.ancestor_chain(outside, home)
-    assert chain[0] == tmp_path / "elsewhere" and chain[-1].parent == chain[-1] and home not in chain
+    strict, lenient = winacl.ancestor_chain(inside, home)
+    assert strict == [home / "AppData" / "state", home / "AppData", home]
+    assert lenient[0] == tmp_path and lenient[-1].parent == lenient[-1]  # on to the volume root
+    outside = tmp_path / "elsewhere" / "deep" / "relay"
+    strict, lenient = winacl.ancestor_chain(outside, home)
+    assert strict == [tmp_path / "elsewhere" / "deep"]  # no profile: only the immediate container is strict
+    assert lenient[0] == tmp_path / "elsewhere" and lenient[-1].parent == lenient[-1] and home not in strict + lenient
 
 
 def test_nt_state_dir_is_refused_when_an_ancestor_is_writable(tmp_path, nt):
@@ -411,6 +454,55 @@ def test_nt_state_dir_is_refused_when_an_ancestor_is_writable(tmp_path, nt):
 
 
 # --------------------------------------------------------------------------
+# validation and reads use the handle, not the name
+# --------------------------------------------------------------------------
+
+def _swap_in_other_content(path: str) -> None:
+    other = Path(path).with_name("attacker.tmp")
+    other.write_text("attacker-value\n")
+    os.replace(other, path)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows refuses to replace a file that is open: the protection itself")
+def test_nt_credential_read_judges_and_reads_the_same_handle(tmp_path, nt):
+    paths = C.StatePaths(tmp_path)
+    L.ensure_state_dir(paths)
+    token = L.ensure_token(paths.relay_token)
+    nt.acl.fds.clear()
+    # the name is re-pointed at another file right after the handle was judged
+    nt.acl.after_validate_fd = _swap_in_other_content
+    assert L.read_token(paths.relay_token) == token  # the validated file's content, not the swapped-in file's
+    (kind, handle_ino, path_ino), = nt.acl.fds
+    assert kind == "validate_fd" and handle_ino == path_ino  # at judging time the handle was the named file
+    assert paths.relay_token.read_text().strip() == "attacker-value"  # and the swap really happened
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows refuses to replace a file that is open: the protection itself")
+def test_nt_private_file_read_judges_and_reads_the_same_handle(tmp_path, nt):
+    paths = C.StatePaths(tmp_path)
+    L.ensure_state_dir(paths)
+    L.write_private_file(paths.registry_file, "kept: yes\n")
+    nt.acl.after_validate_fd = _swap_in_other_content
+    assert L.read_private_file(paths.registry_file) == "kept: yes\n"
+    nt.acl.refuse["validate_fd"] = "grants access to S-1-5-32-545"
+    with pytest.raises(C.RelayConfigError, match="private state file .*grants access"):
+        L.read_private_file(paths.registry_file)
+    with pytest.raises(C.RelayConfigError, match="credential file .*grants access"):
+        L.read_token(paths.relay_token if paths.relay_token.exists() else paths.registry_file)
+
+
+def test_nt_temp_file_is_provisioned_and_judged_through_its_creating_handle(tmp_path, nt):
+    paths = C.StatePaths(tmp_path)
+    L.ensure_state_dir(paths)
+    nt.acl.fds.clear()
+    L.write_private_file(paths.pause_file, "{}\n")
+    kinds = [k for k, *_ in nt.acl.fds]
+    assert kinds == ["provision_fd", "validate_fd"]
+    assert all(handle == named for _k, handle, named in nt.acl.fds)  # the handle is the file that was created
+    assert "provision" not in [k for k, p, *_ in nt.acl.events if Path(p).name.startswith(".pause.json.")]
+
+
+# --------------------------------------------------------------------------
 # pause.json is validated before it is read
 # --------------------------------------------------------------------------
 
@@ -419,7 +511,7 @@ def test_nt_existing_pause_file_is_validated_against_the_open_handle_before_it_i
     L.ensure_state_dir(paths)
     store = L.PauseStore(paths, clock=lambda: 5.0)
     assert store.is_paused("relay") is False  # absent file: no validation, no error
-    assert nt.acl.of("validate_fd") == []
+    assert [p for p, *_ in nt.acl.of("validate_fd") if p == str(paths.pause_file)] == []
     store.pause("relay", "why")
     nt.acl.events.clear()
     assert store.is_paused("relay") is True

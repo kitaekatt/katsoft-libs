@@ -249,13 +249,13 @@ def icacls(*args: str) -> None:
 
 def test_native_acl_provisioned(state, monkeypatch):
     seen: list[tuple[str, int]] = []
-    real_validate = winacl.validate
+    real_validate_fd = winacl.validate_fd
 
-    def spy(path):
-        seen.append((Path(path).name, os.path.getsize(path) if os.path.isfile(path) else -1))
-        real_validate(path)
+    def spy(fd, path):
+        seen.append((Path(path).name, os.fstat(fd).st_size))  # judged through the creating handle, still empty
+        real_validate_fd(fd, path)
 
-    monkeypatch.setattr(winacl, "validate", spy)
+    monkeypatch.setattr(winacl, "validate_fd", spy)
     me = winacl.current_user_sid()
     winacl.validate(state.root)  # the directory made by ensure_state_dir
     sddl = winacl.read_sddl(state.root)
@@ -360,10 +360,80 @@ def test_native_state_root_refused_under_a_writable_ancestor(tmp_path):
     winacl.validate(root)
 
 
-def test_native_stock_profile_ancestors_are_accepted(tmp_path):
-    winacl.refuse_writable_ancestors(tmp_path / "state")  # %TEMP% under the user profile, as Windows ships it
-    chain = winacl.ancestor_chain(tmp_path / "state", Path.home())
-    assert chain[-1] == Path(os.path.abspath(Path.home())) or os.path.normcase(str(chain[-1])) == os.path.normcase(str(Path.home()))
+def test_native_stock_profile_chain_is_accepted_up_to_the_volume_root(tmp_path):
+    """The stock C:\\ -> C:\\Users -> C:\\Users\\<me> chain passes: Authenticated Users may add entries to C:\\
+    (add-subdirectory) but cannot rename or replace the directories the path runs through."""
+    root = tmp_path / "state"
+    winacl.refuse_writable_ancestors(root)
+    strict, lenient = winacl.ancestor_chain(root, Path.home())
+    assert os.path.normcase(str(strict[-1])) == os.path.normcase(str(Path.home()))
+    assert lenient and lenient[-1].parent == lenient[-1]  # ... all the way to the drive root
+    for ancestor in strict + lenient:  # none of them is owned by a stranger
+        assert winacl.read_descriptor(ancestor).owner is not None, ancestor
+    L.ensure_state_dir(C.StatePaths(root))
+
+
+@pytest.fixture
+def drive_scratch() -> Iterator[Path]:
+    """A private directory directly on the system drive: a state root outside the user profile."""
+    import shutil
+    import uuid
+
+    base = Path(os.environ.get("SystemDrive", "C:") + "\\") / f"relay-native-test-{uuid.uuid4().hex[:8]}"
+    try:
+        winacl.create_private_dir(base)
+    except (C.RelayConfigError, PermissionError) as exc:
+        pytest.skip(f"cannot create {base}: {exc}")
+    try:
+        yield base
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def test_native_root_outside_the_profile_uses_the_lenient_rule_above_its_container(drive_scratch):
+    container = drive_scratch / "container"
+    winacl.create_private_dir(container)
+    root = container / "state"
+    strict, lenient = winacl.ancestor_chain(root, Path.home())
+    assert strict == [container] and lenient[0] == drive_scratch and lenient[-1].parent == lenient[-1]
+    L.ensure_state_dir(C.StatePaths(root))  # the stock drive root (Authenticated Users may add entries) is accepted
+    winacl.validate(root)
+    # a trustee that can add entries only: not a reason to refuse above the container
+    icacls(str(drive_scratch), "/grant", f"{USERS}:(AD)")
+    winacl.refuse_writable_ancestors(root)
+    # one that can delete or modify the directory the path runs through: refused
+    icacls(str(drive_scratch), "/grant", f"{USERS}:(OI)(CI)(M)")
+    with pytest.raises(C.RelayConfigError, match="S-1-5-32-545 write to it"):
+        winacl.refuse_writable_ancestors(root)
+    icacls(str(drive_scratch), "/remove:g", USERS)
+    winacl.refuse_writable_ancestors(root)
+    # inside the container, add-subdirectory alone is refused (the strict rule)
+    icacls(str(container), "/grant", f"{USERS}:(AD)")
+    with pytest.raises(C.RelayConfigError, match="S-1-5-32-545 write to it"):
+        winacl.refuse_writable_ancestors(root)
+
+
+def test_native_files_are_provisioned_and_judged_through_their_handle(state):
+    me = winacl.current_user_sid()
+    path = state.root / "handle.tmp"
+    fd = winacl.create_private_file(path)
+    try:
+        winacl.validate_fd(fd, path)
+        # widen the DACL behind the handle's back, then restore it through the handle alone
+        winacl._apply_sddl(path, f"O:{me}D:P(A;;FA;;;{me})(A;;FA;;;SY)(A;;FR;;;WD)")
+        with pytest.raises(C.RelayConfigError, match="grants access to S-1-1-0"):
+            winacl.validate_fd(fd, path)
+        winacl.provision_fd(fd, path)
+        winacl.validate_fd(fd, path)
+        winacl.validate(path)
+    finally:
+        os.close(fd)
+    token = state.root / "cred.token"
+    L.write_private_file(token, "abc\n")
+    assert L.read_token(token) == "abc"
+    icacls(str(token), "/grant", f"{EVERYONE}:(R)")
+    with pytest.raises(C.RelayConfigError, match="credential file .*grants access to S-1-1-0"):
+        L.read_token(token)  # refused through the handle it would have been read from
 
 
 def test_native_pause_file_is_validated_before_it_is_read(state):

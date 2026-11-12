@@ -44,7 +44,12 @@ _WRITE_RIGHTS = (
     | 0x10000 | 0x40000 | 0x80000  # DELETE, WRITE_DAC, WRITE_OWNER
     | 0x40000000 | 0x10000000  # GENERIC_WRITE, GENERIC_ALL
 )
-_GENERIC_READ_WRITE = 0xC0000000
+#: Rights that let a trustee rename, replace or re-ACL a directory entry that already exists
+#: (DELETE_CHILD on the parent, DELETE/WRITE_DAC/WRITE_OWNER on the entry, or the generic forms).
+_REPLACE_RIGHTS = 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x40000000 | 0x10000000
+#: Access requested for a created file: read/write data plus READ_CONTROL, WRITE_DAC and WRITE_OWNER, so the
+#: creating handle can be provisioned and validated without reopening the path.
+_GENERIC_READ_WRITE = 0xC0000000 | 0x20000 | 0x40000 | 0x80000
 _FILE_SHARE_READ_WRITE = 0x3
 _CREATE_NEW = 1
 _FILE_ATTRIBUTE_NORMAL = 0x80
@@ -154,6 +159,9 @@ class _Api:
             wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD, vp, vp, vp, vp, pvp,
         ]
         self.GetNamedSecurityInfoW.restype = wintypes.DWORD
+        self.SetSecurityInfo = advapi32.SetSecurityInfo
+        self.SetSecurityInfo.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.DWORD, vp, vp, vp, vp]
+        self.SetSecurityInfo.restype = wintypes.DWORD
         self.GetSecurityInfo = advapi32.GetSecurityInfo
         self.GetSecurityInfo.argtypes = [
             wintypes.HANDLE, ctypes.c_int, wintypes.DWORD, vp, vp, vp, vp, pvp,
@@ -238,8 +246,10 @@ class _Sd:
         return sa
 
 
-def _apply_sddl(path: "os.PathLike[str] | str", sddl: str) -> None:
-    """Set owner and DACL of ``path`` from ``sddl`` and mark the DACL protected."""
+def _apply_sddl(path: "os.PathLike[str] | str", sddl: str, *, fd: Optional[int] = None) -> None:
+    """Set owner and DACL from ``sddl`` and mark the DACL protected: on the open file ``fd`` when given, else ``path``."""
+    import msvcrt
+
     api = _api()
     wt = api.wintypes
     with _Sd(api, sddl) as sd:
@@ -252,7 +262,10 @@ def _apply_sddl(path: "os.PathLike[str] | str", sddl: str) -> None:
         if not api.GetSecurityDescriptorDacl(sd.ptr, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(flag)):
             raise _winerror("GetSecurityDescriptorDacl", ctypes.get_last_error())  # type: ignore[attr-defined]
         info = _OWNER_SECURITY_INFORMATION | _DACL_SECURITY_INFORMATION | _PROTECTED_DACL_SECURITY_INFORMATION
-        code = api.SetNamedSecurityInfoW(str(path), _SE_FILE_OBJECT, info, owner, None, dacl, None)
+        if fd is not None:
+            code = api.SetSecurityInfo(msvcrt.get_osfhandle(fd), _SE_FILE_OBJECT, info, owner, None, dacl, None)  # type: ignore[attr-defined]
+        else:
+            code = api.SetNamedSecurityInfoW(str(path), _SE_FILE_OBJECT, info, owner, None, dacl, None)
         if code != 0:
             raise _winerror(f"setting the owner and ACL of {path}", code)
 
@@ -265,6 +278,12 @@ def provision(path: "os.PathLike[str] | str", directory: bool = False) -> None:
     assign) raises :class:`RelayConfigError`.
     """
     _apply_sddl(path, _sddl_for(current_user_sid(), directory=directory))
+
+
+def provision_fd(fd: int, path: "os.PathLike[str] | str") -> None:
+    """:func:`provision` for a file open as ``fd`` (it must have been opened with WRITE_DAC and WRITE_OWNER,
+    as :func:`create_private_file` does): the handle that made the file is the object changed, not a pathname."""
+    _apply_sddl(path, _sddl_for(current_user_sid(), directory=False), fd=fd)
 
 
 def create_private_dir(path: "os.PathLike[str] | str") -> None:
@@ -493,59 +512,81 @@ def validate_fd(fd: int, path: "os.PathLike[str] | str") -> None:
 # ancestors
 # --------------------------------------------------------------------------
 
-def check_ancestor(desc: Descriptor, user_sid: str, path: object) -> None:
-    """Refuse an ancestor directory another trustee can write to. Pure; fails closed.
+def check_ancestor(desc: Descriptor, user_sid: str, path: object, *, strict: bool = True) -> None:
+    """Refuse an ancestor directory that another trustee can use to replace what lies below. Pure; fails closed.
 
-    A trustee other than the user, SYSTEM, Administrators or TrustedInstaller
-    that may add entries, delete children, or change the ACL or owner could
-    replace or re-ACL what lies below. Inherit-only ACEs do not apply to the
-    directory itself and are skipped. OWNER RIGHTS (S-1-3-4) counts as trusted
-    only when the directory's owner is. A null DACL, or an ACE type other than
-    allow or deny, is refused.
+    The owner must be the user, SYSTEM, Administrators or TrustedInstaller: an owner always holds WRITE_DAC
+    implicitly, so a foreign owner can regain any right. Among the DACL's allow ACEs, a trustee outside that
+    set must not hold a right in the refused mask:
+
+    * ``strict`` (the state root's own container chain): add-file, add-subdirectory, delete-child, DELETE,
+      WRITE_DAC, WRITE_OWNER and the generic write/all rights. Someone who can add entries beside the state
+      root can pre-create or race what the relay creates there.
+    * not strict (the path above it): only the rights that rename or replace an entry that already exists,
+      DELETE_CHILD (on this directory as the parent of the next component), DELETE, WRITE_DAC and WRITE_OWNER
+      (on it as that component), and the generic write/all rights. Add-file or add-subdirectory alone, as
+      Authenticated Users hold on ``C:\\``, cannot move an existing directory and is not refused.
+
+    Inherit-only ACEs do not apply to the directory itself and are skipped. OWNER RIGHTS (S-1-3-4) counts as
+    trusted when the owner is. A null DACL, or an ACE type other than allow or deny, is refused.
     """
+    trusted = {user_sid, _SYSTEM, _ADMINISTRATORS, _TRUSTED_INSTALLER}
+    if desc.owner not in trusted:
+        raise RelayConfigError(
+            f"ancestor {path} is owned by {desc.owner}, who can always change its ACL; "
+            "keep relay state under directories owned by you, SYSTEM or Administrators"
+        )
     if not desc.dacl_present:
         raise RelayConfigError(f"ancestor {path} has a null DACL, which lets everyone replace its children")
-    trusted = {user_sid, _SYSTEM, _ADMINISTRATORS, _TRUSTED_INSTALLER}
-    if desc.owner in trusted:
-        trusted.add(_OWNER_RIGHTS)  # "the owner of this directory", which is a trusted trustee here
+    trusted.add(_OWNER_RIGHTS)
+    refused = _WRITE_RIGHTS if strict else _REPLACE_RIGHTS
     for ace in desc.aces:
         if ace.ace_type not in (_ACE_ALLOWED, _ACE_DENIED) or ace.sid is None:
             raise RelayConfigError(f"ancestor {path} has an ACE of type {ace.ace_type} this relay does not understand")
         if ace.ace_type == _ACE_DENIED or ace.flags & _INHERIT_ONLY_ACE:
             continue
-        if ace.mask & _WRITE_RIGHTS and ace.sid not in trusted:
+        if ace.mask & refused and ace.sid not in trusted:
             raise RelayConfigError(
                 f"ancestor {path} lets {ace.sid} write to it (access mask {ace.mask:#x}); "
                 "keep relay state under a directory only you can change"
             )
 
 
-def ancestor_chain(path: "os.PathLike[str] | str", home: "os.PathLike[str] | str") -> list[Path]:
-    """``path``'s parents, nearest first, up to and including ``home`` (to the drive root outside it).
+def ancestor_chain(
+    path: "os.PathLike[str] | str", home: "os.PathLike[str] | str"
+) -> tuple[list[Path], list[Path]]:
+    """``(strict, lenient)``: ``path``'s parents, nearest first, split by how closely they are checked.
 
-    The walk stops at the user profile because Windows gives a profile directory an ACL that only the
-    user, SYSTEM and Administrators can change, and the directories above it (``C:\\Users``) are not
-    writable by a standard user. A root outside the profile is checked up to the drive root.
+    Every parent up to the volume or share root is returned. ``strict`` is the state root's own container
+    chain: its parents up to and including ``home`` when it lies under the profile, else only its immediate
+    parent. ``lenient`` is everything above that, up to the root.
     """
     stop = os.path.normcase(os.path.abspath(str(home)))
-    chain: list[Path] = []
+    full: list[Path] = []
     current = Path(os.path.abspath(str(path))).parent
     while True:
-        chain.append(current)
-        if os.path.normcase(str(current)) == stop or current.parent == current:
-            return chain
+        full.append(current)
+        if current.parent == current:
+            break
         current = current.parent
+    for index, ancestor in enumerate(full):
+        if os.path.normcase(str(ancestor)) == stop:
+            return full[: index + 1], full[index + 1 :]
+    return full[:1], full[1:]
 
 
 def refuse_writable_ancestors(path: "os.PathLike[str] | str") -> None:
     """Refuse ``path`` when an ancestor lets another trustee replace or re-ACL it (see :func:`check_ancestor`)."""
     user = current_user_sid()
-    for ancestor in ancestor_chain(path, Path.home()):
-        check_ancestor(read_descriptor(ancestor), user, ancestor)
+    strict, lenient = ancestor_chain(path, Path.home())
+    for ancestor in strict:
+        check_ancestor(read_descriptor(ancestor), user, ancestor, strict=True)
+    for ancestor in lenient:
+        check_ancestor(read_descriptor(ancestor), user, ancestor, strict=False)
 
 
 __all__ = [
     "Ace", "Descriptor", "ancestor_chain", "check_ancestor", "check_descriptor", "create_private_dir",
-    "create_private_file", "current_user_sid", "provision", "read_descriptor", "read_descriptor_fd", "read_sddl",
+    "create_private_file", "current_user_sid", "provision", "provision_fd", "read_descriptor", "read_descriptor_fd", "read_sddl",
     "refuse_redirected", "refuse_writable_ancestors", "validate", "validate_fd",
 ]

@@ -91,8 +91,8 @@ def _temp_private_nt(directory: Path, prefix: str) -> tuple[int, str]:
         except FileExistsError:
             continue
         try:
-            winacl.provision(tmp, False)
-            winacl.validate(tmp)
+            winacl.provision_fd(fd, tmp)  # the creating handle, not the pathname
+            winacl.validate_fd(fd, tmp)
         except BaseException:
             os.close(fd)
             with contextlib.suppress(OSError):
@@ -180,8 +180,32 @@ def ensure_private_dir(path: Path, *, kind: str) -> Path:
     return path
 
 
+def _read_validated_nt(path: Path, kind: str) -> bytes:
+    """The bytes of ``path`` (Windows), validated against the handle they are read from.
+
+    Validating a pathname and then reopening it leaves a window in which the name can be re-pointed; the
+    descriptor judged here is the open object's, and the read uses that same handle.
+    """
+    fd = os.open(path, os.O_RDONLY | _O_BINARY)
+    try:
+        try:
+            winacl.validate_fd(fd, path)
+        except RelayConfigError as exc:
+            raise RelayConfigError(f"{kind} {path}: {exc}") from exc
+        chunks = []
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+
+
 def read_private_file(path: Path) -> str:
     """The text of a ``0600`` file of this user's; a loose mode or a foreign owner is refused."""
+    if _on_nt():
+        return _read_validated_nt(path, "private state file").decode("utf-8").replace("\r\n", "\n")  # text-mode newlines
     _refuse_loose(path, kind="private state file")
     return path.read_text(encoding="utf-8")
 
@@ -297,8 +321,11 @@ def ensure_token(path: Path) -> str:
 
 def read_token(path: Path) -> str:
     """The stored credential, refusing a loose mode, a foreign owner or empty content."""
-    _refuse_loose(path, kind="credential file")
-    value = path.read_text(encoding="ascii").strip()
+    if _on_nt():
+        value = _read_validated_nt(path, "credential file").decode("ascii").strip()
+    else:
+        _refuse_loose(path, kind="credential file")
+        value = path.read_text(encoding="ascii").strip()
     if not value:
         raise RelayConfigError(f"credential file {path} is empty")
     return value
@@ -495,21 +522,7 @@ class PauseStore:
         against the open handle it is read from, so another user's writable file is refused, not trusted."""
         if not _on_nt():
             return self._file.read_text(encoding="utf-8")
-        fd = os.open(self._file, os.O_RDONLY | _O_BINARY)
-        try:
-            try:
-                winacl.validate_fd(fd, self._file)
-            except RelayConfigError as exc:
-                raise RelayConfigError(f"pause file {self._file}: {exc}") from exc
-            chunks = []
-            while True:
-                chunk = os.read(fd, 65536)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            return b"".join(chunks).decode("utf-8")
-        finally:
-            os.close(fd)
+        return _read_validated_nt(self._file, "pause file").decode("utf-8")
 
     @contextlib.contextmanager
     def _locked_nt(self) -> Iterator[None]:
