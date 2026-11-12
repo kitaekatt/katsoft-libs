@@ -7,6 +7,15 @@ lifecycle module does that). The wire contract it serves is
 module owns what that document leaves to configuration: machine labels, ports,
 state and config paths, and the relay's own loopback model registry.
 
+Opt-in. Nothing listens unless this machine's own relay.yaml says so. The
+relay runs only when the file holds ``enabled: true``; the hub (and its public
+sign-in) runs only when it also holds ``hub: {enabled: true}``. A missing file
+or key means off. There is no environment variable or command-line flag that
+turns either on: :func:`relay_enabled` and :func:`hub_enabled` read the file,
+and the relay and hub servers refuse to construct or start without it
+(:func:`require_enabled`). A malformed file is an error, never read as off or
+on.
+
 Machine identity. The relay's machine label is a fleet fact, not a free
 setting. The host name must match a key of ``env.json``'s ``machines`` mapping
 (case-insensitively, whole name); the label is that machine's
@@ -19,6 +28,14 @@ Bind addresses. The relay listens on ``127.0.0.1:4710`` and the hub on
 ``127.0.0.1:4711`` by default, both overridable. A host that is not a literal
 loopback address is refused; ``localhost`` is refused too because a hosts file
 can point it elsewhere.
+
+Hub public URL. ``hub.public_url`` in relay.yaml (or ``--public-url``) names
+the https origin a tunnel in front of the hub serves it at, for example
+``https://hub.example.ts.net``. It changes no bind: the hub still listens on
+loopback only. When it is set the hub serves its OAuth sign-in
+(:mod:`llm_kit.relay.hub_oauth`) and every OAuth URL it publishes is built from
+it, never from a request header. It must be ``https://<host>[:port]`` with no
+path, query, fragment or user info; :func:`parse_public_url` normalizes it.
 
 Paths follow the XDG convention and read the environment on every call:
 
@@ -199,6 +216,34 @@ def require_loopback_host(host: object, *, what: str) -> str:
     return str(host).strip()
 
 
+def parse_public_url(value: object) -> str:
+    """The normalized hub public origin ``https://<host>[:port]`` (lowercase host, no default port, no slash).
+
+    Refuses anything but https, a URL without a host, user info, a path other
+    than ``/``, a query or a fragment, with :class:`RelayConfigError`.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise RelayConfigError(f"hub public_url {value!r} is not a non-empty string")
+    text = value.strip()
+    try:
+        parts = urlsplit(text)
+        port = parts.port
+    except ValueError as exc:
+        raise RelayConfigError(f"hub public_url {text!r} is not a URL: {exc}") from exc
+    if parts.scheme != "https":
+        raise RelayConfigError(f"hub public_url {text!r} must use https")
+    if not parts.hostname:
+        raise RelayConfigError(f"hub public_url {text!r} has no host")
+    if parts.username is not None or parts.password is not None or "@" in parts.netloc:
+        raise RelayConfigError(f"hub public_url {text!r} must not carry user info")
+    if parts.path not in ("", "/") or parts.query or parts.fragment or text.endswith(("?", "#")):
+        raise RelayConfigError(f"hub public_url {text!r} must be an origin only (no path, query or fragment)")
+    host = parts.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    return f"https://{host}" + (f":{port}" if port is not None and port != 443 else "")
+
+
 def _require_port(port: object, *, what: str) -> int:
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise RelayConfigError(f"{what} port {port!r} is not an integer from 1 to 65535")
@@ -256,6 +301,11 @@ class StatePaths:
     @property
     def pause_file(self) -> Path:
         return self.root / "pause.json"
+
+    @property
+    def hub_oauth(self) -> Path:
+        """The hub's OAuth clients and token hashes (``0600``; never a raw token)."""
+        return self.root / "hub-oauth.json"
 
     @property
     def registry_file(self) -> Path:
@@ -389,6 +439,8 @@ class RelayConfig:
     config_path: Path
     ledgers: tuple[Path, ...] = ()
     llm_endpoints: Mapping[str, Mapping[str, Any]] = field(default_factory=lambda: dict(DEFAULT_LLM_ENDPOINTS))
+    #: The hub's public https origin (:func:`parse_public_url`), or None: no tunnel, no OAuth sign-in.
+    hub_public_url: Optional[str] = None
 
     def bind(self, role: str) -> tuple[str, int]:
         """The ``(host, port)`` ``role`` listens on."""
@@ -399,8 +451,9 @@ class RelayConfig:
         return self.machine.label
 
 
-_CONFIG_KEYS = frozenset({"relay", "hub", "ledgers", "llm_endpoints"})
+_CONFIG_KEYS = frozenset({"enabled", "relay", "hub", "ledgers", "llm_endpoints"})
 _LISTENER_KEYS = frozenset({"host", "port"})
+_HUB_KEYS = _LISTENER_KEYS | {"enabled", "public_url"}
 
 
 def _read_config_file(path: Path) -> dict[str, Any]:
@@ -423,16 +476,79 @@ def _read_config_file(path: Path) -> dict[str, Any]:
     return data
 
 
-def _listener(data: Mapping[str, Any], key: str, default_host: str, default_port: int, path: Path) -> tuple[str, int]:
+def _block(data: Mapping[str, Any], key: str, path: Path) -> Mapping[str, Any]:
     block = data.get(key, {})
     if block is None:
         block = {}
     if not isinstance(block, dict):
         raise RelayConfigError(f"relay config {path}: '{key}' is not a mapping")
-    unknown = sorted(set(block) - _LISTENER_KEYS)
+    return block
+
+
+def _listener(data: Mapping[str, Any], key: str, default_host: str, default_port: int, path: Path) -> tuple[str, int]:
+    block = _block(data, key, path)
+    unknown = sorted(set(block) - (_HUB_KEYS if key == "hub" else _LISTENER_KEYS))
     if unknown:
         raise RelayConfigError(f"relay config {path}: '{key}' has unknown keys: {', '.join(map(str, unknown))}")
     return block.get("host", default_host), block.get("port", default_port)
+
+
+def _flag(value: object, key: str, path: Path) -> bool:
+    if not isinstance(value, bool):
+        raise RelayConfigError(f"relay config {path}: '{key}' must be true or false, not {value!r}")
+    return value
+
+
+@dataclass(frozen=True)
+class Enablement:
+    """What this machine's relay.yaml turns on (:func:`enablement`)."""
+
+    path: Path
+    relay: bool
+    hub: bool
+
+
+def enablement(config_path: Optional[Path] = None, *, environ: Optional[Mapping[str, str]] = None) -> Enablement:
+    """Read the opt-in flags from relay.yaml (default: the convention path).
+
+    ``relay`` is the top-level ``enabled``; ``hub`` is true only when both
+    ``enabled`` and ``hub.enabled`` are. A missing file or key is false. A file
+    that does not parse, has unknown keys or a flag that is not a boolean raises
+    :class:`RelayConfigError`.
+    """
+    path = Path(config_path) if config_path is not None else config_file(environ)
+    data = _read_config_file(path)
+    for key, host, port in (("relay", DEFAULT_RELAY_HOST, DEFAULT_RELAY_PORT), ("hub", DEFAULT_HUB_HOST, DEFAULT_HUB_PORT)):
+        _listener(data, key, host, port, path)  # the block's keys are checked; its values are load_config's
+    relay_on = _flag(data.get("enabled", False), "enabled", path)
+    hub_on = _flag(_block(data, "hub", path).get("enabled", False), "hub.enabled", path)
+    return Enablement(path=path, relay=relay_on, hub=relay_on and hub_on)
+
+
+def relay_enabled(config_path: Optional[Path] = None, *, environ: Optional[Mapping[str, str]] = None) -> bool:
+    """True only when relay.yaml holds ``enabled: true`` (the contract the llm-kit plugin calls)."""
+    return enablement(config_path, environ=environ).relay
+
+
+def hub_enabled(config_path: Optional[Path] = None, *, environ: Optional[Mapping[str, str]] = None) -> bool:
+    """True only when relay.yaml holds ``enabled: true`` and ``hub: {enabled: true}``."""
+    return enablement(config_path, environ=environ).hub
+
+
+class RelayNotEnabled(RelayConfigError):
+    """The relay or hub is not turned on in this machine's relay.yaml."""
+
+
+def require_enabled(role: str, config_path: Path) -> None:
+    """Raise :class:`RelayNotEnabled`, naming the file and the key, unless relay.yaml turns ``role`` on."""
+    state = enablement(config_path)
+    if _require_role(role) == "relay" and not state.relay:
+        raise RelayNotEnabled(
+            f"the relay is not enabled on this machine; to run it, put `enabled: true` in {state.path}"
+        )
+    if role == "hub" and not state.hub:
+        missing = "`enabled: true` and `hub: {enabled: true}`" if not state.relay else "`hub: {enabled: true}`"
+        raise RelayNotEnabled(f"the hub is not enabled on this machine; to run it, put {missing} in {state.path}")
 
 
 def _ledgers(raw: object, path: Path) -> tuple[Path, ...]:
@@ -465,6 +581,7 @@ def load_config(
     hub_port: Optional[int] = None,
     ledgers: Optional[Sequence[Path]] = None,
     llm_endpoints: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    hub_public_url: Optional[str] = None,
 ) -> RelayConfig:
     """Resolve the relay configuration. Precedence: argument, relay.yaml, default.
 
@@ -487,6 +604,8 @@ def load_config(
     h_port = _require_port(hub_port if hub_port is not None else file_hub_port, what="hub")
     if r_port == h_port and r_host == h_host:
         raise RelayConfigError(f"relay and hub would both bind {r_host}:{r_port}")
+    raw_public = hub_public_url if hub_public_url is not None else _block(data, "hub", cfg_path).get("public_url")
+    public = parse_public_url(raw_public) if raw_public is not None else None
 
     if ledgers is not None:
         watched = _ledgers([str(p) for p in ledgers], cfg_path)
@@ -512,6 +631,7 @@ def load_config(
         config_path=cfg_path,
         ledgers=watched,
         llm_endpoints=endpoints,
+        hub_public_url=public,
     )
 
 
@@ -522,19 +642,26 @@ __all__ = [
     "DEFAULT_LLM_ENDPOINTS",
     "DEFAULT_RELAY_HOST",
     "DEFAULT_RELAY_PORT",
+    "Enablement",
     "MachineIdentity",
     "REGISTRY_FILENAME",
     "ROLES",
     "RelayConfig",
     "RelayConfigError",
+    "RelayNotEnabled",
     "StatePaths",
     "config_file",
     "default_env_json_path",
+    "enablement",
+    "hub_enabled",
     "is_loopback_host",
     "is_loopback_url",
     "load_config",
     "load_loopback_registry",
+    "parse_public_url",
+    "relay_enabled",
     "render_registry_yaml",
+    "require_enabled",
     "require_loopback_endpoint",
     "require_loopback_host",
     "resolve_machine",

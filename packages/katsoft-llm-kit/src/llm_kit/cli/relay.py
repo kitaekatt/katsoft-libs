@@ -8,15 +8,19 @@ Verbs:
     Prints one JSON object once the socket listens, then serves until SIGINT
     or SIGTERM. A second ``serve`` on the same state directory exits 1 with
     ``already_running``.
-``hub [--host H] [--port N]``
+``hub [--host H] [--port N] [--public-url https://<host>]``
     Run the hub (the MCP server the claude.ai connector talks to) in the
     foreground on ``RelayConfig.bind("hub")`` (``127.0.0.1:4711`` unless
     ``relay.yaml`` says otherwise; loopback only), in front of this machine's
-    relay. Prints one JSON object (``serving`` is the MCP endpoint URL) once
-    the socket listens, then serves until SIGINT or SIGTERM. A second ``hub``
-    on the same state directory exits 1 with ``already_running``. The hub
-    creates its bearer token if missing; it does not need the relay to be up
-    (an unreachable relay is reported per call).
+    relay. Prints one JSON object (``serving`` is the loopback MCP endpoint
+    URL, ``public_url`` the connector URL or null) once the socket listens,
+    then serves until SIGINT or SIGTERM. A second ``hub`` on the same state
+    directory exits 1 with ``already_running``. The hub creates its bearer
+    token if missing; it does not need the relay to be up (an unreachable
+    relay is reported per call). ``--public-url`` (or relay.yaml
+    ``hub.public_url``) names the https origin a tunnel serves the hub at and
+    turns on the OAuth sign-in; the bind stays loopback. The approval code for
+    each claude.ai Connect is printed on this command's stderr.
 ``pause [--scope relay|hub] [--reason TEXT]`` / ``resume [--scope relay|hub]``
     Set or clear a pause flag through the running relay, as
     ``operator:<machine>`` (audited). ``--offline`` writes the pause file in the
@@ -132,6 +136,8 @@ def _parser() -> argparse.ArgumentParser:
     hub = sub.add_parser("hub", parents=[common], help="Run the hub MCP server in the foreground (loopback only).")
     hub.add_argument("--host", help="Loopback host to bind instead of relay.yaml's (a literal loopback address).")
     hub.add_argument("--port", type=int, help="Port to bind instead of relay.yaml's.")
+    hub.add_argument("--public-url", help="The https origin a tunnel serves the hub at (turns on the OAuth sign-in; "
+                                          "the bind stays loopback). Default: relay.yaml hub.public_url.")
     for name, text in (("pause", "Set a pause flag."), ("resume", "Clear a pause flag.")):
         verb = sub.add_parser(name, parents=[common], help=text)
         verb.add_argument("--scope", choices=P.PAUSE_SCOPES, default="relay", help="relay (default) or hub.")
@@ -227,11 +233,16 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 def _cmd_hub(args: argparse.Namespace) -> int:
     from llm_kit.relay.hub import HubServer
 
-    overrides = {key: value for key, value in (("hub_host", args.host), ("hub_port", args.port)) if value is not None}
+    overrides = {key: value for key, value in (("hub_host", args.host), ("hub_port", args.port),
+                                               ("hub_public_url", args.public_url)) if value is not None}
     config = _config(args, **overrides)
 
     def ready(server: HubServer) -> None:
-        _emit({"serving": server.url, "machine": config.machine_label, "protocol": P.PROTOCOL})
+        _emit({"serving": server.url, "machine": config.machine_label, "protocol": P.PROTOCOL,
+               "public_url": server.public_mcp_url, "oauth": server.oauth is not None})
+        if server.oauth is not None:
+            server.oauth.log(f"sign-in is on for {server.public_mcp_url}; the approval code for each claude.ai "
+                             "Connect is printed here")
 
     HubServer(config).serve_forever(on_ready=ready)
     return EXIT_OK

@@ -43,6 +43,8 @@ ENV_JSON = {"machines": {
     "tower.local": {"os": "linux", "tailscale_hostname": "tower"},
 }}
 NONCE = "nonce-" + "x" * 20
+#: relay.yaml text that turns on the relay and the hub (llm_kit.relay.config.require_enabled).
+ENABLED_YAML = "enabled: true\nhub:\n  enabled: true\n"
 
 
 def sid() -> str:
@@ -72,8 +74,11 @@ class Machine:
         self.root = tmp_path / label
         env_json = tmp_path / "env.json"
         env_json.write_text(json.dumps(ENV_JSON), encoding="utf-8")
+        relay_yaml = self.root / "config" / "relay.yaml"
+        relay_yaml.parent.mkdir(parents=True)
+        relay_yaml.write_text(ENABLED_YAML, encoding="utf-8")  # the opt-in: nothing listens without it
         self.config = C.load_config(env_json=env_json, environ={}, hostname=lambda: f"{label}.local",
-                                    config_path=self.root / "config" / "relay.yaml", state_root=self.root / "state")
+                                    config_path=relay_yaml, state_root=self.root / "state")
         self.registrations: dict[str, dict[str, Any]] = {}
         if question:  # one real ledger with one open question, watched by this relay
             ledger = self.root / "ledgers" / "jobs.sqlite3"
@@ -823,6 +828,33 @@ def test_get_and_delete_also_need_the_bearer(hub_two):
 # --------------------------------------------------------------------------
 # loopback only
 # --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", ["", "enabled: true\n", "hub: {enabled: true}\n",
+                                  "enabled: false\nhub: {enabled: true}\n", "enabled: true\nhub: {enabled: false}\n"])
+def test_a_hub_that_is_not_enabled_is_refused_before_any_state_is_touched(machine_a, tmp_path, text):
+    conf = tmp_path / "hub-off" / "relay.yaml"
+    conf.parent.mkdir()
+    conf.write_text(text, encoding="utf-8")
+    state = tmp_path / "hub-off-state"
+    config = dataclasses.replace(machine_a.config, config_path=conf, paths=C.StatePaths(state))
+    for public_url in (None, "https://hub.example.test"):
+        with pytest.raises(C.RelayNotEnabled, match=f"the hub is not enabled on this machine.*in {conf}"):
+            H.HubServer(config, peers=[machine_a.peer], port=0, public_url=public_url)
+    assert not state.exists()
+
+
+def test_a_hub_disabled_after_construction_does_not_start(machine_a, tmp_path):
+    conf = tmp_path / "hub-later" / "relay.yaml"
+    conf.parent.mkdir()
+    conf.write_text(ENABLED_YAML, encoding="utf-8")
+    state = tmp_path / "hub-later-state"
+    config = dataclasses.replace(machine_a.config, config_path=conf, paths=C.StatePaths(state))
+    server = H.HubServer(config, peers=[machine_a.peer], port=0)
+    conf.write_text("enabled: true\n", encoding="utf-8")
+    with pytest.raises(C.RelayNotEnabled, match="hub: \\{enabled: true\\}"):
+        server.start()
+    assert not state.exists()
+
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.5", "::", "localhost", "example.com"])
 def test_a_non_loopback_bind_is_refused_before_any_state_is_touched(machine_a, tmp_path, host):

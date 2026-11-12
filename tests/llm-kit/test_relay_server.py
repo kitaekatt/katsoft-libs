@@ -82,8 +82,11 @@ class Clock:
 def config(tmp_path: Path) -> C.RelayConfig:
     env_json = tmp_path / "env.json"
     env_json.write_text(json.dumps(ENV_JSON), encoding="utf-8")
+    relay_yaml = tmp_path / "config" / "relay.yaml"
+    relay_yaml.parent.mkdir(parents=True)
+    relay_yaml.write_text("enabled: true\n", encoding="utf-8")  # the opt-in: nothing listens without it
     return C.load_config(env_json=env_json, environ={}, hostname=lambda: "m5pro.local",
-                         config_path=tmp_path / "config" / "relay.yaml", state_root=tmp_path / "state")
+                         config_path=relay_yaml, state_root=tmp_path / "state")
 
 
 @pytest.fixture
@@ -109,6 +112,22 @@ def make_server(config, roots, backend, tmp_path, **kw) -> S.RelayServer:
         policy_loader=lambda scope: consent.policy(scope, path=tmp_path / "consent.json"),
         **kw,
     )
+
+
+@pytest.mark.parametrize("text", ["", "enabled: false\n", "hub: {enabled: true}\n"])
+def test_a_relay_that_is_not_enabled_is_refused_before_any_state_is_touched(config, roots, backend, tmp_path, text):
+    config.config_path.write_text(text, encoding="utf-8")
+    with pytest.raises(C.RelayNotEnabled, match=f"enabled: true` in {config.config_path}"):
+        make_server(config, roots, backend, tmp_path)
+    assert not config.paths.root.exists()
+
+
+def test_a_relay_disabled_after_construction_does_not_start(config, roots, backend, tmp_path):
+    server = make_server(config, roots, backend, tmp_path)
+    config.config_path.unlink()
+    with pytest.raises(C.RelayNotEnabled):
+        server.start()
+    assert not config.paths.root.exists()
 
 
 class Relay:

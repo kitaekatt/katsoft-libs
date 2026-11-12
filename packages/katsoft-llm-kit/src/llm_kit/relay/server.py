@@ -1,6 +1,8 @@
 """The relay's HTTP server (unit S3): relay-protocol/1 on a loopback socket.
 
-:class:`RelayServer` is one machine's relay process. Starting it:
+:class:`RelayServer` is one machine's relay process. Constructing or starting it refuses unless this machine's relay.yaml holds
+``enabled: true`` (:func:`llm_kit.relay.config.require_enabled`; the file is
+read again at start). Starting it:
 
 1. refuses a bind host that is not a literal loopback address (before any
    state is touched, and again on the address the socket actually bound);
@@ -42,7 +44,13 @@ from typing import Any, Callable, Optional
 
 from llm_kit.relay import protocol as P
 from llm_kit.relay.client import base_url
-from llm_kit.relay.config import RelayConfig, RelayConfigError, is_loopback_host, load_loopback_registry
+from llm_kit.relay.config import (
+    RelayConfig,
+    RelayConfigError,
+    is_loopback_host,
+    load_loopback_registry,
+    require_enabled,
+)
 from llm_kit.relay.discovery import Discovery, DiscoveryRoots, ProcessProbe, PsutilProbe, RegistrationTable
 from llm_kit.relay.lifecycle import PreparedState, RoleLock, prepare_state
 from llm_kit.relay.mailbox import Mailbox, MailboxLimits, mailbox_db_path
@@ -248,6 +256,7 @@ class RelayServer:
         body_deadline_s: float = DEFAULT_BODY_DEADLINE_S,
         max_in_flight: int = DEFAULT_MAX_IN_FLIGHT,
     ) -> None:
+        require_enabled(ROLE, config.config_path)
         self.config = config
         host, configured_port = config.bind(ROLE)
         self._host = host
@@ -296,6 +305,7 @@ class RelayServer:
     def _open(self) -> None:
         if self._sock is not None:
             raise RuntimeError("the relay server is already open")
+        require_enabled(ROLE, self.config.config_path)
         require_loopback(self._host)
         self.prepared = prepare_state(self.config)
         lock = RoleLock(self.config.paths, ROLE).acquire()

@@ -168,6 +168,149 @@ def test_unknown_config_keys_are_refused(tmp_path, env_json):
         _config(tmp_path, env_json)
 
 
+# --------------------------------------------------------------------------
+# opt-in: relay.yaml turns the relay and the hub on; nothing else does
+# --------------------------------------------------------------------------
+
+def _yaml(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "config" / "relay.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_without_a_relay_yaml_nothing_is_enabled(tmp_path):
+    missing = tmp_path / "config" / "relay.yaml"
+    assert C.relay_enabled(missing) is False and C.hub_enabled(missing) is False
+    assert not missing.exists()
+
+
+@pytest.mark.parametrize("text,relay,hub", [
+    ("", False, False),
+    ("relay: {port: 4800}\n", False, False),
+    ("enabled: false\n", False, False),
+    ("enabled: true\n", True, False),
+    ("enabled: true\nhub: {enabled: false}\n", True, False),
+    ("hub: {enabled: true}\n", False, False),
+    ("enabled: false\nhub: {enabled: true}\n", False, False),
+    ("enabled: true\nhub: {enabled: true}\n", True, True),
+    ("enabled: true\nhub: {enabled: true, public_url: 'https://h.example.ts.net'}\n", True, True),
+])
+def test_the_flags_are_read_from_relay_yaml(tmp_path, text, relay, hub):
+    path = _yaml(tmp_path, text)
+    assert (C.relay_enabled(path), C.hub_enabled(path)) == (relay, hub)
+    assert C.enablement(path) == C.Enablement(path=path, relay=relay, hub=hub)
+
+
+@pytest.mark.parametrize("text", [
+    "enabled: 'true'\n", "enabled: 1\n", "enabled: yes please\n", "enabled: null\n",
+    "enabled: true\nhub: {enabled: 'yes'}\n", "enabled: [true\n", "enabled: true\nhub: {enable: true}\n",
+    "enabeld: true\n", "- enabled\n",
+])
+def test_a_malformed_relay_yaml_fails_loudly(tmp_path, text):
+    path = _yaml(tmp_path, text)
+    with pytest.raises(C.RelayConfigError):
+        C.relay_enabled(path)
+    with pytest.raises(C.RelayConfigError):
+        C.hub_enabled(path)
+
+
+def test_the_default_file_is_the_convention_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    environ = {"XDG_CONFIG_HOME": str(tmp_path / "xdg")}
+    assert C.relay_enabled(environ=environ) is False
+    target = tmp_path / "xdg" / "llm-kit" / "relay.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text("enabled: true\nhub: {enabled: true}\n", encoding="utf-8")
+    assert C.relay_enabled(environ=environ) is True and C.hub_enabled(environ=environ) is True
+    assert C.relay_enabled(environ={}) is False  # ~/.config/llm-kit/relay.yaml under the test HOME
+
+
+def test_no_environment_variable_turns_the_relay_on(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    for name in ("LLM_KIT_RELAY_ENABLED", "LLM_KIT_RELAY", "RELAY_ENABLED", "LLM_KIT_HUB_ENABLED"):
+        monkeypatch.setenv(name, "1")
+    assert C.relay_enabled() is False and C.hub_enabled() is False
+
+
+def test_require_enabled_names_the_file_and_the_key(tmp_path):
+    path = _yaml(tmp_path, "")
+    with pytest.raises(C.RelayNotEnabled, match=r"put `enabled: true` in .*relay\.yaml"):
+        C.require_enabled("relay", path)
+    with pytest.raises(C.RelayNotEnabled, match=r"`enabled: true` and `hub: \{enabled: true\}`"):
+        C.require_enabled("hub", path)
+    path.write_text("enabled: true\n", encoding="utf-8")
+    C.require_enabled("relay", path)
+    with pytest.raises(C.RelayNotEnabled, match=r"put `hub: \{enabled: true\}` in"):
+        C.require_enabled("hub", path)
+    path.write_text("enabled: true\nhub: {enabled: true}\n", encoding="utf-8")
+    C.require_enabled("hub", path)
+    assert issubclass(C.RelayNotEnabled, C.RelayConfigError)
+
+
+def test_load_config_accepts_the_flags(tmp_path, env_json):
+    _yaml(tmp_path, "enabled: true\nhub: {enabled: true, port: 4812}\n")
+    assert _config(tmp_path, env_json).bind("hub") == ("127.0.0.1", 4812)
+
+
+# --------------------------------------------------------------------------
+# the hub's public URL
+# --------------------------------------------------------------------------
+
+def test_no_public_url_by_default(tmp_path, env_json):
+    assert _config(tmp_path, env_json).hub_public_url is None
+
+
+@pytest.mark.parametrize("given,normal", [
+    ("https://hub.example.ts.net", "https://hub.example.ts.net"),
+    ("https://Hub.Example.TS.net/", "https://hub.example.ts.net"),
+    ("https://hub.example.ts.net:443", "https://hub.example.ts.net"),
+    ("https://hub.example.ts.net:8443", "https://hub.example.ts.net:8443"),
+    ("  https://hub.example.ts.net  ", "https://hub.example.ts.net"),
+])
+def test_public_url_is_normalized_to_an_origin(given, normal):
+    assert C.parse_public_url(given) == normal
+
+
+@pytest.mark.parametrize("bad", [
+    "http://hub.example.ts.net", "hub.example.ts.net", "https://", "https://hub.example.ts.net/mcp",
+    "https://hub.example.ts.net?x=1", "https://hub.example.ts.net#f", "https://hub.example.ts.net?",
+    "https://user@hub.example.ts.net", "https://u:p@hub.example.ts.net", "https://hub.example.ts.net:99999", "", 7,
+])
+def test_a_public_url_that_is_not_an_https_origin_is_refused(bad):
+    with pytest.raises(C.RelayConfigError, match="public_url"):
+        C.parse_public_url(bad)
+
+
+def test_public_url_comes_from_the_hub_block_and_the_argument_wins(tmp_path, env_json):
+    conf = tmp_path / "config" / "relay.yaml"
+    conf.parent.mkdir()
+    conf.write_text("hub: {public_url: 'https://from-file.example.ts.net/'}\n", encoding="utf-8")
+    assert _config(tmp_path, env_json).hub_public_url == "https://from-file.example.ts.net"
+    assert _config(tmp_path, env_json, hub_public_url="https://arg.example.ts.net").hub_public_url == (
+        "https://arg.example.ts.net")
+    conf.write_text("hub: {public_url: 'http://from-file.example.ts.net'}\n", encoding="utf-8")
+    with pytest.raises(C.RelayConfigError, match="https"):
+        _config(tmp_path, env_json)
+
+
+def test_public_url_is_a_hub_key_only(tmp_path, env_json):
+    conf = tmp_path / "config" / "relay.yaml"
+    conf.parent.mkdir()
+    conf.write_text("relay: {public_url: 'https://x.example.ts.net'}\n", encoding="utf-8")
+    with pytest.raises(C.RelayConfigError, match="unknown keys"):
+        _config(tmp_path, env_json)
+
+
+def test_a_public_url_changes_no_bind(tmp_path, env_json):
+    config = _config(tmp_path, env_json, hub_public_url="https://hub.example.ts.net")
+    assert config.bind("hub") == ("127.0.0.1", 4711)
+
+
+def test_the_oauth_store_lives_in_the_state_directory(tmp_path):
+    assert C.StatePaths(tmp_path).hub_oauth == tmp_path / "hub-oauth.json"
+
+
 def test_xdg_paths_and_defaults(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     assert C.state_dir({"XDG_STATE_HOME": str(tmp_path / "s")}) == tmp_path / "s" / "llm-kit" / "relay"

@@ -36,6 +36,8 @@ from llm_kit.relay.client import HttpRelayClient
 from test_cli_harness import REPO, home, run  # noqa: F401 -- home is a fixture
 
 LABEL = "testbox"
+#: relay.yaml text that turns on the relay and the hub (llm_kit.relay.config.require_enabled).
+ENABLED_YAML = "enabled: true\nhub:\n  enabled: true\n"
 SESSION = "c1c1c1c1-0000-4000-8000-000000000001"
 LIB = REPO / "packages" / "katsoft-llm-kit" / "src"
 CONTRACTS = REPO / "packages" / "katsoft-contracts" / "src"
@@ -75,6 +77,8 @@ def paths(tmp_path: Path, home) -> SimpleNamespace:
     env_json = tmp_path / "env.json"
     env_json.write_text(json.dumps({"machines": {socket.gethostname(): {"tailscale_hostname": LABEL}}}), encoding="utf-8")
     config = tmp_path / "config" / "relay.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text(ENABLED_YAML, encoding="utf-8")  # the opt-in: nothing listens without it
     state = tmp_path / "state"
     claude, codex = tmp_path / "claude-home", tmp_path / "codex-home"
     (claude / "sessions").mkdir(parents=True)
@@ -94,7 +98,7 @@ def _serve(paths, ledgers=()) -> Iterator[SimpleNamespace]:
     ).start()
     port = server.address[1]
     paths.config.parent.mkdir(parents=True, exist_ok=True)
-    paths.config.write_text(f"relay:\n  port: {port}\n", encoding="utf-8")
+    paths.config.write_text(f"{ENABLED_YAML}relay:\n  port: {port}\n", encoding="utf-8")
     client = HttpRelayClient(server.url, machine=LABEL, relay_token=server.prepared.relay_token)
     try:
         yield SimpleNamespace(server=server, port=port, client=client)
@@ -371,8 +375,17 @@ def test_serve_runs_in_the_foreground_until_sigterm(paths):
 def test_hub_takes_host_and_port_like_serve(paths, capsys):
     out = cli(["hub", "--help"], capsys)
     assert out.code == 0
-    for flag in ("--host", "--port", "--env-json", "--config", "--state-dir"):
+    for flag in ("--host", "--port", "--public-url", "--env-json", "--config", "--state-dir"):
         assert flag in out.out
+
+
+@pytest.mark.parametrize("url", ["http://hub.example.test", "https://hub.example.test/mcp", "https://u@hub.example.test"])
+def test_hub_refuses_a_public_url_that_is_not_an_https_origin(paths, capsys, url):
+    out = cli(["hub", "--public-url", url, *paths.args], capsys)
+    assert out.code == 2 and out.out == ""
+    error = json.loads(out.err)["error"]
+    assert error["kind"] == "configuration" and "public_url" in error["message"]
+    assert not paths.state.exists()
 
 
 def test_hub_refuses_a_non_loopback_host(paths, capsys):
@@ -411,7 +424,8 @@ def test_hub_runs_in_the_foreground_until_sigterm(paths):
         line = child.stdout.readline()
         assert line, child.stderr.read()
         ready = scrub(json.loads(line), paths.tmp, port)
-        assert ready == {"serving": "http://127.0.0.1:<port>/mcp", "machine": LABEL, "protocol": P.PROTOCOL}
+        assert ready == {"serving": "http://127.0.0.1:<port>/mcp", "machine": LABEL, "protocol": P.PROTOCOL,
+                         "public_url": None, "oauth": False}
         bearer = (paths.state / "hub.bearer").read_text(encoding="ascii").strip()
         assert bearer
         import httpx
@@ -426,3 +440,82 @@ def test_hub_runs_in_the_foreground_until_sigterm(paths):
             child.wait()
         child.stdout.close()
         child.stderr.close()
+
+
+def test_hub_with_a_public_url_serves_the_oauth_sign_in(paths):
+    port = _free_port()
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("XDG_", "CLAUDE_", "MODEL_ENDPOINTS"))}
+    env.update({"HOME": str(paths.tmp / "home"), "PYTHONPATH": os.pathsep.join([str(LIB), str(CONTRACTS)]),
+                "_BOOTSTRAP_GUARD_SKIP_REEXEC": "1"})
+    child = subprocess.Popen([sys.executable, "-m", "llm_kit.cli", "relay", "hub", "--port", str(port),
+                              "--public-url", "https://Hub.Example.test/", *paths.args],
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        line = child.stdout.readline()
+        assert line, child.stderr.read()
+        ready = scrub(json.loads(line), paths.tmp, port)
+        assert ready == {"serving": "http://127.0.0.1:<port>/mcp", "machine": LABEL, "protocol": P.PROTOCOL,
+                         "public_url": "https://hub.example.test/mcp", "oauth": True}
+        assert "sign-in is on for https://hub.example.test/mcp" in child.stderr.readline()
+        import httpx
+
+        metadata = httpx.get(f"http://127.0.0.1:{port}/.well-known/oauth-authorization-server", trust_env=False)
+        assert metadata.status_code == 200 and metadata.json()["issuer"] == "https://hub.example.test"
+        refused = httpx.post(f"http://127.0.0.1:{port}/mcp", json={}, trust_env=False)
+        assert refused.status_code == 401
+        assert refused.headers["www-authenticate"] == (
+            'Bearer resource_metadata="https://hub.example.test/.well-known/oauth-protected-resource/mcp"')
+        child.send_signal(signal.SIGTERM)
+        assert child.wait(timeout=30) == 0
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        child.stdout.close()
+        child.stderr.close()
+
+
+# --------------------------------------------------------------------------
+# opt-in: serve and hub run only when relay.yaml turns them on
+# --------------------------------------------------------------------------
+
+def _child(paths, argv: list[str], timeout: float = 60) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("XDG_", "CLAUDE_", "MODEL_ENDPOINTS"))}
+    env.update({"HOME": str(paths.tmp / "home"), "PYTHONPATH": os.pathsep.join([str(LIB), str(CONTRACTS)]),
+                "_BOOTSTRAP_GUARD_SKIP_REEXEC": "1", "LLM_KIT_RELAY_ENABLED": "1"})
+    return subprocess.run([sys.executable, "-m", "llm_kit.cli", "relay", *argv], env=env, capture_output=True,
+                          text=True, timeout=timeout)
+
+
+@pytest.mark.parametrize("verb,text,needed", [
+    ("serve", "", "`enabled: true`"),
+    ("serve", "enabled: false\nhub: {enabled: true}\n", "`enabled: true`"),
+    ("hub", "", "`enabled: true` and `hub: {enabled: true}`"),
+    ("hub", "enabled: true\n", "`hub: {enabled: true}`"),
+    ("hub", "hub: {enabled: true}\n", "`enabled: true` and `hub: {enabled: true}`"),
+])
+def test_serve_and_hub_refuse_unless_relay_yaml_turns_them_on(paths, verb, text, needed):
+    paths.config.write_text(text, encoding="utf-8")
+    argv = [verb, "--port", str(_free_port()), *paths.args]
+    if verb == "hub":
+        argv += ["--public-url", "https://hub.example.test"]
+    done = _child(paths, argv)
+    assert done.returncode == 2 and done.stdout == "", done.stderr
+    error = json.loads(done.stderr)["error"]
+    assert error["kind"] == "configuration"
+    assert needed in error["message"] and str(paths.config) in error["message"]
+    assert not paths.state.exists()
+
+
+def test_serve_and_hub_refuse_without_any_relay_yaml(paths):
+    paths.config.unlink()
+    for verb in ("serve", "hub"):
+        done = _child(paths, [verb, "--port", str(_free_port()), *paths.args])
+        assert done.returncode == 2 and "is not enabled on this machine" in done.stderr, done.stderr
+    assert not paths.state.exists() and not paths.config.exists()
+
+
+def test_no_command_line_flag_turns_the_relay_on(paths, capsys):
+    for verb in ("serve", "hub"):
+        out = cli([verb, "--help"], capsys)
+        assert out.code == 0 and "--enable" not in out.out and "--force" not in out.out

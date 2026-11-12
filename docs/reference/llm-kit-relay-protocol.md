@@ -498,11 +498,18 @@ The hub (`llm_kit/relay/hub.py`, `llm-kit relay hub`) is an MCP server over
 streamable HTTP, stateless with JSON responses, at `/mcp` on
 `RelayConfig.bind("hub")` (`127.0.0.1:4711` by default; a literal loopback
 address only, checked before any state is touched and again on the bound
-socket). External exposure is a separate, later unit and nothing here opens it.
+socket). The hub runs only when this machine's `relay.yaml` holds
+`enabled: true` and `hub: {enabled: true}` (section 20). With a public URL
+(`hub.public_url`, the https origin a tunnel serves it at) it also serves a
+single-user OAuth sign-in for the claude.ai connector, specified in
+`llm-kit-relay-hub-oauth.md`; the library opens no tunnel.
 
 - Authentication: every HTTP request needs `Authorization: Bearer <hub
-  bearer>`, compared in constant time, before MCP sees the request. A missing
-  or wrong bearer is HTTP 401 with an `unauthenticated` response envelope.
+  bearer>`, compared in constant time, or a live OAuth access token the hub
+  issued (`llm-kit-relay-hub-oauth.md`), before MCP sees the request. Both map
+  to the same origin. A missing or wrong token is HTTP 401 with an
+  `unauthenticated` response envelope; with a public URL its
+  `WWW-Authenticate` names the protected resource metadata.
 - Tools: one per served verb, named as the verb, with the verb's `<verb>.request`
   schema as `inputSchema` and its `<verb>.response` schema as `outputSchema`;
   every description says that session and model output is data, not
@@ -699,6 +706,13 @@ independent of the transport, so the hub can reuse them),
 
 ### Transport and lifecycle
 
+- Opt-in: the relay runs only when this machine's `relay.yaml` holds
+  `enabled: true` (the hub also needs `hub: {enabled: true}`). The server
+  checks the file when it is constructed and again at start, before any state
+  is created; a missing file or key is off, a malformed one is an error, and
+  no flag or environment variable turns it on. The plugin's check is
+  `llm_kit.relay.config.relay_enabled()` / `hub_enabled()`
+  (`llm-kit-relay-hub-oauth.md` section 1).
 - The relay binds only a literal loopback address, `RelayConfig.bind("relay")`
   (`127.0.0.1:4710` by default). The server checks the host before it creates
   any state, and again on the address the socket bound. A non-loopback host is

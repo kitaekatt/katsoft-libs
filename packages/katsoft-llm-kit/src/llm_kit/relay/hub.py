@@ -43,16 +43,23 @@ machine) is found by asking every relay and must be held by exactly one. Every r
 credentials (``X-Relay-Token`` and ``Authorization: Bearer <hub bearer>``,
 S3's contract); the hub bearer alone never authorizes a relay call.
 
-Authentication. Every HTTP request needs ``Authorization: Bearer <hub bearer>``
-(compared in constant time), loopback or not; a missing or wrong one is a 401
-carrying the ``unauthenticated`` envelope before any MCP handling happens.
-Under alternative A the bearer is a guardrail against accidental calls, not a
-boundary against a same-user process (protocol section 3).
+Authentication. Every HTTP request needs ``Authorization: Bearer <token>``,
+loopback or not, where the token is the hub bearer (compared in constant time)
+or, when the hub has a public URL, a live OAuth access token the hub issued
+(:mod:`llm_kit.relay.hub_oauth`). A missing or wrong one is a 401 carrying the
+``unauthenticated`` envelope before any MCP handling happens; with a public URL
+its ``WWW-Authenticate`` names the protected resource metadata, so the
+claude.ai connector can find the sign-in. Both credentials map to the same
+origin ``claude.ai/<hub user>``. Under alternative A the bearer is a guardrail
+against accidental calls, not a boundary against a same-user process
+(protocol section 3).
 
 Exposure. The hub binds only a literal loopback address,
 ``RelayConfig.bind("hub")`` (``127.0.0.1:4711`` by default), checked before any
-state is touched and again on the socket's bound address. External exposure
-(a tunnel, OAuth) is a separate, later unit; nothing here opens it.
+state is touched and again on the socket's bound address. The public URL
+(``hub.public_url`` / ``--public-url``) only names the https origin a tunnel in
+front of the hub serves it at; the hub opens no tunnel. Every request's
+``Host`` must be a loopback address or the public URL's host (421 otherwise).
 
 Pause. While the hub's pause flag is set every tool call is refused
 ``paused`` (protocol section 16); ``tools/list`` still answers. The flag is
@@ -65,6 +72,11 @@ served by the new process.
 
 The hub role is a singleton per state directory (:class:`RoleLock`); a second
 hub is refused ``already_running``.
+
+Opt-in. The hub constructs and starts only when this machine's relay.yaml
+holds ``enabled: true`` and ``hub: {enabled: true}``
+(:func:`llm_kit.relay.config.require_enabled`); no flag or environment variable
+turns it on.
 """
 from __future__ import annotations
 
@@ -82,7 +94,8 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from llm_kit.relay import protocol as P
 from llm_kit.relay.client import DEFAULT_LLM_TIMEOUT_S, HttpRelayClient, base_url
-from llm_kit.relay.config import RelayConfig, RelayConfigError, is_loopback_host
+from llm_kit.relay.config import RelayConfig, RelayConfigError, is_loopback_host, parse_public_url, require_enabled
+from llm_kit.relay.hub_oauth import CLIENT_ORIGINS, HubOAuth
 from llm_kit.relay.lifecycle import PauseStore, RoleLock, ensure_state_dir, ensure_token, token_matches
 from llm_kit.schema import json_schema as JS
 
@@ -441,19 +454,39 @@ def parse_bearer(value: Optional[str]) -> Optional[str]:
     return token.strip()
 
 
-class BearerGate:
-    """ASGI wrapper: every HTTP request needs the hub bearer, loopback or not.
+def host_allowed(host: Optional[str], public_host: Optional[str]) -> bool:
+    """True when a ``Host`` header names loopback (a literal address or ``localhost``, any port) or the public URL's host.
 
-    The check is constant time and runs before the MCP application sees the
-    request. Lifespan events pass through (the MCP session manager starts
-    there); any other scope type is refused.
+    A request a tunnel forwards may carry either the public host or the
+    loopback one; any other name is a DNS-rebinding shape and is refused.
+    """
+    if not host:
+        return False
+    value = host.strip().lower()
+    if public_host is not None and value in (public_host, f"{public_host}:443"):
+        return True
+    name = value.rpartition("]")[0] + "]" if value.startswith("[") else value.partition(":")[0]
+    return name == "localhost" or is_loopback_host(name)
+
+
+class BearerGate:
+    """ASGI wrapper: every HTTP request needs the hub bearer or an OAuth access token, loopback or not.
+
+    The ``Host`` header is checked first (:func:`host_allowed`, 421 when
+    foreign). With ``oauth`` (the hub has a public URL) the OAuth endpoints are
+    served without a credential, and a live access token is accepted wherever
+    the bearer is. The bearer check is constant time; an access token is looked
+    up by its hash. Both run before the MCP application sees the request.
+    Lifespan events pass through (the MCP session manager starts there); any
+    other scope type is refused.
     """
 
-    def __init__(self, app: Any, bearer: str) -> None:
+    def __init__(self, app: Any, bearer: str, *, oauth: Optional[HubOAuth] = None) -> None:
         if not bearer:
             raise ValueError("the hub bearer is empty")
         self._app = app
         self._bearer = bearer
+        self._oauth = oauth
 
     async def __call__(self, scope: dict[str, Any], receive: Callable[..., Any], send: Callable[..., Any]) -> None:
         if scope["type"] == "lifespan":
@@ -461,27 +494,49 @@ class BearerGate:
             return
         if scope["type"] != "http":
             return
-        presented = None
+        authorization = host = None
         for raw_name, raw_value in scope.get("headers", []):
-            if raw_name.decode("latin-1").lower() == P.HEADER_AUTHORIZATION.lower():
-                presented = parse_bearer(raw_value.decode("latin-1"))
-                break
-        if not token_matches(presented, self._bearer):
-            await self._refuse(send)
+            name = raw_name.decode("latin-1").lower()
+            if name == P.HEADER_AUTHORIZATION.lower() and authorization is None:
+                authorization = raw_value.decode("latin-1")
+            elif name == "host" and host is None:
+                host = raw_value.decode("latin-1")
+        oauth = self._oauth
+        if not host_allowed(host, oauth.public_host if oauth is not None else None):
+            await self._send(send, 421, b"the Host header names neither loopback nor this hub's public URL",
+                             content_type=b"text/plain; charset=utf-8")
             return
-        await self._app(scope, receive, send)
+        if oauth is not None and oauth.handles(scope["path"]):
+            await oauth.handle(scope, receive, send)
+            return
+        presented = parse_bearer(authorization)
+        if token_matches(presented, self._bearer) or (
+                oauth is not None and presented is not None and oauth.verify_access(presented)):
+            await self._app(scope, receive, send)
+            return
+        if oauth is not None:
+            oauth.log(f"refused {scope['method']} {scope['path']}: "
+                      f"{'an unknown or expired token' if presented else 'no bearer token'}")
+        await self._refuse(send, presented is not None)
+
+    async def _refuse(self, send: Callable[..., Any], token_presented: bool) -> None:
+        error = P.RelayError("unauthenticated", f"the hub needs {P.HEADER_AUTHORIZATION}: {P.BEARER_SCHEME} <token>")
+        payload = json.dumps(P.make_error(None, error), ensure_ascii=True, separators=(",", ":")).encode("ascii")
+        challenge = (self._oauth.www_authenticate(invalid_token=token_presented) if self._oauth is not None
+                     else P.BEARER_SCHEME)
+        await self._send(send, error.http_status, payload, content_type=P.CONTENT_TYPE.encode("ascii"),
+                         extra=[(b"www-authenticate", challenge.encode("ascii"))])
 
     @staticmethod
-    async def _refuse(send: Callable[..., Any]) -> None:
-        error = P.RelayError("unauthenticated", f"the hub needs {P.HEADER_AUTHORIZATION}: {P.BEARER_SCHEME} <hub bearer>")
-        payload = json.dumps(P.make_error(None, error), ensure_ascii=True, separators=(",", ":")).encode("ascii")
+    async def _send(send: Callable[..., Any], status: int, payload: bytes, *, content_type: bytes,
+                    extra: Sequence[tuple[bytes, bytes]] = ()) -> None:
         await send({
             "type": "http.response.start",
-            "status": error.http_status,
+            "status": status,
             "headers": [
-                (b"content-type", P.CONTENT_TYPE.encode("ascii")),
+                (b"content-type", content_type),
                 (b"content-length", str(len(payload)).encode("ascii")),
-                (b"www-authenticate", P.BEARER_SCHEME.encode("ascii")),
+                *extra,
                 (b"cache-control", b"no-store"),
             ],
         })
@@ -598,7 +653,10 @@ class HubServer:
     :class:`RelayPeer`; the default is this machine's relay at
     ``RelayConfig.bind("relay")``. ``port`` overrides the configured port (0
     picks a free one; tests use it). ``hub_user`` names the connector in the
-    ``claude.ai/<user>`` origin the relays see.
+    ``claude.ai/<user>`` origin the relays see. ``public_url`` overrides
+    ``config.hub_public_url``; when either is set the hub serves its OAuth
+    sign-in (:class:`~llm_kit.relay.hub_oauth.HubOAuth`), with
+    ``metadata_fetcher`` and ``oauth_log`` passed through (tests inject them).
 
     Use :meth:`serve_forever` in the foreground (SIGINT or SIGTERM stops it) or
     :meth:`start` / :meth:`stop` (or ``with``) on a background thread.
@@ -615,7 +673,11 @@ class HubServer:
         llm_timeout_s: float = DEFAULT_LLM_TIMEOUT_S,
         clock: Callable[[], float] = time.time,
         workers: int = DEFAULT_WORKERS,
+        public_url: Optional[str] = None,
+        metadata_fetcher: Optional[Callable[[str], Mapping[str, Any]]] = None,
+        oauth_log: Optional[Callable[[str], None]] = None,
     ) -> None:
+        require_enabled(ROLE, config.config_path)
         self.config = config
         host, configured_port = config.bind(ROLE)
         self._host = host
@@ -627,7 +689,11 @@ class HubServer:
         self._llm_timeout_s = llm_timeout_s
         self._clock = clock
         self._workers = workers
+        self._public_url = parse_public_url(public_url) if public_url is not None else config.hub_public_url
+        self._metadata_fetcher = metadata_fetcher
+        self._oauth_log = oauth_log
         self.bearer: Optional[str] = None
+        self.oauth: Optional[HubOAuth] = None
         self.router: Optional[HubRouter] = None
         self._lock: Optional[RoleLock] = None
         self._sock: Optional[socket.socket] = None
@@ -646,9 +712,19 @@ class HubServer:
 
     @property
     def url(self) -> str:
-        """The MCP endpoint URL."""
+        """The MCP endpoint URL on the loopback socket."""
         host, port = self.address
         return base_url(host, port) + MCP_PATH
+
+    @property
+    def public_url(self) -> Optional[str]:
+        """The public https origin a tunnel serves the hub at, or None (no OAuth sign-in)."""
+        return self._public_url
+
+    @property
+    def public_mcp_url(self) -> Optional[str]:
+        """The MCP URL the claude.ai connector is given (``<public URL>/mcp``), or None."""
+        return None if self._public_url is None else self._public_url + MCP_PATH
 
     # -- opening and closing --------------------------------------------------------
 
@@ -670,6 +746,7 @@ class HubServer:
     def _open(self) -> None:
         if self._sock is not None:
             raise RuntimeError("the hub is already open")
+        require_enabled(ROLE, self.config.config_path)
         require_loopback(self._host)
         paths = self.config.paths
         ensure_state_dir(paths)
@@ -679,8 +756,18 @@ class HubServer:
         try:
             clients = self._build_clients(relay_token, self.bearer)
             self.router = HubRouter(clients, pause=PauseStore(paths, clock=self._clock), origin=self._origin)
+            if self._public_url is not None:
+                self.oauth = HubOAuth(
+                    self._public_url, store_path=paths.hub_oauth, pause=PauseStore(paths, clock=self._clock),
+                    mcp_path=MCP_PATH, fetch_client_metadata=self._metadata_fetcher, log=self._oauth_log,
+                    clock=self._clock, pause_scope=ROLE,
+                )
             self._sock = bind_loopback(self._host, self._port)
         except BaseException:
+            if self.router is not None:
+                self.router.close()
+                self.router = None
+            self.oauth = None
             lock.release()
             raise
         self._lock = lock
@@ -692,14 +779,30 @@ class HubServer:
         host = self.address[0]
         app = mcp_server.streamable_http_app(
             streamable_http_path=MCP_PATH, host=host, json_response=True, stateless_http=True,
+            transport_security=self._transport_security(),
         )
         self._uvicorn = uvicorn.Server(uvicorn.Config(
-            BearerGate(app, self.bearer), lifespan="on", http="h11", ws="none", log_config=None,
+            BearerGate(app, self.bearer, oauth=self.oauth), lifespan="on", http="h11", ws="none", log_config=None,
             log_level="warning", access_log=False, proxy_headers=False, server_header=False,
             timeout_graceful_shutdown=5,
         ))
 
+    def _transport_security(self) -> Any:
+        """The MCP SDK's Host/Origin check: its loopback default, plus the public URL's host and the connector origins."""
+        if self.oauth is None:
+            return None  # the SDK's own loopback-only default
+        from mcp.server.transport_security import TransportSecuritySettings
+
+        public_host = self.oauth.public_host
+        return TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", public_host, f"{public_host}:443"],
+            allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*", self.oauth.issuer,
+                             *CLIENT_ORIGINS],
+        )
+
     def _close(self) -> None:
+        self.oauth = None
         if self._executor is not None:
             self._executor.shutdown(wait=True, cancel_futures=True)
             self._executor = None
@@ -790,6 +893,7 @@ __all__ = [
     "WRITE_TOOLS",
     "bind_loopback",
     "build_mcp_server",
+    "host_allowed",
     "parse_bearer",
     "question_machine",
     "require_loopback",

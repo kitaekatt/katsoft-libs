@@ -70,6 +70,12 @@ def ensure_state_dir(paths: StatePaths) -> Path:
     return root
 
 
+def read_private_file(path: Path) -> str:
+    """The text of a ``0600`` file of this user's; a loose mode or a foreign owner is refused."""
+    _refuse_loose(path, kind="private state file")
+    return path.read_text(encoding="utf-8")
+
+
 def write_private_file(path: Path, text: str) -> None:
     """Atomically replace ``path`` with ``text`` at mode ``0600``."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
@@ -374,6 +380,7 @@ __all__ = [
     "ensure_state_dir",
     "ensure_token",
     "prepare_state",
+    "read_private_file",
     "read_token",
     "token_matches",
     "write_private_file",
