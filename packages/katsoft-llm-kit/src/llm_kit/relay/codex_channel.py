@@ -534,11 +534,15 @@ class CodexChannel:
             self._close_app(deadline, notes)
             self._finish_with_relay(deadline, notes)
         finally:
-            watchdog.cancel()
-            for note in notes:
-                self._log(note)
-            if self._dropped_output:
-                self._log(f"{self._dropped_output} output line(s) were dropped because the terminal stopped accepting output")
+            # The watchdog stays armed through the final output: a write that blocks inside the stream
+            # (the lock timeout bounds only the wait for the lock) must still end in the deadline.
+            try:
+                for note in notes:
+                    self._log(note)
+                if self._dropped_output:
+                    self._log(f"{self._dropped_output} output line(s) were dropped because the terminal stopped accepting output")
+            finally:
+                watchdog.cancel()
 
     def _cleanup_expired(self) -> None:
         """Watchdog thread: cleanup overran its deadline."""

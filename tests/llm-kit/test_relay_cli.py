@@ -787,3 +787,55 @@ def test_a_stalled_terminal_does_not_keep_the_app_server_alive_after_sigterm(rel
             child.wait()
         child.stdout.close()
         child.stderr.close()
+
+
+_STALLED_STDERR_DRIVER = """
+import json, sys, time
+from pathlib import Path
+from llm_kit.relay import codex_channel as CC, config as C
+
+a = json.loads(sys.argv[1])
+config = C.load_config(env_json=Path(a["env_json"]), config_path=Path(a["config"]), state_root=Path(a["state"]))
+CC.CLEANUP_DEADLINE_S = 5.0
+
+
+class Stalled:  # a stderr whose write blocks inside the stream on the final cleanup note
+    def write(self, text):
+        if "deregistered" in text:
+            Path(a["flag"]).write_text("blocked")
+            time.sleep(3600)
+        sys.__stderr__.write(text)
+
+    def flush(self):
+        pass
+
+
+channel = CC.CodexChannel(config, CC.CodexChannelOptions(cd=a["cd"]), hard_exit=True, stderr=Stalled())
+sys.exit(channel.run())
+"""
+
+
+def test_a_blocked_final_log_write_still_ends_in_the_cleanup_deadline(relay, paths, codex_launcher):
+    import psutil
+
+    driver = paths.tmp / "driver2.py"
+    driver.write_text(_STALLED_STDERR_DRIVER, encoding="utf-8")
+    flag = paths.tmp / "blocked.flag"
+    args = {"env_json": str(paths.env_json), "config": str(paths.config), "state": str(paths.state),
+            "cd": str(paths.tmp / "work"), "flag": str(flag)}
+    child = subprocess.Popen([sys.executable, str(driver), json.dumps(args)], env=_codex_env(paths, codex_launcher),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        ready = json.loads(child.stdout.readline())
+        app_pid = ready["pid"]
+        started = time.monotonic()
+        child.send_signal(signal.SIGTERM)
+        assert child.wait(timeout=20) == 1  # the watchdog ended it
+        assert flag.exists() and time.monotonic() - started < 12
+        assert not psutil.pid_exists(app_pid)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        child.stdout.close()
+        child.stderr.close()
