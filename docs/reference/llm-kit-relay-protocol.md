@@ -39,10 +39,12 @@ existing one means, needs `relay-protocol/2`.
 Policy revisions inside `relay-protocol/1` (no envelope, schema or field
 changed; a client of the earlier policy keeps working):
 
-- 2026-11-11, hub writes (owner ruling "opt-in session = grant"): a relay
-  accepts a hub-origin `send_message` without a grant, for a session that
-  opted in through a channel, and refuses a hub-origin `answer_question`
-  `not_opted_in` (section 3). Before, both were `grant_required`.
+- 2026-11-11, hub writes (owner rulings "opt-in session = grant" and "allow
+  answering any question"): a relay accepts a hub-origin `send_message`
+  without a grant, for a session that opted in through a channel, and a
+  hub-origin `answer_question` without a grant, for any question (section 3).
+  Before, both were `grant_required`. (katsoft-llm-kit 1.14.0 refused hub
+  answers `not_opted_in`; 1.15.0 accepts them.)
 
 ## 2. Transport binding
 
@@ -102,19 +104,28 @@ Rules that follow from the table:
 - A `/direct` write needs a covering grant, checked and consumed by the
   relay, which owns the grant table. Every `/direct` client verb needs a grant,
   reads included (owner ruling 9).
-- A hub write needs no grant: the target session's opt-in is the permission
-  (owner ruling 2026-11-11, "opt-in session = grant"). A session the owner
-  launched with the channel (`clauder --relay`, which registers it, section 9)
-  accepts hub sends and answers to its own questions; every other session is
-  read-only. The relay enforces it, not the hub: a hub `send_message` to a
-  session that is not `live-accepting` with the kind in its `accepts` is
-  `not_opted_in` (`session_ended` when the process is gone), the same refusal
-  every origin gets (section 20, "Messaging"). A hub `answer_question` is
-  accepted only for a question raised by an opted-in session; every
-  `relay-protocol/1` question is a job interrupt, which no session raised, so
-  a hub `answer_question` is `not_opted_in`. No write path needs only the
-  relay token: a hub write also needs the hub bearer (section 20,
-  "Authentication").
+- A hub write needs no grant. For `send_message` the target session's opt-in
+  is the permission (owner ruling 2026-11-11, "opt-in session = grant"): a
+  session the owner launched with the channel (`clauder --relay`, which
+  registers it, section 9) accepts hub sends, and every other session is
+  read-only for the hub. The relay enforces it, not the hub: a hub
+  `send_message` to a session that is not `live-accepting` with the kind in
+  its `accepts` is `not_opted_in` (`session_ended` when the process is gone),
+  the same refusal every origin gets (section 20, "Messaging"). A hub
+  `answer_question` answers any question (owner ruling 2026-11-11, "allow
+  answering any question"), with the refusals a `/direct` answer meets. No
+  write path needs only the relay token: a hub write also needs the hub
+  bearer (section 20, "Authentication").
+- Authority of a hub message (owner ruling 2026-11-11, decision 7, "let remote
+  count as you"; switched on the same day): a message whose `sender` is
+  `claude.ai/<user>` counts as the owner's own words in the receiving session,
+  gated actions included. A message from any other origin (another session's
+  `direct:` origin, `operator:`) is another session's request, as before. The
+  owner accepted the risk this carries under alternative A: on a machine, any
+  process that can read the relay token and the hub bearer (any Claude session
+  running as the owner, for example) can send a message as `claude.ai/<user>`
+  and so impersonate the owner. The llm-kit channel server states the rule to
+  the receiving session.
 - Hub reads and `ask_llm` need no grant (design section 9, gate 4); `ask_llm`
   still needs the relay's consent policy (`consent_refused`).
 - Nothing in this protocol answers a session's permission prompt.
@@ -454,10 +465,8 @@ Every other move is `invalid_transition`. Every transition is an audit row.
   grant, reserves one use before the answer is written, and gets it back only
   when the call failed before any effect (section 14; every refusal above is
   such a failure, a replay keeps its use because the call returned ok). It is
-  refused `paused` while the relay is paused. A hub-origin call is
-  `not_opted_in` (section 3: only a question raised by an opted-in session is
-  answerable from the hub, and every question here is a job interrupt), with
-  `details.id`.
+  refused `paused` while the relay is paused. A hub-origin call needs no
+  grant (section 3) and otherwise meets the same checks and refusals.
 
 ### The hub endpoint and routing
 
@@ -651,8 +660,6 @@ Files: `common`, `envelope.request`, `envelope.response`, the objects `error`,
   labels: relay configuration (C0).
 - Relay-to-relay forwarding and its peer authentication: a later additive
   revision (origin kind `relay` is reserved).
-- Questions raised by a session (only job interrupts are questions here), and
-  so any hub `answer_question` that a relay accepts.
 - Verification of `signed` or of any `origin_proof` other than `none`:
   alternative B or the OAuth phase.
 - `continue_session`, `start_session`, `stop_session` and remote approval of
@@ -746,8 +753,7 @@ independent of the transport, so the hub can reuse them),
 - A hub-origin call has no grant stage: the verb table names `direct` alone
   in every verb's grant column, and `X-Relay-Grant` on a hub call is ignored.
   A hub `send_message` meets the messaging refusals below; a hub
-  `answer_question` is `not_opted_in` in the verb's handler, before the
-  question is looked up.
+  `answer_question` meets the questions refusals of section 13.
 
 ### Channel verbs
 

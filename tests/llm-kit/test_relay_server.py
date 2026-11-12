@@ -366,13 +366,13 @@ def test_a_hub_send_to_a_session_that_did_not_opt_in_is_refused(relay, roots, sl
     relay.refused("not_opted_in", relay.hub, "send_message", {"to": addr(notes_only), "kind": "instruction", "body": "x"})
 
 
-def test_a_hub_answer_is_refused_because_no_session_raised_a_job_question(relay):
-    err = relay.refused("not_opted_in", relay.hub, "answer_question",
+def test_a_hub_answer_to_an_unknown_question_meets_the_questions_refusal_not_a_grant_one(relay):
+    err = relay.refused("question_not_found", relay.hub, "answer_question",
                         {"id": f"q:{MACHINE}/jobs:run-1:7", "decision": "reject"})
-    assert err.details == {"id": f"q:{MACHINE}/jobs:run-1:7"} and "job interrupts" in err.message
     rows = [r for r in relay.mailbox.audit_rows() if r["verb"] == "answer_question"]
     assert [(r["origin"], r["outcome"], r["code"]) for r in rows] == [
-        ("claude.ai/owner@example.com", "refused", "not_opted_in")]
+        ("claude.ai/owner@example.com", "refused", "question_not_found")]
+    assert err.code == "question_not_found"
 
 
 def test_the_relay_token_is_required_on_every_origin(relay):
@@ -988,18 +988,32 @@ def test_a_refused_answer_gives_its_reserved_use_back(config, roots, backend, tm
         gen.close()
 
 
-def test_a_hub_answer_is_refused_and_a_paused_relay_refuses_answers_and_reports_paused(config, roots, backend, tmp_path):
+def test_a_hub_answers_any_question_without_a_grant(config, roots, backend, tmp_path):
+    """Owner ruling 2026-11-11, "allow answering any question": a claude.ai answer counts as the owner's own."""
     gen = _question_relay(config, roots, backend, tmp_path)
     relay, ledger, qid = next(gen)
     try:
         answer = {"id": qid, "decision": "answer", "input": {"approved": True}}
-        # an open, answerable question; the hub still may not answer it: no opted-in session raised it
-        relay.refused("not_opted_in", relay.hub, "answer_question", answer)
-        assert _resolutions(ledger) == []
+        result = relay.hub("answer_question", answer)
+        assert (result["id"], result["state"], result["replayed"]) == (qid, "answered", False)
+        assert len(_resolutions(ledger)) == 1
+        assert relay.hub("answer_question", answer)["replayed"] is True
+        relay.refused("invalid_transition", relay.hub, "answer_question", {"id": qid, "decision": "reject"})
+        assert not any(r["verb"] == "grant_mint" for r in relay.mailbox.audit_rows())
+    finally:
+        gen.close()
+
+
+def test_a_paused_relay_refuses_answers_and_reports_paused(config, roots, backend, tmp_path):
+    gen = _question_relay(config, roots, backend, tmp_path)
+    relay, ledger, qid = next(gen)
+    try:
+        answer = {"id": qid, "decision": "answer", "input": {"approved": True}}
         relay.refused("origin_not_allowed", relay.operator, "answer_question", answer)
         grant = relay.mint("answer_question", [qid])
         relay.operator("pause", {"scope": "relay"})
         relay.refused("paused", relay.direct, "answer_question", answer, grant=grant["grant_id"])
+        relay.refused("paused", relay.hub, "answer_question", answer)
         assert relay.mailbox.get_grant(grant["grant_id"])["uses_remaining"] == 1
         assert relay.hub("list_questions", {})["machines"] == [{"machine": MACHINE, "status": "paused"}]
         assert _resolutions(ledger) == []

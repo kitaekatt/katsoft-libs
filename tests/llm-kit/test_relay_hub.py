@@ -293,7 +293,8 @@ def test_the_hub_serves_every_hub_verb_with_the_verbs_schemas(hub):
         assert tool.annotations.read_only_hint is (not write and name != "ask_llm"), name
         assert tool.annotations.destructive_hint is False, name
         if write:
-            assert "not_opted_in" in tool.description and H.WRITE_NOTES[name] in tool.description, name
+            assert H.WRITE_NOTES[name] in tool.description, name
+    assert "not_opted_in" in tools["send_message"].description
     for name, tool in tools.items():
         wanted_in = P.load_schema(P.request_schema_name(name))
         wanted_out = P.load_schema(P.response_schema_name(name))
@@ -492,20 +493,22 @@ def test_send_message_to_a_machine_without_a_relay_is_machine_unreachable(hub_tw
     assert error["code"] == "machine_unreachable"
 
 
-def test_answer_question_goes_to_the_named_relay_which_refuses_a_job_question(question_machines):
+def test_answer_question_answers_on_the_relay_the_question_id_names(question_machines):
     a, b = question_machines
     server = make_hub(a.config, [a.peer, b.peer]).start()
     try:
         hub = Hub(server)
         question = next(q for q in hub.ok("list_questions")["questions"] if q["machine"] == B)
-        error = hub.refused("answer_question", {"id": question["id"], "decision": "reject", "reason": "no"})
-        assert error["code"] == "not_opted_in" and error["details"] == {"id": question["id"]}
+        result = hub.ok("answer_question", {"id": question["id"], "decision": "reject", "reason": "not now"})
+        assert (result["id"], result["state"], result["decision"]) == (question["id"], "rejected", "reject")
         assert hub.refused("answer_question", {"id": "q:nomachine", "decision": "reject"})["code"] == "bad_request"
-        assert [q["state"] for q in hub.ok("list_questions", {"machine": B})["questions"]] == ["open"]
+        assert [q["state"] for q in hub.ok("list_questions", {"machine": B, "state": "all"})["questions"]] == [
+            "rejected"]
+        assert [q["state"] for q in hub.ok("list_questions", {"machine": A})["questions"]] == ["open"]
     finally:
         server.stop()
-    rows = [(r["origin"], r["code"]) for r in b.server.mailbox.audit_rows() if r["verb"] == "answer_question"]
-    assert rows == [("claude.ai/owner", "not_opted_in")]
+    rows = [(r["origin"], r["outcome"]) for r in b.server.mailbox.audit_rows() if r["verb"] == "answer_question"]
+    assert rows == [("claude.ai/owner", "ok")]
     assert not any(r["verb"] == "answer_question" for r in a.server.mailbox.audit_rows())
 
 
