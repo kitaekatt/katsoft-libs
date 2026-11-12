@@ -2,7 +2,8 @@
 
 Six backends implement :class:`~llm_kit.pipeline.runtime.platform.LLMBackend`:
 
-- :class:`OpenRouterBackend` -- an OpenAI-compatible HTTP completion.
+- :class:`OpenAICompatBackend` -- an OpenAI-compatible HTTP completion (OpenRouter is one
+  endpoint it serves).
 - :class:`ModelEndpointBackend` -- an OpenAI-compatible completion against an
   entry in the model-endpoints registry, typically a locally hosted keyless
   server. Unlike the others its availability is NOT assumed: :func:`route`
@@ -41,7 +42,7 @@ the one contract probe,
 
 :func:`route` reads one process-level model declaration
 (``CONTENT_PIPELINE_LLM_MODELS``) and returns the backend for its first usable
-entry; unset, it returns the default :class:`OpenRouterBackend`. Backend
+entry; unset, it returns the default :class:`OpenAICompatBackend`. Backend
 selection is one process-wide switch rather than a parameter threaded through
 every call site. The returned response's ``model`` reflects the model that
 ACTUALLY ran, so audit stamping stays truthful.
@@ -56,12 +57,19 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from llm_kit.completion.factory_protocols import BackendFactory, BackendSpec
+from llm_kit.registry.adapter_names import (
+    ADAPTER_OPENAI_COMPAT,
+    canonical_adapter_name_or_none,  # noqa: F401 -- re-exported for pipeline.execution
+    NEW_BACKEND_CLASS,
+    OLD_BACKEND_CLASS,
+    warn_renamed,
+)
 from llm_kit.dispatch.pipeline_backends import (
     BACKEND_CLAUDE_CLI,
     BACKEND_CODEX_CLI,
     BACKEND_MODEL_ENDPOINT,
     BACKEND_OPENCODE_CLI,
-    BACKEND_OPENROUTER,
+    BACKEND_OPENAI_COMPAT,
     ConfiguredBackendFactory,
 )
 from llm_kit.pipeline.runtime import platform
@@ -430,7 +438,7 @@ def _complete_through(
 class _LazyDelegate:
     """Shared double-checked-locked lazy delegate build for the thin wrappers.
 
-    Every live transport (:class:`OpenRouterBackend`, :class:`ClaudeCliBackend`,
+    Every live transport (:class:`OpenAICompatBackend`, :class:`ClaudeCliBackend`,
     :class:`CodexCliBackend`, :class:`OpencodeCliBackend`,
     :class:`ModelEndpointBackend`) wraps exactly one completion backend, built
     lazily and cached on ``self._delegate`` (see :func:`_lazy_build_note` for
@@ -494,16 +502,16 @@ class _LazyDelegate:
 
 
 # ---------------------------------------------------------------------------
-# OpenRouter (OpenAI-compatible HTTP) backend -- built through the factory
+# OpenAI-compatible HTTP backend (``openai-compat``) -- built through the factory
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class OpenRouterBackend(_LazyDelegate):
+class OpenAICompatBackend(_LazyDelegate):
     """OpenAI-compatible HTTP completion, built through the backend factory.
 
     ``endpoint`` / ``project_root`` / ``client`` are forwarded in the
-    construction spec to the ``openrouter`` backend (a caller may inject a
+    construction spec to the ``openai-compat`` backend (a caller may inject a
     pre-built ``client`` as the test seam). ``factory`` injects the
     :class:`~llm_kit.completion.factory_protocols.BackendFactory`; ``None`` is
     the default configured factory. The delegate is built lazily on first use,
@@ -518,7 +526,7 @@ class OpenRouterBackend(_LazyDelegate):
     project_root: Optional[Path] = None
     client: Any = None
     factory: Optional[BackendFactory] = field(default=None, repr=False, compare=False)
-    name: str = field(default="openrouter", init=False)
+    name: str = field(default=ADAPTER_OPENAI_COMPAT, init=False)
     _cap_endpoint: Any = field(default=None, init=False, repr=False, compare=False)
 
     def output_cap_for(self, model: str) -> Optional[int]:
@@ -539,7 +547,7 @@ class OpenRouterBackend(_LazyDelegate):
     def _backend(self) -> Any:
         return self._build(
             BackendSpec(
-                backend=BACKEND_OPENROUTER,
+                backend=BACKEND_OPENAI_COMPAT,
                 endpoint=self.endpoint,
                 project_root=self.project_root,
                 client=self.client,
@@ -731,7 +739,7 @@ class ModelEndpointBackend(_LazyDelegate):
     use so that ``.endpoint`` is a concrete entry id by the time it reaches a
     probe or a cache key.
 
-    THREAD SAFETY: as :class:`OpenRouterBackend` -- one instance may be shared
+    THREAD SAFETY: as :class:`OpenAICompatBackend` -- one instance may be shared
     across worker threads; the lazy delegate build is double-checked-locked.
     """
 
@@ -746,7 +754,7 @@ class ModelEndpointBackend(_LazyDelegate):
     def output_cap_for(self, model: str) -> Optional[int]:
         """The output cap this registry entry carries for ``model`` when the caller names none.
 
-        As :meth:`OpenRouterBackend.output_cap_for`, for the selected registry entry: the
+        As :meth:`OpenAICompatBackend.output_cap_for`, for the selected registry entry: the
         configured ``max_output_tokens`` of the project model file row naming this entry and
         model, else None when the entry is an openrouter.ai endpoint, else 4096.
         """
@@ -801,7 +809,7 @@ class ModelEndpointBackend(_LazyDelegate):
 
     def _backend(self) -> Any:
         # The ``model-endpoint`` spec is built by the factory with the same
-        # OpenAI-compatible adapter as ``openrouter`` -- a client works
+        # OpenAI-compatible adapter as ``openai-compat`` -- a client works
         # against any base URL, and the model-endpoints registry entry
         # supplies this one's.
         return self._build(
@@ -1216,7 +1224,7 @@ def declared_backend_and_model(
 
     ``backend_name`` is the resolved entry's process drive name (the
     adapter family: ``claude-cli`` / ``codex-cli`` /
-    ``opencode-cli`` / ``openrouter``, or a model-endpoint transport entry's
+    ``opencode-cli`` / ``openai-compat``, or a model-endpoint transport entry's
     own id); ``model_id`` is the entry's concrete model. Intended for a
     caller building a ``RunRecord``
     (or the ``create-run`` CLI's ``--models`` flag) so the record stores the
@@ -1286,7 +1294,7 @@ def _backend_for_entry(entry: Any) -> Any:
     if harness == "opencode":
         return OpencodeCliBackend()
     if entry.id == "openrouter":
-        return OpenRouterBackend()
+        return OpenAICompatBackend()
     return ModelEndpointBackend(endpoint=entry.id)
 
 
@@ -1383,7 +1391,7 @@ def route(
         if entry.id == "openrouter" and openrouter is not None:
             # The caller's instance IS the openrouter entry: it carries the
             # client, endpoint pin and budget wrapper a bare per-call
-            # OpenRouterBackend() would drop, and is reused across calls.
+            # OpenAICompatBackend() would drop, and is reused across calls.
             return openrouter
         backend = _backend_for_entry(entry)
         # PROBE ONLY THE SELECTED ENTRY, and only here. One ping per route()
@@ -1457,7 +1465,7 @@ def routed_model(
 
 
 __all__ = [
-    "OpenRouterBackend",
+    "OpenAICompatBackend",
     "ClaudeCliBackend",
     "CodexCliBackend",
     "OpencodeCliBackend",
@@ -1473,3 +1481,11 @@ __all__ = [
     "declared_backend_and_model",
     "reset_declared_entry_cache",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Keep the retired ``OpenRouterBackend`` name resolving, with a warning."""
+    if name == OLD_BACKEND_CLASS:
+        warn_renamed(__name__, OLD_BACKEND_CLASS, NEW_BACKEND_CLASS)
+        return OpenAICompatBackend
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

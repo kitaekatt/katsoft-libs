@@ -30,6 +30,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterator, Mapping, Optional, Sequence
 
+from llm_kit.registry.adapter_names import canonical_adapter_name
 from llm_kit.storage import connection as _connection
 from llm_kit.storage import schema_version as _schema_version
 from llm_kit.storage import transaction as _transaction
@@ -552,7 +553,7 @@ def _row_to_attempt(row: sqlite3.Row) -> Attempt:
         job_id=str(row["job_id"]),
         attempt_no=int(row["attempt_no"]),
         endpoint=str(row["endpoint"]),
-        backend=str(row["backend"]),
+        backend=canonical_adapter_name(str(row["backend"])),
         model=str(row["model"]),
         status=str(row["status"]),
         started_at=row["started_at"],
@@ -601,7 +602,7 @@ def _row_to_reservation(row: sqlite3.Row) -> AttemptReservation:
         attempt_no=int(row["attempt_no"]),
         budget_no=int(row["budget_no"]),
         endpoint=str(row["endpoint"]),
-        backend=str(row["backend"]),
+        backend=canonical_adapter_name(str(row["backend"])),
         model=str(row["model"]),
         workspace_path=(Path(workspace_path) if workspace_path is not None else None),
         reserved_at=str(row["reserved_at"]),
@@ -1524,7 +1525,7 @@ class JobStore:
                     attempt_no,
                     budget_no,
                     endpoint,
-                    backend,
+                    canonical_adapter_name(backend),
                     model,
                     str(path) if path is not None else None,
                     str(reserved_at),
@@ -2048,7 +2049,7 @@ class JobStore:
                     attempt.job_id,
                     attempt.attempt_no,
                     attempt.endpoint,
-                    attempt.backend,
+                    canonical_adapter_name(attempt.backend),
                     attempt.model,
                     attempt.status,
                     error_code,

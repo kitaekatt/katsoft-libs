@@ -9,7 +9,7 @@ a :class:`LLMBackend` (see ``backends``). It does NOT decide which backend or
 model to call; that is ``backends``'s job.
 
 Key resolution, the model registry, and the ready-made OpenAI-compatible
-client are NOT reimplemented here -- ``backends.OpenRouterBackend`` reaches
+client are NOT reimplemented here -- ``backends.OpenAICompatBackend`` reaches
 them through an injected backend factory. At module scope this module is
 stdlib-only plus the two permitted cross-package imports
 (``pipeline.artifacts.freshness.hashing`` for the cache key,
@@ -339,7 +339,7 @@ class LLMBackend(Protocol):
     resolution and a reservation of :data:`UNDECLARED_RESERVATION_OUTPUT_TOKENS`.
     """
 
-    name: str  # audit provider label, e.g. "openrouter" / "claude-cli" / "mock"
+    name: str  # audit provider label, e.g. "openai-compat" / "claude-cli" / "mock"
 
     def complete(
         self,
@@ -1174,6 +1174,13 @@ class CostBudget:
 # ---------------------------------------------------------------------------
 
 
+#: The label the response-cache key hashes for an adapter that was renamed. The key must not
+#: change with the name: a persisted cache is content-addressed by it, so a changed label would
+#: orphan every stored answer and the next run would pay for each call again. ``openai-compat``
+#: and its retired name ``openrouter`` therefore hash alike, as ``openrouter`` always did.
+_CACHE_KEY_BACKEND_LABEL = {"openai-compat": "openrouter"}
+
+
 def build_cache_key(
     *,
     backend: str,
@@ -1223,7 +1230,7 @@ def build_cache_key(
     """
     opts = options or BackendOptions()
     payload = {
-        "backend": backend,
+        "backend": _CACHE_KEY_BACKEND_LABEL.get(backend, backend),
         "model": model,
         "system": system,
         "user": user,

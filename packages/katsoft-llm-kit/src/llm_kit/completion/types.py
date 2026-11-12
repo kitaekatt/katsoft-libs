@@ -193,7 +193,7 @@ class LLMResponse:
       field name, because on an adapter that reads some extras keys and not
       others the field name has no single answer.
     - ``forwarded_params`` -- params the adapter sent downstream WITHOUT
-      validating them: openrouter copies every ``extras`` key into the request
+      validating them: openai-compat copies every ``extras`` key into the request
       as a top-level parameter and makes no claim the provider accepts any of
       them. Deliberately not folded into ``dropped_params``, because the two
       carry opposite advice -- a dropped param had no effect and should be
@@ -337,7 +337,7 @@ class BackendOptions:
       attributable.
     - ``extras`` -- open map for consumer-specific knobs a backend may read.
       What happens to a key is per-adapter and advertised per key: codex reads
-      a named set (``output_schema``, ``sandbox``, ...), openrouter forwards
+      a named set (``output_schema``, ``sandbox``, ...), openai-compat forwards
       every key unvalidated, and claude-cli and opencode-cli read none. A key
       that reaches nothing is reported in ``LLMResponse.dropped_params``; one
       forwarded without validation is reported in ``forwarded_params``.
@@ -350,7 +350,7 @@ class BackendOptions:
     - ``skill_context`` -- a :class:`~.skill_context_types.SkillContext`
       built by :func:`~.skill_context.materialize_skill_context`: caller-named
       skill material, read once before the call. Every adapter READS it:
-      openrouter places the block first in the system message; the three
+      openai-compat places the block first in the system message; the three
       harness adapters refuse it before dispatch. Any other value is a
       ``TypeError`` before dispatch. ``None`` (the default) leaves every call
       unchanged. See :mod:`.skill_context`.
@@ -378,7 +378,7 @@ class BackendOptions:
 class LLMBackend(Protocol):
     """A transport that runs one completion and classifies its failures."""
 
-    name: str  # audit provider label, e.g. "openrouter" / "claude-cli"
+    name: str  # audit provider label, e.g. "openai-compat" / "claude-cli"
 
     def complete(
         self,

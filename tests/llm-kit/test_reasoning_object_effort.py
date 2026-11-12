@@ -213,7 +213,7 @@ def _client():
 
 def _complete(endpoint, **options):
     client, sent = _client()
-    backend = backends_mod.OpenRouterBackend(endpoint=endpoint, client=client)
+    backend = backends_mod.OpenAICompatBackend(endpoint=endpoint, client=client)
     backend.complete("s", "u", model="a/b", options=BackendOptions(**options))
     assert len(sent) == 1
     return sent[0], backend
@@ -299,7 +299,7 @@ def test_a_null_reasoning_alone_sends_no_extra_body(endpoints):
 def test_malformed_input_fails_before_any_client_or_network(endpoints, options):
     """A refused call builds no client, resolves no model and sends nothing."""
     client, sent = _client()
-    backend = backends_mod.OpenRouterBackend(endpoint="obj", client=client)
+    backend = backends_mod.OpenAICompatBackend(endpoint="obj", client=client)
     backend._ensure_client = lambda: pytest.fail("client built before validation")  # noqa: SLF001
     backend._resolve_model = lambda model: pytest.fail("model resolved before validation")  # noqa: SLF001
     backend.client = None

@@ -1,6 +1,6 @@
 """Protocol 2 of ``llm-kit completion complete --request-file -``: one call from the project model file.
 
-The three completion backends run for real (``OpenRouterBackend``, ``ClaudeCliBackend``,
+The three completion backends run for real (``OpenAICompatBackend``, ``ClaudeCliBackend``,
 ``CodexCliBackend``) with fake transports in place of the network and of the CLIs, so
 the request each one builds is the request it would send. No paid call is made, no
 harness is started, and every test runs under a throwaway HOME.
@@ -146,7 +146,7 @@ def world(home, tmp_path, monkeypatch):  # noqa: F811
             backend = dataclasses.replace(backend, runner=w.claude_runner, executable="claude")
         elif backend.name == "codex-cli":
             backend = dataclasses.replace(backend, argv_prefix=("codex",), runner=w.codex_runner)
-        elif backend.name == "openrouter":
+        elif backend.name == "openai-compat":
             backend = dataclasses.replace(backend, client=w.client())
         else:  # pragma: no cover - a backend this suite does not fake must not start a process
             raise AssertionError(f"unexpected backend {backend.name}")
@@ -185,7 +185,7 @@ def test_openrouter_completion_result_shape(world, capsys):
     assert doc["protocol"] == 2 and doc["status"] == "completed" and doc["mode"] == "completion"
     assert doc["selection"] == {"id": "art", "model": "deepseek"}
     resolved = doc["resolved"]
-    assert (resolved["endpoint"], resolved["adapter"]) == ("openrouter", "openrouter")
+    assert (resolved["endpoint"], resolved["adapter"]) == ("openrouter", "openai-compat")
     assert resolved["requested_model"] == "deepseek/deepseek-v4.1-flash"
     assert resolved["reported_model"] == "deepseek/deepseek-v4.1-flash" and resolved["model_verified"] is True
     assert resolved["effort"] == {"requested": "max", "sent": "max", "source": "selection"}

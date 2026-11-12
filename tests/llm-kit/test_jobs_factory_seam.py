@@ -66,7 +66,7 @@ _RESOLVED = {
     },
     "t-plain": {"name": "t-plain", "base_url": "http://x.invalid/v1", "request_defaults": {}},
 }
-_NAMES = {"openrouter": "openrouter", "claude-cli": "claude-cli", "codex-cli": "codex-cli"}
+_NAMES = {"openai-compat": "openai-compat", "claude-cli": "claude-cli", "codex-cli": "codex-cli"}
 
 
 class FakeBackend:
@@ -180,7 +180,7 @@ class TestJobsCallCreateWithSpecs:
         assert [j.state.value for j in snapshot.jobs] == ["accepted"]
         # One create per declared candidate: describe resolves every id once.
         assert factory.specs == [
-            BackendSpec(backend="openrouter", endpoint="t-plain", project_root=Path(str(job.declared_directory))),
+            BackendSpec(backend="openai-compat", endpoint="t-plain", project_root=Path(str(job.declared_directory))),
             BackendSpec(backend="claude-cli"),
         ]
         # The chosen candidate (the first usable entry) is the one that was called.
@@ -345,7 +345,7 @@ class TestTheDefaultAndTheLegacyAdapter:
         path = _job_file(tmp_path, ["t-plain"])
         snapshot = jobs_run.run_job_file(path, store_path=tmp_path / "ledger" / "runs.sqlite3", run_id="r")
         assert [j.state.value for j in snapshot.jobs] == ["accepted"]
-        assert [spec.backend for spec in built] == ["openrouter"]
+        assert [spec.backend for spec in built] == ["openai-compat"]
 
     def test_an_object_that_is_neither_is_refused(self):
         with pytest.raises(TypeError, match="backend_factory must be a BackendFactory"):
@@ -391,7 +391,7 @@ class TestEndpointResolver:
     def test_a_factory_that_provides_no_capabilities_is_refused_unless_one_is_passed(self):
         class Bare:
             def create(self, spec: BackendSpec) -> FakeBackend:
-                return FakeBackend("openrouter")
+                return FakeBackend("openai-compat")
 
         with pytest.raises(TypeError, match="needs a CapabilityProvider"):
             EndpointResolver(Bare())  # type: ignore[arg-type]
@@ -399,9 +399,9 @@ class TestEndpointResolver:
 
     def test_a_provider_without_the_transport_family_record_fails_loudly(self):
         table = dict(ConfiguredBackendFactory().capability_records())
-        table.pop("openrouter")
+        table.pop("openai-compat")
         factory = RecordingFactory(table)
-        with pytest.raises(LookupError, match="'openrouter'"):
+        with pytest.raises(LookupError, match="'openai-compat'"):
             EndpointResolver(factory)("t-plain")
         assert factory.specs == []
 

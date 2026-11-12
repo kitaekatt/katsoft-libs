@@ -13,7 +13,7 @@ values they accept. An *effort style* names one wire convention:
 - ``unsupported``: the endpoint takes no effort; nothing is emitted.
 
 One module owns the vocabulary so the front door (which translates effort
-already in an inbound body) and ``OpenRouterBackend`` (which translates
+already in an inbound body) and ``OpenAICompatBackend`` (which translates
 ``BackendOptions.effort`` on a direct call) cannot disagree about a style.
 Stdlib-only. ``model_endpoints`` and the completion seam depend on it; the one
 registry lookup it needs (``effort_menu``/``lower_effort``) is imported at call

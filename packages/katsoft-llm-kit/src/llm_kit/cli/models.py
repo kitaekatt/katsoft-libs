@@ -159,7 +159,7 @@ def _collect_endpoint_entries(
         values[str(name)] = {
             "kind": "transport", "base_url": endpoint["base_url"],
             "key_env": endpoint["key_env"], "default_model": endpoint.get("default"),
-            "adapter": "openrouter",
+            "adapter": TRANSPORT_ADAPTER,
             "reasoning_effort": profile.declared_effort,
             "effort_delivery": profile.effort.to_json(),
         }
@@ -392,12 +392,13 @@ def _cmd_seats(
 # dispatch; capabilities are per ADAPTER FAMILY while endpoints are per registry
 # entry, and several entries share one adapter (sol and luna are both codex).
 _HARNESS_ADAPTERS = model_catalog.ADAPTER_BY_HARNESS
+TRANSPORT_ADAPTER = model_catalog.TRANSPORT_ADAPTER
 
 
 def _adapter_for(entry: Any) -> Optional[str]:
     if getattr(entry, "kind", None) == "harness":
         return _HARNESS_ADAPTERS.get((getattr(entry, "harness", "") or "").lower())
-    return "openrouter"
+    return TRANSPORT_ADAPTER
 
 
 def _entry_json(entry: Any) -> dict[str, Any]:

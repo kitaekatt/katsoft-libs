@@ -9,7 +9,7 @@
   "stderr": "",
   "stdout": {
     "json": {
-      "backend": "openrouter",
+      "backend": "openai-compat",
       "declared_effort": null,
       "effort": null,
       "effort_delivery": {

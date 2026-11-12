@@ -128,7 +128,7 @@ def test_each_row_reports_its_exact_model_menu_modes_and_adapter(project, capsys
     assert {i: (r["kind"], r["adapter"], r["modes"]) for i, r in rows.items()} == {
         "luna": ("harness", "codex-cli", ["completion", "workspace"]),
         "sonnet": ("harness", "claude-cli", ["completion"]),
-        "deepseek-flash": ("transport", "openrouter", ["completion"]),
+        "deepseek-flash": ("transport", "openai-compat", ["completion"]),
         "sol": ("harness", "codex-cli", ["completion", "workspace"]),
         "opus": ("harness", "claude-cli", ["completion"]),
         "astra": ("harness", "codex-cli", ["completion", "workspace"]),

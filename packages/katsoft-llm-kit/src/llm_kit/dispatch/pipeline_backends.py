@@ -38,12 +38,25 @@ from llm_kit.completion.factory_protocols import (
     CapabilityProvider,
 )
 from llm_kit.completion.types import LLMBackend
+from llm_kit.registry.adapter_names import (
+    ADAPTER_CLAUDE_CLI,
+    ADAPTER_CODEX_CLI,
+    ADAPTER_OPENAI_COMPAT,
+    ADAPTER_OPENCODE_CLI,
+    canonical_adapter_name,
+    lookup_by_adapter,
+)
 
+#: The OpenAI-compatible transport adapter (OpenRouter is one endpoint it serves).
+BACKEND_OPENAI_COMPAT = ADAPTER_OPENAI_COMPAT
+#: The name the transport adapter had before 1.11.0. A spec that carries it still builds the
+#: ``openai-compat`` backend, and an injected table keyed by it still serves it. New specs use
+#: :data:`BACKEND_OPENAI_COMPAT`.
 BACKEND_OPENROUTER = "openrouter"
 BACKEND_MODEL_ENDPOINT = "model-endpoint"
-BACKEND_CLAUDE_CLI = "claude-cli"
-BACKEND_CODEX_CLI = "codex-cli"
-BACKEND_OPENCODE_CLI = "opencode-cli"
+BACKEND_CLAUDE_CLI = ADAPTER_CLAUDE_CLI
+BACKEND_CODEX_CLI = ADAPTER_CODEX_CLI
+BACKEND_OPENCODE_CLI = ADAPTER_OPENCODE_CLI
 
 
 @dataclass(frozen=True)
@@ -59,7 +72,7 @@ class _Plan:
 _TRANSPORT_PLAN = _Plan(always=("endpoint", "project_root", "client"), unless_none=())
 
 _PLANS: Dict[str, _Plan] = {
-    BACKEND_OPENROUTER: _TRANSPORT_PLAN,
+    BACKEND_OPENAI_COMPAT: _TRANSPORT_PLAN,
     BACKEND_MODEL_ENDPOINT: _TRANSPORT_PLAN,
     BACKEND_CLAUDE_CLI: _Plan(
         always=("diagnostics_dir", "executable"),
@@ -80,7 +93,7 @@ _SPEC_OPTIONS = (
 
 
 def _plan_for(backend: str) -> _Plan:
-    plan = _PLANS.get(backend)
+    plan = _PLANS.get(canonical_adapter_name(backend))
     if plan is None:
         raise ValueError(
             f"unknown backend {backend!r}; configured backends: {', '.join(sorted(_PLANS))}"
@@ -112,10 +125,11 @@ def construction_kwargs(spec: BackendSpec) -> Dict[str, Any]:
 def _default_class(backend: str) -> Callable[..., Any]:
     """The concrete adapter class for a backend name, imported at call time."""
     _plan_for(backend)
-    if backend in (BACKEND_OPENROUTER, BACKEND_MODEL_ENDPOINT):
-        from llm_kit.adapters.backends import OpenRouterBackend  # noqa: PLC0415
+    backend = canonical_adapter_name(backend)
+    if backend in (BACKEND_OPENAI_COMPAT, BACKEND_MODEL_ENDPOINT):
+        from llm_kit.adapters.backends import OpenAICompatBackend  # noqa: PLC0415
 
-        return OpenRouterBackend
+        return OpenAICompatBackend
     if backend == BACKEND_CLAUDE_CLI:
         from llm_kit.adapters.backends import ClaudeCliBackend  # noqa: PLC0415
 
@@ -149,13 +163,13 @@ class ConfiguredBackendFactory:
         if self._classes is None:
             return _default_class(backend)
         _plan_for(backend)
-        try:
-            return self._classes[backend]
-        except KeyError:
+        constructor = lookup_by_adapter(self._classes, backend)
+        if constructor is None:
             raise ValueError(
                 f"no constructor injected for backend {backend!r}; "
                 f"injected: {', '.join(sorted(self._classes)) or '<none>'}"
-            ) from None
+            )
+        return constructor
 
     def create(self, spec: BackendSpec) -> LLMBackend:
         kwargs = construction_kwargs(spec)
@@ -167,7 +181,7 @@ class ConfiguredBackendFactory:
         return adapter_capabilities()
 
     def capability_record(self, backend: str) -> Optional[Capabilities]:
-        return self.capability_records().get(backend)
+        return lookup_by_adapter(self.capability_records(), backend)
 
 
 def build_backend(spec: BackendSpec, factory: Optional[BackendFactory] = None) -> LLMBackend:
@@ -217,6 +231,7 @@ __all__ = [
     "BACKEND_CODEX_CLI",
     "BACKEND_MODEL_ENDPOINT",
     "BACKEND_OPENCODE_CLI",
+    "BACKEND_OPENAI_COMPAT",
     "BACKEND_OPENROUTER",
     "BackendFactory",
     "BackendSpec",

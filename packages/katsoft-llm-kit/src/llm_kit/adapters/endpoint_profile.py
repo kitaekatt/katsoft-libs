@@ -1,7 +1,7 @@
 """Per-endpoint facts that specialize an adapter family's advertisement.
 
 A :class:`~.capabilities.Capabilities` record describes an adapter FAMILY, and
-for ``openrouter`` that family spans servers that disagree about where a
+for ``openai-compat`` that family spans servers that disagree about where a
 reasoning effort goes. An :class:`EndpointProfile` carries what the registry
 says about ONE endpoint, and :func:`endpoint_capabilities` turns the family
 record into that endpoint's truthful record.

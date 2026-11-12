@@ -50,6 +50,14 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, MutableMapping,
 
 from llm_kit import _runtime
 from llm_kit.registry import cost as _cost
+from llm_kit.registry.adapter_names import (
+    ADAPTER_CLAUDE_CLI,
+    ADAPTER_CODEX_CLI,
+    ADAPTER_OPENAI_COMPAT,
+    ADAPTER_OPENCODE_CLI,
+    canonical_adapter_name_or_none,
+    lookup_by_adapter,
+)
 from llm_kit.registry.constants import cli_command
 from llm_kit.completion.contract import OutputContractViolation, contract_requirements, merge_requirements
 from llm_kit.completion.halt import HALT_INSUFFICIENT_CREDIT, HALT_QUOTA
@@ -103,7 +111,9 @@ _RENDERED = (DISPOSITION_USABLE, DISPOSITION_OUT_OF_QUOTA, DISPOSITION_UNREACHAB
 
 #: Harnesses a process caller drives through the completion seam, and the
 #: adapter family name each one's backend carries.
-_HARNESS_ADAPTERS = {"claude": "claude-cli", "codex": "codex-cli", "opencode": "opencode-cli"}
+_HARNESS_ADAPTERS = {
+    "claude": ADAPTER_CLAUDE_CLI, "codex": ADAPTER_CODEX_CLI, "opencode": ADAPTER_OPENCODE_CLI,
+}
 
 #: How an in-session caller drives each harness (D1's caller table).
 _SESSION_DRIVE = {"claude": "agent", "codex": "codex exec", "opencode": "opencode run"}
@@ -576,24 +586,30 @@ def _armed_call(
 
     advertised = capabilities if capabilities is not None else adapter_capabilities()
     name = getattr(backend, "name", None)
-    record = advertised.get(name) if isinstance(name, str) else None
+    record = lookup_by_adapter(advertised, name)
     return arm_call(backend, options, requirements, record)
 
 
 def _adapter_name(kind: str, harness: Optional[str]) -> Optional[str]:
     if kind == TRANSPORT_KIND:
-        return "openrouter"
+        return ADAPTER_OPENAI_COMPAT
     return _HARNESS_ADAPTERS.get((harness or "").lower())
+
+
+def _drive_name(backend_name: Optional[str], kind: str, harness: Optional[str]) -> str:
+    """The adapter that drives an entry, by its current name (a retired name is mapped)."""
+    name = canonical_adapter_name_or_none(backend_name) or _adapter_name(kind, harness)
+    return name or "unroutable"
 
 
 def _drive(caller: str, kind: str, harness: Optional[str], backend_name: Optional[str]) -> str:
     if caller == CALLER_SESSION and kind == TRANSPORT_KIND:
         # Reached only when the session caller declared transports dispatchable:
         # it drives the entry through the same adapter a process caller would.
-        return backend_name or _adapter_name(kind, harness) or "unroutable"
+        return _drive_name(backend_name, kind, harness)
     if caller == CALLER_SESSION:
         return _SESSION_DRIVE.get((harness or "").lower(), "unroutable")
-    return backend_name or _adapter_name(kind, harness) or "unroutable"
+    return _drive_name(backend_name, kind, harness)
 
 
 def _rule(caller: str, has_author: bool) -> str:
@@ -845,7 +861,7 @@ def describe(
                 continue
         if matcher is not None:
             adapter = backend_name if isinstance(backend_name, str) else _adapter_name(kind, harness)
-            record = advertised.get(adapter) if adapter else None
+            record = lookup_by_adapter(advertised, adapter) if adapter else None
             if (
                 isinstance(record, Capabilities)
                 and kind == TRANSPORT_KIND
@@ -1234,7 +1250,7 @@ def run(
         attempt_fields: Dict[str, Any] = {"attempt_id": str(number)}
         backend_name = getattr(backend, "name", None)
         if isinstance(backend_name, str) and backend_name:
-            attempt_fields["adapter"] = backend_name
+            attempt_fields["adapter"] = canonical_adapter_name_or_none(backend_name)
         if isinstance(selection.model, str) and selection.model:
             attempt_fields["model"] = selection.model
         if observer is not None:

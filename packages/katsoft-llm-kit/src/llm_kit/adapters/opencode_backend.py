@@ -1,7 +1,7 @@
 """OpenCode CLI completion transport.
 
 The fourth backend behind the shared :class:`~.types.LLMBackend` protocol,
-alongside the OpenRouter, Claude CLI, and Codex CLI transports. OpenCode owns
+alongside the OpenAI-compatible HTTP, Claude CLI, and Codex CLI transports. OpenCode owns
 provider authentication and any provider billing, so this layer records only
 the usage the CLI actually exposes.
 

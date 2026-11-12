@@ -47,6 +47,13 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional, Sequence
 
+from .adapter_names import (
+    ADAPTER_CLAUDE_CLI,
+    ADAPTER_CODEX_CLI,
+    ADAPTER_OPENAI_COMPAT,
+    ADAPTER_OPENCODE_CLI,
+    lookup_by_adapter,
+)
 from .consent import discovery_note
 from .cost import HarnessAuth, classify
 from .effort import DELIVERING_STYLES
@@ -64,19 +71,27 @@ from .project_models import (
 SCHEMA = "llm-kit.model-catalog/v1"
 
 #: The adapter family that serves each harness; every other endpoint is served
-#: by the ``openrouter`` transport adapter.
+#: by the ``openai-compat`` transport adapter (OpenRouter is one endpoint it serves).
 ADAPTER_BY_HARNESS = {
-    "claude": "claude-cli",
-    "codex": "codex-cli",
-    "opencode": "opencode-cli",
+    "claude": ADAPTER_CLAUDE_CLI,
+    "codex": ADAPTER_CODEX_CLI,
+    "opencode": ADAPTER_OPENCODE_CLI,
 }
-TRANSPORT_ADAPTER = "openrouter"
+TRANSPORT_ADAPTER = ADAPTER_OPENAI_COMPAT
 
 #: ``effort_source`` of a row whose project file declares ``efforts: []`` (no effort dial).
 EFFORT_SOURCE_PROJECT_NONE = "project-no-effort"
 
 #: Harnesses whose cost class depends on how the CLI is authenticated.
 _AUTH_DEPENDENT = ("claude", "codex")
+
+
+def _modes_for(modes_by_adapter: Mapping[str, Sequence[str]], adapter: str) -> Sequence[str]:
+    """``modes_by_adapter[adapter]``, accepting a table keyed by a retired adapter name."""
+    modes = lookup_by_adapter(modes_by_adapter, adapter)
+    if modes is None:
+        raise KeyError(adapter)
+    return modes
 
 
 def adapter_of(info: EndpointInfo) -> str:
@@ -168,7 +183,7 @@ def build_catalog(
             "efforts": efforts,
             "effort_source": effort_source,
             "effort_delivery": delivery,
-            "modes": list(modes_by_adapter[adapter]),
+            "modes": list(_modes_for(modes_by_adapter, adapter)),
             "cost": _cost(info, entry, endpoints.entries(), harness_auth),
         }
         if "max_output_tokens" in row:

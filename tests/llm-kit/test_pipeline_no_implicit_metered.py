@@ -24,7 +24,7 @@ def test_pipeline_without_declaration_or_configured_default_fails_before_call(
     def complete(*args, **kwargs):
         calls.append((args, kwargs))
 
-    monkeypatch.setattr(backends.OpenRouterBackend, "complete", complete)
+    monkeypatch.setattr(backends.OpenAICompatBackend, "complete", complete)
     with pytest.raises(backends.platform.ConfigurationError, match="default_endpoint"):
         backends.route()
     assert calls == []
@@ -62,7 +62,7 @@ def test_explicitly_supplied_backend_still_works_without_a_default(monkeypatch):
         **copy.deepcopy(models.DEFAULT_MODEL_CONFIG),
         "default_endpoint": None,
     })
-    supplied = backends.OpenRouterBackend()
+    supplied = backends.OpenAICompatBackend()
 
     assert backends.route(openrouter=supplied) is supplied
 
@@ -81,7 +81,7 @@ def _no_default(monkeypatch):
 
 def test_routed_model_for_supplied_backend_works_without_a_declaration(monkeypatch):
     backends = _no_default(monkeypatch)
-    supplied = backends.OpenRouterBackend()
+    supplied = backends.OpenAICompatBackend()
 
     assert backends.route(openrouter=supplied) is supplied
     assert backends.routed_model("vendor/model-x", openrouter=supplied) == "vendor/model-x"

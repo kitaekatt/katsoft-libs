@@ -34,7 +34,7 @@ from llm_kit.dispatch.pipeline_backends import (
     BACKEND_CLAUDE_CLI,
     BACKEND_CODEX_CLI,
     BACKEND_OPENCODE_CLI,
-    BACKEND_OPENROUTER,
+    BACKEND_OPENAI_COMPAT,
 )
 from llm_kit.registry.model_endpoints import HARNESS_KIND
 from llm_kit.registry.models import (
@@ -130,14 +130,14 @@ class EndpointResolver:
         selected_model = resolve_model(
             model, cheap=cheap, config=config, endpoint=name, project_root=root
         )
-        family = self._capabilities.capability_record(BACKEND_OPENROUTER)
+        family = self._capabilities.capability_record(BACKEND_OPENAI_COMPAT)
         if family is None:
             raise LookupError(
-                f"the capability provider advertises no {BACKEND_OPENROUTER!r} record"
+                f"the capability provider advertises no {BACKEND_OPENAI_COMPAT!r} record"
             )
         backend = self._factory.create(
             BackendSpec(
-                backend=BACKEND_OPENROUTER,
+                backend=BACKEND_OPENAI_COMPAT,
                 endpoint=name,
                 project_root=Path(root) if root else None,
             )
