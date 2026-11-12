@@ -716,9 +716,11 @@ def test_peer_credentials_are_private_on_nt_through_winacl(monkeypatch, tmp_path
     monkeypatch.setattr(L, "winacl", acl)
     paths = C.StatePaths(tmp_path / "relay")
     L.write_peer_credentials(paths, B, "peer-relay-token", "peer-hub-bearer")
-    assert [p for p, _, _ in acl.of("create_dir")] == [str(paths.root)]          # the state root: created private, atomically
+    # the state root and both peer directories are each born private (CreateDirectory with the descriptor), in order,
+    # never mkdir-then-provision
+    assert [p for p, _, _ in acl.of("create_dir")] == [str(paths.root), str(paths.peers_dir), str(paths.peer_dir(B))]
     provisioned = {p for p, d, _ in acl.of("provision") if d}
-    assert {str(paths.peers_dir), str(paths.peer_dir(B))} <= provisioned          # both peer directories are provisioned ...
+    assert {str(paths.peers_dir), str(paths.peer_dir(B))} <= provisioned          # both peer directories are normalized ...
     validated = {p for p, _, _ in acl.of("validate")}
     assert {str(paths.peers_dir), str(paths.peer_dir(B))} <= validated            # ... and validated
     for prefix in (".relay.token.", ".hub.bearer."):
