@@ -693,3 +693,41 @@ def test_codex_runs_as_a_child_answers_a_granted_send_binds_nothing_and_stops_on
             child.wait()
         child.stdout.close()
         child.stderr.close()
+
+
+def test_a_second_sigterm_during_deregistration_neither_skips_it_nor_leaves_the_app_server(relay, paths, codex_launcher, monkeypatch):
+    import threading
+
+    import psutil
+
+    in_deregister = threading.Event()
+    handlers = relay.server.service._handlers
+    real = handlers["deregister"]
+
+    def slow(*a, **kw):
+        in_deregister.set()
+        time.sleep(1.5)  # long enough for a second signal to land while the call is in flight
+        return real(*a, **kw)
+
+    monkeypatch.setitem(handlers, "deregister", slow)
+    child = subprocess.Popen([sys.executable, "-m", "llm_kit.cli", "relay", "codex", "--cd", str(paths.tmp / "work"), *paths.args],
+                             env=_codex_env(paths, codex_launcher), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        ready = json.loads(child.stdout.readline())
+        assert psutil.pid_exists(ready["pid"])
+        child.send_signal(signal.SIGTERM)
+        assert in_deregister.wait(30)
+        child.send_signal(signal.SIGTERM)  # the second signal, mid-deregistration
+        child.send_signal(signal.SIGINT)
+        assert child.wait(timeout=30) == 0
+        assert relay.client.status({}, origin=f"operator:{LABEL}")["registrations"] == 0  # deregistration finished
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and psutil.pid_exists(ready["pid"]):
+            time.sleep(0.1)
+        assert not psutil.pid_exists(ready["pid"])  # the app-server (its own process group) is gone
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        child.stdout.close()
+        child.stderr.close()

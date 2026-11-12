@@ -168,6 +168,9 @@ class ThreadInfo:
     exclude_tmpdir_env_var: bool
     rollout_path: Optional[str]
     model: Optional[str]
+    #: Effective ``sandbox.writableRoots`` (additional writable roots) of a workspace-write
+    #: sandbox; ``None`` when the response did not report them (refused for workspace-write).
+    writable_roots: Optional[tuple] = None
 
 
 @dataclass(frozen=True)
@@ -427,6 +430,8 @@ class CodexAppServer:
             "approvalPolicy": "never",
             "approvalsReviewer": "user",
             "config": {"sandbox_workspace_write": {
+                # inherited additional roots from the user's Codex config are cleared, never trusted
+                "writable_roots": [],
                 "network_access": bool(policy.network),
                 "exclude_slash_tmp": bool(policy.exclude_tmp),
                 "exclude_tmpdir_env_var": bool(policy.exclude_tmp),
@@ -455,6 +460,8 @@ class CodexAppServer:
                 exclude_tmpdir_env_var=exclude_env,
                 rollout_path=thread.get("path"),
                 model=result.get("model"),
+                writable_roots=(tuple(str(r) for r in sandbox["writableRoots"])
+                                if isinstance(sandbox.get("writableRoots"), list) else None),
             )
         except (KeyError, TypeError, AttributeError) as exc:
             raise CodexProtocolError(f"unusable thread response: {exc!r}") from exc
@@ -490,11 +497,45 @@ class CodexAppServer:
         if info.sandbox == "workspace-write":
             check("exclude_slash_tmp", bool(policy.exclude_tmp), info.exclude_slash_tmp)
             check("exclude_tmpdir_env_var", bool(policy.exclude_tmp), info.exclude_tmpdir_env_var)
+        if info.sandbox == "workspace-write":
+            allowed = self._allowed_roots(policy)
+            if info.writable_roots is None:
+                # fail closed: an inherited root cannot be ruled out without the field
+                requested["writable_roots"] = f"reported, within {sorted(allowed)}"
+                effective["writable_roots"] = None
+            else:
+                outside = [r for r in info.writable_roots if not self._within(r, allowed)]
+                if outside:
+                    requested["writable_roots"] = f"within {sorted(allowed)}"
+                    effective["writable_roots"] = list(info.writable_roots)
         if requested:
             mismatch = CodexConfigMismatch(requested, effective, info.thread_id)
             with self._lock:
                 self._refused_threads[info.thread_id] = mismatch
             raise mismatch
+
+    @staticmethod
+    def _allowed_roots(policy: ThreadPolicy) -> List[str]:
+        """Roots an effective writable root may lie under: the workspace, plus ``/tmp`` and
+        ``$TMPDIR`` only when the policy leaves them writable."""
+        roots = [os.path.realpath(policy.cwd)]
+        if not policy.exclude_tmp:
+            import tempfile
+
+            for tmp in ("/tmp", os.environ.get("TMPDIR"), tempfile.gettempdir()):
+                if tmp:
+                    real = os.path.realpath(tmp)
+                    if real not in roots:
+                        roots.append(real)
+        return roots
+
+    @staticmethod
+    def _within(root: str, allowed: Sequence[str]) -> bool:
+        real = os.path.realpath(root)
+        for base in allowed:
+            if real == base or real.startswith(base.rstrip(os.sep) + os.sep):
+                return True
+        return False
 
     # ------------------------------------------------------------ turns
 

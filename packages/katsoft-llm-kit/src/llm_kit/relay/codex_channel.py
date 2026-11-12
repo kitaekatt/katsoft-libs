@@ -245,6 +245,9 @@ class CodexChannel:
         self._nonce = secrets.token_hex(16)
         self._stop = threading.Event()
         self._out_lock = threading.RLock()
+        self._outbox: "collections.OrderedDict[str, dict]" = collections.OrderedDict()
+        self._cleaning = False
+        self._signalled = False
         self._ready = False  # the ready line is the first stdout line: earlier events are held until it is printed
         self._held: list = []
         self._reg_lock = threading.RLock()
@@ -469,6 +472,7 @@ class CodexChannel:
                 raise ChannelExit(EXIT_REFUSED, self._fatal)
             return EXIT_OK
         finally:
+            self._cleaning = True  # from here on, further termination signals are ignored
             self._stop.set()
             try:
                 self._shutdown()
@@ -476,19 +480,25 @@ class CodexChannel:
                 self._restore_signals(previous)
 
     def _shutdown(self) -> None:
-        """Deregister, then close the app-server (in that order)."""
-        reg = self._reg
-        if reg is not None and self._client is not None and self._origin is not None:
-            try:
-                self._call("deregister", {**self._creds(reg), "reason": "codex channel closed"})
-                self._log("deregistered")
-            except P.RelayError as exc:
-                self._log(f"deregister failed: {exc}")
-        if self._app is not None:
-            try:
-                self._app.close()
-            except CodexAppServerError as exc:
-                self._log(f"closing the app-server raised: {exc}")
+        """Deregister, then close the app-server (in that order). The close always runs: the child
+        has its own process group and would outlive this process."""
+        try:
+            if self._outbox and self._client is not None and self._origin is not None:
+                self._flush_outbox(attempts=2)  # one last try before deregistering ends the open messages
+            self._report_lost_replies()
+            reg = self._reg
+            if reg is not None and self._client is not None and self._origin is not None:
+                try:
+                    self._call("deregister", {**self._creds(reg), "reason": "codex channel closed"})
+                    self._log("deregistered")
+                except P.RelayError as exc:
+                    self._log(f"deregister failed: {exc}")
+        finally:
+            if self._app is not None:
+                try:
+                    self._app.close()
+                except CodexAppServerError as exc:
+                    self._log(f"closing the app-server raised: {exc}")
 
     def _install_signals(self) -> dict:
         previous: dict = {}
@@ -496,9 +506,14 @@ class CodexChannel:
             return previous
 
         def terminate(signum: int, frame: Any) -> None:
+            # The first signal unwinds the serving loop. Any later one, and any during cleanup, is
+            # ignored: it must not cut deregistration short or skip closing the app-server.
+            if self._cleaning or self._signalled:
+                return
+            self._signalled = True
             raise KeyboardInterrupt
 
-        for name in ("SIGTERM", "SIGHUP"):
+        for name in ("SIGINT", "SIGTERM", "SIGHUP"):
             if hasattr(signal, name):
                 previous[getattr(signal, name)] = signal.signal(getattr(signal, name), terminate)
         return previous
@@ -538,6 +553,7 @@ class CodexChannel:
     def _poll_loop(self) -> None:
         failures = 0
         while not self._stop.is_set():
+            self._flush_outbox()
             if self._foreign_turn_running():
                 self._stop.wait(MIN_EMPTY_POLL_S)  # long-poll only while no turn runs
                 continue
@@ -626,15 +642,43 @@ class CodexChannel:
             self._log(f"ack of {mid} failed: {exc}")  # the turn runs anyway; the reply may still go through
 
     def _reply(self, mid: str, state: str, body: str) -> None:
+        """Queue the reply in the outbox and try to deliver it now.
+
+        The turn already ran and the message is acked, so the relay will never offer it again: a reply that
+        cannot be delivered stays in the outbox (body and reply id fixed, so a retry is idempotent at the
+        relay) and :meth:`_flush_outbox` retries it from the poll loop. The turn is never re-run. The outbox
+        is in memory on purpose: a clean stop deregisters, which ends the message at the relay (a reply
+        would be refused), and after a crash the answer is in the thread's rollout (``read_session``).
+        """
         address = self._reg.address if self._reg is not None else f"{self._machine}/codex/{self._thread_id}"
         body = fit_reply(body if body.strip() else "(empty)", address)
-        reply_id = "rpl_" + secrets.token_hex(12)  # one id per reply: a retry is idempotent at the relay
-        try:
-            self._channel_call("reply", {"in_reply_to": mid, "state": state, "body": body, "id": reply_id},
-                               attempts=ACK_ATTEMPTS, deadline=time.monotonic() + REPLY_DEADLINE_S)
-            self._emit({"event": "reply", "id": mid, "state": state})
-        except P.RelayError as exc:
-            self._log(f"reply to {mid} failed: {exc}")
+        self._outbox[mid] = {"state": state, "body": body, "id": "rpl_" + secrets.token_hex(12)}
+        self._flush_outbox(attempts=ACK_ATTEMPTS, deadline=time.monotonic() + REPLY_DEADLINE_S)
+
+    def _flush_outbox(self, *, attempts: int = 1, deadline: Optional[float] = None) -> None:
+        for mid in list(self._outbox):
+            item = self._outbox[mid]
+            try:
+                self._channel_call("reply", {"in_reply_to": mid, "state": item["state"], "body": item["body"],
+                                             "id": item["id"]}, attempts=attempts, deadline=deadline)
+            except P.RelayError as exc:
+                if exc.retryable or exc.code in REGISTRATION_ERRORS:
+                    self._log(f"reply to {mid} not delivered yet ({exc}); it stays queued and is retried")
+                    continue
+                del self._outbox[mid]  # an explicit refusal from the relay: recorded, not retried
+                self._log(f"reply to {mid} REFUSED by the relay and dropped: {exc}")
+                self._emit({"event": "reply_failed", "id": mid, "state": item["state"], "error": exc.code})
+                continue
+            del self._outbox[mid]
+            self._emit({"event": "reply", "id": mid, "state": item["state"]})
+
+    def _report_lost_replies(self) -> None:
+        for mid, item in self._outbox.items():
+            self._log(f"LOST reply to {mid} ({item['state']}, {len(item['body'].encode('utf-8'))} bytes): "
+                      "the relay could not be reached before the channel stopped; the turn ran and its answer "
+                      "is in the thread's transcript")
+            self._emit({"event": "reply_lost", "id": mid, "state": item["state"]})
+        self._outbox.clear()
 
 
 __all__ = [

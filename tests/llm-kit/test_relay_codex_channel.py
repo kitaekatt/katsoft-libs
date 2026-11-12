@@ -556,14 +556,16 @@ def test_tmp_is_excluded_by_default_and_allow_tmp_lifts_it(chan, relay):
     c = chan().start()
     ready = c.ready()
     config_param = requests(c.log, "thread/start")[0]["params"]["config"]["sandbox_workspace_write"]
-    assert config_param == {"network_access": False, "exclude_slash_tmp": True, "exclude_tmpdir_env_var": True}
+    assert config_param == {"writable_roots": [], "network_access": False, "exclude_slash_tmp": True,
+                            "exclude_tmpdir_env_var": True}
     assert ready["policy"] == {"sandbox": "workspace-write", "network": False, "approval_policy": "never",
                                "approvals_reviewer": "user", "tmp_excluded": True, "hooks": False, "notify": "off"}
     c.finish()
     c2 = chan(allow_tmp=True, network=True).start()
     ready2 = c2.ready()
     param2 = requests(c2.log, "thread/start")[0]["params"]["config"]["sandbox_workspace_write"]
-    assert param2 == {"network_access": True, "exclude_slash_tmp": False, "exclude_tmpdir_env_var": False}
+    assert param2 == {"writable_roots": [], "network_access": True, "exclude_slash_tmp": False,
+                        "exclude_tmpdir_env_var": False}
     assert ready2["policy"]["tmp_excluded"] is False and ready2["policy"]["network"] is True
     c2.finish()
 
@@ -728,3 +730,81 @@ def test_a_hub_origin_without_the_bearer_is_unauthenticated(relay):
                     origin="claude.ai/owner@example.com")
     response = raw_post(relay, "/v1/send_message", body)  # the relay token only: no Authorization header
     assert response.status_code == 401 and response.json()["error"]["code"] == "unauthenticated"
+
+
+# --------------------------------------------------------------------------
+# cleanup is guaranteed; an undeliverable reply is kept, not dropped
+# --------------------------------------------------------------------------
+
+def test_an_interruption_during_deregistration_still_closes_the_child(config, launcher, tmp_path, monkeypatch):
+    fake = FakeRelay()
+    fake.fail_next["deregister"].append(KeyboardInterrupt())  # a signal landing in the middle of deregistering
+    c = Chan(config, None, launcher, tmp_path, monkeypatch, client=fake).start()
+    c.ready()
+    assert stub_children() != []
+    c.channel.stop()
+    c.thread.join(20)
+    assert not c.thread.is_alive() and len(fake.of("deregister")) == 1
+    wait_for(lambda: stub_children() == [], 10, "the child to be closed")
+
+
+class Flaky:
+    """The real relay client, except that while ``down`` every call fails as if the relay were unreachable."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.down = False
+        self.failed: list[str] = []
+
+    def call(self, verb: str, params, *, origin: str, grant=None) -> dict:
+        if self.down:
+            self.failed.append(verb)
+            raise P.RelayError("machine_unreachable", "relay did not answer (test double)")
+        return self.inner.call(verb, params, origin=origin, grant=grant)
+
+
+def reply_rows(relay: Relay) -> list[dict]:
+    return [r for r in relay.mailbox.audit_rows(limit=1000) if r["event"] == "call" and r["verb"] == "reply" and r["outcome"] == "ok"]
+
+
+def test_a_reply_that_could_not_be_delivered_is_kept_and_delivered_once_when_the_relay_is_back(chan, relay):
+    flaky = Flaky(relay.client)
+    c = chan(client=flaky, turn_timeout_s=1.5).start()
+    ready = c.ready()
+    message = send(relay, ready, "MODE=hang")
+    wait_state(relay, message, "acked")
+    flaky.down = True  # the relay goes away while the turn runs; the reply is attempted while it is down
+    # the bounded retries inside the reply are used up, and the poll loop has tried again from the outbox
+    wait_for(lambda: flaky.failed.count("reply") > CC.ACK_ATTEMPTS, 20, "the outbox retry while the relay is down")
+    assert state_of(relay, message) == "acked" and reply_rows(relay) == []
+    flaky.down = False
+    wait_state(relay, message, "declined")
+    assert "did not finish within" in reply_of(relay, message)["reply"]["body"]
+    assert len(reply_rows(relay)) == 1  # delivered once
+    assert len(turn_texts(c.log)) == 1  # the turn was never re-run
+    c.finish()
+
+
+def test_replies_still_undelivered_at_stop_are_reported_as_lost(chan, relay):
+    flaky = Flaky(relay.client)
+    c = chan(client=flaky, turn_timeout_s=1.0).start()
+    ready = c.ready()
+    message = send(relay, ready, "MODE=hang")
+    wait_state(relay, message, "acked")
+    flaky.down = True
+    wait_for(lambda: "reply" in flaky.failed and c.events("turn_result"), 20, "a failed reply attempt")
+    c.finish()
+    assert f"LOST reply to {message['id']}" in c.err.getvalue()
+    assert [e["id"] for e in c.events("reply_lost")] == [message["id"]]
+    assert stub_children() == []
+
+
+def test_a_refusal_from_the_relay_is_recorded_and_not_retried_forever(config, launcher, tmp_path, monkeypatch):
+    fake = FakeRelay(batches=[[message("msg_a")]])
+    fake.fail_next["reply"].append(P.RelayError("invalid_transition", "message already ended"))
+    c = Chan(config, None, launcher, tmp_path, monkeypatch, client=fake).start()
+    c.ready()
+    wait_for(lambda: c.events("reply_failed"), 15, "the refusal to be recorded")
+    time.sleep(0.5)
+    assert len(fake.of("reply")) == 1 and c.events("reply_failed")[0]["error"] == "invalid_transition"
+    c.finish()

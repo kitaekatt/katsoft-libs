@@ -19,6 +19,7 @@ Configuration (environment):
     ignore_eof         keep running after stdin EOF (forces the kill path).
     spawn_grandchild   spawn a long sleep in the same process group.
     user_agent         initialize userAgent override.
+    omit_writable_roots  the sandbox object reports no writableRoots (fail-closed test).
 
 A turn's behaviour comes from a MODE=<name> token in the turn text (default
 "reply"); see Stub.run_turn. Under "approval-like" modes the stub models E-K4:
@@ -154,6 +155,8 @@ class Stub:
             "approvalPolicy": params["approvalPolicy"], "approvalsReviewer": params["approvalsReviewer"],
             "sandbox": sandbox,
         }
+        if CFG.get("omit_writable_roots"):
+            result["sandbox"].pop("writableRoots", None)
         over = dict(CFG.get("thread_overrides") or {})
         sandbox_over = over.pop("sandbox", None)
         result.update(over)
