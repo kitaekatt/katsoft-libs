@@ -1047,3 +1047,142 @@ def test_a_verb_that_is_still_unserved_keeps_the_not_implemented_refusal(relay, 
     error = relay.refused("unknown_verb", relay.hub, "list_questions", {})
     assert error.details == {"verb": "list_questions", "not_implemented": True}
     assert relay.hub("list_machines", {})["machines"][0]["machine"] == MACHINE
+
+
+# --------------------------------------------------------------------------
+# amendment 1 (katsoft-llm-kit 1.19.0): the Codex channel origin, section 1 of the protocol document
+# --------------------------------------------------------------------------
+
+def _old_parse_identity(text: str) -> P.Identity:
+    """parse_identity as a relay without amendment 1 had it: channel and direct were claude-only."""
+    match = P.re.fullmatch(
+        rf"(?:(?P<kind>channel|direct):(?P<address>{P.MACHINE_LABEL}/claude/{P.SESSION_ID})"
+        rf"|(?P<mkind>operator|relay):(?P<machine>{P.MACHINE_LABEL})"
+        rf"|claude\.ai/(?P<user>{P.HUB_USER}))", text) if isinstance(text, str) else None
+    if match is None:
+        raise P.RelayError("bad_request", f"{text!r} is not a relay identity")
+    if match["kind"]:
+        return P.Identity(match["kind"], match["address"])
+    if match["mkind"]:
+        return P.Identity(match["mkind"], match["machine"])
+    return P.Identity("hub", match["user"])
+
+
+def _codex_register_params(session: str) -> dict:
+    return {"session_id": session, "harness": "codex", "pid": os.getpid(), "cwd": "/Users/u/Dev/app",
+            "version": "codex-cli 0.164.0", "accepts": ["note", "instruction", "question"], "channel_nonce": NONCE}
+
+
+def _as_a_relay_without_amendment_1(monkeypatch) -> None:
+    """Make the next relay built in this process behave as one of 1.18.0 or earlier: the old register
+    schema (harness claude only), the old identity grammar and a status that reports no ``harnesses``."""
+    real = P.load_schema
+
+    def old_load(name):
+        composed = real(name)
+        if name == "register.request":
+            composed = json.loads(json.dumps(composed))
+            composed["properties"]["harness"]["enum"] = ["claude"]
+        elif name == "status.response":
+            composed = json.loads(json.dumps(composed))
+            composed["properties"].pop("harnesses")
+        return composed
+
+    monkeypatch.setattr(P, "load_schema", old_load)
+    monkeypatch.setattr(P, "parse_identity", _old_parse_identity)
+    real_status = SV.RelayService._status
+
+    def old_status(self, *args):
+        result = real_status(self, *args)
+        result.pop("harnesses")
+        return result
+
+    monkeypatch.setattr(SV.RelayService, "_status", old_status)
+
+
+def test_status_lists_the_channel_harnesses_the_relay_serves(relay):
+    for caller in (relay.operator, relay.hub, relay.direct):
+        assert caller("status", {})["harnesses"] == list(P.CHANNEL_HARNESSES) == ["claude", "codex"]
+
+
+def test_an_undefined_channel_harness_is_refused_with_no_row_and_no_state(relay):
+    session = sid()
+    before = relay.operator("status", {})["registrations"]
+    for harness, origin_harness in (("gemini", "claude"), ("llm", "claude")):
+        params = {**_codex_register_params(session), "harness": harness}
+        error = relay.refused("bad_request", relay.client.call, "register", params,
+                              origin=f"channel:{MACHINE}/{origin_harness}/{session}")
+        assert error.retryable is False and "register params fail their schema" in error.message
+    origin_error = relay.refused("bad_request", relay.client.call, "register", _codex_register_params(session),
+                                 origin=f"channel:{MACHINE}/gemini/{session}")
+    assert "is not a relay identity" in origin_error.message
+    assert relay.operator("status", {})["registrations"] == before == 0
+    assert relay.server.service._table.get(session) is None
+
+
+def test_a_relay_without_amendment_1_refuses_codex_non_retryably_and_advertises_nothing(
+        config, roots, backend, tmp_path, monkeypatch):
+    _as_a_relay_without_amendment_1(monkeypatch)
+    server = make_server(config, roots, backend, tmp_path).start()
+    try:
+        old = Relay(server, roots)
+        assert "harnesses" not in old.operator("status", {})  # the field a client checks before registering codex
+        session = sid()
+        by_schema = old.refused("bad_request", old.client.call, "register", _codex_register_params(session),
+                                origin=f"channel:{MACHINE}/claude/{session}")
+        by_origin = old.refused("bad_request", old.client.call, "register",
+                                {**_codex_register_params(session), "harness": "claude"},
+                                origin=f"channel:{MACHINE}/codex/{session}")
+        assert by_schema.retryable is False and by_origin.retryable is False
+        assert by_schema.http_status == by_origin.http_status == 400
+        assert old.operator("status", {})["registrations"] == 0  # no registration, no lease
+        assert old.server.service._table.get(session) is None
+        assert old.hub("list_sessions", {})["sessions"] == []
+        assert old.mailbox.messages_to(f"{MACHINE}/codex/{session}", limit=10) == []
+        # the old relay still serves a Claude registration: the refusal is specific to the amendment
+        assert old.register(sid())["machine"] == MACHINE
+    finally:
+        server.stop()
+
+
+def test_frozen_legacy_claude_requests_are_served_with_the_same_result_shape(relay):
+    """The pre-amendment Claude requests, spelled as literals: they keep their meaning and result shapes
+    (section 1, condition 1). Do not rebuild these from the schemas or the helpers."""
+    session, sender = "7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11", "b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9"
+    channel_origin = f"channel:m5pro/claude/{session}"
+    direct_origin = f"direct:m5pro/claude/{sender}"
+    registered = relay.client.call("register", {
+        "session_id": session, "harness": "claude", "pid": os.getpid(), "cwd": "/Users/christina/Dev/katsoft-libs",
+        "version": "2.1.317", "accepts": ["note", "instruction", "question"],
+        "channel_nonce": "c2hhbm5lbC1ub25jZS0wMDAx", "title": "relay F0", "task": "plugins-kit/harness-messaging",
+    }, origin=channel_origin)
+    assert set(registered) == {"registration_id", "address", "machine", "heartbeat_s", "lease_s",
+                               "lease_expires_at", "ack_timeout_s", "max_wait_s", "paused", "replaced"}
+    assert registered["address"] == f"m5pro/claude/{session}" and registered["replaced"] is False
+    creds = {"registration_id": registered["registration_id"], "session_id": session,
+             "channel_nonce": "c2hhbm5lbC1ub25jZS0wMDAx"}
+    beat = relay.client.call("heartbeat", dict(creds), origin=channel_origin)
+    assert {"registration_id", "address", "lease_expires_at"} <= set(beat) and beat["address"] == registered["address"]
+
+    relay.client.call("grant_mint", {
+        "session": f"m5pro/claude/{sender}", "verb": "send_message", "targets": [f"m5pro/claude/{session}"],
+        "expires_in_s": 300, "uses": 1, "origin_proof": {"type": "none"}, "command": "/direct send",
+    }, origin=direct_origin)
+    sent = relay.client.call("send_message", {
+        "to": f"m5pro/claude/{session}", "kind": "question", "body": "Are the relay tests green?",
+        "id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW", "expires_in_s": 3600, "task": "plugins-kit/harness-messaging",
+    }, origin=direct_origin)["message"]
+    assert sent["state"] == "queued" and sent["id"] == "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW"
+
+    polled = relay.client.call("poll", {**creds, "wait_s": 0}, origin=channel_origin)
+    assert set(polled) == {"messages", "paused", "lease_expires_at"}
+    assert [(m["id"], m["sender"], m["kind"], m["attempt"]) for m in polled["messages"]] == [
+        ("msg_01JBX3V9Q8K2M4N6P7R8S9T0VW", direct_origin, "question", 1)]
+    acked = relay.client.call("ack", {**creds, "message_id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW"}, origin=channel_origin)
+    assert acked == {"message_id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW", "state": "acked"}
+    replied = relay.client.call("reply", {
+        **creds, "in_reply_to": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW", "state": "answered",
+        "body": "Done: tests pass.", "id": "rpl_01JBX3VA2C4E6G8J0K2M4N6P8Q",
+    }, origin=channel_origin)
+    assert replied["message_state"] == "answered" and replied["replayed"] is False
+    relay.client.call("deregister", dict(creds), origin=channel_origin)

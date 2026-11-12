@@ -238,7 +238,11 @@ INVALID_CASES = [
     ("poll.request", lambda: _ex("poll.request", wait_s=P.MAX_POLL_WAIT_S + 1), "long-poll cap"),
     ("poll.request", lambda: _ex("poll.request", 1, max_messages=P.MAX_POLL_BATCH + 1), "batch cap"),
     ("poll.request", lambda: _ex("poll.request", channel_nonce=_DROP), "nonce"),
-    ("register.request", lambda: _ex("register.request", harness="codex"), "channel harness"),
+    ("register.request", lambda: _ex("register.request", harness="llm"), "channel harness"),
+    ("register.request", lambda: _ex("register.request", harness="gemini"), "undefined channel harness"),
+    ("register.request", lambda: _ex("register.request", harness="Codex"), "harness is case-sensitive"),
+    ("status.response", lambda: _ex("status.response", harnesses=["llm"]), "status harness"),
+    ("status.response", lambda: _ex("status.response", harnesses="codex"), "status harnesses type"),
     ("register.request", lambda: _ex("register.request", channel_nonce="short"), "nonce length"),
     ("register.request", lambda: _ex("register.request", pid=0), "pid"),
     ("register.request", lambda: _ex("register.request", accepts=["command"]), "accepts"),
@@ -580,6 +584,7 @@ def test_latest_is_never_a_session_id():
 @pytest.mark.parametrize(("text", "kind", "subject"), [
     (f"channel:m5pro/claude/{SID}", "channel", f"m5pro/claude/{SID}"),
     (f"direct:m5pro/claude/{SID}", "direct", f"m5pro/claude/{SID}"),
+    (f"channel:m5pro/codex/{SID}", "channel", f"m5pro/codex/{SID}"),
     ("operator:m5pro", "operator", "m5pro"),
     ("relay:m5pro", "relay", "m5pro"),
     ("claude.ai/owner", "hub", "owner"),
@@ -591,7 +596,8 @@ def test_identities_parse_and_round_trip(text, kind, subject):
 
 
 @pytest.mark.parametrize("text", [
-    "direct:m5pro/codex/x", "channel:m5pro/llm/x", "operator:M5", "claude.ai/", "hub:m5pro", "direct:latest",
+    "direct:m5pro/codex/x", f"direct:m5pro/codex/{SID}", "channel:m5pro/llm/x", "channel:m5pro/gemini/x",
+    "channel:m5pro/codex/", "channel:codex/x", "operator:M5", "claude.ai/", "hub:m5pro", "direct:latest",
     "m5pro/claude/x",
 ])
 def test_invalid_identities_are_refused(text):
@@ -684,6 +690,91 @@ def test_contract_modules_import_only_the_standard_library(module):
             imported.add(node.module)
     foreign = sorted(m for m in imported if m.split(".")[0] not in sys.stdlib_module_names)
     assert not foreign, f"{module} imports non-stdlib modules: {foreign}"
+
+
+# -- amendment 1 (katsoft-llm-kit 1.19.0): the Codex channel origin -----------
+
+#: Every pre-amendment Claude request the examples carried, frozen here as
+#: literals. They must keep validating, unchanged, as long as relay-protocol/1
+#: lasts (section 1, condition 1). Do not regenerate them from the schemas.
+_LEGACY_SID = "7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11"
+_LEGACY_CHANNEL = {
+    "registration_id": "reg_01JBX3S0A1B2C3D4E5F6G7H8J9", "session_id": _LEGACY_SID,
+    "channel_nonce": "c2hhbm5lbC1ub25jZS0wMDAx",
+}
+LEGACY_CLAUDE_REQUESTS = (
+    ("register", f"channel:m5pro/claude/{_LEGACY_SID}", {
+        "session_id": _LEGACY_SID, "harness": "claude", "pid": 41234,
+        "cwd": "/Users/christina/Dev/katsoft-libs", "version": "2.1.317",
+        "accepts": ["note", "instruction", "question"], "channel_nonce": "c2hhbm5lbC1ub25jZS0wMDAx",
+        "title": "relay F0", "task": "plugins-kit/harness-messaging"}),
+    ("register", f"channel:m5pro/claude/{_LEGACY_SID}", {
+        "session_id": _LEGACY_SID, "harness": "claude", "pid": 41234, "cwd": "/tmp", "version": "2.1.317",
+        "accepts": [], "channel_nonce": "c2hhbm5lbC1ub25jZS0wMDAx"}),
+    ("heartbeat", f"channel:m5pro/claude/{_LEGACY_SID}", dict(_LEGACY_CHANNEL)),
+    ("poll", f"channel:m5pro/claude/{_LEGACY_SID}", {**_LEGACY_CHANNEL, "wait_s": 25}),
+    ("ack", f"channel:m5pro/claude/{_LEGACY_SID}", {**_LEGACY_CHANNEL, "message_id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW"}),
+    ("reply", f"channel:m5pro/claude/{_LEGACY_SID}", {
+        **_LEGACY_CHANNEL, "in_reply_to": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW", "state": "answered",
+        "body": "Done: tests pass.", "id": "rpl_01JBX3VA2C4E6G8J0K2M4N6P8Q"}),
+    ("grant_mint", "direct:m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9", {
+        "session": "m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9", "verb": "send_message",
+        "targets": [f"m5pro/claude/{_LEGACY_SID}"], "expires_in_s": 300, "uses": 1,
+        "origin_proof": {"type": "none"}, "command": "/direct send"}),
+    ("send_message", "direct:m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9", {
+        "to": f"m5pro/claude/{_LEGACY_SID}", "kind": "question", "body": "Are the relay tests green?",
+        "id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW", "expires_in_s": 3600, "task": "plugins-kit/harness-messaging"}),
+    ("send_message", "claude.ai/owner@example.com", {
+        "to": f"m5pro/claude/{_LEGACY_SID}", "kind": "note", "body": "FYI: 1.11.0 is out."}),
+)
+
+
+@pytest.mark.parametrize(("verb", "origin", "params"), LEGACY_CLAUDE_REQUESTS,
+                         ids=[f"{v}-{i}" for i, (v, _, _) in enumerate(LEGACY_CLAUDE_REQUESTS)])
+def test_legacy_claude_requests_still_validate_and_parse(verb, origin, params):
+    assert errors(P.request_schema_name(verb), params) == ()
+    assert errors("envelope.request", {"protocol": P.PROTOCOL, "id": "req-legacy", "verb": verb,
+                                       "origin": origin, "params": params}) == ()
+    assert str(P.parse_identity(origin)) == origin
+
+
+def test_codex_register_and_origin_round_trip():
+    params = _ex("register.request", 1)
+    assert params["harness"] == "codex"
+    assert errors("register.request", params) == ()
+    origin = f"channel:m5pro/codex/{params['session_id']}"
+    assert errors("envelope.request", {"protocol": P.PROTOCOL, "id": "req-codex", "verb": "register",
+                                       "origin": origin, "params": params}) == ()
+    identity = P.parse_identity(origin)
+    assert (identity.kind, identity.subject) == ("channel", f"m5pro/codex/{params['session_id']}")
+    assert str(identity) == origin
+    assert errors("register.request", {**params, "previous_session_id": "x"}), "register never carries previous_session_id"
+
+
+def test_direct_stays_claude_only():
+    with pytest.raises(P.RelayError) as caught:
+        P.parse_identity(f"direct:m5pro/codex/{SID}")
+    assert caught.value.code == "bad_request"
+
+
+def test_channel_harness_vocabulary_agrees_across_code_schemas_and_document():
+    assert P.CHANNEL_HARNESSES == ("claude", "codex")
+    assert set(P.CHANNEL_HARNESSES) <= set(P.SESSION_HARNESSES)
+    assert schema("register.request")["properties"]["harness"]["enum"] == list(P.CHANNEL_HARNESSES)
+    assert schema("status.response")["properties"]["harnesses"]["items"]["enum"] == list(P.CHANNEL_HARNESSES)
+    text = DOC.read_bytes().decode("ascii")
+    assert "channel:<machine>/(claude|codex)/<session>" in text
+    assert "`register.harness` is one of `claude`, `codex`" in text
+    assert "`status.harnesses`" in text and "katsoft-llm-kit 1.19.0" in text
+    for condition in ("Every request that was valid before stays valid", "refuses the new request non-retryably",
+                      "says so in a response field", "listed here with its date"):
+        assert condition in text, condition
+
+
+def test_status_example_advertises_the_channel_harnesses():
+    assert _ex("status.response")["harnesses"] == list(P.CHANNEL_HARNESSES)
+    legacy_status = {k: v for k, v in _ex("status.response").items() if k != "harnesses"}
+    assert errors("status.response", legacy_status) == (), "a relay without the field stays a valid status"
 
 
 def test_reference_document_names_every_verb_code_and_state():

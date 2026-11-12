@@ -122,6 +122,9 @@ MAX_READ_TURNS = 200
 
 HARNESSES = ("claude", "codex", "llm")
 SESSION_HARNESSES = ("claude", "codex")
+#: Harnesses a session may register through a channel (amendment 1 of the
+#: extension contract, section 1 of the protocol document). ``direct:`` stays claude-only.
+CHANNEL_HARNESSES = ("claude", "codex")
 MESSAGE_KINDS = ("note", "instruction", "question")
 SESSION_STATES = ("live-accepting", "live-read-only", "idle", "ended")
 MACHINE_STATUSES = ("up", "paused", "unreachable")
@@ -320,6 +323,7 @@ SESSION_ID = r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
 _SEGMENT = r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
 _HARNESS_ALT = "|".join(HARNESSES)
 _SESSION_HARNESS_ALT = "|".join(SESSION_HARNESSES)
+_CHANNEL_HARNESS_ALT = "|".join(CHANNEL_HARNESSES)
 
 MACHINE_RE = re.compile(MACHINE_LABEL)
 ADDRESS_RE = re.compile(
@@ -333,7 +337,8 @@ SELECTOR_RE = re.compile(
 )
 HUB_USER = r"[A-Za-z0-9._@+-]{1,128}"
 IDENTITY_RE = re.compile(
-    rf"(?:(?P<kind>channel|direct):(?P<address>{MACHINE_LABEL}/claude/{SESSION_ID})"
+    rf"(?:(?P<kind>channel):(?P<address>{MACHINE_LABEL}/(?:{_CHANNEL_HARNESS_ALT})/{SESSION_ID})"
+    rf"|(?P<dkind>direct):(?P<daddress>{MACHINE_LABEL}/claude/{SESSION_ID})"
     rf"|(?P<mkind>operator|relay):(?P<machine>{MACHINE_LABEL})"
     rf"|claude\.ai/(?P<user>{HUB_USER}))"
 )
@@ -435,6 +440,8 @@ def parse_identity(text: str) -> Identity:
         raise RelayError("bad_request", f"{text!r} is not a relay identity")
     if match["kind"]:
         return Identity(match["kind"], match["address"])
+    if match["dkind"]:
+        return Identity(match["dkind"], match["daddress"])
     if match["mkind"]:
         return Identity(match["mkind"], match["machine"])
     return Identity("hub", match["user"])
@@ -690,7 +697,7 @@ class AuditRow(TypedDict):
 
 class RegisterParams(TypedDict):
     session_id: str
-    harness: Literal["claude"]
+    harness: Literal["claude", "codex"]
     pid: int
     cwd: str
     version: str
@@ -955,6 +962,7 @@ class StatusResult(TypedDict):
     pause: PauseState
     library_version: NotRequired[str]
     registrations: NotRequired[int]
+    harnesses: NotRequired[list[str]]
 
 
 # --------------------------------------------------------------------------

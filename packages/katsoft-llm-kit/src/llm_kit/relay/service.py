@@ -859,6 +859,7 @@ class RelayService:
             "now": self._clock(),
             "pause": self._pause.state(),
             "registrations": len(self._table.active()),
+            "harnesses": list(P.CHANNEL_HARNESSES),
         }
         if self._version is not None:
             result["library_version"] = self._version

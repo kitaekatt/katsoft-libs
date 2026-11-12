@@ -25,6 +25,16 @@
     "registrations": {
       "type": "integer",
       "minimum": 0
+    },
+    "harnesses": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "claude",
+          "codex"
+        ]
+      },
+      "description": "The channel harnesses this relay serves (amendment 1, katsoft-llm-kit 1.19.0). A relay that omits the field serves claude only."
     }
   },
   "required": [
@@ -51,8 +61,12 @@
           "reason": null
         }
       },
-      "library_version": "1.11.0",
-      "registrations": 2
+      "library_version": "1.19.0",
+      "registrations": 2,
+      "harnesses": [
+        "claude",
+        "codex"
+      ]
     }
   ]
 }

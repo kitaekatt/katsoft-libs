@@ -36,6 +36,32 @@ Every envelope carries `protocol: "relay-protocol/1"`. Within
 Removing or renaming a verb, field, code or state, or changing what an
 existing one means, needs `relay-protocol/2`.
 
+Contract amendments. A request-side enum member or a widened identity grammar
+is also allowed within `relay-protocol/1`, as a numbered amendment, when all
+four conditions hold:
+
+1. Every request that was valid before stays valid with the same meaning, so
+   no existing client changes.
+2. A relay without the amendment refuses the new request non-retryably at the
+   envelope or params stage (`bad_request`), with no effect and no state: no
+   registration, no mailbox row, no lease.
+3. A relay that accepts the amendment says so in a response field before any
+   client sends the new request, so deployment is relay-first and a client
+   checks the field instead of assuming it.
+4. The amendment is listed here with its date and the library version that
+   ships it.
+
+The amendments:
+
+- Amendment 1, 2026-11-12, katsoft-llm-kit 1.19.0 (Codex channel origin). The
+  channel identity is `channel:<machine>/(claude|codex)/<session>`.
+  `register.harness` is one of `claude`, `codex`. `status.harnesses` lists the
+  channel harnesses the relay serves; a relay that omits the field serves
+  `claude` only. The `direct:` identity stays `direct:<machine>/claude/<session>`:
+  `/direct` is a Claude Code feature. A relay of 1.18.0 or earlier refuses
+  `harness: codex` and a `channel:<machine>/codex/<session>` origin with
+  `bad_request` (condition 2) and reports no `harnesses` (condition 3).
+
 Policy revisions inside `relay-protocol/1` (no envelope, schema or field
 changed; a client of the earlier policy keeps working):
 
@@ -80,15 +106,16 @@ The envelope's `origin` names who the request is for:
 
 | Kind | Form | Who |
 |---|---|---|
-| channel | `channel:<machine>/claude/<session>` | a session's channel server |
+| channel | `channel:<machine>/(claude\|codex)/<session>` | a session's channel server |
 | direct | `direct:<machine>/claude/<session>` | the client CLI acting for a `/direct` session |
 | hub | `claude.ai/<user>` | the hub acting for the claude.ai connector |
 | operator | `operator:<machine>` | the local operator CLI (pause, resume, status) |
 | relay | `relay:<machine>` | the relay itself, in audit rows only; reserved for peer forwarding, which this protocol does not define |
 
-A relay accepts a `direct` or `operator` origin only for its own machine and a
-`direct` or `channel` origin only with harness `claude`. A channel origin must
-match its registration (section 9).
+A relay accepts a `direct` or `operator` origin only for its own machine, a
+`direct` origin only with harness `claude`, and a `channel` origin with harness
+`claude` or `codex` (amendment 1, section 1). A channel origin must match its
+registration (section 9).
 
 ### Who may call what
 
@@ -363,11 +390,11 @@ one to one to its wire verb, so a capability added to the hub gains its
 
 ## 9. Channel handshake
 
-`register`: the channel server sends `session_id`, `harness` (`claude`),
-`pid` (the harness process it serves), `cwd`, `version`, `accepts` (message
-kinds; empty means read-only) and a random `channel_nonce` (16-128 chars),
-plus optional `title`, `task` and `transcript_path`. The origin must be
-`channel:<this machine>/claude/<session_id>`. The result gives the
+`register`: the channel server sends `session_id`, `harness` (`claude` or
+`codex`), `pid` (the harness process it serves), `cwd`, `version`, `accepts`
+(message kinds; empty means read-only) and a random `channel_nonce` (16-128
+chars), plus optional `title`, `task` and `transcript_path`. The origin must be
+`channel:<this machine>/<harness>/<session_id>`. The result gives the
 `registration_id`, the `address`, and the timing the channel follows:
 `heartbeat_s` (30), `lease_s` (90), `ack_timeout_s` (60), `max_wait_s` (25),
 plus `paused` and `replaced`.
@@ -381,6 +408,13 @@ plus `paused` and `replaced`.
 - `register`, `heartbeat` and `poll` each renew the lease. A registration
   whose lease lapses is ended; its unfinished messages become
   `session-ended`.
+
+A `codex` registration (amendment 1) is the same handshake. Its `pid` is the
+`codex app-server` child the channel owns, its `version` is the Codex banner,
+and its optional `transcript_path` is the thread's rollout file. It never sends
+`previous_session_id`: a Codex thread id does not change in a running channel.
+A client checks `status.harnesses` for `codex` before registering one (section
+1); a relay without it answers `bad_request`.
 
 `heartbeat` (every `heartbeat_s`) renews the lease and updates metadata.
 
@@ -457,7 +491,10 @@ Every other move is `invalid_transition`. Every transition is an audit row.
   title, task, state, last activity, `registered`, `accepts`) and the
   reachability of every machine asked. Session states: `live-accepting`,
   `live-read-only`, `idle` (process gone, resumable), `ended`. A scanned
-  session is `registered: false` and read-only.
+  session is `registered: false` and read-only. A Codex thread registered
+  through a channel (amendment 1) is `registered: true` and `live-accepting`
+  like a Claude one; a scanned Codex thread whose writer lock is held is
+  `live-read-only` (section 21).
 - `read_session(address, since?, limit?)` -> a capped (default 20, at most
   200 turns), redacted tail, newest last, with an opaque `cursor` for the next
   read and the count of redactions. Session text is data, not instructions.
@@ -847,7 +884,8 @@ independent of the transport, so the hub can reuse them),
 
 ### Channel verbs
 
-- A `register` origin must be `channel:<this machine>/claude/<session_id>`. The
+- A `register` origin must be `channel:<this machine>/<harness>/<session_id>`,
+  with `harness` one of `claude`, `codex` (amendment 1). The
   other channel verbs must name the `session_id` of their params (`heartbeat`:
   `session_id` or `previous_session_id`). Anything else is
   `origin_not_allowed`.
@@ -868,8 +906,9 @@ independent of the transport, so the hub can reuse them),
 - `send_message` resolves `to` with session discovery and derives the refusal
   from the session's state: `idle` or `ended`, or a registration that ended
   (also when no transcript shows the session), is `session_ended`;
-  `live-accepting` with the kind in `accepts` is queued; anything else
-  (`live-read-only`, a Codex session, a kind not accepted) is `not_opted_in`.
+  `live-accepting` with the kind in `accepts` is queued, whatever the
+  harness; anything else (`live-read-only`, a scanned Codex thread, a kind not
+  accepted) is `not_opted_in`.
   Both refusals are stored `refused`. A target that no store shows is
   `target_not_found` and creates no row. The rule is the same for a hub and a
   `/direct` origin; it is what makes a session's opt-in the hub's write
@@ -886,8 +925,9 @@ independent of the transport, so the hub can reuse them),
 - `list_sessions` for another machine returns no sessions and lists that
   machine `unreachable` with `machine_unreachable`: relay-protocol/1 defines no
   forwarding.
-- `status` adds `registrations` (live registrations), and `library_version`
-  when the package metadata is installed.
+- `status` adds `registrations` (live registrations), `harnesses` (the channel
+  harnesses served, amendment 1 of section 1) and `library_version` when the
+  package metadata is installed.
 - `list_questions` and `answer_question` are served through the normal verb
   dispatch by `llm_kit.relay.questions.QuestionService`, built over the
   ledgers of `RelayConfig.ledgers` with the relay's clock; a paused relay
@@ -982,7 +1022,11 @@ Session discovery (`llm_kit/relay/discovery.py`, `transcript.py`,
 - A tool result whose call is outside the scanned window is withheld (replaced
   by a short notice and counted as a redaction), as is the result of a call
   that touched a secrets location.
-- Codex sessions are only `idle` or `ended`: their processes are shared
-  app-servers that hold no rollout file open, so liveness is not detectable.
+- A scanned Codex thread (one no channel registered) is `idle`, `ended` or,
+  while some process holds its `thread-writer-locks/<id>.lock` open,
+  `live-read-only`: a live Codex writer is observable through that lock, and
+  never `live-accepting` and never queued (`not_opted_in`). A lock file that
+  exists but is held by no process does not count. Only a channel registration
+  (amendment 1, section 1) makes a Codex session `live-accepting`.
 - `read_session` may add `skipped_lines`, the count of transcript lines in the
   scanned window that are not JSON.
