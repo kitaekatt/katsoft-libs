@@ -168,8 +168,9 @@ def ensure_private_dir(path: Path, *, kind: str) -> Path:
     shared directory is refused, not repaired.
     """
     if _on_nt():
+        winacl.refuse_writable_ancestors(path)
         try:
-            path.mkdir()
+            winacl.create_private_dir(path)  # created with its descriptor, not mkdir-then-provision
         except FileExistsError:
             pass
         else:

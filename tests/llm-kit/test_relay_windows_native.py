@@ -436,6 +436,23 @@ def test_native_files_are_provisioned_and_judged_through_their_handle(state):
         L.read_token(token)  # refused through the handle it would have been read from
 
 
+def test_native_private_dirs_are_born_private_and_existing_ones_validated(state):
+    peers = state.root / "peers"
+    L.ensure_private_dir(peers, kind="peers directory")
+    winacl.validate(peers)
+    peer = peers / "m5pro"
+    L.ensure_private_dir(peer, kind="peer directory")
+    winacl.validate(peer)
+    desc = winacl.read_descriptor(peer)
+    assert desc.protected and {a.sid for a in desc.aces} == {winacl.current_user_sid(), "S-1-5-18"}
+    L.ensure_private_dir(peer, kind="peer directory")  # existing and private: accepted unchanged
+    icacls(str(peer), "/grant", f"{USERS}:(R)")
+    with pytest.raises(C.RelayConfigError, match="peer directory .*grants access to S-1-5-32-545"):
+        L.ensure_private_dir(peer, kind="peer directory")  # existing and broad: refused, not repaired
+    L.write_peer_credentials(C.StatePaths(state.root), "winbox", "relay-tok", "hub-bearer")
+    assert L.peer_credentials(C.StatePaths(state.root), "winbox") == ("relay-tok", "hub-bearer")
+
+
 def test_native_pause_file_is_validated_before_it_is_read(state):
     store = L.PauseStore(state)
     assert store.is_paused("relay") is False  # absent file: unchanged

@@ -453,6 +453,25 @@ def test_nt_state_dir_is_refused_when_an_ancestor_is_writable(tmp_path, nt):
     assert not root.exists()  # nothing was created under a parent another user controls
 
 
+def test_nt_private_dirs_are_created_with_their_descriptor_not_mkdir_then_provision(tmp_path, nt):
+    paths = C.StatePaths(tmp_path / "state")
+    L.ensure_state_dir(paths)
+    nt.acl.events.clear()
+    L.ensure_private_dir(paths.peers_dir, kind="peers directory")
+    kinds = [k for k, p, *_ in nt.acl.events if p == str(paths.peers_dir)]
+    assert kinds[:2] == ["ancestors", "create_dir"]  # ancestors checked, then born private
+    assert kinds[-1] == "validate"
+    nt.acl.events.clear()
+    L.ensure_private_dir(paths.peers_dir, kind="peers directory")  # existing: validated, nothing created or re-provisioned
+    assert [k for k, *_ in nt.acl.events if k in ("create_dir", "provision")] == []
+    assert "validate" in [k for k, *_ in nt.acl.events]
+    # an ancestor another user can write refuses before anything is created
+    nt.acl.refuse["ancestors"] = "ancestor parent lets S-1-5-32-545 write to it"
+    with pytest.raises(C.RelayConfigError, match="lets S-1-5-32-545"):
+        L.ensure_private_dir(paths.peer_dir("m5pro"), kind="peer directory")
+    assert not paths.peer_dir("m5pro").exists()
+
+
 # --------------------------------------------------------------------------
 # validation and reads use the handle, not the name
 # --------------------------------------------------------------------------
