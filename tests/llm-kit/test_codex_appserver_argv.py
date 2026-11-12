@@ -53,8 +53,9 @@ def test_hooks_false_emitted_and_omitted_when_true():
 
 
 def test_notify_always_present():
-    assert "notify=[]" in build()
-    assert "notify=[]" in build(hooks=True, network=True)
+    for argv in (build(), build(hooks=True, network=True)):
+        i = argv.index("notify=[]")
+        assert argv[i - 1] == "-c"
 
 
 def test_windows_sandbox_on_nt(monkeypatch):
