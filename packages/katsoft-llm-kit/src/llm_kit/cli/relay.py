@@ -43,6 +43,22 @@ Verbs:
     state directory, private files in private directories. The object's
     ``machine`` must equal ``<machine>``, which must be an enabled fleet
     machine other than this one.
+``codex --cd DIR [--resume THREAD_ID] [--sandbox read-only|workspace-write] [--network] [--allow-tmp] [--hooks] ...``
+    Run a Codex channel in the foreground (unit CH): own one ``codex app-server``
+    child over stdio, register its thread with this machine's relay as
+    ``channel:<machine>/codex/<thread>``, run one turn per delivered message and
+    reply with the turn's final answer. The owner starts it at the keyboard; the
+    relay launches nothing. Exits 2, spawning nothing, unless relay.yaml holds
+    ``enabled: true``, ``--cd`` is not a directory, or ``--resume`` names a thread
+    that never ran a turn; exits 1 when the relay does not answer, is older than
+    katsoft-llm-kit 1.20.0 (its ``status`` lists no ``codex`` in ``harnesses``),
+    refuses the registration, or the thread is open in another Codex process.
+    The first stdout line is the effective policy, hooks included; later lines
+    mirror the app-server's events. Defaults: sandbox ``workspace-write`` rooted
+    at ``--cd``, network off, ``/tmp`` and ``$TMPDIR`` not writable
+    (``--allow-tmp`` lifts it), the user's Codex hooks off (``--hooks`` turns them
+    on), the notify program off, a turn timeout of 1800 s (``--turn-timeout``).
+    Stops on SIGINT or SIGTERM: deregister, then close the app-server.
 ``client <verb> --session <id> [--grant <grant id>] ...``
     One ``/direct`` client verb: ``machines``, ``sessions``, ``read``, ``ask``,
     ``send``, ``replies``, ``questions``, ``answer``. The origin is
@@ -61,7 +77,8 @@ relay refusal or failure, ``{"error": {"kind": "configuration", ...}}`` for a
 configuration error.
 
 Exit codes: 0 success; 1 the relay refused or failed the call, did not answer,
-or is already running; 2 usage or configuration.
+or is already running (``codex``: also a busy thread or a failed app-server);
+2 usage or configuration (``codex``: also the relay not enabled).
 """
 from __future__ import annotations
 
@@ -74,6 +91,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
 
 from llm_kit.relay import protocol as P
+from llm_kit.relay.codex_channel import DEFAULT_TURN_TIMEOUT_S
 from llm_kit.relay.config import RelayConfig, RelayConfigError, fleet_machine_labels, load_config
 
 #: The ``format`` of the object ``peer export`` prints and ``peer import`` reads.
@@ -143,6 +161,24 @@ def _client_common() -> argparse.ArgumentParser:
     return parent
 
 
+def _positive_seconds(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number of seconds") from None
+    if not value > 0 or value == float("inf"):
+        raise argparse.ArgumentTypeError(f"{text!r} is not a positive number of seconds")
+    return value
+
+
+def _message_kinds(text: str) -> tuple:
+    kinds = tuple(part.strip() for part in text.split(",") if part.strip())
+    for kind in kinds:
+        if kind not in P.MESSAGE_KINDS:
+            raise argparse.ArgumentTypeError(f"{kind!r} is not a message kind (one of {', '.join(P.MESSAGE_KINDS)})")
+    return tuple(dict.fromkeys(kinds))
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="llm-kit relay",
@@ -173,6 +209,23 @@ def _parser() -> argparse.ArgumentParser:
     peer_import = peer_verbs.add_parser("import", parents=[common],
                                         help="Store a peer's credentials, read as JSON from standard input.")
     peer_import.add_argument("machine", help="The peer's machine label; must equal the JSON object's machine.")
+
+    codex = sub.add_parser("codex", parents=[common],
+                           help="Run a Codex channel: one codex app-server thread that answers relay messages.")
+    codex.add_argument("--cd", required=True, type=Path, help="The directory the Codex thread works in (an existing directory).")
+    codex.add_argument("--resume", metavar="THREAD_ID", help="Resume this Codex thread (it must have run a turn).")
+    codex.add_argument("--sandbox", choices=("read-only", "workspace-write"), default="workspace-write",
+                       help="workspace-write (default; writable only under --cd) or read-only.")
+    codex.add_argument("--network", action="store_true", help="Allow network access in the sandbox (default: off).")
+    codex.add_argument("--allow-tmp", action="store_true",
+                       help="Let the sandbox write /tmp and $TMPDIR (default: excluded).")
+    codex.add_argument("--hooks", action="store_true", help="Run the user's Codex hooks in this session (default: off).")
+    codex.add_argument("--model", help="Codex model for this server.")
+    codex.add_argument("--effort", help="Codex reasoning effort for this server.")
+    codex.add_argument("--turn-timeout", type=_positive_seconds, default=DEFAULT_TURN_TIMEOUT_S, metavar="SECONDS",
+                       help="Interrupt and decline a turn that runs longer than this (default: %(default)s).")
+    codex.add_argument("--accepts", type=_message_kinds, default=tuple(P.MESSAGE_KINDS), metavar="KINDS",
+                       help="Comma list of message kinds to accept (default: note,instruction,question; empty is read-only).")
 
     client = sub.add_parser("client", help="Call one /direct client verb.")
     verbs = client.add_subparsers(dest="client_verb", required=True, metavar="client-verb")
@@ -321,6 +374,24 @@ def _is_tty(stream: Any) -> bool:
     return bool(getattr(stream, "isatty", lambda: False)())
 
 
+def _cmd_codex(args: argparse.Namespace) -> int:
+    from llm_kit.relay.codex_channel import ChannelExit, CodexChannel, CodexChannelOptions
+
+    config = _config(args)
+    options = CodexChannelOptions(
+        cd=os.path.realpath(os.path.expanduser(str(args.cd))), resume=args.resume, sandbox=args.sandbox,
+        network=args.network, allow_tmp=args.allow_tmp, hooks=args.hooks, model=args.model, effort=args.effort,
+        turn_timeout_s=args.turn_timeout, accepts=args.accepts,
+    )
+    try:
+        return CodexChannel(config, options).run()
+    except ChannelExit as exc:
+        if exc.code == EXIT_USAGE:
+            return _config_error(exc.message)
+        _emit({"error": {"kind": "codex_channel", "message": exc.message}}, stream=sys.stderr)
+        return exc.code
+
+
 def _cmd_peer(args: argparse.Namespace) -> int:
     from llm_kit.relay.lifecycle import read_token, write_peer_credentials
 
@@ -458,6 +529,7 @@ _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "resume": _cmd_control,
     "status": _cmd_control,
     "peer": _cmd_peer,
+    "codex": _cmd_codex,
     "client": _cmd_client,
 }
 

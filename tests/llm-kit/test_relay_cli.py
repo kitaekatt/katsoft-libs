@@ -519,3 +519,177 @@ def test_no_command_line_flag_turns_the_relay_on(paths, capsys):
     for verb in ("serve", "hub"):
         out = cli([verb, "--help"], capsys)
         assert out.code == 0 and "--enable" not in out.out and "--force" not in out.out
+
+
+# --------------------------------------------------------------------------
+# codex: the Codex channel (unit CH). The app-server is the fake stub behind a launcher script.
+# --------------------------------------------------------------------------
+
+def _codex_env(paths, launcher, **extra: str) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("XDG_", "CLAUDE_", "MODEL_ENDPOINTS"))}
+    env.update({"HOME": str(paths.tmp / "home"), "PYTHONPATH": os.pathsep.join([str(LIB), str(CONTRACTS)]),
+                "_BOOTSTRAP_GUARD_SKIP_REEXEC": "1", "LLM_KIT_CODEX_EXECUTABLE": str(launcher.path),
+                "FAKE_CODEX_LOG": str(paths.tmp / "stub.log.jsonl"), "FAKE_CODEX_CFG": "{}"})
+    env.update(extra)
+    return env
+
+
+@pytest.fixture
+def codex_launcher(paths, monkeypatch):
+    from test_relay_codex_channel import make_launcher
+
+    launcher = make_launcher(paths.tmp)
+    monkeypatch.setenv("LLM_KIT_CODEX_EXECUTABLE", str(launcher.path))
+    monkeypatch.setenv("FAKE_CODEX_LOG", str(paths.tmp / "stub.log.jsonl"))
+    monkeypatch.setenv("FAKE_CODEX_CFG", "{}")
+    (paths.tmp / "work").mkdir()
+    return launcher
+
+
+@pytest.fixture
+def old_relay(paths, monkeypatch) -> Iterator[SimpleNamespace]:
+    """A relay that behaves as katsoft-llm-kit 1.18.0 or earlier: its status lists no ``harnesses``."""
+    from test_relay_server import _as_a_relay_without_amendment_1
+
+    _as_a_relay_without_amendment_1(monkeypatch)
+    yield from _serve(paths)
+
+
+def test_codex_exits_2_and_spawns_nothing_unless_relay_yaml_opts_in(paths, capsys, codex_launcher):
+    for text in ("", "enabled: false\n"):
+        paths.config.write_text(text, encoding="utf-8")
+        out = cli(["codex", "--cd", str(paths.tmp / "work"), *paths.args], capsys)
+        assert out.code == 2 and out.out == ""
+        error = json.loads(out.err)["error"]
+        assert error["kind"] == "configuration" and "`enabled: true`" in error["message"] and str(paths.config) in error["message"]
+        assert codex_launcher.launches() == 0
+    assert not paths.state.exists()
+
+
+def test_codex_exits_2_for_a_missing_directory_and_for_bad_flags(paths, capsys, codex_launcher):
+    out = cli(["codex", "--cd", str(paths.tmp / "nope"), *paths.args], capsys)
+    assert out.code == 2 and "is not an existing directory" in json.loads(out.err)["error"]["message"]
+    work = str(paths.tmp / "work")
+    for flags in (["--turn-timeout", "0"], ["--turn-timeout", "soon"], ["--accepts", "note,shout"],
+                  ["--sandbox", "danger-full-access"], ["--sandbox", "read-only", "--approval-policy", "on-request"]):
+        assert cli(["codex", "--cd", work, *flags, *paths.args], capsys).code == 2, flags
+    assert cli(["codex", *paths.args], capsys).code == 2  # --cd is required
+    assert codex_launcher.launches() == 0
+
+
+def test_codex_exits_1_when_no_relay_has_run_and_spawns_nothing(paths, capsys, codex_launcher):
+    out = cli(["codex", "--cd", str(paths.tmp / "work"), *paths.args], capsys)  # enabled, but no token and no relay
+    assert out.code == 1 and out.out == ""
+    assert "llm-kit relay serve" in json.loads(out.err)["error"]["message"]
+    assert codex_launcher.launches() == 0
+
+
+def test_codex_exits_1_when_the_running_relay_lists_no_codex_harness_and_spawns_nothing(old_relay, paths, capsys, codex_launcher):
+    status = old_relay.client.status({}, origin=f"operator:{LABEL}")
+    assert "harnesses" not in status
+    out = cli(["codex", "--cd", str(paths.tmp / "work"), *paths.args], capsys)
+    assert out.code == 1 and out.out == ""
+    assert json.loads(out.err)["error"]["message"] == (
+        "the running relay is older than katsoft-llm-kit 1.20.0; restart llm-kit relay serve")
+    assert codex_launcher.launches() == 0
+    assert old_relay.client.status({}, origin=f"operator:{LABEL}")["registrations"] == 0
+
+
+def test_codex_exits_1_with_the_relays_refusal_of_the_registration(relay, paths, capsys, codex_launcher, monkeypatch):
+    real = HttpRelayClient.call
+
+    def refusing(self, verb, params, **kw):
+        if verb == "register":
+            raise P.RelayError("bad_request", "register params fail their schema: stubbed")
+        return real(self, verb, params, **kw)
+
+    monkeypatch.setattr(HttpRelayClient, "call", refusing)
+    out = cli(["codex", "--cd", str(paths.tmp / "work"), *paths.args], capsys)
+    assert out.code == 1 and out.out == ""
+    error = json.loads(out.err)["error"]
+    assert error["code"] == "bad_request" and "stubbed" in error["message"]
+
+
+def test_codex_exits_2_when_the_thread_to_resume_never_ran_and_1_when_it_is_busy(relay, paths, capsys, codex_launcher, monkeypatch):
+    work = str(paths.tmp / "work")
+    thread = "0192aaaa-0000-7000-8000-00000000cafe"
+    monkeypatch.setenv("FAKE_CODEX_CFG", json.dumps({"resume_error": "no_rollout"}))
+    out = cli(["codex", "--cd", work, "--resume", thread, *paths.args], capsys)
+    assert out.code == 2 and json.loads(out.err)["error"]["message"] == f"thread {thread} never ran a turn; it cannot be resumed"
+    monkeypatch.setenv("FAKE_CODEX_CFG", json.dumps({"resume_error": "active_writer"}))
+    out = cli(["codex", "--cd", work, "--resume", thread, *paths.args], capsys)
+    assert out.code == 1 and json.loads(out.err)["error"]["message"] == f"thread {thread} is open in another Codex process"
+    assert relay.client.status({}, origin=f"operator:{LABEL}")["registrations"] == 0
+
+
+def _tcp_listeners(pid: int) -> list[Any]:
+    """Every listening TCP socket held by ``pid`` or any descendant."""
+    import psutil
+
+    found = []
+    root = psutil.Process(pid)
+    for proc in [root, *root.children(recursive=True)]:
+        try:
+            found += [c for c in proc.net_connections(kind="inet") if c.status == psutil.CONN_LISTEN]
+        except psutil.NoSuchProcess:
+            continue
+    return found
+
+
+def test_the_listener_probe_does_see_a_listening_process_tree(tmp_path):
+    """Positive control: the probe the e2e test relies on reports a listening child (and a grandchild)."""
+    code = ("import socket,subprocess,sys,time\n"
+            "s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(1)\n"
+            "subprocess.Popen([sys.executable,'-c','import socket,time; s=socket.socket(); s.bind((\"127.0.0.1\",0)); s.listen(1); time.sleep(30)'])\n"
+            "print('up', flush=True); time.sleep(30)\n")
+    child = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+    try:
+        assert child.stdout.readline().strip() == "up"
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and len(_tcp_listeners(child.pid)) < 2:
+            time.sleep(0.1)
+        assert len(_tcp_listeners(child.pid)) == 2
+    finally:
+        import psutil
+
+        for proc in [psutil.Process(child.pid), *psutil.Process(child.pid).children(recursive=True)]:
+            proc.kill()
+        child.wait()
+        child.stdout.close()
+
+
+def test_codex_runs_as_a_child_answers_a_granted_send_binds_nothing_and_stops_on_sigterm(relay, paths, codex_launcher):
+    work = paths.tmp / "work"
+    child = subprocess.Popen([sys.executable, "-m", "llm_kit.cli", "relay", "codex", "--cd", str(work), *paths.args],
+                             env=_codex_env(paths, codex_launcher), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        line = child.stdout.readline()
+        assert line, child.stderr.read()
+        ready = json.loads(line)  # the effective policy is the first stdout line
+        assert ready["codex_channel"] == "ready" and ready["address"] == f"{LABEL}/codex/{ready['thread_id']}"
+        assert ready["policy"] == {"sandbox": "workspace-write", "network": False, "approval_policy": "never",
+                                   "approvals_reviewer": "user", "tmp_excluded": True, "hooks": False, "notify": "off"}
+        assert ready["turn_timeout_s"] == 1800.0 and ready["cwd"] == os.path.realpath(work)
+        argv = codex_launcher.argv()
+        assert argv[:3] == ["app-server", "--listen", "stdio://"] and "features.hooks=false" in argv and "notify=[]" in argv
+        sent = relay.client.call("send_message", {"to": ready["address"], "kind": "question", "body": "ping?"},
+                                 origin=f"direct:{LABEL}/claude/{SESSION}", grant=mint(relay, "send_message", [ready["address"]]))
+        mid = sent["message"]["id"]
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and relay.server.mailbox.get_message(mid)["state"] != "answered":
+            time.sleep(0.1)
+        assert relay.server.mailbox.get_message(mid)["state"] == "answered"
+        assert _tcp_listeners(child.pid) == []  # nothing in the process tree listens on a port
+        assert relay.client.status({}, origin=f"operator:{LABEL}")["registrations"] == 1
+        child.send_signal(signal.SIGTERM)
+        assert child.wait(timeout=30) == 0
+        assert relay.client.status({}, origin=f"operator:{LABEL}")["registrations"] == 0  # deregistered
+        assert "deregistered" in child.stderr.read()
+        rest = [json.loads(l) for l in child.stdout.read().splitlines() if l.strip()]
+        assert [e["event"] for e in rest if e.get("event") in ("message", "reply")] == ["message", "reply"]
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+        child.stdout.close()
+        child.stderr.close()
