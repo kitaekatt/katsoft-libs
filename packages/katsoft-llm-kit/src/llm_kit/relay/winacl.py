@@ -7,9 +7,16 @@ to the current user and SYSTEM only:
 
 * :func:`provision` sets the owner to the current user and that DACL. A
   directory's ACEs are inheritable, so a file created inside it starts private.
-* :func:`validate` reads the security descriptor as SDDL and refuses what
-  :func:`provision` would never have written (see :func:`check_sddl`). It never
+* :func:`validate` reads the security descriptor as binary (owner SID, the
+  DACL's ACEs one by one) and refuses what :func:`provision` would never have
+  written (see :func:`check_descriptor`). It fails closed: an ACE type it does
+  not explicitly understand (conditional, object, ...) is refused. It never
   repairs: a broad file is refused, as on POSIX.
+* :func:`create_private_dir` and :func:`create_private_file` create with that
+  descriptor in the same call (``SECURITY_ATTRIBUTES``), so nothing is ever
+  visible with an inherited ACL.
+* :func:`refuse_writable_ancestors` refuses a state root whose parent chain
+  lets another trustee replace or re-ACL it.
 
 Importing this module is safe on every platform; the Win32 calls load on first
 use and raise :class:`RelayConfigError` anywhere but Windows.
@@ -18,16 +25,30 @@ from __future__ import annotations
 
 import ctypes
 import os
-import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional, Sequence
 
 from llm_kit.relay.config import RelayConfigError
 
-#: Allow-ACE types in SDDL (allow, object allow, callback allow, callback object allow).
-_ALLOW_TYPES = frozenset({"A", "OA", "XA", "ZA"})
-#: SDDL spellings of SYSTEM.
-_SYSTEM = frozenset({"SY", "S-1-5-18"})
+_SYSTEM = "S-1-5-18"
+_ADMINISTRATORS = "S-1-5-32-544"
+_OWNER_RIGHTS = "S-1-3-4"
+_TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+#: The only ACE types a DACL may hold for validation: ACCESS_ALLOWED and ACCESS_DENIED.
+_ACE_ALLOWED, _ACE_DENIED = 0, 1
+_INHERIT_ONLY_ACE = 0x08
+_SE_DACL_PROTECTED = 0x1000
+#: Rights that let a trustee change, replace or re-ACL a directory entry.
+_WRITE_RIGHTS = (
+    0x2 | 0x4 | 0x40  # add file, add subdirectory, delete child
+    | 0x10000 | 0x40000 | 0x80000  # DELETE, WRITE_DAC, WRITE_OWNER
+    | 0x40000000 | 0x10000000  # GENERIC_WRITE, GENERIC_ALL
+)
+_GENERIC_READ_WRITE = 0xC0000000
+_FILE_SHARE_READ_WRITE = 0x3
+_CREATE_NEW = 1
+_FILE_ATTRIBUTE_NORMAL = 0x80
+_ERROR_FILE_EXISTS, _ERROR_ALREADY_EXISTS = 80, 183
 
 _SE_FILE_OBJECT = 1
 _OWNER_SECURITY_INFORMATION = 0x1
@@ -56,6 +77,15 @@ class _Api:
         pdw = ctypes.POINTER(wintypes.DWORD)
         pbool = ctypes.POINTER(wintypes.BOOL)
 
+        class SecurityAttributes(ctypes.Structure):
+            _fields_ = [("nLength", wintypes.DWORD), ("lpSecurityDescriptor", vp), ("bInheritHandle", wintypes.BOOL)]
+
+        class AclSizeInformation(ctypes.Structure):
+            _fields_ = [("AceCount", wintypes.DWORD), ("AclBytesInUse", wintypes.DWORD), ("AclBytesFree", wintypes.DWORD)]
+
+        self.SecurityAttributes = SecurityAttributes
+        self.AclSizeInformation = AclSizeInformation
+
         self.GetCurrentProcess = kernel32.GetCurrentProcess
         self.GetCurrentProcess.restype = wintypes.HANDLE
         self.CloseHandle = kernel32.CloseHandle
@@ -66,6 +96,15 @@ class _Api:
         self.GetLongPathNameW = kernel32.GetLongPathNameW
         self.GetLongPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
         self.GetLongPathNameW.restype = wintypes.DWORD
+        self.CreateDirectoryW = kernel32.CreateDirectoryW
+        self.CreateDirectoryW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(SecurityAttributes)]
+        self.CreateDirectoryW.restype = wintypes.BOOL
+        self.CreateFileW = kernel32.CreateFileW
+        self.CreateFileW.argtypes = [
+            wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(SecurityAttributes),
+            wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+        ]
+        self.CreateFileW.restype = wintypes.HANDLE
 
         self.OpenProcessToken = advapi32.OpenProcessToken
         self.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
@@ -96,6 +135,15 @@ class _Api:
         self.GetSecurityDescriptorDacl = advapi32.GetSecurityDescriptorDacl
         self.GetSecurityDescriptorDacl.argtypes = [vp, pbool, pvp, pbool]
         self.GetSecurityDescriptorDacl.restype = wintypes.BOOL
+        self.GetSecurityDescriptorControl = advapi32.GetSecurityDescriptorControl
+        self.GetSecurityDescriptorControl.argtypes = [vp, ctypes.POINTER(wintypes.WORD), pdw]
+        self.GetSecurityDescriptorControl.restype = wintypes.BOOL
+        self.GetAclInformation = advapi32.GetAclInformation
+        self.GetAclInformation.argtypes = [vp, vp, wintypes.DWORD, ctypes.c_int]
+        self.GetAclInformation.restype = wintypes.BOOL
+        self.GetAce = advapi32.GetAce
+        self.GetAce.argtypes = [vp, wintypes.DWORD, pvp]
+        self.GetAce.restype = wintypes.BOOL
         self.SetNamedSecurityInfoW = advapi32.SetNamedSecurityInfoW
         self.SetNamedSecurityInfoW.argtypes = [
             wintypes.LPWSTR, ctypes.c_int, wintypes.DWORD, vp, vp, vp, vp,
@@ -106,6 +154,11 @@ class _Api:
             wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD, vp, vp, vp, vp, pvp,
         ]
         self.GetNamedSecurityInfoW.restype = wintypes.DWORD
+        self.GetSecurityInfo = advapi32.GetSecurityInfo
+        self.GetSecurityInfo.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, wintypes.DWORD, vp, vp, vp, vp, pvp,
+        ]
+        self.GetSecurityInfo.restype = wintypes.DWORD
 
 
 def _api() -> _Api:
@@ -119,6 +172,16 @@ def _api() -> _Api:
 
 def _winerror(what: str, code: int) -> RelayConfigError:
     return RelayConfigError(f"{what} failed: {ctypes.FormatError(code).strip()} (Windows error {code})")  # type: ignore[attr-defined]
+
+
+def _sid_string(api: _Api, sid_ptr: Any) -> str:
+    text = ctypes.c_wchar_p()
+    if not api.ConvertSidToStringSidW(sid_ptr, ctypes.byref(text)):
+        raise _winerror("ConvertSidToStringSidW", ctypes.get_last_error())  # type: ignore[attr-defined]
+    try:
+        return str(text.value)
+    finally:
+        api.LocalFree(ctypes.cast(text, ctypes.c_void_p))
 
 
 def current_user_sid() -> str:
@@ -138,22 +201,60 @@ def current_user_sid() -> str:
         if not api.GetTokenInformation(token, _TOKEN_USER, buf, needed.value, ctypes.byref(needed)):
             raise _winerror("GetTokenInformation", ctypes.get_last_error())  # type: ignore[attr-defined]
         sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]
-        text = ctypes.c_wchar_p()
-        if not api.ConvertSidToStringSidW(sid_ptr, ctypes.byref(text)):
-            raise _winerror("ConvertSidToStringSidW", ctypes.get_last_error())  # type: ignore[attr-defined]
-        try:
-            _sid_cache = str(text.value)
-        finally:
-            api.LocalFree(ctypes.cast(text, ctypes.c_void_p))
+        _sid_cache = _sid_string(api, sid_ptr)
     finally:
         api.CloseHandle(token)
     return _sid_cache
 
 
-def _sddl_for(sid: str, *, directory: bool) -> str:
-    """The SDDL :func:`provision` applies: owner ``sid``, protected DACL for ``sid`` and SYSTEM."""
+def _sddl_for(sid: str, *, directory: bool, owner: bool = True) -> str:
+    """The SDDL of a private object: owner ``sid`` (optional), protected DACL for ``sid`` and SYSTEM."""
     flags = "OICI" if directory else ""
-    return f"O:{sid}D:P(A;{flags};FA;;;{sid})(A;{flags};FA;;;SY)"
+    return f"{f'O:{sid}' if owner else ''}D:P(A;{flags};FA;;;{sid})(A;{flags};FA;;;SY)"
+
+
+class _Sd:
+    """A security descriptor converted from SDDL; freed on exit."""
+
+    def __init__(self, api: _Api, sddl: str) -> None:
+        self.api = api
+        self.ptr = ctypes.c_void_p()
+        if not api.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl, _SDDL_REVISION_1, ctypes.byref(self.ptr), None
+        ):
+            raise _winerror("ConvertStringSecurityDescriptorToSecurityDescriptorW", ctypes.get_last_error())  # type: ignore[attr-defined]
+
+    def __enter__(self) -> "_Sd":
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.api.LocalFree(self.ptr)
+
+    def attributes(self) -> Any:
+        sa = self.api.SecurityAttributes()
+        sa.nLength = ctypes.sizeof(sa)
+        sa.lpSecurityDescriptor = self.ptr
+        sa.bInheritHandle = False
+        return sa
+
+
+def _apply_sddl(path: "os.PathLike[str] | str", sddl: str) -> None:
+    """Set owner and DACL of ``path`` from ``sddl`` and mark the DACL protected."""
+    api = _api()
+    wt = api.wintypes
+    with _Sd(api, sddl) as sd:
+        owner = ctypes.c_void_p()
+        dacl = ctypes.c_void_p()
+        flag = wt.BOOL()
+        present = wt.BOOL()
+        if not api.GetSecurityDescriptorOwner(sd.ptr, ctypes.byref(owner), ctypes.byref(flag)):
+            raise _winerror("GetSecurityDescriptorOwner", ctypes.get_last_error())  # type: ignore[attr-defined]
+        if not api.GetSecurityDescriptorDacl(sd.ptr, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(flag)):
+            raise _winerror("GetSecurityDescriptorDacl", ctypes.get_last_error())  # type: ignore[attr-defined]
+        info = _OWNER_SECURITY_INFORMATION | _DACL_SECURITY_INFORMATION | _PROTECTED_DACL_SECURITY_INFORMATION
+        code = api.SetNamedSecurityInfoW(str(path), _SE_FILE_OBJECT, info, owner, None, dacl, None)
+        if code != 0:
+            raise _winerror(f"setting the owner and ACL of {path}", code)
 
 
 def provision(path: "os.PathLike[str] | str", directory: bool = False) -> None:
@@ -163,34 +264,55 @@ def provision(path: "os.PathLike[str] | str", directory: bool = False) -> None:
     it start private. A failure (for example an owner this process may not
     assign) raises :class:`RelayConfigError`.
     """
+    _apply_sddl(path, _sddl_for(current_user_sid(), directory=directory))
+
+
+def create_private_dir(path: "os.PathLike[str] | str") -> None:
+    """Create directory ``path`` with the private descriptor in the same call.
+
+    Raises :class:`FileExistsError` when it exists. Nothing ever observes the
+    directory with an ACL inherited from its parent.
+    """
     api = _api()
-    wt = api.wintypes
-    sd = ctypes.c_void_p()
-    if not api.ConvertStringSecurityDescriptorToSecurityDescriptorW(
-        _sddl_for(current_user_sid(), directory=directory), _SDDL_REVISION_1, ctypes.byref(sd), None
-    ):
-        raise _winerror("ConvertStringSecurityDescriptorToSecurityDescriptorW", ctypes.get_last_error())  # type: ignore[attr-defined]
-    try:
-        owner = ctypes.c_void_p()
-        dacl = ctypes.c_void_p()
-        flag = wt.BOOL()
-        present = wt.BOOL()
-        if not api.GetSecurityDescriptorOwner(sd, ctypes.byref(owner), ctypes.byref(flag)):
-            raise _winerror("GetSecurityDescriptorOwner", ctypes.get_last_error())  # type: ignore[attr-defined]
-        if not api.GetSecurityDescriptorDacl(sd, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(flag)):
-            raise _winerror("GetSecurityDescriptorDacl", ctypes.get_last_error())  # type: ignore[attr-defined]
-        info = _OWNER_SECURITY_INFORMATION | _DACL_SECURITY_INFORMATION | _PROTECTED_DACL_SECURITY_INFORMATION
-        code = api.SetNamedSecurityInfoW(
-            str(path), _SE_FILE_OBJECT, info, owner, None, dacl, None
+    with _Sd(api, _sddl_for(current_user_sid(), directory=True, owner=False)) as sd:
+        sa = sd.attributes()
+        if not api.CreateDirectoryW(str(path), ctypes.byref(sa)):
+            code = ctypes.get_last_error()  # type: ignore[attr-defined]
+            if code in (_ERROR_ALREADY_EXISTS, _ERROR_FILE_EXISTS):
+                raise FileExistsError(str(path))
+            raise _winerror(f"creating directory {path}", code)
+
+
+def create_private_file(path: "os.PathLike[str] | str") -> int:
+    """Create file ``path`` (``CREATE_NEW``) with the private descriptor in the same call; a read-write binary fd.
+
+    Raises :class:`FileExistsError` when it exists. The returned descriptor is
+    the handle that made the file, so a caller keeps it through the first
+    write.
+    """
+    import msvcrt
+
+    api = _api()
+    with _Sd(api, _sddl_for(current_user_sid(), directory=False, owner=False)) as sd:
+        sa = sd.attributes()
+        handle = api.CreateFileW(
+            str(path), _GENERIC_READ_WRITE, _FILE_SHARE_READ_WRITE, ctypes.byref(sa), _CREATE_NEW,
+            _FILE_ATTRIBUTE_NORMAL, None,
         )
-        if code != 0:
-            raise _winerror(f"setting the owner and ACL of {path}", code)
-    finally:
-        api.LocalFree(sd)
+    if handle in (None, 0, -1, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF):
+        code = ctypes.get_last_error()  # type: ignore[attr-defined]
+        if code in (_ERROR_ALREADY_EXISTS, _ERROR_FILE_EXISTS):
+            raise FileExistsError(str(path))
+        raise _winerror(f"creating file {path}", code)
+    try:
+        return msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)  # type: ignore[attr-defined]
+    except BaseException:
+        api.CloseHandle(handle)
+        raise
 
 
 def read_sddl(path: "os.PathLike[str] | str") -> str:
-    """The owner and DACL of ``path`` as SDDL text (``O:...D:...``)."""
+    """The owner and DACL of ``path`` as SDDL text (``O:...D:...``); for diagnostics, never for validation."""
     api = _api()
     psd = ctypes.c_void_p()
     code = api.GetNamedSecurityInfoW(
@@ -214,42 +336,115 @@ def read_sddl(path: "os.PathLike[str] | str") -> str:
         api.LocalFree(psd)
 
 
-#: A SID in SDDL is ``S-...`` or a two-letter alias such as ``SY``.
-_TRUSTEE = r"(?:S-[0-9]+(?:-[0-9]+)+|[A-Z]{2})"
-_SDDL_RE = re.compile(rf"^O:(?P<owner>{_TRUSTEE})(?:G:{_TRUSTEE})?(?:D:(?P<dacl>.*))?$", re.DOTALL)
-_ACE_RE = re.compile(r"\(([^()]*)\)")
+# --------------------------------------------------------------------------
+# reading and judging a descriptor
+# --------------------------------------------------------------------------
+
+class Ace(NamedTuple):
+    """One ACE of a DACL: type byte, flags, access mask, and trustee SID string (``None`` unless allow/deny)."""
+
+    ace_type: int
+    flags: int
+    mask: int
+    sid: Optional[str]
 
 
-def check_sddl(sddl: str, user_sid: str, path: object) -> None:
-    """Refuse ``sddl`` unless it is what :func:`provision` writes: pure and portable.
+class Descriptor(NamedTuple):
+    owner: Optional[str]
+    protected: bool
+    dacl_present: bool  # False = a null DACL, which grants everyone full access
+    aces: Sequence[Ace]
 
-    Refused: an owner other than ``user_sid``; no DACL or a null DACL; a DACL
-    that is not protected (it would follow its parent); an allow ACE for any
-    trustee other than ``user_sid`` or SYSTEM; and a DACL with no allow ACE for
-    ``user_sid`` at all. Deny and audit ACEs are not grants and are ignored.
+
+def _read_acl(api: _Api, dacl: Any) -> list[Ace]:
+    info = api.AclSizeInformation()
+    if not api.GetAclInformation(dacl, ctypes.byref(info), ctypes.sizeof(info), 2):  # AclSizeInformation
+        raise _winerror("GetAclInformation", ctypes.get_last_error())  # type: ignore[attr-defined]
+    aces: list[Ace] = []
+    for index in range(info.AceCount):
+        pace = ctypes.c_void_p()
+        if not api.GetAce(dacl, index, ctypes.byref(pace)):
+            raise _winerror(f"GetAce({index})", ctypes.get_last_error())  # type: ignore[attr-defined]
+        header = ctypes.string_at(pace.value, 4)
+        ace_type, flags, size = header[0], header[1], header[2] | (header[3] << 8)
+        if ace_type in (_ACE_ALLOWED, _ACE_DENIED) and size >= 16:
+            mask = int.from_bytes(ctypes.string_at(pace.value + 4, 4), "little")
+            aces.append(Ace(ace_type, flags, mask, _sid_string(api, pace.value + 8)))
+        else:
+            aces.append(Ace(ace_type, flags, 0, None))  # not understood: the policy refuses it
+    return aces
+
+
+def _descriptor_from(api: _Api, code: int, what: str, owner: Any, dacl: Any, psd: Any) -> Descriptor:
+    if code != 0:
+        raise _winerror(f"reading the security descriptor of {what}", code)
+    try:
+        wt = api.wintypes
+        control = wt.WORD()
+        revision = wt.DWORD()
+        if not api.GetSecurityDescriptorControl(psd, ctypes.byref(control), ctypes.byref(revision)):
+            raise _winerror("GetSecurityDescriptorControl", ctypes.get_last_error())  # type: ignore[attr-defined]
+        return Descriptor(
+            owner=_sid_string(api, owner) if owner.value else None,
+            protected=bool(control.value & _SE_DACL_PROTECTED),
+            dacl_present=bool(dacl.value),
+            aces=_read_acl(api, dacl) if dacl.value else [],
+        )
+    finally:
+        api.LocalFree(psd)
+
+
+def read_descriptor(path: "os.PathLike[str] | str") -> Descriptor:
+    """The owner and the binary DACL of ``path``."""
+    api = _api()
+    owner, dacl, psd = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+    code = api.GetNamedSecurityInfoW(
+        str(path), _SE_FILE_OBJECT, _OWNER_SECURITY_INFORMATION | _DACL_SECURITY_INFORMATION,
+        ctypes.byref(owner), None, ctypes.byref(dacl), None, ctypes.byref(psd),
+    )
+    return _descriptor_from(api, code, str(path), owner, dacl, psd)
+
+
+def read_descriptor_fd(fd: int) -> Descriptor:
+    """The owner and the binary DACL of the file open as ``fd`` (the object actually read, not a path)."""
+    import msvcrt
+
+    api = _api()
+    owner, dacl, psd = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+    code = api.GetSecurityInfo(
+        msvcrt.get_osfhandle(fd), _SE_FILE_OBJECT, _OWNER_SECURITY_INFORMATION | _DACL_SECURITY_INFORMATION,  # type: ignore[attr-defined]
+        ctypes.byref(owner), None, ctypes.byref(dacl), None, ctypes.byref(psd),
+    )
+    return _descriptor_from(api, code, f"descriptor {fd}", owner, dacl, psd)
+
+
+def check_descriptor(desc: Descriptor, user_sid: str, path: object) -> None:
+    """Refuse ``desc`` unless it is what :func:`provision` writes. Pure and portable; fails closed.
+
+    Refused: an owner other than ``user_sid``; a null DACL; a DACL that is not
+    protected (it would follow its parent); any ACE that is not a plain
+    ACCESS_ALLOWED or ACCESS_DENIED ACE (conditional, object, callback, anything
+    unknown); an allow ACE for a trustee other than ``user_sid`` or SYSTEM; and
+    a DACL with no allow ACE for ``user_sid``. A deny ACE is not a grant.
     """
-    match = _SDDL_RE.match(sddl.strip())
-    if match is None:
-        raise RelayConfigError(f"{path} has a security descriptor this relay cannot read: {sddl!r}")
-    owner = match["owner"]
-    if owner != user_sid:
-        raise RelayConfigError(f"{path} is not owned by the current user (owner {owner}, expected {user_sid})")
-    dacl = match["dacl"]
-    if dacl is None or dacl.startswith("NO_ACCESS_CONTROL") or not dacl:
+    if desc.owner != user_sid:
+        raise RelayConfigError(f"{path} is not owned by the current user (owner {desc.owner}, expected {user_sid})")
+    if not desc.dacl_present:
         raise RelayConfigError(f"{path} has a null or missing DACL, which grants everyone access")
-    flags = dacl.split("(", 1)[0]
-    if "P" not in flags:
-        raise RelayConfigError(f"{path} has an unprotected DACL (flags {flags!r}); it inherits access from its parent")
-    allowed = {user_sid} | _SYSTEM
+    if not desc.protected:
+        raise RelayConfigError(f"{path} has an unprotected DACL; it inherits access from its parent")
+    allowed = {user_sid, _SYSTEM}
     user_granted = False
-    for ace in _ACE_RE.findall(dacl):
-        fields = ace.split(";")
-        if fields[0] not in _ALLOW_TYPES:
+    for ace in desc.aces:
+        if ace.ace_type not in (_ACE_ALLOWED, _ACE_DENIED) or ace.sid is None:
+            raise RelayConfigError(
+                f"{path} has an ACE of type {ace.ace_type} this relay does not understand (refused, not skipped)"
+            )
+        if ace.ace_type == _ACE_DENIED:
             continue
-        trustee = fields[5] if len(fields) > 5 else ""
-        if trustee not in allowed:
-            raise RelayConfigError(f"{path} grants access to {trustee or 'an unnamed trustee'}; only the current user and SYSTEM may have it")
-        if trustee == user_sid:
+        if ace.sid not in allowed:
+            raise RelayConfigError(f"{path} grants access to {ace.sid}; only the current user and SYSTEM may have it")
+        if ace.sid == user_sid:
             user_granted = True
     if not user_granted:
         raise RelayConfigError(f"{path} grants the current user no access")
@@ -279,13 +474,78 @@ def refuse_redirected(path: "os.PathLike[str] | str") -> None:
 
 
 def validate(path: "os.PathLike[str] | str") -> None:
-    """Refuse ``path`` unless it is private to the current user (see :func:`check_sddl`).
+    """Refuse ``path`` unless it is private to the current user (see :func:`check_descriptor`).
 
     Also refuses a path whose real path differs from its absolute path.
     Raises :class:`RelayConfigError`; never repairs.
     """
     refuse_redirected(path)
-    check_sddl(read_sddl(path), current_user_sid(), Path(path))
+    check_descriptor(read_descriptor(path), current_user_sid(), Path(path))
 
 
-__all__ = ["check_sddl", "current_user_sid", "provision", "read_sddl", "refuse_redirected", "validate"]
+def validate_fd(fd: int, path: "os.PathLike[str] | str") -> None:
+    """:func:`validate` for a file already open as ``fd``: the descriptor judged is the open object's."""
+    refuse_redirected(path)
+    check_descriptor(read_descriptor_fd(fd), current_user_sid(), Path(path))
+
+
+# --------------------------------------------------------------------------
+# ancestors
+# --------------------------------------------------------------------------
+
+def check_ancestor(desc: Descriptor, user_sid: str, path: object) -> None:
+    """Refuse an ancestor directory another trustee can write to. Pure; fails closed.
+
+    A trustee other than the user, SYSTEM, Administrators or TrustedInstaller
+    that may add entries, delete children, or change the ACL or owner could
+    replace or re-ACL what lies below. Inherit-only ACEs do not apply to the
+    directory itself and are skipped. OWNER RIGHTS (S-1-3-4) counts as trusted
+    only when the directory's owner is. A null DACL, or an ACE type other than
+    allow or deny, is refused.
+    """
+    if not desc.dacl_present:
+        raise RelayConfigError(f"ancestor {path} has a null DACL, which lets everyone replace its children")
+    trusted = {user_sid, _SYSTEM, _ADMINISTRATORS, _TRUSTED_INSTALLER}
+    if desc.owner in trusted:
+        trusted.add(_OWNER_RIGHTS)  # "the owner of this directory", which is a trusted trustee here
+    for ace in desc.aces:
+        if ace.ace_type not in (_ACE_ALLOWED, _ACE_DENIED) or ace.sid is None:
+            raise RelayConfigError(f"ancestor {path} has an ACE of type {ace.ace_type} this relay does not understand")
+        if ace.ace_type == _ACE_DENIED or ace.flags & _INHERIT_ONLY_ACE:
+            continue
+        if ace.mask & _WRITE_RIGHTS and ace.sid not in trusted:
+            raise RelayConfigError(
+                f"ancestor {path} lets {ace.sid} write to it (access mask {ace.mask:#x}); "
+                "keep relay state under a directory only you can change"
+            )
+
+
+def ancestor_chain(path: "os.PathLike[str] | str", home: "os.PathLike[str] | str") -> list[Path]:
+    """``path``'s parents, nearest first, up to and including ``home`` (to the drive root outside it).
+
+    The walk stops at the user profile because Windows gives a profile directory an ACL that only the
+    user, SYSTEM and Administrators can change, and the directories above it (``C:\\Users``) are not
+    writable by a standard user. A root outside the profile is checked up to the drive root.
+    """
+    stop = os.path.normcase(os.path.abspath(str(home)))
+    chain: list[Path] = []
+    current = Path(os.path.abspath(str(path))).parent
+    while True:
+        chain.append(current)
+        if os.path.normcase(str(current)) == stop or current.parent == current:
+            return chain
+        current = current.parent
+
+
+def refuse_writable_ancestors(path: "os.PathLike[str] | str") -> None:
+    """Refuse ``path`` when an ancestor lets another trustee replace or re-ACL it (see :func:`check_ancestor`)."""
+    user = current_user_sid()
+    for ancestor in ancestor_chain(path, Path.home()):
+        check_ancestor(read_descriptor(ancestor), user, ancestor)
+
+
+__all__ = [
+    "Ace", "Descriptor", "ancestor_chain", "check_ancestor", "check_descriptor", "create_private_dir",
+    "create_private_file", "current_user_sid", "provision", "read_descriptor", "read_descriptor_fd", "read_sddl",
+    "refuse_redirected", "refuse_writable_ancestors", "validate", "validate_fd",
+]

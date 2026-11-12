@@ -77,22 +77,44 @@ def _lock_contended(exc: OSError) -> bool:
     return exc.errno in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EACCES))
 
 
+def _temp_private_nt(directory: Path, prefix: str) -> tuple[int, str]:
+    """A new temp file (Windows), created with the private descriptor in the same call; ``(fd, path)``.
+
+    ``CREATE_NEW`` with ``SECURITY_ATTRIBUTES``: the file never exists with an inherited ACL, and the
+    returned descriptor is the handle that created it. The owner is then normalized and the result validated
+    before the caller writes a byte.
+    """
+    while True:
+        tmp = str(directory / f"{prefix}{secrets.token_hex(6)}")
+        try:
+            fd = winacl.create_private_file(tmp)
+        except FileExistsError:
+            continue
+        try:
+            winacl.provision(tmp, False)
+            winacl.validate(tmp)
+        except BaseException:
+            os.close(fd)
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
+        return fd, tmp
+
+
 def _create_private_nt(path: Path, data: bytes = b"") -> None:
-    """Create ``path`` private and complete (Windows): provision and validate a temp file, then link it in.
+    """Create ``path`` private and complete (Windows): a private temp file, then link it in.
 
     Race-free for a file two processes create at once: the loser's link fails
     and it uses the winner's file, which was private from its first byte.
     """
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    fd, tmp = _temp_private_nt(path.parent, f".{path.name}.")
     try:
-        os.close(fd)
-        winacl.provision(tmp, False)
-        winacl.validate(tmp)
-        if data:
-            with open(tmp, "wb") as handle:
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
+        try:
+            if data:
+                os.write(fd, data)
+                os.fsync(fd)
+        finally:
+            os.close(fd)
         try:
             os.link(tmp, path)
         except FileExistsError:
@@ -125,8 +147,9 @@ def ensure_state_dir(paths: StatePaths) -> Path:
     root = paths.root
     if _on_nt():
         root.parent.mkdir(parents=True, exist_ok=True)
+        winacl.refuse_writable_ancestors(root)
         try:
-            root.mkdir()
+            winacl.create_private_dir(root)
         except FileExistsError:
             pass
         else:
@@ -165,16 +188,12 @@ def read_private_file(path: Path) -> str:
 
 def write_private_file(path: Path, text: str) -> None:
     """Atomically replace ``path`` with ``text`` at mode ``0600``."""
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    if _on_nt():
+        fd, tmp = _temp_private_nt(path.parent, f".{path.name}.")
+    else:
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
-        if _on_nt():
-            os.close(fd)
-            winacl.provision(tmp, False)
-            winacl.validate(tmp)
-            handle_ctx = open(tmp, "w", encoding="utf-8")
-        else:
-            handle_ctx = os.fdopen(fd, "w", encoding="utf-8")
-        with handle_ctx as handle:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
@@ -447,7 +466,7 @@ class PauseStore:
     def _load_unlocked(self) -> dict[str, P.PauseFlag]:
         """Read ``pause.json``; the caller holds the pause lock when it is about to change the file."""
         try:
-            raw = json.loads(self._file.read_text(encoding="utf-8"))
+            raw = json.loads(self._read_text())
         except FileNotFoundError:
             return {scope: _clear_flag() for scope in P.PAUSE_SCOPES}
         except (OSError, ValueError) as exc:
@@ -470,6 +489,27 @@ class PauseStore:
                 raise RelayConfigError(f"pause file {self._file} has an invalid flag for scope {scope!r}")
             flags[scope] = {"paused": paused, "paused_since": since, "reason": reason}
         return flags
+
+    def _read_text(self) -> str:
+        """The text of ``pause.json``. On Windows an existing file is validated (owner, ACL, redirection)
+        against the open handle it is read from, so another user's writable file is refused, not trusted."""
+        if not _on_nt():
+            return self._file.read_text(encoding="utf-8")
+        fd = os.open(self._file, os.O_RDONLY | _O_BINARY)
+        try:
+            try:
+                winacl.validate_fd(fd, self._file)
+            except RelayConfigError as exc:
+                raise RelayConfigError(f"pause file {self._file}: {exc}") from exc
+            chunks = []
+            while True:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks).decode("utf-8")
+        finally:
+            os.close(fd)
 
     @contextlib.contextmanager
     def _locked_nt(self) -> Iterator[None]:

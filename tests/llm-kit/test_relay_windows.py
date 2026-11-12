@@ -54,16 +54,37 @@ class FakeMsvcrt(types.ModuleType):
 
 
 class FakeWinacl:
-    """Records provision/validate calls with the file size at that moment (0 = no secret byte yet)."""
+    """Records provision/validate/create calls with the file size at that moment (0 = no secret byte yet)."""
 
     def __init__(self) -> None:
         self.events: list[tuple[str, str, bool, int]] = []
+        self.refuse: dict[str, str] = {}  # operation -> message to refuse with
+
+    def _note(self, kind: str, path, directory: bool = False) -> None:
+        if kind in self.refuse:
+            raise C.RelayConfigError(self.refuse[kind])
+        self.events.append((kind, str(path), directory, os.path.getsize(path) if os.path.isfile(path) else -1))
+
+    def create_private_dir(self, path) -> None:
+        os.mkdir(path)  # FileExistsError like the real one
+        self._note("create_dir", path, True)
+
+    def create_private_file(self, path) -> int:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)  # FileExistsError like the real one
+        self._note("create_file", path)
+        return fd
+
+    def refuse_writable_ancestors(self, path) -> None:
+        self._note("ancestors", path, True)
 
     def provision(self, path, directory: bool = False) -> None:
-        self.events.append(("provision", str(path), directory, os.path.getsize(path) if os.path.isfile(path) else -1))
+        self._note("provision", path, directory)
 
     def validate(self, path) -> None:
-        self.events.append(("validate", str(path), False, os.path.getsize(path) if os.path.isfile(path) else -1))
+        self._note("validate", path)
+
+    def validate_fd(self, fd: int, path) -> None:
+        self._note("validate_fd", path)
 
     def of(self, kind: str) -> list[tuple[str, bool, int]]:
         return [(p, d, s) for k, p, d, s in self.events if k == kind]
@@ -197,7 +218,10 @@ def test_cwd_selector_windows_path(monkeypatch):
 def test_nt_dispatch_uses_winacl_and_msvcrt(tmp_path, nt):
     paths = C.StatePaths(tmp_path / "state")
     L.ensure_state_dir(paths)
-    assert (str(paths.root), True) in [(p, d) for p, d, _ in nt.acl.of("provision")]  # the root is provisioned as a directory
+    # the root is created with its descriptor (not mkdir-then-provision), after its ancestors were checked
+    kinds = [k for k, p, *_ in nt.acl.events if p == str(paths.root)]
+    assert kinds[:2] == ["ancestors", "create_dir"]
+    assert (str(paths.root), True) in [(p, d) for p, d, _ in nt.acl.of("provision")]
 
     first = L.RoleLock(paths, "relay").acquire()
     try:
@@ -236,17 +260,15 @@ def test_nt_temp_files_are_private_before_the_first_secret_byte(tmp_path, nt):
 
     token = L.ensure_token(paths.relay_token)
     tmp_events = [(k, size) for k, p, _d, size in nt.acl.events if Path(p).name.startswith(".relay.token.")]
-    assert tmp_events[:2] == [("provision", 0), ("validate", 0)]  # empty file: no secret byte yet
-    assert ("validate", len(token) + 1) not in tmp_events[:2]
-    assert nt.acl.events[-1][:2] == ("validate", str(paths.relay_token)) or str(paths.relay_token) in [
-        p for k, p, *_ in nt.acl.events if k == "validate"
-    ]
+    # born private (create_file), normalized and checked while still empty: no secret byte had been written
+    assert tmp_events[:3] == [("create_file", 0), ("provision", 0), ("validate", 0)]
+    assert str(paths.relay_token) in [p for k, p, *_ in nt.acl.events if k == "validate"]
     assert L.read_token(paths.relay_token) == token
 
     nt.acl.events.clear()
     L.write_private_file(paths.pause_file, "{}\n")
     kinds = [(k, Path(p).name.startswith(".pause.json."), size) for k, p, _d, size in nt.acl.events]
-    assert kinds[0] == ("provision", True, 0) and kinds[1] == ("validate", True, 0)
+    assert kinds[:3] == [("create_file", True, 0), ("provision", True, 0), ("validate", True, 0)]
     assert kinds[-1][:2] == ("validate", False) and kinds[-1][2] > 0  # the replacement target is validated at its final path, written
 
 
@@ -277,39 +299,149 @@ def test_nt_pause_store_serializes_on_msvcrt_and_times_out_loudly(tmp_path, nt, 
 
 
 # --------------------------------------------------------------------------
-# the SDDL policy (pure)
+# the descriptor policy (pure): fails closed
 # --------------------------------------------------------------------------
 
-GOOD_DIR = f"O:{USER}D:P(A;OICI;FA;;;{USER})(A;OICI;FA;;;SY)"
-GOOD_FILE = f"O:{USER}D:P(A;;FA;;;{USER})(A;;FA;;;SY)"
+def ace(sid: str, *, kind: int = 0, flags: int = 0, mask: int = 0x1F01FF) -> winacl.Ace:
+    return winacl.Ace(kind, flags, mask, sid)
 
 
-@pytest.mark.parametrize("sddl", [GOOD_DIR, GOOD_FILE, f"O:{USER}G:{USER}D:P(A;;FA;;;{USER})", f"O:{USER}D:P(A;;FA;;;{USER})(D;;FA;;;WD)", f"O:{USER}D:PAI(A;;FA;;;{USER})"])
-def test_sddl_policy_accepts_what_provision_writes(sddl):
-    winacl.check_sddl(sddl, USER, "p")
+def desc(*aces: winacl.Ace, owner: str = USER, protected: bool = True, present: bool = True) -> winacl.Descriptor:
+    return winacl.Descriptor(owner, protected, present, list(aces))
+
+
+GOOD = desc(ace(USER), ace("S-1-5-18"))
+
+
+@pytest.mark.parametrize("d", [
+    GOOD,
+    desc(ace(USER)),
+    desc(ace(USER), ace("S-1-1-0", kind=1)),  # a deny ACE grants nothing
+])
+def test_descriptor_policy_accepts_what_provision_writes(d):
+    winacl.check_descriptor(d, USER, "p")
 
 
 @pytest.mark.parametrize(
-    "sddl, why",
+    "d, why",
     [
-        (f"O:BAD:P(A;;FA;;;{USER})", "not owned"),
-        (f"O:{USER}D:AI(A;ID;FA;;;{USER})(A;ID;FA;;;SY)", "unprotected"),
-        (f"O:{USER}D:AR(A;ID;FA;;;{USER})", "unprotected"),
-        (f"O:{USER}D:(A;;FA;;;{USER})", "unprotected"),
-        (f"O:{USER}", "null or missing"),
-        (f"O:{USER}D:NO_ACCESS_CONTROL", "null or missing"),
-        (f"O:{USER}D:P(A;;FA;;;{USER})(A;;FR;;;WD)", "WD"),
-        (f"O:{USER}D:P(A;;FA;;;{USER})(A;;FR;;;BU)", "BU"),
-        (f"O:{USER}D:P(A;;FA;;;{USER})(A;;FR;;;AU)", "AU"),
-        (f"O:{USER}D:P(A;;FA;;;{USER})(A;;FA;;;BA)", "BA"),
-        (f"O:{USER}D:P(A;;FA;;;{USER})(A;;FA;;;S-1-5-21-9-9-9-1002)", "S-1-5-21-9-9-9-1002"),
-        (f"O:{USER}D:P(A;;FA;;;SY)", "no access"),
-        ("garbage", "cannot read"),
+        (desc(ace(USER), owner="S-1-5-32-544"), "not owned"),
+        (desc(ace(USER), owner=None), "not owned"),
+        (desc(ace(USER), protected=False), "unprotected"),
+        (desc(present=False), "null or missing"),
+        (desc(ace(USER), ace("S-1-1-0")), "S-1-1-0"),
+        (desc(ace(USER), ace("S-1-5-32-545")), "S-1-5-32-545"),
+        (desc(ace(USER), ace("S-1-5-11")), "S-1-5-11"),
+        (desc(ace(USER), ace("S-1-5-32-544")), "S-1-5-32-544"),
+        (desc(ace("S-1-5-18")), "no access"),
+        (desc(), "no access"),
     ],
 )
-def test_sddl_policy_refuses_broad_or_foreign(sddl, why):
+def test_descriptor_policy_refuses_broad_or_foreign(d, why):
     with pytest.raises(C.RelayConfigError, match=why):
-        winacl.check_sddl(sddl, USER, "p")
+        winacl.check_descriptor(d, USER, "p")
+
+
+@pytest.mark.parametrize("ace_type", [2, 3, 5, 6, 7, 8, 9, 10, 11, 17, 19, 21, 200])
+def test_descriptor_policy_refuses_an_ace_type_it_does_not_understand(ace_type):
+    """A conditional allow (type 9, SDDL XA) for Users once slipped past a text parser as 'not an ACE';
+    here every non-allow/deny type is refused, never skipped, so a grant cannot hide in a shape we do not read."""
+    hidden = winacl.Ace(ace_type, 0, 0, None)
+    with pytest.raises(C.RelayConfigError, match=f"type {ace_type} .*does not understand"):
+        winacl.check_descriptor(desc(ace(USER), ace("S-1-5-18"), hidden), USER, "p")
+
+
+def test_descriptor_policy_refuses_a_conditional_grant_even_with_the_rest_correct():
+    conditional = winacl.Ace(9, 0, 0x1F01FF, None)  # ACCESS_ALLOWED_CALLBACK_ACE: (XA;;FA;;;WD;(Member_of {...}))
+    with pytest.raises(C.RelayConfigError, match="does not understand"):
+        winacl.check_descriptor(desc(ace(USER), ace("S-1-5-18"), conditional), USER, "p")
+
+
+# --------------------------------------------------------------------------
+# ancestors
+# --------------------------------------------------------------------------
+
+HOME_ACL = desc(ace(USER), ace("S-1-5-18"), ace("S-1-5-32-544"))
+
+
+def test_ancestor_check_accepts_a_stock_profile_chain():
+    winacl.check_ancestor(HOME_ACL, USER, "home")
+    winacl.check_ancestor(desc(ace(USER), ace("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")), USER, "x")
+    # read-only access for everyone, and inherit-only ACEs, do not let anyone replace the child
+    winacl.check_ancestor(desc(ace(USER), ace("S-1-1-0", mask=0x1200A9)), USER, "x")
+    winacl.check_ancestor(desc(ace(USER), ace("S-1-5-32-545", flags=0x0B, mask=0x1F01FF)), USER, "x")
+
+
+def test_ancestor_check_trusts_owner_rights_only_for_a_trusted_owner():
+    """Python 3.13 gives os.mkdir(mode=0o700) directories an OWNER RIGHTS (S-1-3-4) full-control ACE, as pytest's tmp dirs have."""
+    owner_rights = ace("S-1-3-4")
+    winacl.check_ancestor(desc(ace(USER), owner_rights, ace("S-1-5-18")), USER, "pytest-tmp")
+    with pytest.raises(C.RelayConfigError, match="S-1-3-4 write to it"):
+        winacl.check_ancestor(desc(ace(USER), owner_rights, owner="S-1-5-21-9-9-9-1002"), USER, "foreign-owned")
+
+
+@pytest.mark.parametrize("mask", [0x2, 0x4, 0x40, 0x10000, 0x40000, 0x80000, 0x40000000, 0x10000000, 0x1F01FF])
+def test_ancestor_check_refuses_another_trustee_that_can_write(mask):
+    with pytest.raises(C.RelayConfigError, match="S-1-5-32-545 write to it"):
+        winacl.check_ancestor(desc(ace(USER), ace("S-1-5-32-545", mask=mask)), USER, "parent")
+
+
+def test_ancestor_check_fails_closed_on_null_dacl_and_unknown_ace():
+    with pytest.raises(C.RelayConfigError, match="null DACL"):
+        winacl.check_ancestor(desc(present=False), USER, "parent")
+    with pytest.raises(C.RelayConfigError, match="does not understand"):
+        winacl.check_ancestor(desc(ace(USER), winacl.Ace(9, 0, 0x2, None)), USER, "parent")
+
+
+def test_ancestor_chain_stops_at_the_profile_or_runs_to_the_root(tmp_path):
+    home = tmp_path / "home"
+    inside = home / "AppData" / "state" / "relay"
+    assert winacl.ancestor_chain(inside, home) == [home / "AppData" / "state", home / "AppData", home]
+    outside = tmp_path / "elsewhere" / "relay"
+    chain = winacl.ancestor_chain(outside, home)
+    assert chain[0] == tmp_path / "elsewhere" and chain[-1].parent == chain[-1] and home not in chain
+
+
+def test_nt_state_dir_is_refused_when_an_ancestor_is_writable(tmp_path, nt):
+    nt.acl.refuse["ancestors"] = "ancestor parent lets S-1-5-32-545 write to it"
+    root = tmp_path / "state"
+    with pytest.raises(C.RelayConfigError, match="lets S-1-5-32-545"):
+        L.ensure_state_dir(C.StatePaths(root))
+    assert not root.exists()  # nothing was created under a parent another user controls
+
+
+# --------------------------------------------------------------------------
+# pause.json is validated before it is read
+# --------------------------------------------------------------------------
+
+def test_nt_existing_pause_file_is_validated_against_the_open_handle_before_it_is_read(tmp_path, nt):
+    paths = C.StatePaths(tmp_path)
+    L.ensure_state_dir(paths)
+    store = L.PauseStore(paths, clock=lambda: 5.0)
+    assert store.is_paused("relay") is False  # absent file: no validation, no error
+    assert nt.acl.of("validate_fd") == []
+    store.pause("relay", "why")
+    nt.acl.events.clear()
+    assert store.is_paused("relay") is True
+    assert [p for p, *_ in nt.acl.of("validate_fd")] == [str(paths.pause_file)]  # judged the open file
+
+    # a pause file another user can write is refused, and its contents are never used
+    nt.acl.refuse["validate_fd"] = f"{paths.pause_file} grants access to S-1-5-32-545"
+    with pytest.raises(C.RelayConfigError, match="pause file .* grants access to S-1-5-32-545"):
+        store.is_paused("relay")
+    with pytest.raises(C.RelayConfigError, match="grants access"):
+        store.require_not_paused("relay")
+    with pytest.raises(C.RelayConfigError, match="grants access"):
+        store.pause("hub", "x")  # a writer reads before it rewrites: it refuses too
+    assert nt.msvcrt.held == set()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the POSIX path")
+def test_posix_pause_read_does_not_call_winacl(tmp_path, monkeypatch):
+    monkeypatch.setattr(L, "winacl", types.SimpleNamespace())  # any attribute access would raise
+    store = L.PauseStore(C.StatePaths(tmp_path))
+    store.pause("relay", "why")
+    assert store.is_paused("relay") is True
 
 
 def test_winacl_refuses_to_run_off_windows(tmp_path):

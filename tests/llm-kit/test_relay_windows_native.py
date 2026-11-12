@@ -98,6 +98,25 @@ print("done")
 
 
 @pytest.fixture
+def tmp_path() -> Iterator[Path]:
+    """A private scratch directory under the user profile, replacing pytest's (which lives in %TEMP%).
+
+    Relay state refuses an ancestor that lets another trustee write (see ``winacl.refuse_writable_ancestors``),
+    and a stock %TEMP% can carry such ACEs; the profile directory is the one place Windows guarantees
+    only the user, SYSTEM and Administrators can change.
+    """
+    import shutil
+    import uuid
+
+    base = Path.home() / f".relay-native-test-{uuid.uuid4().hex[:8]}"
+    winacl.create_private_dir(base)
+    try:
+        yield base
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+@pytest.fixture
 def state(tmp_path: Path) -> C.StatePaths:
     paths = C.StatePaths(tmp_path / "state")
     L.ensure_state_dir(paths)
@@ -281,6 +300,92 @@ def test_native_acl_refuses_broad(state):
     with pytest.raises(C.RelayConfigError, match="unprotected DACL"):
         L.read_token(token)  # a pre-existing inherited-only file is refused, not repaired
     assert "P" not in winacl.read_sddl(token).split("D:", 1)[1].split("(", 1)[0]
+
+
+def test_native_acl_refuses_conditional_and_unknown_aces(state):
+    """A conditional allow for Users once hid from an SDDL text parser; the binary reader refuses any ACE it does not know."""
+    me = winacl.current_user_sid()
+    secret = state.root / "secret.txt"
+    L.write_private_file(secret, "s3cret\n")
+    winacl.validate(secret)
+    winacl._apply_sddl(
+        secret, f"O:{me}D:P(A;;FA;;;{me})(A;;FA;;;SY)(XA;;FA;;;WD;(Member_of {{SID(S-1-5-32-545)}}))"
+    )
+    assert "XA" in winacl.read_sddl(secret)  # Windows really stored a conditional ACE
+    with pytest.raises(C.RelayConfigError, match="does not understand"):
+        winacl.validate(secret)
+    with pytest.raises(C.RelayConfigError, match="does not understand"):
+        L.read_private_file(secret)
+    # an object ACE for another trustee, likewise
+    winacl._apply_sddl(secret, f"O:{me}D:P(A;;FA;;;{me})(OA;;FA;00000000-0000-0000-0000-000000000001;;WD)")
+    with pytest.raises(C.RelayConfigError, match="does not understand|grants access"):
+        winacl.validate(secret)
+
+
+def test_native_objects_are_private_from_their_first_instant(tmp_path):
+    """Created with the descriptor in the same call: protected, owner+SYSTEM only, with no provision() afterwards."""
+    me = winacl.current_user_sid()
+    directory = tmp_path / "born-private"
+    winacl.create_private_dir(directory)
+    file = directory / "born-private.txt"
+    fd = winacl.create_private_file(file)
+    try:
+        for path in (directory, file):
+            desc = winacl.read_descriptor(path)
+            assert desc.protected and desc.dacl_present
+            assert {a.sid for a in desc.aces} == {me, "S-1-5-18"} and all(a.ace_type == 0 for a in desc.aces)
+        os.write(fd, b"x")
+    finally:
+        os.close(fd)
+    with pytest.raises(FileExistsError):
+        winacl.create_private_dir(directory)
+    with pytest.raises(FileExistsError):
+        winacl.create_private_file(file)
+    # a file made by hand in it inherits the directory's inheritable ACEs only: unprotected, so refused
+    with pytest.raises(C.RelayConfigError, match="unprotected"):
+        (directory / "by-hand.txt").write_text("y")
+        winacl.validate(directory / "by-hand.txt")
+
+
+def test_native_state_root_refused_under_a_writable_ancestor(tmp_path):
+    parent = tmp_path / "shared"
+    parent.mkdir()
+    icacls(str(parent), "/grant", f"{USERS}:(OI)(CI)(F)")
+    root = parent / "state"
+    with pytest.raises(C.RelayConfigError, match="lets S-1-5-32-545 write to it"):
+        L.ensure_state_dir(C.StatePaths(root))
+    assert not root.exists()  # nothing was created under a parent another user controls
+    icacls(str(parent), "/remove:g", USERS)
+    L.ensure_state_dir(C.StatePaths(root))  # the same path is accepted once the ancestor is clean
+    winacl.validate(root)
+
+
+def test_native_stock_profile_ancestors_are_accepted(tmp_path):
+    winacl.refuse_writable_ancestors(tmp_path / "state")  # %TEMP% under the user profile, as Windows ships it
+    chain = winacl.ancestor_chain(tmp_path / "state", Path.home())
+    assert chain[-1] == Path(os.path.abspath(Path.home())) or os.path.normcase(str(chain[-1])) == os.path.normcase(str(Path.home()))
+
+
+def test_native_pause_file_is_validated_before_it_is_read(state):
+    store = L.PauseStore(state)
+    assert store.is_paused("relay") is False  # absent file: unchanged
+    store.pause("relay", "keep out")
+    assert store.is_paused("relay") is True
+    icacls(str(state.pause_file), "/grant", f"{USERS}:(M)")  # another user can now rewrite the pause flags
+    with pytest.raises(C.RelayConfigError, match="pause file .*grants access to S-1-5-32-545"):
+        store.is_paused("relay")
+    with pytest.raises(C.RelayConfigError, match="pause file"):
+        store.require_not_paused("relay")
+    with pytest.raises(C.RelayConfigError, match="pause file"):
+        store.resume("relay")  # a writer reads first and refuses too, so it cannot launder the file
+    icacls(str(state.pause_file), "/remove:g", USERS)
+    assert store.is_paused("relay") is True
+    # a hand-made (inherited, unprotected) pause file is refused as well
+    state.pause_file.unlink()
+    state.pause_file.write_text(json.dumps({"relay": {"paused": False, "paused_since": None, "reason": None},
+                                            "hub": {"paused": False, "paused_since": None, "reason": None}}))
+    with pytest.raises(C.RelayConfigError, match="unprotected"):
+        store.is_paused("relay")
 
 
 def test_native_acl_refuses_redirected_root(tmp_path):
