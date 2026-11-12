@@ -15,7 +15,15 @@ Singleton. A role (``relay`` or ``hub``) runs at most once per state
 directory. The holder owns an exclusive ``flock`` on ``<role>.pid`` for its
 whole life and writes its pid there; the kernel releases the lock when the
 process dies, so a stale pidfile never blocks a start. A second holder is
-refused with the protocol error ``already_running``. POSIX only.
+refused with the protocol error ``already_running``.
+
+Windows. ``os.chmod`` cannot express ``0700``/``0600`` there, so the state
+directory, every credential, every temporary file and the pidfile carry an
+owner-plus-SYSTEM protected ACL (:mod:`llm_kit.relay.winacl`), provisioned
+before the first secret byte and validated at the final path. A broad file is
+refused, not repaired. The role lock is ``msvcrt.locking`` on one byte at
+:data:`LOCK_OFFSET`, far past the pid text, so the pid at offset 0 stays
+readable to a second process that is refused.
 
 Pause. ``pause.json`` holds the persisted ``relay`` and ``hub`` pause flags
 (protocol section 16): ``paused``, ``paused_since`` (epoch seconds, set when a
@@ -26,6 +34,7 @@ the flags.
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import secrets
@@ -36,6 +45,7 @@ from pathlib import Path
 from typing import Callable, Iterator, Optional
 
 from llm_kit.relay import protocol as P
+from llm_kit.relay import winacl
 from llm_kit.relay.config import (
     RelayConfig,
     RelayConfigError,
@@ -49,12 +59,60 @@ _DIR_MODE = 0o700
 _FILE_MODE = 0o600
 _TOKEN_BYTES = 32
 
+#: Windows lock byte: far past the pid text at offset 0, below 2**31 (``msvcrt.locking`` takes a 32-bit position).
+LOCK_OFFSET = 0x7FFFFFF0
+#: The PauseStore lock is polled on Windows (``msvcrt`` has no blocking exclusive lock).
+_PAUSE_LOCK_POLL_SECONDS = 0.05
+_PAUSE_LOCK_TIMEOUT_SECONDS = 10.0
+#: Windows opens files in text mode unless told otherwise; the pidfile and lock files are bytes.
+_O_BINARY = getattr(os, "O_BINARY", 0)
+
+
+def _on_nt() -> bool:
+    return os.name == "nt"
+
+
+def _lock_contended(exc: OSError) -> bool:
+    """Whether ``exc`` from ``msvcrt.locking(LK_NBLCK)`` means another handle holds the byte."""
+    return exc.errno in (errno.EACCES, getattr(errno, "EDEADLOCK", errno.EACCES))
+
+
+def _create_private_nt(path: Path, data: bytes = b"") -> None:
+    """Create ``path`` private and complete (Windows): provision and validate a temp file, then link it in.
+
+    Race-free for a file two processes create at once: the loser's link fails
+    and it uses the winner's file, which was private from its first byte.
+    """
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        os.close(fd)
+        winacl.provision(tmp, False)
+        winacl.validate(tmp)
+        if data:
+            with open(tmp, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            pass
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+
 
 # --------------------------------------------------------------------------
 # state directory and private files
 # --------------------------------------------------------------------------
 
 def _refuse_loose(path: Path, *, kind: str) -> None:
+    if _on_nt():
+        try:
+            winacl.validate(path)
+        except RelayConfigError as exc:
+            raise RelayConfigError(f"{kind} {path}: {exc}") from exc
+        return
     mode = stat.S_IMODE(path.stat().st_mode)
     if mode & 0o077:
         raise RelayConfigError(f"{kind} {path} has mode {mode:04o}; it must not be accessible by group or others (chmod 0700/0600)")
@@ -65,6 +123,16 @@ def _refuse_loose(path: Path, *, kind: str) -> None:
 def ensure_state_dir(paths: StatePaths) -> Path:
     """Create the state directory ``0700`` (parents default) and refuse a loose or foreign one."""
     root = paths.root
+    if _on_nt():
+        root.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            root.mkdir()
+        except FileExistsError:
+            pass
+        else:
+            winacl.provision(root, True)
+        _refuse_loose(root, kind="relay state directory")
+        return root
     root.mkdir(parents=True, exist_ok=True, mode=_DIR_MODE)
     _refuse_loose(root, kind="relay state directory")
     return root
@@ -80,12 +148,22 @@ def write_private_file(path: Path, text: str) -> None:
     """Atomically replace ``path`` with ``text`` at mode ``0600``."""
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        if _on_nt():
+            os.close(fd)
+            winacl.provision(tmp, False)
+            winacl.validate(tmp)
+            handle_ctx = open(tmp, "w", encoding="utf-8")
+        else:
+            handle_ctx = os.fdopen(fd, "w", encoding="utf-8")
+        with handle_ctx as handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.chmod(tmp, _FILE_MODE)
+        if not _on_nt():
+            os.chmod(tmp, _FILE_MODE)
         os.replace(tmp, path)
+        if _on_nt():
+            winacl.validate(path)
     except BaseException:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp)
@@ -104,7 +182,9 @@ def ensure_token(path: Path) -> str:
     existing file with group/other access, a foreign owner or empty content is
     refused rather than repaired.
     """
-    if not path.exists():
+    if not path.exists() and _on_nt():
+        _create_private_nt(path, (secrets.token_urlsafe(_TOKEN_BYTES) + "\n").encode("ascii"))
+    elif not path.exists():
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
         try:
             with os.fdopen(fd, "w", encoding="ascii") as handle:
@@ -178,10 +258,10 @@ class RoleLock:
     def acquire(self) -> "RoleLock":
         if self._fd is not None:
             raise RelayConfigError(f"this process already holds the {self.role} lock")
-        try:
-            import fcntl
-        except ImportError:  # pragma: no cover - POSIX only
-            raise RelayConfigError("the relay singleton lock needs fcntl (POSIX)") from None
+        if _on_nt():
+            return self._acquire_nt()
+        import fcntl
+
         fd = os.open(self.pidfile, os.O_RDWR | os.O_CREAT, _FILE_MODE)
         try:
             try:
@@ -189,6 +269,32 @@ class RoleLock:
             except BlockingIOError:
                 raise SingletonHeld(self.role, self.pidfile, _read_pid(fd)) from None
             os.fchmod(fd, _FILE_MODE)
+            os.ftruncate(fd, 0)
+            os.write(fd, f"{os.getpid()}\n".encode("ascii"))
+            os.fsync(fd)
+        except BaseException:
+            os.close(fd)
+            raise
+        self._fd = fd
+        return self
+
+    def _acquire_nt(self) -> "RoleLock":
+        """Windows: a private pidfile, then ``msvcrt.locking`` on the byte at :data:`LOCK_OFFSET`."""
+        import msvcrt
+
+        if not self.pidfile.exists():
+            _create_private_nt(self.pidfile)
+        winacl.validate(self.pidfile)
+        fd = os.open(self.pidfile, os.O_RDWR | _O_BINARY)
+        try:
+            os.lseek(fd, LOCK_OFFSET, os.SEEK_SET)
+            try:
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                if not _lock_contended(exc):
+                    raise
+                raise SingletonHeld(self.role, self.pidfile, _read_pid(fd)) from None
+            os.lseek(fd, 0, os.SEEK_SET)
             os.ftruncate(fd, 0)
             os.write(fd, f"{os.getpid()}\n".encode("ascii"))
             os.fsync(fd)
@@ -209,7 +315,14 @@ class RoleLock:
         fd, self._fd = self._fd, None
         with contextlib.suppress(OSError):
             os.ftruncate(fd, 0)
-        os.close(fd)  # closing the descriptor releases the flock
+        if _on_nt():
+            # The OS frees a closed handle's locks at an unspecified later time; unlock first.
+            import msvcrt
+
+            with contextlib.suppress(OSError):
+                os.lseek(fd, LOCK_OFFSET, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        os.close(fd)  # closing the descriptor releases the lock
 
     def __enter__(self) -> "RoleLock":
         return self.acquire()
@@ -220,7 +333,8 @@ class RoleLock:
 
 def _read_pid(fd: int) -> Optional[int]:
     try:
-        raw = os.pread(fd, 32, 0).decode("ascii", "replace").strip()
+        os.lseek(fd, 0, os.SEEK_SET)  # os.pread does not exist on Windows
+        raw = os.read(fd, 32).decode("ascii", "replace").strip()
         return int(raw) if raw.isdigit() else None
     except OSError:
         return None
@@ -238,7 +352,7 @@ class PauseStore:
     """The persisted relay and hub pause flags, re-read from disk on every call.
 
     ``clock`` returns epoch seconds (injectable for tests). Changes are
-    serialized by an ``flock`` on ``pause.lock`` and written atomically, so
+    serialized by an ``flock`` on ``pause.lock`` (``msvcrt.locking`` on Windows) and written atomically, so
     two processes cannot lose each other's update. A corrupt file is an error,
     never read as "not paused".
     """
@@ -249,6 +363,15 @@ class PauseStore:
         self._clock = clock
 
     def _load(self) -> dict[str, P.PauseFlag]:
+        """The flags from disk. On Windows a reader takes the pause lock: ``os.replace`` fails with
+        ``PermissionError`` while a reader has the file open, and a read fails while a replace runs."""
+        if _on_nt():
+            with self._locked_nt():
+                return self._load_unlocked()
+        return self._load_unlocked()
+
+    def _load_unlocked(self) -> dict[str, P.PauseFlag]:
+        """Read ``pause.json``; the caller holds the pause lock when it is about to change the file."""
         try:
             raw = json.loads(self._file.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -275,7 +398,44 @@ class PauseStore:
         return flags
 
     @contextlib.contextmanager
+    def _locked_nt(self) -> Iterator[None]:
+        """Windows: poll ``LK_NBLCK`` on ``pause.lock`` every 50 ms for up to 10 s, then fail loudly."""
+        import msvcrt
+
+        if not self._lock.exists():
+            _create_private_nt(self._lock)
+        winacl.validate(self._lock)
+        fd = os.open(self._lock, os.O_RDWR | _O_BINARY)
+        try:
+            deadline = time.monotonic() + _PAUSE_LOCK_TIMEOUT_SECONDS
+            while True:
+                os.lseek(fd, LOCK_OFFSET, os.SEEK_SET)
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if not _lock_contended(exc):
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise RelayConfigError(
+                            f"pause lock {self._lock} was not free within {_PAUSE_LOCK_TIMEOUT_SECONDS:g} seconds"
+                        ) from None
+                    time.sleep(_PAUSE_LOCK_POLL_SECONDS)
+            try:
+                yield
+            finally:
+                with contextlib.suppress(OSError):
+                    os.lseek(fd, LOCK_OFFSET, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        finally:
+            os.close(fd)
+
+    @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
+        if _on_nt():
+            with self._locked_nt():
+                yield
+            return
         import fcntl
 
         fd = os.open(self._lock, os.O_RDWR | os.O_CREAT, _FILE_MODE)
@@ -303,7 +463,7 @@ class PauseStore:
         """Pause ``scope``. ``paused_since`` is set on the clear-to-paused change and kept while paused."""
         self._require_scope(scope)
         with self._locked():
-            flags = self._load()
+            flags = self._load_unlocked()
             current = flags[scope]
             since = current["paused_since"] if current["paused"] else float(self._clock())
             flags[scope] = {"paused": True, "paused_since": since, "reason": reason if reason is not None else current["reason"]}
@@ -314,7 +474,7 @@ class PauseStore:
         """Clear ``scope``'s flag."""
         self._require_scope(scope)
         with self._locked():
-            flags = self._load()
+            flags = self._load_unlocked()
             flags[scope] = _clear_flag()
             self._write(flags)
         return self.state()
@@ -373,6 +533,7 @@ def prepare_state(config: RelayConfig) -> PreparedState:
 
 
 __all__ = [
+    "LOCK_OFFSET",
     "PauseStore",
     "PreparedState",
     "RoleLock",

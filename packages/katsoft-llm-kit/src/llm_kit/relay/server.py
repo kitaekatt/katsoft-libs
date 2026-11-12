@@ -34,6 +34,7 @@ import asyncio
 import concurrent.futures
 import functools
 import json
+import os
 import signal
 import socket
 import sys
@@ -81,13 +82,21 @@ def require_loopback(host: object, *, what: str = "relay") -> str:
     return str(host).strip().strip("[]")
 
 
+def _on_nt() -> bool:
+    return os.name == "nt"
+
+
 def bind_loopback(host: str, port: int) -> socket.socket:
     """A listening TCP socket on loopback ``host``:``port`` (``port`` 0 picks a free one)."""
     address = require_loopback(host)
     family = socket.AF_INET6 if ":" in address else socket.AF_INET
     sock = socket.socket(family, socket.SOCK_STREAM)
     try:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if _on_nt():
+            # SO_REUSEADDR on Windows lets a second process bind a port that is in use.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        else:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((address, port))
         require_loopback(sock.getsockname()[0], what="bound relay")
         sock.listen(128)

@@ -71,7 +71,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Protocol, Sequence
 
 from llm_kit.relay import protocol as P
@@ -92,6 +92,27 @@ _CODEX_ID_RE = re.compile(
 )
 
 LIVE_STATES = ("live-accepting", "live-read-only")
+
+_DRIVE_CWD_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _cwd_matches(cwd: str, selector: str) -> bool:
+    """Whether a session's ``cwd`` is what a ``cwd:`` selector value names.
+
+    A selector value is an absolute POSIX path or a bare final component. A
+    drive-letter ``cwd`` (``C:\\Users\\u\\app``, a Windows harness) is split
+    with :class:`~pathlib.PureWindowsPath` and compared case-insensitively;
+    its absolute form is ``/C:/Users/u/app``. Any other ``cwd`` keeps the
+    POSIX comparison.
+    """
+    if _DRIVE_CWD_RE.match(cwd):
+        win = PureWindowsPath(cwd)
+        if selector.startswith("/"):
+            return PurePosixPath(selector).as_posix().rstrip("/").casefold() == f"/{win.as_posix()}".rstrip("/").casefold()
+        return win.name.casefold() == selector.casefold()
+    if selector.startswith("/"):
+        return cwd.rstrip("/") == selector.rstrip("/")
+    return os.path.basename(cwd.rstrip("/")) == selector
 
 
 # --------------------------------------------------------------------------
@@ -902,13 +923,7 @@ class Discovery:
         if parsed.kind == "task":
             matches = [s for s in candidates if s.task == parsed.value]
         elif parsed.kind == "cwd":
-            if parsed.value.startswith("/"):
-                matches = [s for s in candidates if s.cwd is not None and s.cwd.rstrip("/") == parsed.value.rstrip("/")]
-            else:
-                matches = [
-                    s for s in candidates
-                    if s.cwd is not None and os.path.basename(s.cwd.rstrip("/")) == parsed.value
-                ]
+            matches = [s for s in candidates if s.cwd is not None and _cwd_matches(s.cwd, parsed.value)]
         else:
             matches = candidates
             if matches:
