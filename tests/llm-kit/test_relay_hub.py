@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import re
 import socket
 import threading
 import time
@@ -989,3 +990,36 @@ def test_a_non_loopback_relay_url_is_refused(machine_a):
         make_hub(machine_a.config, [(A, "http://192.168.1.5:4710")]).start()
     # the failed open released the lock
     make_hub(machine_a.config, [machine_a.peer]).start().stop()
+
+
+# --------------------------------------------------------------------------
+# the call log
+# --------------------------------------------------------------------------
+
+def test_every_served_tool_call_is_logged_without_bodies_or_tokens(machine_a, machine_b, ghost):
+    lines: list[str] = []
+    server = make_hub(machine_a.config, [machine_a.peer, machine_b.peer, ghost], oauth_log=lines.append).start()
+    hub = Hub(server)
+    try:
+        session = machine_b.session(["x", "y"], accepts=("note", "instruction"))
+        notes_only = machine_a.session(["x", "z"], accepts=("note",))
+        hub.ok("list_machines")
+        hub.ok("send_message", {"to": machine_b.address(session), "kind": "instruction",
+                                "body": "SECRET-BODY-TEXT"})
+        error = hub.refused("send_message", {"to": machine_a.address(notes_only), "kind": "instruction",
+                                             "body": "SECRET-BODY-TEXT"})
+        hub.refused("read_session", {"address": "nomachine/x/y", "since": 0})
+        bearer = hub.bearer
+    finally:
+        server.stop()
+    calls = [line for line in lines if line.startswith("llm-kit hub call: ")]
+    assert [re.search(r"tool=(\w+) outcome=(\S+)", c).groups() for c in calls][:3] == [
+        ("list_machines", "ok"), ("send_message", "ok"), ("send_message", error["code"])]
+    assert len(calls) == 4
+    for line in calls:
+        assert re.search(r"ts=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ ", line)
+        assert re.search(r"duration_ms=\d+", line)
+        assert 'client_id="hub-bearer"' in line
+    assert f'to="{machine_b.address(session)}"' in calls[1]
+    text = "\n".join(lines)
+    assert "SECRET-BODY-TEXT" not in text and bearer not in text

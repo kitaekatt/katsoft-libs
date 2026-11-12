@@ -1217,3 +1217,13 @@ def test_a_paused_hub_still_lists_tools_for_a_signed_in_client_but_refuses_calls
         assert result.is_error and result.structured_content["error"]["code"] == "paused"
     finally:
         store.resume("hub")
+
+
+def test_a_tool_call_with_an_oauth_token_logs_the_client_id_and_never_the_token(oauth):
+    tokens = oauth.tokens()
+    Hub(oauth.server).run(lambda c: c.call_tool("list_machines", {}), bearer=tokens["access_token"])
+    calls = [line for line in oauth.logs if line.startswith("llm-kit hub call: ")]
+    assert len(calls) == 1 and "tool=list_machines outcome=ok" in calls[0]
+    assert f'client_id="{CIMD_ID}"' in calls[0]
+    for secret in (tokens["access_token"], tokens["refresh_token"], oauth.server.bearer):
+        assert secret not in oauth.logs.text()

@@ -81,6 +81,7 @@ turns it on.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import concurrent.futures
 import json
 import signal
@@ -469,6 +470,39 @@ def host_allowed(host: Optional[str], public_host: Optional[str]) -> bool:
     return name == "localhost" or is_loopback_host(name)
 
 
+#: What the call log records as the caller when the hub bearer (not an OAuth access token) authorized the request.
+CALLER_BEARER = "hub-bearer"
+#: ... when the caller cannot be determined.
+CALLER_UNKNOWN = "unknown"
+_CALLER: contextvars.ContextVar[str] = contextvars.ContextVar("llm_kit_hub_caller", default=CALLER_UNKNOWN)
+
+#: Tool arguments whose values may appear in the call log, as addresses and ids. Everything else (``body``,
+#: ``prompt``, ``messages``, ``input``, ``reason``, ``decision``, ...) is never logged.
+LOGGED_ARGUMENTS = ("to", "address", "endpoint", "machine", "harness", "state", "kind", "message_id", "id")
+_MAX_LOGGED_VALUE = 120
+
+
+def _log_value(value: object) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+    return json.dumps(text[:_MAX_LOGGED_VALUE], ensure_ascii=True)
+
+
+def _stderr_call_log(line: str) -> None:
+    print(line, file=sys.stderr, flush=True)
+
+
+def format_call_line(tool: str, arguments: Mapping[str, Any], *, outcome: str, duration_ms: int,
+                     caller: str, now: float) -> str:
+    """One structured, redacted log line for a served tool call (never a body, token or answer)."""
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+    parts = [f"ts={stamp}", f"tool={tool}", f"outcome={outcome}", f"duration_ms={duration_ms}",
+             f"client_id={_log_value(caller)}"]
+    for name in LOGGED_ARGUMENTS:
+        if name in arguments and arguments[name] is not None:
+            parts.append(f"{name}={_log_value(arguments[name])}")
+    return "llm-kit hub call: " + " ".join(parts)
+
+
 class BearerGate:
     """ASGI wrapper: every HTTP request needs the hub bearer or an OAuth access token, loopback or not.
 
@@ -512,7 +546,15 @@ class BearerGate:
         presented = parse_bearer(authorization)
         if token_matches(presented, self._bearer) or (
                 oauth is not None and presented is not None and oauth.verify_access(presented)):
-            await self._app(scope, receive, send)
+            if oauth is not None and presented is not None and not token_matches(presented, self._bearer):
+                caller = oauth.client_id_for(presented) or CALLER_UNKNOWN
+            else:
+                caller = CALLER_BEARER
+            reset = _CALLER.set(caller)
+            try:
+                await self._app(scope, receive, send)
+            finally:
+                _CALLER.reset(reset)
             return
         if oauth is not None:
             oauth.log(f"refused {scope['method']} {scope['path']}: "
@@ -593,7 +635,9 @@ def _tool_description(name: str) -> str:
     return f"{P.VERBS[name].summary} {note + ' ' if note else ''}{DATA_NOT_INSTRUCTIONS}"
 
 
-def build_mcp_server(router: HubRouter, executor: concurrent.futures.Executor) -> Any:
+def build_mcp_server(router: HubRouter, executor: concurrent.futures.Executor,
+                     call_log: Optional[Callable[[str], None]] = None,
+                     clock: Callable[[], float] = time.time) -> Any:
     """The low-level MCP ``Server`` whose tools are the router's, with schemas from the protocol."""
     from mcp.server import Server
     from mcp_types import CallToolResult, ListToolsResult, TextContent, Tool, ToolAnnotations
@@ -623,14 +667,28 @@ def build_mcp_server(router: HubRouter, executor: concurrent.futures.Executor) -
 
     async def on_call_tool(ctx: Any, params: Any) -> Any:
         loop = asyncio.get_running_loop()
+        arguments = params.arguments or {}
+        started = time.monotonic()
+        outcome = "ok"
+
+        def record() -> None:
+            if call_log is not None:
+                call_log(format_call_line(params.name, arguments, outcome=outcome, caller=_CALLER.get(),
+                                          duration_ms=int((time.monotonic() - started) * 1000), now=clock()))
+
         try:
-            result = await loop.run_in_executor(executor, router.call, params.name, params.arguments or {})
+            result = await loop.run_in_executor(executor, router.call, params.name, arguments)
         except P.RelayError as exc:
+            outcome = exc.code
+            record()
             return text_result({"error": exc.to_error_object()}, is_error=True)
         except Exception as exc:  # noqa: BLE001 -- report a hub defect to the caller and to stderr, never swallow
             traceback.print_exc(file=sys.stderr)
+            outcome = "internal"
+            record()
             error = P.RelayError("internal", f"hub defect: {type(exc).__name__}")
             return text_result({"error": error.to_error_object()}, is_error=True)
+        record()
         return text_result(result, is_error=False)
 
     return Server(
@@ -657,6 +715,8 @@ class HubServer:
     ``config.hub_public_url``; when either is set the hub serves its OAuth
     sign-in (:class:`~llm_kit.relay.hub_oauth.HubOAuth`), with
     ``metadata_fetcher`` and ``oauth_log`` passed through (tests inject them).
+    Every tool call served is logged as one line (:func:`format_call_line`) to
+    the same ``oauth_log`` sink, or to stderr when none is given.
 
     Use :meth:`serve_forever` in the foreground (SIGINT or SIGTERM stops it) or
     :meth:`start` / :meth:`stop` (or ``with``) on a background thread.
@@ -775,7 +835,7 @@ class HubServer:
                                                                thread_name_prefix="llm-kit-hub-call")
         import uvicorn
 
-        mcp_server = build_mcp_server(self.router, self._executor)
+        mcp_server = build_mcp_server(self.router, self._executor, self._oauth_log or _stderr_call_log, self._clock)
         host = self.address[0]
         app = mcp_server.streamable_http_app(
             streamable_http_path=MCP_PATH, host=host, json_response=True, stateless_http=True,

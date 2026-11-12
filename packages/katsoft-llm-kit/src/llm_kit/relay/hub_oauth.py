@@ -731,6 +731,11 @@ class HubOAuth:
         record = self._store.access(token)
         return record is not None and record["resource"] == self.resource
 
+    def client_id_for(self, token: str) -> Optional[str]:
+        """The OAuth ``client_id`` a live access token was issued to, or None."""
+        record = self._store.access(token)
+        return record["client_id"] if record is not None else None
+
     def www_authenticate(self, *, invalid_token: bool) -> str:
         """The ``WWW-Authenticate`` value of a 401 from ``/mcp`` (RFC 9728 section 5.1)."""
         value = f'Bearer resource_metadata="{self.resource_metadata_url}"'
