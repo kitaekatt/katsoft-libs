@@ -475,3 +475,76 @@ def build_codex_exec_argv(
         _reject_cmd_metacharacters(argv)
     return argv
 
+
+
+def _config_text(value: object, param: str) -> str:
+    text = str(value)
+    if '"' in text or "\n" in text or "\r" in text:
+        raise ValueError("%s must not contain a quote or newline (got %r)" % (param, text))
+    return text
+
+
+def build_codex_app_server_argv(
+    *,
+    root: PathLike,
+    sandbox: str = "workspace-write",
+    network: bool = False,
+    approval_policy: str = "never",
+    hooks: bool = False,
+    model: Optional[str] = None,
+    effort: Optional[str] = None,
+    argv_prefix: Optional[Sequence[str]] = None,
+) -> list:
+    """Build the ``codex app-server --listen stdio://`` argv.
+
+    Returns an argv list, never a shell string (an unquoted ``notify=[]`` is a
+    zsh glob error). Always emitted: ``approval_policy``, ``sandbox_mode``,
+    explicit ``sandbox_workspace_write.network_access``, ``notify=[]``, and
+    ``features.hooks=false`` unless ``hooks=True``. Model and effort ride the
+    server because per-turn overrides are sticky. ``root`` is validated absolute
+    but not emitted (the working directory is a thread parameter).
+
+    There is no listen parameter and no extra_config; the listener is always
+    stdio. Refuses (ValueError naming the parameter) a sandbox outside
+    {read-only, workspace-write}, an approval_policy other than ``never``, a
+    relative root, and a model or effort holding a quote or newline.
+    """
+    _absolute(root, "root")
+    if sandbox not in ("read-only", "workspace-write"):
+        raise ValueError("sandbox must be 'read-only' or 'workspace-write' (got %r)" % (sandbox,))
+    if approval_policy != "never":
+        raise ValueError("approval_policy must be 'never' (got %r)" % (approval_policy,))
+    if not isinstance(network, bool):
+        raise ValueError("network must be a boolean")
+    if not isinstance(hooks, bool):
+        raise ValueError("hooks must be a boolean")
+    if model is not None:
+        model = _config_text(model, "model")
+    if effort is not None:
+        effort = _config_text(effort, "effort")
+    if argv_prefix is None:
+        resolved = resolve_codex_cli()
+        if resolved is None:
+            raise RuntimeError(
+                "`%s` is not on PATH, so no Codex command can be built "
+                "(install the Codex CLI, set %s, or pass argv_prefix=)"
+                % (configured_codex_executable(), CODEX_EXECUTABLE_ENV)
+            )
+        argv_prefix = resolved
+    argv = [str(part) for part in argv_prefix]
+    argv += ["app-server", "--listen", "stdio://"]
+    argv += ["-c", 'approval_policy="never"']
+    argv += ["-c", 'sandbox_mode="%s"' % sandbox]
+    argv += ["-c", "sandbox_workspace_write.network_access=%s" % ("true" if network else "false")]
+    if not hooks:
+        argv += ["-c", "features.hooks=false"]
+    argv += ["-c", "notify=[]"]
+    if os.name == "nt":
+        argv += ["-c", 'windows.sandbox="unelevated"']
+    if model:
+        argv += ["-c", 'model="%s"' % model]
+    if effort:
+        argv += ["-c", 'model_reasoning_effort="%s"' % effort]
+    if any(_is_cmd_launcher(part) for part in argv_prefix):
+        _reject_cmd_metacharacters(argv)
+    return argv
