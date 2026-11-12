@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/origin_proof.json",
+  "title": "origin_proof",
+  "description": "The origin_proof object (common $defs/origin_proof).",
+  "$ref": "#/$defs/origin_proof",
+  "examples": [
+    {
+      "type": "none"
+    },
+    {
+      "type": "enclave-signature",
+      "key_id": "enclave:owner-1",
+      "alg": "es256",
+      "challenge": "broker-nonce-1",
+      "signature": "c2ln",
+      "signed": {
+        "audience": "m5pro",
+        "issued_at": 1793664000.0,
+        "not_after": 1793664030.0,
+        "nonce": "n-01JBX3",
+        "key_id": "enclave:owner-1",
+        "alg": "es256",
+        "signature": "c2lnbmF0dXJlLXBsYWNlaG9sZGVy"
+      }
+    }
+  ]
+}

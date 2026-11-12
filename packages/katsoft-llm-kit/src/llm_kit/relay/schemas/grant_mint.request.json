@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/grant_mint.request.json",
+  "title": "grant_mint params",
+  "description": "Mint a grant for the calling /direct session. Request params (strict).",
+  "type": "object",
+  "properties": {
+    "session": {
+      "$ref": "#/$defs/address"
+    },
+    "verb": {
+      "$ref": "#/$defs/grantable_verb"
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/target"
+      },
+      "minItems": 0,
+      "maxItems": 16
+    },
+    "expires_in_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 600
+    },
+    "uses": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+    "origin_proof": {
+      "$ref": "#/$defs/origin_proof"
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "description": "The typed /direct command the grant was minted from, for audit."
+    }
+  },
+  "required": [
+    "session",
+    "verb",
+    "targets",
+    "expires_in_s",
+    "uses",
+    "origin_proof"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "session": "m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+      "verb": "send_message",
+      "targets": [
+        "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11"
+      ],
+      "expires_in_s": 300,
+      "uses": 1,
+      "origin_proof": {
+        "type": "none"
+      },
+      "command": "/direct send m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11 Are the relay tests green?"
+    },
+    {
+      "session": "m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+      "verb": "list_sessions",
+      "targets": [],
+      "expires_in_s": 300,
+      "uses": 8,
+      "origin_proof": {
+        "type": "none"
+      }
+    },
+    {
+      "session": "m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+      "verb": "read_session",
+      "targets": [
+        "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11"
+      ],
+      "expires_in_s": 120,
+      "uses": 4,
+      "origin_proof": {
+        "type": "enclave-signature",
+        "key_id": "enclave:owner-1",
+        "alg": "es256",
+        "challenge": "broker-nonce-1",
+        "signature": "c2ln",
+        "signed": {
+          "audience": "m5pro",
+          "issued_at": 1793664000.0,
+          "not_after": 1793664030.0,
+          "nonce": "n-01JBX3",
+          "key_id": "enclave:owner-1",
+          "alg": "es256",
+          "signature": "c2lnbmF0dXJlLXBsYWNlaG9sZGVy"
+        }
+      }
+    }
+  ]
+}

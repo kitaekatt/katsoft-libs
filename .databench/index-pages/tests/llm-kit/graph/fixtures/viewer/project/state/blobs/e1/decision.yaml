@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/llm-kit/graph/fixtures/viewer/project/state/blobs/e1",
+  "decision": "none",
+  "source_sha": "0c6473e85c13b7e500ef100ccd4d64824c72f5d8",
+  "input_sha256": "9c642531dcf61e4126608e07ef14af4ad7e720cfa72b6f0f7c229cfb5b4247cd",
+  "input_shape_sha256": "221680fa4b5d18a3613184561b783000c891818853ec21b17f8304336dbe29df",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

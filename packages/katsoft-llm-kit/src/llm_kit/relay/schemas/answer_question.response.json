@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/answer_question.response.json",
+  "title": "answer_question result",
+  "description": "Answer or reject one question, as `llm-kit jobs resolve` would. Response result (unknown fields allowed).",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "#/$defs/question_id"
+    },
+    "decision": {
+      "enum": [
+        "answer",
+        "reject"
+      ]
+    },
+    "state": {
+      "$ref": "#/$defs/question_state"
+    },
+    "replayed": {
+      "type": "boolean"
+    },
+    "resolved_at": {
+      "$ref": "#/$defs/epoch"
+    }
+  },
+  "required": [
+    "id",
+    "decision",
+    "state",
+    "replayed",
+    "resolved_at"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "id": "q:m5pro/jobs-main:run-20261103-01:7",
+      "decision": "answer",
+      "state": "answered",
+      "replayed": false,
+      "resolved_at": 1793664090.0
+    }
+  ]
+}

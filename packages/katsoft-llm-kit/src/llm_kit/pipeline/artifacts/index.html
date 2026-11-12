@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<!-- index-pages: {"generated_by":"md-domain","source_sha":"e0046bdda44ae5cb06cd3c7c62f9d72fa218660c","directory":"packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts","kind":"page"} -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>The pipeline artifact layer: canonical attributed store, two-tier freshness, in-place and projection delivery, context-provider registry, human round-trip, and version-control seam.</title>
+<link rel="stylesheet" href="../../../../../../.databench/index-pages.css">
+</head>
+<body>
+<nav data-index-pages-chrome="nav"><ul><li><a href="../index.html"><span class="hh-nav-label">pipeline</span> <span class="hh-nav-identity">Stage orchestration and durable execution for LLM-in-the-loop batch pipelines: single-pass and convergence-loop shapes, gates, work-unit strategies, and the SQLite-backed run store with its controller and worker protocol.</span></a></li><li><a href="../../../../README.md"><span class="hh-nav-label">README.md</span> <span class="hh-nav-identity">Package-level documentation and usage for katsoft-llm-kit.</span></a></li></ul></nav>
+<main>
+<h1>The pipeline artifact layer: canonical attributed store, two-tier freshness, in-place and projection delivery, context-provider registry, human round-trip, and version-control seam.</h1>
+<p class="hh-orientation">This is the artifact layer: the data model, staleness engine, and delivery machinery between pipeline stages and the files on disk. Every stored field carries three attribution slices with a fixed precedence (human edit beats machine output beats original source), and that invariant is what the rest of the layer builds on. Sub-packages follow the data flow: a canonical record defines the shape, a hash engine decides what to regenerate, a delivery pair writes results back, a provider registry assembles prompts, a round-trip pair closes the human loop, and a version-control seam handles the commit. Nothing here calls an LLM or touches the run store.</p><section><h2>Where to start</h2><p>Open <a href="store/attributed.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/store/attributed.py</a> first: the three-slice precedence (human &gt; machine &gt; sourced) is the invariant every other module depends on, and reading it makes the delivery and freshness logic legible.</p></section><section><h2>Routes</h2><ul><li><strong>Deliver generated content in place</strong><ol><li><a href="store/projection.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/store/projection.py</a> computes the projected value</li><li><a href="deliver/inplace.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/deliver/inplace.py</a> applies it with a do-no-harm marker</li><li><a href="vcs/git_vcs.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/vcs/git_vcs.py</a> stages and commits the moved subset</li></ol></li><li><strong>Refresh a derived artifact</strong><ol><li><a href="freshness/hashing.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/freshness/hashing.py</a> computes the content hash</li><li><a href="freshness/classify.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/freshness/classify.py</a> classifies the record state</li><li><a href="freshness/ensure.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/freshness/ensure.py</a> regenerates cheaply and writes only on a real change</li></ol></li><li><strong>Assemble prompt context</strong><ol><li><a href="providers/registry.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/providers/registry.py</a> runs every provider of a tier into a brief map</li><li><a href="providers/assembly.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/providers/assembly.py</a> composes the map into ordered named blocks with slot substitution</li></ol></li></ul></section><section><h2>Canonical record model</h2><p><a href="store/attributed.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/store/attributed.py</a> -- three-slice fields (sourced, machine, human) with fixed precedence; the declarative merge policy that carries human edits and valid machine blocks across a regeneration without hardcoding field names.</p><p><a href="store/candidate.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/store/candidate.py</a> -- active, shadow, and retired candidate populations per cell; at-most-one-active enforced by every mutator; pluggable serialization for bulk stores.</p><p><a href="store/intermediary.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/store/intermediary.py</a> -- the single-intermediary hashing anchor: a cheap hash check short-circuits the common case, and the full rebuild path fires only on drift.</p><p><a href="store/projection.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/store/projection.py</a> -- reduces a canonical record to the plain value shape a delivery mode or external reader expects; applies the effective-value and active-candidate picks along the way.</p></section><section><h2>Staleness engine</h2><p><a href="freshness/hashing.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/freshness/hashing.py</a> -- stable deterministic content hashing (sorted-key JSON, SHA-256, separator-safe); the shared-snapshot plus per-item split that keeps a unit hash cheap to recompute.</p><p><a href="freshness/classify.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/freshness/classify.py</a> -- the single freshness predicate (HUMAN &gt; EXCLUDED &gt; MISSING &gt; STALE &gt; FRESH); every needs-regeneration check and coverage bucket delegates here.</p><p><a href="freshness/tier.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/freshness/tier.py</a> -- the two-tier model: a source tier that invalidates the cheap derived artifact, and a generation tier that invalidates one expensive output.</p><p><a href="freshness/ensure.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/freshness/ensure.py</a> -- the ensure-chain: always regenerate in memory, compare content hashes, write only on a real change; optional pre-write hook for the version-control seam.</p></section><section><h2>Delivery modes</h2><p><a href="deliver/inplace.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/deliver/inplace.py</a> -- in-place mutation with a configurable do-no-harm marker; apply is a pure function of the store so re-apply is idempotent; first-class revert; drives the injected <code>VcsBackend</code> for the two-phase changeset choreography.</p><p><a href="deliver/projection.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/deliver/projection.py</a> -- append-only projection to a standalone artifact; .bak rollback via rename; reload validation before the swap; aggregation of many units into one artifact.</p></section><section><h2>Prompt context assembly</h2><p><a href="providers/registry.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/providers/registry.py</a> -- name-to-callable registry with two tiers (source, generation); deterministic sorted ordering; <code>run_tier</code> assembles a tier outputs into a brief map for the assembler.</p><p><a href="providers/assembly.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/providers/assembly.py</a> -- the single owner of prompt-block composition (ordered, conditional), configurable slot-syntax tokenization, and opaque label indirection that defeats an LLM key-collapsing.</p></section><section><h2>Human round-trip</h2><p><a href="roundtrip/questions.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/roundtrip/questions.py</a> -- machine-asks / human-answers loop; answers survive regeneration via the store merge policy, and an orphaned answered question is retained as authored work.</p><p><a href="roundtrip/returns.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/roundtrip/returns.py</a> -- export-for-review and intake-corrections closed loop; corrections land on the human slice so the do-no-harm precedence protects them from the next machine pass.</p></section><section><h2>Version-control seam</h2><p><a href="vcs/git_vcs.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/vcs/git_vcs.py</a> -- the git VcsBackend: a staged set stands in for a pending changeset, literal pathspecs prevent glob-sweep, and the commit contains only the successfully-moved subset.</p><p><a href="vcs/null_vcs.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/vcs/null_vcs.py</a> -- no-op backend for CI, tests, and consumers that do not use version control.</p></section><section><h2>Unsupported-stub registry</h2><p><a href="cli/unsupported.py">packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/cli/unsupported.py</a> -- sticky exclude-forever registry: marks structurally unsupported units so a bulk run never re-pays an LLM call for a shape the pipeline cannot handle; persistable and round-trips through any YAML engine.</p></section>
+</main>
+<script>
+if (window.parent !== window) {
+  window.parent.postMessage({
+    type: "index-pages:announce",
+    version: 1,
+    directory: "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts",
+    file: "index.html",
+    kind: "page",
+    source_sha: "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c"
+  }, "*");
+  document.addEventListener("click", function (event) {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var el = event.target;
+    while (el && el.nodeName !== "A") el = el.parentNode;
+    if (!el) return;
+    var href = el.getAttribute("href");
+    if (!href) return;
+    if (href.charAt(0) === "#" || href.charAt(0) === "/") return;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) return;
+    var target = href.split("#")[0].split("?")[0];
+    if (!target) return;
+    if (/(^|\/)index-page(\.[^/]+)?\.html$/.test(target)) return;
+    var parts = "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts".split("/");
+    if (parts.length === 1 && parts[0] === ".") parts = [];
+    var segs = target.split("/");
+    for (var i = 0; i < segs.length; i++) {
+      if (segs[i] === "" || segs[i] === ".") continue;
+      if (segs[i] === "..") { parts.pop(); continue; }
+      parts.push(segs[i]);
+    }
+    event.preventDefault();
+    window.parent.postMessage({
+      type: "index-pages:navigate",
+      version: 1,
+      path: parts.join("/")
+    }, "*");
+  });
+}
+</script>
+</body>
+</html>

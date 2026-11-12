@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "directory": ".",
+  "decision": "page",
+  "source_sha": "349adbfc9428d02197ef852bc1bfb9c54aac5339",
+  "generation_spec_sha256": "8573606e5f3b827eff1eb29578efe854f3b917c38f7e9b9539ce898c925d9fa1",
+  "input_sha256": "3f75ed2a51ee7c6b16fa0ca5cafc9908d8bc57a18351a88243fd0eed01139101",
+  "input_shape_sha256": "c9da08715608b6be4ed8b4c1f2be266b96e91dabd32801693283fe1d3915f4db",
+  "dirty": false,
+  "identity": "Standalone Python distributions for LLM access and shared contracts: package manifests, the shared release build system, PyPI release tooling, CI workflows, and architecture reference documentation",
+  "instructions": "",
+  "references": []
+}

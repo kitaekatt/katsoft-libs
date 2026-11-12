@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/pause_state.json",
+  "title": "pause_state",
+  "description": "The pause_state object (common $defs/pause_state).",
+  "$ref": "#/$defs/pause_state",
+  "examples": [
+    {
+      "relay": {
+        "paused": false,
+        "paused_since": null,
+        "reason": null
+      },
+      "hub": {
+        "paused": false,
+        "paused_since": null,
+        "reason": null
+      }
+    },
+    {
+      "relay": {
+        "paused": true,
+        "paused_since": 1793664060.0,
+        "reason": "owner kill switch"
+      },
+      "hub": {
+        "paused": false,
+        "paused_since": null,
+        "reason": null
+      }
+    }
+  ]
+}

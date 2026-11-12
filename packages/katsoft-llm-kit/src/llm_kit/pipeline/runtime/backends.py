@@ -42,7 +42,9 @@ the one contract probe,
 
 :func:`route` reads one process-level model declaration
 (``CONTENT_PIPELINE_LLM_MODELS``) and returns the backend for its first usable
-entry; unset, it returns the default :class:`OpenAICompatBackend`. Backend
+entry -- a :class:`DeclarationBackend` that falls through to the next usable
+entry on a busy or unreachable endpoint when the declaration can name more than
+one; unset, it returns the default :class:`OpenAICompatBackend`. Backend
 selection is one process-wide switch rather than a parameter threaded through
 every call site. The returned response's ``model`` reflects the model that
 ACTUALLY ran, so audit stamping stays truthful.
@@ -326,6 +328,7 @@ def _to_completion_options(opts: BackendOptions) -> Any:
         client_id=opts.client_id,
         log_prefix=opts.log_prefix,
         extras=opts.extras,
+        max_retries=opts.max_retries,
     )
     if opts.output_contract is None:
         from llm_kit.completion.types import BackendOptions as _CompletionOptions  # noqa: PLC0415
@@ -1234,8 +1237,24 @@ def declared_backend_and_model(
     return entry.drive, (entry.model or entry.id)
 
 
-_declared_entry_cache: Dict[Any, Any] = {}
-"""Per-process memo of :func:`resolve_declaration` keyed by (names, root,
+@dataclass(frozen=True)
+class _DeclaredRoute:
+    """One memoized declaration selection.
+
+    ``entry`` is the first usable entry (``resolve_declaration``'s answer),
+    ``reselector`` the ``declaration.Reselector`` that made it -- it keeps the
+    reachability cache and every endpoint recorded unreachable for the rest of
+    the process -- and ``expanded_names`` the declaration with each front door's
+    group members (R39).
+    """
+
+    entry: Any
+    reselector: Any
+    expanded_names: tuple
+
+
+_declared_entry_cache: Dict[Any, _DeclaredRoute] = {}
+"""Per-process memo of the declaration selection keyed by (names, root,
 output-contract identity).
 
 A declaration governs a whole run; re-probing reachability and quota on every
@@ -1243,16 +1262,17 @@ call site would multiply live probes for no benefit. The contract identity is
 part of the key because a contract narrows the usable entries: a no-contract
 selection must never stand in for a contract one, nor one contract's for
 another's. Cleared by :func:`reset_declared_entry_cache` (a test seam, and a
-legitimate call after a mid-run re-selection that should re-probe)."""
+legitimate call after a mid-run re-selection that should re-probe), which also
+forgets every endpoint a :class:`DeclarationBackend` recorded unreachable."""
 
 
-def _resolve_declared_entry(
+def _resolve_declared_route(
     *,
     project_root: Optional[str] = None,
     output_contract: Optional[Any] = None,
     models: "Optional[Sequence[str]]" = None,
-) -> Any:
-    """The first usable entry for the ACTIVE :data:`MODELS_ENV` declaration, memoized.
+) -> _DeclaredRoute:
+    """The memoized selection for the ACTIVE :data:`MODELS_ENV` declaration.
 
     Callers gate on ``declared_model_names() is not None`` before calling
     this (:func:`route`, :func:`routed_model`), so ``names`` is never
@@ -1261,7 +1281,9 @@ def _resolve_declared_entry(
     With an ``output_contract`` the selection requirement comes from
     the completion layer's ``contract_requirements``, reached through
     :func:`~llm_kit.pipeline.runtime.platform._contract_seam`, and the memo is keyed
-    on the contract's ``identity()``.
+    on the contract's ``identity()``. The first selection is exactly
+    :func:`resolve_declaration`'s (the same ``describe`` call), made through the
+    ``Reselector`` a :class:`DeclarationBackend` falls through with.
     """
     names = declared_model_names(models)
     identity: Optional[tuple] = None
@@ -1273,14 +1295,33 @@ def _resolve_declared_entry(
         requirements = seam.contract_requirements(output_contract)
     key = (tuple(names), project_root, identity)
     if key not in _declared_entry_cache:
-        _declared_entry_cache[key] = resolve_declaration(
-            names, project_root=project_root, requirements=requirements
+        declaration = _declaration_module()
+        extra: Dict[str, Any] = {"requirements": requirements} if requirements else {}
+        reselector = declaration.Reselector(
+            list(names), project_root=project_root, caller=declaration.CALLER_PROCESS,
+            **extra,
+        )
+        ranking = reselector.ranking()
+        _declared_entry_cache[key] = _DeclaredRoute(
+            ranking.default, reselector, tuple(ranking.expanded_names)
         )
     return _declared_entry_cache[key]
 
 
+def _resolve_declared_entry(
+    *,
+    project_root: Optional[str] = None,
+    output_contract: Optional[Any] = None,
+    models: "Optional[Sequence[str]]" = None,
+) -> Any:
+    """The first usable entry for the ACTIVE :data:`MODELS_ENV` declaration, memoized."""
+    return _resolve_declared_route(
+        project_root=project_root, output_contract=output_contract, models=models
+    ).entry
+
+
 def reset_declared_entry_cache() -> None:
-    """Test seam: clear the per-process declaration memo."""
+    """Test seam: clear the per-process declaration memo (and its recorded failures)."""
     _declared_entry_cache.clear()
 
 
@@ -1296,6 +1337,139 @@ def _backend_for_entry(entry: Any) -> Any:
     if entry.id == "openrouter":
         return OpenAICompatBackend()
     return ModelEndpointBackend(endpoint=entry.id)
+
+
+def _unavailable(probe: Any) -> "platform.LLMUnavailableError":
+    return platform.LLMUnavailableError(
+        f"model endpoint {probe.endpoint!r} is unavailable: "
+        f"{probe.detail}. Start that server (if it is one of "
+        f"yours) or change {MODELS_ENV}."
+    )
+
+
+class DeclarationBackend:
+    """The backend :func:`route` returns for a declaration that can fall through.
+
+    Returned when the declaration expands to more than one id (several declared
+    entries, or a front door with group members -- R39). A call runs on the
+    starting entry's backend; when that endpoint is busy or cannot be reached
+    (``declaration.fallthrough_reason``: R40, R41) the call moves to the
+    declaration's next usable entry -- a front door's members in
+    ``routing.order``, then the next declared entry -- through the shared
+    ``declaration.call_with_fallthrough``. Any other failure propagates from the
+    endpoint that raised it, and when no entry is left the LAST endpoint's
+    failure propagates, so :meth:`classify_halt` (which asks the backend that
+    raised it) and ``call_llm`` see exactly what they would without
+    fall-through.
+
+    The starting entry is the memoized selection unless an earlier call
+    recorded it unreachable, in which case it is the next usable one; a
+    ``model-endpoint`` starting entry is pinged here, as :func:`route` pings a
+    single entry, and one that does not answer is recorded unreachable and
+    passed over (``LLMUnavailableError`` once none is left). An endpoint that
+    could not be connected to stays unreachable for the process
+    (:func:`reset_declared_entry_cache` forgets it); a busy or timed-out one is
+    skipped for that call only. A timeout after connecting, on a call whose
+    options set ``timeout_s``, is the caller's own deadline and does not fall
+    through (``call_llm`` then treats it as it always has).
+
+    ``name`` and every other attribute (``effective_options``,
+    ``output_cap_for``, ``endpoint`` ...) are the starting entry's backend's,
+    so a call that does not fall through keys, caps and prices exactly as that
+    backend would. A fall-through entry runs its own registry model (the
+    routed entry runs the ``model`` the caller passed), and a transport entry
+    is called with ``max_retries=0`` unless the options set it. A response
+    served after a fall-through is cached under the starting entry's key; its
+    ``model`` names what actually ran.
+
+    THREAD SAFETY: one instance may be shared across worker threads; built
+    backends are cached under a lock and the reselection is serialized.
+    """
+
+    def __init__(self, route_state: _DeclaredRoute, *, openrouter: Optional[Any] = None) -> None:
+        self._state = route_state
+        self._openrouter = openrouter
+        self._built: Dict[str, Any] = {}
+        self._lock = threading.Lock()
+        self._raised = threading.local()
+        self.entry, self.backend = self._start()
+        self.name = getattr(self.backend, "name", "declaration")
+
+    def __getattr__(self, attr: str) -> Any:
+        if attr in ("backend", "_state", "_built", "_lock", "_raised", "_openrouter"):
+            raise AttributeError(attr)
+        return getattr(self.backend, attr)
+
+    def _backend_for(self, entry: Any) -> Any:
+        if entry.id == "openrouter" and self._openrouter is not None:
+            return self._openrouter
+        with self._lock:
+            built = self._built.get(entry.id)
+            if built is None:
+                built = self._built[entry.id] = _backend_for_entry(entry)
+            return built
+
+    def _start(self) -> "tuple[Any, Any]":
+        declaration = _declaration_module()
+        reselector = self._state.reselector
+        entry = self._state.entry
+        if entry.id in reselector.unreachable:
+            entry = reselector.select()
+        while True:
+            backend = self._backend_for(entry)
+            if not isinstance(backend, ModelEndpointBackend):
+                return entry, backend
+            probe = backend.probe()
+            if probe.ok:
+                return entry, backend
+            reselector.record(
+                entry.id, declaration.FALLTHROUGH_UNREACHABLE, f"probe failed: {probe.detail}"
+            )
+            try:
+                entry = reselector.select()
+            except declaration.NoUsableRoutingTarget:
+                none_left = True
+            else:
+                none_left = False
+            if none_left:
+                raise _unavailable(probe)
+
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        model: str,
+        options: Optional[BackendOptions] = None,
+    ) -> LLMResponse:
+        declaration = _declaration_module()
+        routed_id = self._state.entry.id
+        opts = options or BackendOptions()
+
+        def call(entry: Any) -> LLMResponse:
+            backend = self._backend_for(entry)
+            run_model = model if entry.id == routed_id else (entry.model or model)
+            sent = opts
+            if entry.kind == "transport" and sent.max_retries is None:
+                sent = replace(sent, max_retries=0)
+            try:
+                return backend.complete(system, user, model=run_model, options=sent)
+            except BaseException as exc:
+                self._raised.pair = (exc, backend)
+                raise
+
+        deadline = opts.timeout_s is not None
+        return declaration.call_with_fallthrough(
+            self._state.reselector, call, first=self.entry,
+            classify=lambda exc: declaration.fallthrough_reason(exc, caller_deadline=deadline),
+        )
+
+    def classify_halt(self, exc: BaseException) -> Optional[str]:
+        """The halt the backend that raised ``exc`` reports (the starting one when unknown)."""
+        pair = getattr(self._raised, "pair", None)
+        if pair is not None and pair[0] is exc:
+            return pair[1].classify_halt(exc)
+        return self.backend.classify_halt(exc)
 
 
 REMOVED_ROUTING_ENVS = (
@@ -1353,7 +1527,11 @@ def route(
 
     When :data:`MODELS_ENV` is set, the backend is resolved through the
     declaration (:func:`_resolve_declared_entry`) --
-    ``NoUsableRoutingTarget`` (R23) propagates uncaught. A ``model-endpoint``-kind entry is probed before
+    ``NoUsableRoutingTarget`` (R23) propagates uncaught. A declaration that
+    expands to more than one id (several entries, or a front door with group
+    members) returns a :class:`DeclarationBackend`, which moves a call to the
+    next usable entry when its endpoint is busy or unreachable; a declaration
+    of one id returns that entry's backend as before. A ``model-endpoint``-kind entry is probed before
     being returned: a registry server is up only if somebody started it, so
     a dead one refuses here rather than once per unit. Unset, a deliberately
     configured ``default_endpoint`` is used; with no declaration or configured
@@ -1385,9 +1563,14 @@ def route(
         project_root = project_root or os.getcwd()
         names = _configured_default_names(project_root)
     if names is not None:
-        entry = _resolve_declared_entry(
+        state = _resolve_declared_route(
             output_contract=output_contract, models=names, project_root=project_root
         )
+        if len(state.expanded_names) > 1:
+            # More than one endpoint may serve this declaration: fall through
+            # on busy and unreachable endpoints (R39-R41).
+            return DeclarationBackend(state, openrouter=openrouter)
+        entry = state.entry
         if entry.id == "openrouter" and openrouter is not None:
             # The caller's instance IS the openrouter entry: it carries the
             # client, endpoint pin and budget wrapper a bare per-call
@@ -1400,11 +1583,7 @@ def route(
         if isinstance(backend, ModelEndpointBackend):
             probe = backend.probe()
             if not probe.ok:
-                raise platform.LLMUnavailableError(
-                    f"model endpoint {probe.endpoint!r} is unavailable: "
-                    f"{probe.detail}. Start that server (if it is one of "
-                    f"yours) or change {MODELS_ENV}."
-                )
+                raise _unavailable(probe)
         return backend
     raise platform.ConfigurationError(
         f"No model is declared. Set {MODELS_ENV} or configure default_endpoint."
@@ -1471,6 +1650,7 @@ __all__ = [
     "OpencodeCliBackend",
     "ModelEndpointBackend",
     "MockBackend",
+    "DeclarationBackend",
     "MODELS_ENV",
     "REMOVED_ROUTING_ENVS",
     "OPENCODE_FILESYSTEM_POSTURE",

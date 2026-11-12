@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/cli",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "e4b3d07c29122c79cdf9b6303fa974ad351baf29df84f5fe2bf5f8006e6f7bb7",
+  "input_shape_sha256": "4374c9db21a997047a47364a915e84fc7e7a530a82c92aa78265aafe8b3ae1ca",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

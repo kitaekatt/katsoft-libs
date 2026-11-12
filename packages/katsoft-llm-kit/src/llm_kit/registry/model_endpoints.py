@@ -842,6 +842,35 @@ def load_endpoint_registry(
     return EndpointRegistry(default_id=default_id, entries=entries, path=path, notes=notes)
 
 
+def frontdoor_group_members(entry: object, entries: Mapping[str, object]) -> list[str]:
+    """The ids of the deployments a ``frontdoor: true`` entry routes to, in walk order.
+
+    A front-door entry's ``model`` names its routing group. Its members are the
+    transport entries in ``entries`` whose ``routing.group`` is that group, ordered
+    by ``(routing.order, id)`` -- the order the front door walks them. A front-door
+    entry is never a member (no nested expansion), so an entry that is not a
+    front door, or a group with no members, yields an empty list.
+    """
+    if not getattr(entry, "frontdoor", False) or getattr(entry, "kind", None) != TRANSPORT_KIND:
+        return []
+    group = getattr(entry, "model", None)
+    own_id = getattr(entry, "id", None)
+    members = []
+    for candidate in entries.values():
+        routing = getattr(candidate, "routing", None)
+        if (
+            routing is None
+            or routing.group != group
+            or getattr(candidate, "kind", None) != TRANSPORT_KIND
+            or getattr(candidate, "frontdoor", False)
+            or candidate.id == own_id
+        ):
+            continue
+        members.append(candidate)
+    members.sort(key=lambda member: (member.routing.order, member.id))
+    return [member.id for member in members]
+
+
 def resolve_registry_entry(
     name: Optional[str] = None,
     *,
@@ -906,5 +935,6 @@ __all__ = [
     "effort_notes",
     "BILLING_MODES",
     "load_endpoint_registry",
+    "frontdoor_group_members",
     "resolve_registry_entry",
 ]

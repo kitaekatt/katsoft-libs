@@ -46,7 +46,10 @@ from llm_kit.dispatch.declaration import (
     DISPOSITION_UNRESOLVED,
     DISPOSITION_UNROUTABLE,
     NoUsableRoutingTarget,
+    Reselector,
+    call_with_fallthrough,
     describe,
+    fallthrough_reason,
 )
 from llm_kit.adapters.harness_adapters import CODEX_EFFORT_MENU
 from llm_kit.registry.models import EndpointResolveError, discover_model_entries
@@ -417,19 +420,22 @@ def _lane_factory(name: str, **kwargs: Any) -> Any:
         raise _SeamResolveError(str(exc)) from exc
 
 
-def _describe_lane_model(model: str, project_root: Optional[str]) -> str:
+def _lane_route(model: str, project_root: Optional[str]) -> "tuple[Any, Reselector]":
     """Run the lane's one id through ``describe`` for a process caller.
 
     The lane names ONE id; the review skill owns choosing among a
     declaration's entries and re-dispatching. ``describe`` supplies what the
     bare factory could not: an out-of-quota or unreachable endpoint is refused
-    before any prompt is built, with the floor's itemised disposition.
+    before any prompt is built, with the floor's itemised disposition. A
+    front-door id expands into its group's members (R39), so its first usable
+    endpoint may be a member. Returns that entry and the ``Reselector`` the
+    lane falls through with (R40, R41).
     """
+    reselector = Reselector(
+        [model], project_root=project_root, caller="process", backend_factory=_lane_factory,
+    )
     try:
-        ranking = describe(
-            [model], project_root=project_root, caller="process",
-            backend_factory=_lane_factory,
-        )
+        ranking = reselector.ranking()
     except NoUsableRoutingTarget as floor:
         if all(d.disposition in _CONFIGURATION_DISPOSITIONS for d in floor.dispositions):
             raise LaneConfigError(
@@ -440,7 +446,60 @@ def _describe_lane_model(model: str, project_root: Optional[str]) -> str:
             f"endpoint {model!r} is not serving this run: {floor}"
         ) from floor
     assert ranking.default is not None  # describe() raises the floor otherwise
-    return ranking.default.id
+    return ranking.default, reselector
+
+
+def _describe_lane_model(model: str, project_root: Optional[str]) -> str:
+    """The id of the lane's first usable endpoint (see :func:`_lane_route`)."""
+    return _lane_route(model, project_root)[0].id
+
+
+class _UnfitEndpoint(Exception):
+    """A fall-through endpoint that cannot serve this lane; the lane skips it."""
+
+
+def _lane_selection(lane: str, model: str, effort: str, endpoint: str, project_root: Optional[str]) -> Any:
+    """Build and check the backend for ``endpoint``; refusals raise ``LaneConfigError``."""
+    try:
+        selection = create_backend(endpoint, project_root=project_root)
+    except EndpointResolveError as exc:
+        raise LaneConfigError(
+            f"model {model!r} is neither an Agent-tool alias nor a known "
+            f"llm-scripting-kit endpoint id: {exc}"
+        ) from exc
+    _check_selection(lane, selection)
+    _check_transport_sdk(selection)
+    _check_effort(effort, selection)
+    return selection
+
+
+def _check_window(selection: Any, estimate: int, max_output_tokens: int, project_root: Optional[str]) -> None:
+    window = _endpoint_context_window(selection.endpoint, project_root)
+    if window is not None and estimate + max_output_tokens > window:
+        raise LaneRunError(
+            f"chunk does not fit endpoint {selection.endpoint!r}: about "
+            f"{estimate} prompt tokens plus {max_output_tokens} reserved for "
+            f"output exceeds its {window}-token context window. Review this "
+            "range on an endpoint with a larger window, or on an Agent-tool "
+            "model."
+        )
+
+
+def _failed_at(selection: Any, entry: Any) -> str:
+    """The endpoint a failed call ran on (the entry's id before any backend was built)."""
+    return selection.endpoint if selection is not None else entry.id
+
+
+def _fallthrough_note(fell_through: Sequence[str]) -> str:
+    """``""``, or the endpoints this call fell through from and why."""
+    return f" (fell through from: {'; '.join(fell_through)})" if fell_through else ""
+
+
+def _lane_options(options: BackendOptions, selection: Any) -> BackendOptions:
+    """``options`` for one endpoint: a transport gets ``max_retries=0`` unless set (D2)."""
+    if selection.kind == "transport" and options.max_retries is None:
+        return _replace_dataclass(options, max_retries=0)
+    return options
 
 
 def run_lane(
@@ -463,20 +522,24 @@ def run_lane(
 
     Raises ``LaneConfigError`` for a dispatch that must not be attempted and
     ``LaneRunError`` for one that was attempted and failed.
+
+    A front-door ``model`` stands for its routing group (R39). When the
+    endpoint a call runs on is busy or cannot be reached
+    (``declaration.fallthrough_reason``), the call moves to the next usable
+    endpoint (R40, R41) -- a group member, checked for this lane first and
+    skipped when it cannot serve it (kind, effort, SDK, context window). The
+    lane's own deadline expiring never moves it, and any other failure ends
+    the lane as before. A transport endpoint is called with
+    ``max_retries=0``. ``endpoint`` in the envelope is the one that answered.
     """
     check_lane_dispatchable(lane, model)
-    endpoint = _describe_lane_model(model, project_root)
-
-    try:
-        selection = create_backend(endpoint, project_root=project_root)
-    except EndpointResolveError as exc:
-        raise LaneConfigError(
-            f"model {model!r} is neither an Agent-tool alias nor a known "
-            f"llm-scripting-kit endpoint id: {exc}"
-        ) from exc
-    _check_selection(lane, selection)
-    _check_transport_sdk(selection)
-    _check_effort(effort, selection)
+    current, reselector = _lane_route(model, project_root)
+    # The lane's own id is checked loudly, as it always was. A front-door
+    # group member standing in for it (the front door is down) is checked when
+    # it is called, and skipped when it cannot serve the lane.
+    selection: Any = None
+    if current.via is None:
+        selection = _lane_selection(lane, model, effort, current.id, project_root)
 
     system = LANE_PROMPTS[lane].system
     user = build_user_message(
@@ -489,16 +552,9 @@ def run_lane(
         mechanical_check_phrases=mechanical_check_phrases,
     )
 
-    window = _endpoint_context_window(selection.endpoint, project_root)
     estimate = _estimate_tokens(system) + _estimate_tokens(user)
-    if window is not None and estimate + max_output_tokens > window:
-        raise LaneRunError(
-            f"chunk does not fit endpoint {selection.endpoint!r}: about "
-            f"{estimate} prompt tokens plus {max_output_tokens} reserved for "
-            f"output exceeds its {window}-token context window. Review this "
-            "range on an endpoint with a larger window, or on an Agent-tool "
-            "model."
-        )
+    if selection is not None:
+        _check_window(selection, estimate, max_output_tokens, project_root)
 
     options = BackendOptions(
         max_tokens=max_output_tokens,
@@ -515,6 +571,39 @@ def run_lane(
     last_error: Optional[str] = None
     response = None
     issues: list[dict[str, Any]] = []
+    timeouts = _timeout_errors()
+    fell_through: list[str] = []
+    ready = {current.id: selection} if selection is not None else {}
+
+    def classify(exc: BaseException) -> Optional[str]:
+        if isinstance(exc, _UnfitEndpoint):
+            return "unfit"
+        if timeouts and isinstance(exc, timeouts):
+            return None  # this lane's own deadline: never the endpoint's health
+        # A post-connect timeout under the lane's timeout_s is the same deadline.
+        return fallthrough_reason(exc, caller_deadline=options.timeout_s is not None)
+
+    def note(entry: Any, reason: str, exc: BaseException) -> None:
+        fell_through.append(f"{entry.id} ({reason}: {type(exc).__name__}: {exc})")
+
+    def call(entry: Any) -> Any:
+        """One completion on ``entry``; an endpoint reached by fall-through is checked first."""
+        nonlocal current, selection
+        chosen = ready.get(entry.id)
+        if chosen is None:
+            # Reached only by falling through from a busy or unreachable
+            # endpoint: one this lane cannot use is skipped, not fatal.
+            try:
+                chosen = _lane_selection(lane, model, effort, entry.id, project_root)
+                _check_window(chosen, estimate, max_output_tokens, project_root)
+            except (LaneConfigError, LaneRunError) as exc:
+                raise _UnfitEndpoint(str(exc)) from exc
+            ready[entry.id] = chosen
+        current, selection = entry, chosen
+        return chosen.backend.complete(
+            system, message, model=chosen.model, options=_lane_options(options, chosen)
+        )
+
     # One repair attempt, and exactly one: a model that ignores the output
     # contract twice is not going to honor it on a third ask, and an unbounded
     # loop turns a formatting failure into an unbounded bill.
@@ -522,10 +611,17 @@ def run_lane(
         attempts = attempt + 1
         message = user if attempt == 0 else user + _REPAIR_SUFFIX
         try:
-            response = selection.backend.complete(
-                system, message, model=selection.model, options=options
+            # A busy or unreachable endpoint hands the call to the next usable
+            # one (R40, R41); the repair attempt starts where the answer came from.
+            response = call_with_fallthrough(
+                reselector, call, first=current, classify=classify, on_fallthrough=note,
             )
-        except _timeout_errors() as exc:
+        except _UnfitEndpoint as exc:
+            raise LaneRunError(
+                f"endpoint {model!r} is not serving this run and no fall-through "
+                f"endpoint can serve lane {lane}: {'; '.join(fell_through)}"
+            ) from exc
+        except timeouts as exc:
             # OUR deadline, not the endpoint's health. This lane sets
             # timeout_s, so a timeout is evidence about the budget chosen here
             # and says nothing about whether the endpoint is serving -- report
@@ -537,17 +633,19 @@ def run_lane(
             # the timeout").
             raise LaneRunError(
                 f"lane {lane} exceeded its own {options.timeout_s:g}s budget on "
-                f"endpoint {selection.endpoint!r} ({exc}). The endpoint is not "
+                f"endpoint {_failed_at(selection, current)!r} ({exc}). The endpoint is not "
                 "implicated -- raise --timeout, or review a smaller chunk"
+                + _fallthrough_note(fell_through)
             ) from exc
         except HaltError as exc:
             raise LaneRunError(
-                f"endpoint {selection.endpoint!r} halted ({exc}); it is not "
-                "serving this run"
+                f"endpoint {_failed_at(selection, current)!r} halted ({exc}); it is not "
+                "serving this run" + _fallthrough_note(fell_through)
             ) from exc
         except Exception as exc:
             raise LaneRunError(
-                f"endpoint {selection.endpoint!r} failed: {type(exc).__name__}: {exc}"
+                f"endpoint {_failed_at(selection, current)!r} failed: {type(exc).__name__}: {exc}"
+                + _fallthrough_note(fell_through)
             ) from exc
         if "effort" in (getattr(response, "dropped_params", None) or ()):
             raise LaneConfigError(

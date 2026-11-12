@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/pause.request.json",
+  "title": "pause params",
+  "description": "Set the relay or hub pause flag. Request params (strict).",
+  "type": "object",
+  "properties": {
+    "scope": {
+      "$ref": "#/$defs/pause_scope"
+    },
+    "reason": {
+      "$ref": "#/$defs/short_text"
+    }
+  },
+  "required": [
+    "scope"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "scope": "relay",
+      "reason": "owner kill switch"
+    },
+    {
+      "scope": "hub"
+    }
+  ]
+}

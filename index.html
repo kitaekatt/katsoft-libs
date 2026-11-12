@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<!-- index-pages: {"generated_by":"md-domain","source_sha":"349adbfc9428d02197ef852bc1bfb9c54aac5339","directory":".","kind":"page"} -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Standalone Python distributions for LLM access and shared contracts: package manifests, the shared release build system, PyPI release tooling, CI workflows, and architecture reference documentation</title>
+<link rel="stylesheet" href=".databench/index-pages.css">
+</head>
+<body>
+<nav data-index-pages-chrome="nav"><ul><li><a href="packages/katsoft-llm-kit/src/llm_kit/index.html"><span class="hh-nav-label">llm_kit</span> <span class="hh-nav-identity">Multi-backend LLM completion protocol (OpenRouter, Claude, Codex, OpenCode), endpoint and model registry, dispatch and execution, front-door API, graph viewer, CLI, and deployment-mode runtime with bootstrap provisioning guards</span></a></li><li><a href="tests/index.html"><span class="hh-nav-label">tests</span> <span class="hh-nav-identity">The test suite for katsoft-libs: frozen contract goldens, the llm-kit CLI and adapter behavior, the repoint from legacy plugins into the unified llm-kit package, and packaging.</span></a></li><li><a href="README.md"><span class="hh-nav-label">README.md</span> <span class="hh-nav-identity">Install instructions and the one-line dev loop for this repository.</span></a></li></ul></nav>
+<main>
+<h1>Standalone Python distributions for LLM access and shared contracts: package manifests, the shared release build system, PyPI release tooling, CI workflows, and architecture reference documentation</h1>
+<p class="hh-orientation">This repository builds and ships two Python distributions: katsoft-llm-kit and katsoft-contracts. Each versions independently and releases to PyPI through a shared deterministic build system that guarantees a tag always rebuilds by the builder it was released with. The release tooling, CI workflows, and architecture reference documentation sit here; the llm-kit library source lives one level down. The build is the organizing principle: the registry, the ledger, the workflow, and the hatchling hooks all exist to make that guarantee hold.</p><section><h2>Where to start</h2><p>Start with <a href="pyproject.toml">pyproject.toml</a> for the dev environment and test configuration, then <a href="docs/reference/package-release.md">docs/reference/package-release.md</a> before changing release code or bumping a version.</p></section><section><h2>Routes</h2><ul><li><strong>Release a package</strong><ol><li>Bump the version in the package&#x27;s <a href="pyproject.toml">pyproject.toml</a></li><li><code>uv run --extra dev pytest</code></li><li>Plan: <code>uv run --extra dev python </code><a href="scripts/release.py">scripts/release.py</a></li><li>Execute after approval: <code>uv run --extra dev python </code><a href="scripts/release.py">scripts/release.py</a><code> --execute</code></li></ol></li><li><strong>CI on every push</strong><ol><li>Push to <code>dev</code></li><li><a href=".github/workflows/tests.yml">.github/workflows/tests.yml</a> runs pytest on Ubuntu and Windows</li></ol></li><li><strong>Build a wheel locally</strong><ol><li><code>uv run --extra dev python </code><a href="packages/_build/release_build.py">packages/_build/release_build.py</a><code> build --repo . --commit HEAD --dist katsoft-llm-kit --out tmp/wheels</code></li></ol></li></ul></section><section><h2>Package manifests and registry</h2><ul><li><a href="packages/registry.toml">packages/registry.toml</a> - the release registry: names each distribution, its import name, marker path, and surface file</li><li><a href="packages/released.json">packages/released.json</a> - the release ledger: verified wheels with commit, tag, SHA-256, and verification timestamp</li><li><a href="packages/katsoft-contracts/pyproject.toml">packages/katsoft-contracts/pyproject.toml</a> - the contracts package manifest, version 1.0.1, no runtime dependencies</li><li><a href="packages/katsoft-llm-kit/pyproject.toml">packages/katsoft-llm-kit/pyproject.toml</a> - the llm-kit package manifest, version 1.10.1, extras for sdk, jobs, config, frontdoor, pipeline, and graph</li><li><a href="packages/katsoft-llm-kit/public-surface.json">packages/katsoft-llm-kit/public-surface.json</a> - every exported name with its lifecycle status; open when checking whether a public API changed</li><li><a href="packages/katsoft-contracts/src/katsoft_contracts">packages/katsoft-contracts/src/katsoft_contracts</a> - the contracts source: execution-event envelope, interrupt contract, and model-declaration parser</li></ul></section><section><h2>Deterministic build system</h2><ul><li><a href="packages/_build/release_build.py">packages/_build/release_build.py</a> - the single build implementation: git-archive inputs, pinned constraints, SOURCE_DATE_EPOCH, and the wheel-content check</li><li><a href="packages/_build/hatch_build.py">packages/_build/hatch_build.py</a> - the hatchling hooks that write the release marker and Source URL into each wheel; refuses to build without release identity</li><li><a href="packages/_build/constraints.txt">packages/_build/constraints.txt</a> - pinned build dependencies; a change here invalidates every distribution&#x27;s build inputs</li></ul></section><section><h2>Release command and CI</h2><ul><li><a href="scripts/release.py">scripts/release.py</a> - the release entry point: plan mode prints the release set; --execute pushes tags and records verified uploads</li><li><a href="scripts/_packages.py">scripts/_packages.py</a> - the release machinery: preflight policy, observations, transitions, and git operations for the dev advance and tag push</li><li><a href=".github/workflows/tests.yml">.github/workflows/tests.yml</a> - CI: pytest on Ubuntu and Windows on every push and pull request to dev</li><li><a href=".github/workflows/release-packages.yml">.github/workflows/release-packages.yml</a> - the release workflow: checks out the tag, builds with the release builder, and uploads via PyPI trusted publishing</li></ul></section><section><h2>Architecture reference</h2><ul><li><a href="docs/reference/llm-kit-architecture.md">docs/reference/llm-kit-architecture.md</a> - the signed-off 14-decision architecture: component boundaries, the exact dependency graph, and the migration ruling</li><li><a href="docs/reference/llm-kit-graph.md">docs/reference/llm-kit-graph.md</a> - graph file format, project config, definition hashes, and the validate verb</li><li><a href="docs/reference/llm-kit-graph-expr.md">docs/reference/llm-kit-graph-expr.md</a> - the safe expression language used for when conditions and repeat stop rules</li><li><a href="docs/reference/llm-kit-graph-ops.md">docs/reference/llm-kit-graph-ops.md</a> - the operations registry, the three built-in ops, prompt templates, and test support</li><li><a href="docs/reference/llm-kit-graph-runtime.md">docs/reference/llm-kit-graph-runtime.md</a> - run records, the freshness and reuse rule, and the content-addressed stores</li><li><a href="docs/reference/llm-kit-graph-services.md">docs/reference/llm-kit-graph-services.md</a> - concurrency slots, spend admission and settlement, durable human waits, and commit nodes</li><li><a href="docs/reference/llm-kit-graph-viewer.md">docs/reference/llm-kit-graph-viewer.md</a> - the read-only graph viewer: server routes, the inspector, theme and panel extension points</li><li><a href="docs/reference/package-release.md">docs/reference/package-release.md</a> - the release procedure: prepare, execute, resume, and the build contract</li></ul></section><section><h2>Repository configuration</h2><ul><li><a href="pyproject.toml">pyproject.toml</a> - root dev environment: Python 3.12, pytest with worksteal distribution, dev extras</li><li><a href=".gitattributes">.gitattributes</a> - repo-wide LF enforcement; the comment documents the Windows/WSL incident that made eol=lf mandatory</li><li><a href=".python-version">.python-version</a> - pins the interpreter to 3.12</li><li><a href=".claude/bootstrap.json">.claude/bootstrap.json</a> - dev venv extras and the import checks the bootstrap runs before a session starts</li></ul></section>
+</main>
+<script>
+if (window.parent !== window) {
+  window.parent.postMessage({
+    type: "index-pages:announce",
+    version: 1,
+    directory: ".",
+    file: "index.html",
+    kind: "page",
+    source_sha: "349adbfc9428d02197ef852bc1bfb9c54aac5339"
+  }, "*");
+  document.addEventListener("click", function (event) {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var el = event.target;
+    while (el && el.nodeName !== "A") el = el.parentNode;
+    if (!el) return;
+    var href = el.getAttribute("href");
+    if (!href) return;
+    if (href.charAt(0) === "#" || href.charAt(0) === "/") return;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) return;
+    var target = href.split("#")[0].split("?")[0];
+    if (!target) return;
+    if (/(^|\/)index-page(\.[^/]+)?\.html$/.test(target)) return;
+    var parts = ".".split("/");
+    if (parts.length === 1 && parts[0] === ".") parts = [];
+    var segs = target.split("/");
+    for (var i = 0; i < segs.length; i++) {
+      if (segs[i] === "" || segs[i] === ".") continue;
+      if (segs[i] === "..") { parts.pop(); continue; }
+      parts.push(segs[i]);
+    }
+    event.preventDefault();
+    window.parent.postMessage({
+      type: "index-pages:navigate",
+      version: 1,
+      path: parts.join("/")
+    }, "*");
+  });
+}
+</script>
+</body>
+</html>

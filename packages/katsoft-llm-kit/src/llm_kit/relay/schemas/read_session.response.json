@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/read_session.response.json",
+  "title": "read_session result",
+  "description": "A capped, redacted tail of one session. Response result (unknown fields allowed).",
+  "type": "object",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/address"
+    },
+    "turns": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/turn"
+      }
+    },
+    "cursor": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/cursor"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "redactions": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "address",
+    "turns",
+    "cursor",
+    "truncated",
+    "redactions"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "address": "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+      "turns": [
+        {
+          "role": "user",
+          "text": "Implement unit F0.",
+          "at": 1793664000.0
+        },
+        {
+          "role": "assistant",
+          "text": "Reading the build plan.",
+          "at": 1793664003.0,
+          "truncated": true
+        }
+      ],
+      "cursor": "c:1206",
+      "truncated": true,
+      "redactions": 1
+    }
+  ]
+}

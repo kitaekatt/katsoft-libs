@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": ".github",
+  "decision": "none",
+  "source_sha": "7b9d3c8f47a5601aeb43f8bf861779fb0cd47abc",
+  "input_sha256": "e5e0a310a7650efb2205318a832a8fe5cbfc3e90060f0d219a052a5ab16136e2",
+  "input_shape_sha256": "b9a8cb54b67a2824f32e6f2777cee109e1f21a28566f6fd317a21d7899437abf",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

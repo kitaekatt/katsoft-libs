@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/list_questions.request.json",
+  "title": "list_questions params",
+  "description": "Pending operator questions (job interrupts). Request params (strict).",
+  "type": "object",
+  "properties": {
+    "machine": {
+      "$ref": "#/$defs/machine_label"
+    },
+    "state": {
+      "enum": [
+        "open",
+        "all"
+      ]
+    }
+  },
+  "required": [],
+  "additionalProperties": false,
+  "examples": [
+    {},
+    {
+      "machine": "m5pro",
+      "state": "all"
+    }
+  ]
+}

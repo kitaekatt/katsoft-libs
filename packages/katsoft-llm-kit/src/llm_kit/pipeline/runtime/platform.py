@@ -286,6 +286,12 @@ class BackendOptions:
       server/model choose its mode-aware default; an explicit value is sent.
     - ``timeout_s`` -- per-call wall-clock cap. ``None`` uses the backend
       default.
+    - ``max_retries`` -- OpenAI-compatible transport only: SDK-level automatic
+      retries for this call (0 disables them). ``None`` keeps the client's
+      default. A declaration backend that can fall through
+      (:class:`~llm_kit.pipeline.runtime.backends.DeclarationBackend`) sends 0
+      to a transport entry when this is ``None``. Not part of the cache key:
+      it changes how long the caller waits, not what is answered.
     - ``cache_salt`` -- per-attempt salt for malformed-response retry loops so
       a retry does not replay the cached bad response. 0 (default) keeps the
       cache key stable.
@@ -323,6 +329,7 @@ class BackendOptions:
     log_prefix: str = "[llm]"
     extras: Mapping[str, Any] = field(default_factory=dict)
     output_contract: Optional[Any] = None
+    max_retries: Optional[int] = None
 
 
 @runtime_checkable

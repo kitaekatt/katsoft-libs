@@ -17,6 +17,7 @@ import dataclasses
 import json
 import sys
 import time
+import types
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -67,9 +68,10 @@ from llm_kit.dispatch.declaration import (
     RunRequest,
 )
 from llm_kit.dispatch.declaration import run as declaration_run
+from llm_kit.dispatch.declaration import Reselector, call_with_fallthrough, fallthrough_reason
 from llm_kit.dispatch import invoke as dispatch_invoke
-from llm_kit.registry.model_endpoints import EndpointRegistryError
-from llm_kit.registry.models import EndpointResolveError, ModelResolveError
+from llm_kit.registry.model_endpoints import EndpointRegistryError, frontdoor_group_members
+from llm_kit.registry.models import EndpointResolveError, ModelResolveError, discover_model_entries
 from llm_kit.schema.json_repair import STATUS_REPAIRED, repair_json_structure
 from llm_kit.schema.json_schema import check_schema
 
@@ -114,7 +116,22 @@ _COMPLETE_CALL_FLAGS = (
 _FLAG_DEFAULTS = {"max_tokens": None, "temperature": None, "system": "", "cheap": False}
 
 
-def _request_from_flags(args: argparse.Namespace) -> "tuple[str, str, Any, BackendOptions]":
+@dataclasses.dataclass(frozen=True)
+class _CallSource:
+    """How the single-call path builds the call for ANOTHER entry (front-door fall-through).
+
+    ``declared`` is the id the caller named (``--models`` or a request's
+    ``endpoint``), None for the configured default; ``model``, ``cheap`` and
+    ``effort`` are the caller's own values, before any entry's defaults.
+    """
+
+    declared: Optional[str]
+    model: Optional[str]
+    cheap: bool
+    effort: Optional[str]
+
+
+def _request_from_flags(args: argparse.Namespace) -> "tuple[str, str, Any, BackendOptions, _CallSource]":
     """The original flag surface, unchanged.
 
     Kept whole rather than re-expressed through the protocol parser: every
@@ -148,7 +165,11 @@ def _request_from_flags(args: argparse.Namespace) -> "tuple[str, str, Any, Backe
         cwd=args.cwd,
         log_prefix=f"[{selection.endpoint}]",
     )
-    return system, user, selection, options
+    source = _CallSource(
+        declared=declared[0] if declared else None, model=args.model,
+        cheap=flag("cheap"), effort=args.effort,
+    )
+    return system, user, selection, options, source
 
 
 def _read_request_payload(args: argparse.Namespace) -> Any:
@@ -181,7 +202,7 @@ def _is_protocol_2(payload: Any) -> bool:
 
 def _request_from_protocol(
     args: argparse.Namespace, payload: Any
-) -> "tuple[str, str, Any, BackendOptions]":
+) -> "tuple[str, str, Any, BackendOptions, _CallSource]":
     """Parse a versioned (protocol 1) request, then resolve the same way the flags do."""
     request = parse_request(payload)
     selection = create_backend(
@@ -198,7 +219,33 @@ def _request_from_protocol(
         effort=request.options.effort or selection.effort,
         log_prefix=f"[{selection.endpoint}]",
     )
-    return request.system, request.prompt, selection, options
+    source = _CallSource(
+        declared=request.endpoint, model=request.model, cheap=request.cheap,
+        effort=request.options.effort,
+    )
+    return request.system, request.prompt, selection, options, source
+
+
+def _frontdoor_reselector(entry_id: str, project_root: Optional[str]) -> Optional[Reselector]:
+    """A ``Reselector`` over ``[entry_id]`` when it is a front door with group members, else None.
+
+    Its members are providers the caller listed through it (R39), so a single
+    front-door call falls through to them (R40, R41). Any other single entry
+    has no one else listed and keeps its one call. Reads configuration only.
+    """
+    entries = discover_model_entries(project_root=project_root)
+    if not frontdoor_group_members(entries.get(entry_id), entries):
+        return None
+    return Reselector(
+        [entry_id], project_root=project_root, caller="process", backend_factory=_backend_factory,
+    )
+
+
+def _without_sdk_retries(options: BackendOptions, selection: Any) -> BackendOptions:
+    """``options`` for a fall-through call: a transport sends ``max_retries=0`` unless set."""
+    if selection.kind == "transport" and options.max_retries is None:
+        return dataclasses.replace(options, max_retries=0)
+    return options
 
 
 def _refuse_v2(kind: str, message: str) -> int:
@@ -359,7 +406,9 @@ def _cmd_complete_routed(args: argparse.Namespace) -> int:
         )
         last_exc[0] = None
 
-    max_attempts = args.max_attempts or len(declared)
+    # None: run() allows one execution per id of the EXPANDED declaration, so a
+    # front door's group members are covered as well as the declared entries.
+    max_attempts = args.max_attempts
     floor: Optional[NoUsableRoutingTarget] = None
     result = None
     try:
@@ -431,9 +480,9 @@ def _cmd_complete(args: argparse.Namespace) -> int:
             payload = _read_request_payload(args)
             if _is_protocol_2(payload):
                 return _cmd_invoke(args, payload)
-            system, user, selection, options = _request_from_protocol(args, payload)
+            system, user, selection, options, source = _request_from_protocol(args, payload)
         else:
-            system, user, selection, options = _request_from_flags(args)
+            system, user, selection, options, source = _request_from_flags(args)
     except ProtocolError as exc:
         # A protocol error never reached an endpoint, so it gets neither the
         # result envelope (there is no call to describe) nor an endpoint exit
@@ -441,13 +490,50 @@ def _cmd_complete(args: argparse.Namespace) -> int:
         # consumer parsing it must not find a different shape there.
         _json(protocol_error_envelope(str(exc)), stream=sys.stderr)
         return EXIT_PROTOCOL
+    # A front door named alone (or as the configured default) stands for its
+    # group: a busy, unreachable or exhausted endpoint hands the call to the
+    # next member (R39-R41). The envelope is the one-call envelope of the
+    # endpoint that answered (or failed last), plus `fell_through` when it moved.
+    reselector = _frontdoor_reselector(source.declared or selection.endpoint, args.project_root)
+    fell_through: list[dict[str, str]] = []
+    if reselector is not None:
+        options = _without_sdk_retries(options, selection)
+
+    def call_entry(entry: Any) -> LLMResponse:
+        nonlocal selection, options
+        if entry.id != selection.endpoint:
+            selection = create_backend(
+                entry.id, model=source.model, cheap=source.cheap, project_root=args.project_root,
+            )
+            options = _without_sdk_retries(dataclasses.replace(
+                options, effort=source.effort or selection.effort,
+                log_prefix=f"[{selection.endpoint}]",
+            ), selection)
+        return selection.backend.complete(system, user, model=selection.model, options=options)
+
+    def note(entry: Any, reason: str, exc: BaseException) -> None:
+        fell_through.append({"entry": entry.id, "reason": reason, "error": f"{type(exc).__name__}: {exc}"})
+
+    def with_fallthrough(envelope: dict) -> dict:
+        if fell_through:
+            envelope["fell_through"] = list(fell_through)
+        return envelope
+
     # Bracket the call HERE too. A failure never reaches an adapter's own
     # timestamping, and a failed call still ran -- a timeout by definition
     # burned the whole budget -- so the CLI has to record what it can see.
     started_at = utc_now_iso()
     started_monotonic = time.monotonic()
     try:
-        response = selection.backend.complete(system, user, model=selection.model, options=options)
+        if reselector is None:
+            response = selection.backend.complete(system, user, model=selection.model, options=options)
+        else:
+            deadline = options.timeout_s is not None
+            response = call_with_fallthrough(
+                reselector, call_entry, first=types.SimpleNamespace(id=selection.endpoint),
+                classify=lambda exc: fallthrough_reason(exc, caller_deadline=deadline),
+                on_fallthrough=note,
+            )
     except OutputContractViolation as exc:
         # The call RAN: the adapter holds the full failed response (raw text,
         # the controls it emitted, the contract report), so the envelope
@@ -455,7 +541,7 @@ def _cmd_complete(args: argparse.Namespace) -> int:
         if args.format == "text":
             print(f"{exc.response.error.code}: {exc.response.error.message}", file=sys.stderr)
         else:
-            _json(_complete_envelope(selection, exc.response, call_ran=True))
+            _json(with_fallthrough(_complete_envelope(selection, exc.response, call_ran=True)))
         return EXIT_FAILURE
     except Exception as exc:  # transport implementations expose heterogeneous exception types
         # ERROR-AS-DATA, and only here. The package API keeps RAISING -- every
@@ -498,14 +584,14 @@ def _cmd_complete(args: argparse.Namespace) -> int:
             envelope = _complete_envelope(selection, failed)
             if halt:
                 envelope["halt"] = halt_payload(halt, exc)
-            _json(envelope)
+            _json(with_fallthrough(envelope))
         # Exit codes are UNCHANGED: they stay the shell-level signal, and the
         # envelope is the machine-readable one. A caller may read either.
         return EXIT_HALT if halt else EXIT_FAILURE
     if args.format == "text":
         print(_answer_text(response))
     else:
-        _json(_complete_envelope(selection, response))
+        _json(with_fallthrough(_complete_envelope(selection, response)))
     return EXIT_OK
 
 
@@ -651,7 +737,8 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "Run one configured completion. With several --models (or "
             "--requirements) the first usable entry serves and a classified halt "
-            "falls back to the next."
+            "falls back to the next. A front-door entry used alone falls through "
+            "to its group's members when an endpoint is busy or unreachable."
         ),
     )
     _add_models_arg(complete)
@@ -662,7 +749,8 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Executions allowed across the declaration (default: one per declared "
-            "entry; refused with exit 2 on a single-entry call without --requirements)."
+            "entry and per member of a declared front door's group; refused with "
+            "exit 2 on a single-entry call without --requirements)."
         ),
     )
     _add_project_arg(complete)

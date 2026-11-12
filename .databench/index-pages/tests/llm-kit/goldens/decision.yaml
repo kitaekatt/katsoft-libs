@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/llm-kit/goldens",
+  "decision": "none",
+  "source_sha": "6f377e5b82d5fa65d00162ac4cedfea5ea72a72a",
+  "input_sha256": "5d16396017a8643c5be011d863220e33e2bcd2bc5908b24968472d766c070ad8",
+  "input_shape_sha256": "5aea12cc60d2f4d62a08d744668ad6772265e24f78966a04c8d296ea017aaed0",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

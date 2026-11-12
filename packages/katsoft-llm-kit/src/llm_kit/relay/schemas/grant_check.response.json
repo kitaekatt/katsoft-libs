@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/grant_check.response.json",
+  "title": "grant_check result",
+  "description": "Whether a live grant covers (session, verb, target), without consuming it. Response result (unknown fields allowed).",
+  "type": "object",
+  "properties": {
+    "covered": {
+      "type": "boolean"
+    },
+    "grant_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/grant_id"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "code": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/error_code"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "covered",
+    "grant_id",
+    "code"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "covered": true,
+      "grant_id": "grt_01JBX3T7Z1Y2X3W4V5U6T7S8R9",
+      "code": null
+    },
+    {
+      "covered": false,
+      "grant_id": null,
+      "code": "grant_required"
+    }
+  ]
+}

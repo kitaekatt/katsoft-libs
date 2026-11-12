@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "scripts",
+  "decision": "none",
+  "source_sha": "7b9d3c8f47a5601aeb43f8bf861779fb0cd47abc",
+  "input_sha256": "53c6ae70a88ca3f2f19ac86de616f8e4c9007e4c14c04483438bb3c1a5d4f139",
+  "input_shape_sha256": "1eb83820bb8085f8268ea372efed03b9a398f19d70b96f3ee6eb8ea1b1c8e56c",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

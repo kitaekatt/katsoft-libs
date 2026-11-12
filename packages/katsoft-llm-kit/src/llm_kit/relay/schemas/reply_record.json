@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/reply_record.json",
+  "title": "reply_record",
+  "description": "The reply_record object (common $defs/reply_record).",
+  "$ref": "#/$defs/reply_record",
+  "examples": [
+    {
+      "id": "rpl_01JBX3VA2C4E6G8J0K2M4N6P8Q",
+      "in_reply_to": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW",
+      "sender": "channel:m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+      "state": "answered",
+      "body": "Done: tests pass.",
+      "at": 1793664040.0
+    }
+  ]
+}

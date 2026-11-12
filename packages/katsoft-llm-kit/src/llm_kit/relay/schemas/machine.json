@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/machine.json",
+  "title": "machine",
+  "description": "The machine object (common $defs/machine).",
+  "$ref": "#/$defs/machine",
+  "examples": [
+    {
+      "machine": "m5pro",
+      "status": "up",
+      "protocol": "relay-protocol/1",
+      "last_contact_at": 1793664005.0,
+      "pause": {
+        "relay": {
+          "paused": false,
+          "paused_since": null,
+          "reason": null
+        },
+        "hub": {
+          "paused": false,
+          "paused_since": null,
+          "reason": null
+        }
+      },
+      "endpoints": [
+        "m5pro/llm/qwen38-m5-32k-local",
+        "m5pro/llm/qwen36-m5-local"
+      ]
+    },
+    {
+      "machine": "5090w",
+      "status": "unreachable",
+      "error": {
+        "code": "machine_unreachable",
+        "message": "relay 5090w did not answer",
+        "retryable": true
+      }
+    }
+  ]
+}

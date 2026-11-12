@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/graph/commands",
+  "decision": "none",
+  "source_sha": "a52cddabeaf54b9522cf0702038251afdf3f079e",
+  "input_sha256": "673c367a3d2192a627521896144897576c5cc8f02682a038883be70a4fabf47a",
+  "input_shape_sha256": "0cdb36262c411e49aab516124150d3685001c6298a2f10857e780343f1c07a6e",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

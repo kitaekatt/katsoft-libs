@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<!-- index-pages: {"generated_by":"md-domain","source_sha":"a0a05fe70507d2d8f9d01816a7a0c37318c04057","directory":"tests","kind":"page"} -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>The test suite for katsoft-libs: frozen contract goldens, the llm-kit CLI and adapter behavior, the repoint from legacy plugins into the unified llm-kit package, and packaging.</title>
+<link rel="stylesheet" href="../.databench/index-pages.css">
+</head>
+<body>
+<nav data-index-pages-chrome="nav"><ul><li><a href="../index.html"><span class="hh-nav-label">Repository root</span> <span class="hh-nav-identity">Standalone Python distributions for LLM access and shared contracts: package manifests, the shared release build system, PyPI release tooling, CI workflows, and architecture reference documentation</span></a></li><li><a href="../README.md"><span class="hh-nav-label">README.md</span> <span class="hh-nav-identity">Project-level getting started and layout.</span></a></li></ul></nav>
+<main>
+<h1>The test suite for katsoft-libs: frozen contract goldens, the llm-kit CLI and adapter behavior, the repoint from legacy plugins into the unified llm-kit package, and packaging.</h1>
+<p class="hh-orientation">The test suite for two Python distributions: katsoft-contracts and katsoft-llm-kit. It splits by distribution, then by check type. The contract side pins exact behavior with frozen goldens captured once from a reference commit and never regenerated; the llm-kit side exercises the live source tree through a shared harness that isolates HOME, scrubs ambient state, and runs the real CLI in-process. A repoint layer records the migration from three legacy plugins into the unified package, and packaging tests build and inspect the release wheel. The invariant that shapes everything: the contract goldens are literals, not computed values, so a changed error message is a deliberate act.</p><section><h2>Where to start</h2><p>Open <a href="llm-kit/test_cli_harness.py">tests/llm-kit/test_cli_harness.py</a> for the shared environment every llm-kit test builds on; open <a href="contracts/test_goldens_frozen.py">tests/contracts/test_goldens_frozen.py</a> when you need to verify the canonical package against its frozen behavior.</p></section><section><h2>Routes</h2><ul><li><strong>Add a contract case</strong><ol><li><a href="contracts/contract_cases.py">tests/contracts/contract_cases.py</a> -- add the new input as a literal</li><li><a href="contracts/contract_goldens.py">tests/contracts/contract_goldens.py</a> -- capture its golden from the reference modules and add it in the same commit</li></ol></li><li><strong>Verify a release wheel</strong><ol><li><a href="contracts/contract_support.py">tests/contracts/contract_support.py</a> -- build the wheel the way the release machinery does</li><li><a href="contracts/test_wheel_contents.py">tests/contracts/test_wheel_contents.py</a> -- check every member and its metadata</li></ol></li><li><strong>Update a CLI golden</strong><ol><li>Run <a href="llm-kit/test_cli_goldens.py">tests/llm-kit/test_cli_goldens.py</a> with <code>UPDATE_GOLDENS=1</code></li><li>Review the diff in <a href="llm-kit/goldens/cli">tests/llm-kit/goldens/cli</a></li></ol></li></ul></section><section><h2>Frozen contract checks</h2><ul><li><a href="contracts/contract_cases.py">tests/contracts/contract_cases.py</a> -- the fixed case list; inputs are literals so the list cannot drift with the code</li><li><a href="contracts/contract_goldens.py">tests/contracts/contract_goldens.py</a> -- frozen literal results; never regenerated from the canonical package</li><li><a href="contracts/contract_support.py">tests/contracts/contract_support.py</a> -- module loading, golden comparison, and the wheel build</li><li><a href="contracts/test_goldens_frozen.py">tests/contracts/test_goldens_frozen.py</a> -- runs the canonical package through every case and checks against the goldens</li><li><a href="contracts/test_package_metadata.py">tests/contracts/test_package_metadata.py</a> -- static facts: name, version, stdlib-only imports, no committed release marker</li><li><a href="contracts/test_wheel_contents.py">tests/contracts/test_wheel_contents.py</a> -- builds the wheel and checks every member and its metadata</li></ul></section><section><h2>LLM-kit behavior</h2><ul><li><a href="llm-kit/test_cli_harness.py">tests/llm-kit/test_cli_harness.py</a> -- the shared harness: fake HOME, scrubbed env, two sides for differential parity</li><li><a href="llm-kit/test_cli_groups.py">tests/llm-kit/test_cli_groups.py</a> -- CLI routing, verb map, composition root, pinned messages</li><li><a href="llm-kit/test_cli_goldens.py">tests/llm-kit/test_cli_goldens.py</a> -- golden fixtures for CLI verbs; <code>UPDATE_GOLDENS=1</code> to rewrite</li><li><a href="llm-kit/dist_support.py">tests/llm-kit/dist_support.py</a> -- wheel building and the isolated subprocess runner</li><li>10 more tests cover consent store, account status JSON, cost-class allow filter, call modes, and claude/codex adapter behavior</li></ul></section><section><h2>Repoint and parity</h2><ul><li><a href="llm-kit/repoint-map.json">tests/llm-kit/repoint-map.json</a> -- the module-level migration map from legacy plugins to llm-kit</li><li><a href="llm-kit/porting-ledger.json">tests/llm-kit/porting-ledger.json</a> -- post-map edits, each ported or rejected with evidence</li><li><a href="llm-kit/final_wording.py">tests/llm-kit/final_wording.py</a> -- named deliberate wording differences between legacy and final text</li></ul></section><section><h2>Test data and fixtures</h2><ul><li><a href="llm-kit/fixtures">tests/llm-kit/fixtures</a> -- codex JSON streams, cross-state, job and pipeline schema fixtures</li><li><a href="llm-kit/goldens/cli">tests/llm-kit/goldens/cli</a> -- golden JSON files the CLI tests compare against</li><li><a href="llm-kit/graph">tests/llm-kit/graph</a> -- graph module tests and their fixtures (beta, beta_ops, viewer project tree)</li></ul></section><section><h2>Packaging and scripts</h2><ul><li><a href="packaging">tests/packaging</a> -- packaging tests and probes</li><li><a href="repo-scripts">tests/repo-scripts</a> -- repo script tests</li></ul></section><section><h2>Shared setup</h2><ul><li><a href="conftest.py">tests/conftest.py</a> -- pycache isolation for the whole suite</li><li><a href="llm-kit/conftest.py">tests/llm-kit/conftest.py</a> -- llm-kit path setup and ambient-state scrub</li><li><a href="contracts/conftest.py">tests/contracts/conftest.py</a> -- contracts fixtures; imports from the source tree, never an installed copy</li></ul></section>
+</main>
+<script>
+if (window.parent !== window) {
+  window.parent.postMessage({
+    type: "index-pages:announce",
+    version: 1,
+    directory: "tests",
+    file: "index.html",
+    kind: "page",
+    source_sha: "a0a05fe70507d2d8f9d01816a7a0c37318c04057"
+  }, "*");
+  document.addEventListener("click", function (event) {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var el = event.target;
+    while (el && el.nodeName !== "A") el = el.parentNode;
+    if (!el) return;
+    var href = el.getAttribute("href");
+    if (!href) return;
+    if (href.charAt(0) === "#" || href.charAt(0) === "/") return;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) return;
+    var target = href.split("#")[0].split("?")[0];
+    if (!target) return;
+    if (/(^|\/)index-page(\.[^/]+)?\.html$/.test(target)) return;
+    var parts = "tests".split("/");
+    if (parts.length === 1 && parts[0] === ".") parts = [];
+    var segs = target.split("/");
+    for (var i = 0; i < segs.length; i++) {
+      if (segs[i] === "" || segs[i] === ".") continue;
+      if (segs[i] === "..") { parts.pop(); continue; }
+      parts.push(segs[i]);
+    }
+    event.preventDefault();
+    window.parent.postMessage({
+      type: "index-pages:navigate",
+      version: 1,
+      path: parts.join("/")
+    }, "*");
+  });
+}
+</script>
+</body>
+</html>

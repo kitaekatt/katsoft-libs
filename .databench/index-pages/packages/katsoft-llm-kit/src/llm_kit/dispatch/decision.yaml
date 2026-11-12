@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/dispatch",
+  "decision": "none",
+  "source_sha": "4ef7d5712f664dcee32ad0b228e42fc4013613c1",
+  "input_sha256": "af4a2fb4cd90aaa623235a4580c2ef469e0e71e545c36b86acb52655eb05aed7",
+  "input_shape_sha256": "e2efc4c74729122b3b44aaaee51a28ff321b7049f88f700b932eca50c80c9b38",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

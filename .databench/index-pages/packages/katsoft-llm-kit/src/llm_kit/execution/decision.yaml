@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/execution",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "e2848c20988472fe7a05fe9bcc7bb639a0079f39789234db4d2fdb85e418f49c",
+  "input_shape_sha256": "0525b96523416282443296f63b45049a86f6f986b55593240636b7806c78f2b8",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

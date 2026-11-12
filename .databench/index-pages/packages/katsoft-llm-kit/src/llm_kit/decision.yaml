@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit",
+  "decision": "page",
+  "source_sha": "a0a05fe70507d2d8f9d01816a7a0c37318c04057",
+  "generation_spec_sha256": "8573606e5f3b827eff1eb29578efe854f3b917c38f7e9b9539ce898c925d9fa1",
+  "input_sha256": "e4fceb70a78ea7ba42ddc99603fb959532adf93041d1bf1fa17e7583de1bed8b",
+  "input_shape_sha256": "4b02dc816c54337fb91f96090028972d1b53b34a217c10cd3d14162b72de453a",
+  "dirty": false,
+  "identity": "Multi-backend LLM completion protocol (OpenRouter, Claude, Codex, OpenCode), endpoint and model registry, dispatch and execution, front-door API, graph viewer, CLI, and deployment-mode runtime with bootstrap provisioning guards",
+  "instructions": "",
+  "references": []
+}

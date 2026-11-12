@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/core",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "35b9ce5e2daa5e1d37ee62e310b65f3d61e232ee2dcd703009ed606d50ad2075",
+  "input_shape_sha256": "01d9ca7821d07d03019bf2b73ed628a389abd4f34ef4c58a1cca1a1bd276210e",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

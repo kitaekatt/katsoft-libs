@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/grant.json",
+  "title": "grant",
+  "description": "The grant object (common $defs/grant).",
+  "$ref": "#/$defs/grant",
+  "examples": [
+    {
+      "grant_id": "grt_01JBX3T7Z1Y2X3W4V5U6T7S8R9",
+      "session": "m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+      "verb": "send_message",
+      "targets": [
+        "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11"
+      ],
+      "issued_at": 1793664000.0,
+      "expires_at": 1793664300.0,
+      "uses": 1,
+      "uses_remaining": 1,
+      "origin_proof": {
+        "type": "none"
+      },
+      "state": "live"
+    },
+    {
+      "grant_id": "grt_01JBX3T8READ0000000000000",
+      "session": "m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+      "verb": "list_sessions",
+      "targets": [],
+      "issued_at": 1793664000.0,
+      "expires_at": 1793664300.0,
+      "uses": 8,
+      "uses_remaining": 7,
+      "origin_proof": {
+        "type": "none"
+      },
+      "state": "live"
+    }
+  ]
+}

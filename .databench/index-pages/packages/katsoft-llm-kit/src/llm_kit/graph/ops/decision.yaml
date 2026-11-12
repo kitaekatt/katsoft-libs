@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/graph/ops",
+  "decision": "none",
+  "source_sha": "fbcde6b6c5ba808e9c053ba7c9fedafd07588a37",
+  "input_sha256": "9656493760bda4af0f8edeb1458ea062def15e97a12f6ffbb5ae396c2c776d93",
+  "input_shape_sha256": "238ae8a7da71e1d8f7cdbd26391da3cf6a6d3fa58cafcc340ff833c567ec0f34",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

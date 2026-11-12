@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/list_machines.request.json",
+  "title": "list_machines params",
+  "description": "Machines with relay status and last contact. Request params (strict).",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false,
+  "examples": [
+    {}
+  ]
+}

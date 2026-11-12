@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/core/validate",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "f56d804fd2ed41c38b5620be9a235b190274be5995a767c1132cdadb2dfccc2e",
+  "input_shape_sha256": "7fc02eebb0ebebb6869e9b2feeeb06f8c85975801d7e41ff7ca8e0c011598eee",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

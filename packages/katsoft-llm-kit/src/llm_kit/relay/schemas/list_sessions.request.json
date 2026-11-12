@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/list_sessions.request.json",
+  "title": "list_sessions params",
+  "description": "Sessions with address, cwd, title, task and state. Request params (strict).",
+  "type": "object",
+  "properties": {
+    "machine": {
+      "$ref": "#/$defs/machine_label"
+    },
+    "harness": {
+      "$ref": "#/$defs/session_harness"
+    },
+    "state": {
+      "$ref": "#/$defs/session_state"
+    }
+  },
+  "required": [],
+  "additionalProperties": false,
+  "examples": [
+    {},
+    {
+      "machine": "m5pro",
+      "harness": "claude",
+      "state": "live-accepting"
+    }
+  ]
+}

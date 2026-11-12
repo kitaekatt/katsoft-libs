@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/read_session.request.json",
+  "title": "read_session params",
+  "description": "A capped, redacted tail of one session. Request params (strict).",
+  "type": "object",
+  "properties": {
+    "address": {
+      "$ref": "#/$defs/target"
+    },
+    "since": {
+      "$ref": "#/$defs/cursor"
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 200
+    }
+  },
+  "required": [
+    "address"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "address": "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11"
+    },
+    {
+      "address": "task:plugins-kit/harness-messaging",
+      "since": "c:1204",
+      "limit": 50
+    }
+  ]
+}

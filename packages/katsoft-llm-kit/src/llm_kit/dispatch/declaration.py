@@ -30,6 +30,14 @@ order. The first usable entry of the ordered list is the default. An
 unattended caller takes it; an in-session caller may choose any usable entry
 and announces the choice.
 
+A ``frontdoor: true`` entry stands for its routing group (R39): when the front
+door is not usable, its group members follow it in ``routing.order``, each
+classified like a declared entry and marked ``via`` the front door, and pace
+never reorders a member across its group's boundary. A failed call moves its
+unit on (R40, R41) only for the reasons :func:`fallthrough_reason` names; the
+callers that own their call share :class:`Reselector` and
+:func:`call_with_fallthrough` for it.
+
 ``pace = remaining / window_remaining``: 100% is exactly on pace. The number
 comes from an UNPINNED read at render time, while the status, ``usable`` and
 the default come from the session-pinned verdict
@@ -43,6 +51,7 @@ import inspect
 import os
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -60,11 +69,26 @@ from llm_kit.registry.adapter_names import (
 )
 from llm_kit.registry.constants import cli_command
 from llm_kit.completion.contract import OutputContractViolation, contract_requirements, merge_requirements
-from llm_kit.completion.halt import HALT_INSUFFICIENT_CREDIT, HALT_QUOTA
+from llm_kit.completion.halt import (
+    ENDPOINT_TIMEOUT,
+    ENDPOINT_UNREACHABLE,
+    HALT_BACKPRESSURE,
+    HALT_INSUFFICIENT_CREDIT,
+    HALT_QUOTA,
+    classify_backpressure,
+    classify_endpoint_failure,
+    is_frontdoor_group_exhausted,
+)
 from llm_kit.completion.skill_context import skill_context_requirements
 from llm_kit.completion.types import BackendOptions
 from llm_kit.dispatch.observer import ExecutionObserver
-from llm_kit.registry.model_endpoints import HARNESS_KIND, TRANSPORT_KIND, EndpointEntry, EndpointRegistryError
+from llm_kit.registry.model_endpoints import (
+    HARNESS_KIND,
+    TRANSPORT_KIND,
+    EndpointEntry,
+    EndpointRegistryError,
+    frontdoor_group_members,
+)
 from llm_kit.registry.models import EndpointResolveError, claude_cli_alias
 from llm_kit.dispatch.reachability import (
     DEFAULT_VERIFY_TIMEOUT_S,
@@ -275,6 +299,26 @@ def order_by_pace(
     return ordered
 
 
+def _order_blocks(states: Sequence[Any]) -> List[Any]:
+    """:func:`order_by_pace` over declaration blocks, never across one.
+
+    A block is one declared entry plus the front-door group members expanded
+    after it (all share its ``declared_index``). Blocks move by the pace of
+    their declared entry; inside a block the members keep their walk order
+    (``routing.order``), so a paced member can never overtake its front door
+    or a later declared entry. ``states`` arrive in slot order. Without a
+    front door every block is one entry and this is :func:`order_by_pace`.
+    """
+    blocks: Dict[int, List[Any]] = {}
+    for state in states:
+        blocks.setdefault(state.declared_index, []).append(state)
+    ordered_blocks = order_by_pace(
+        [blocks[index] for index in sorted(blocks)],
+        pace=lambda block: block[0].pace if block[0].via is None else None,
+    )
+    return [state for block in ordered_blocks for state in block]
+
+
 def _format_reset(resets_at: Optional[int]) -> str:
     if resets_at is None:
         return "an unknown time"
@@ -283,7 +327,12 @@ def _format_reset(resets_at: Optional[int]) -> str:
 
 @dataclass(frozen=True)
 class Disposition:
-    """What happened to one declared entry. Read only by floor handling."""
+    """What happened to one declared entry. Read only by floor handling.
+
+    ``via`` is set on a front-door group member that :func:`describe` added
+    after its front-door entry (R39); ``declared_index`` is then that front
+    door's index. None for every declared entry.
+    """
 
     id: str
     declared_index: int
@@ -291,12 +340,14 @@ class Disposition:
     detail: str = ""
     resets_at: Optional[int] = None
     cost_class: Optional[str] = None
+    via: Optional[str] = None
 
     def describe_line(self) -> str:
         text = self.disposition
         if self.disposition == DISPOSITION_OUT_OF_QUOTA:
             text += f" until {_format_reset(self.resets_at)}"
-        return f"{self.id}: {text}" + (f" ({self.detail})" if self.detail else "")
+        line = f"{self.id}: {text}" + (f" ({self.detail})" if self.detail else "")
+        return line + (f" [via {self.via}]" if self.via else "")
 
     def to_json(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {
@@ -308,12 +359,18 @@ class Disposition:
         }
         if self.cost_class is not None:
             data["cost_class"] = self.cost_class
+        if self.via is not None:
+            data["via"] = self.via
         return data
 
 
 @dataclass(frozen=True)
 class EntryState:
-    """One rendered entry. ``usable`` gates selection; the rest is information."""
+    """One rendered entry. ``usable`` gates selection; the rest is information.
+
+    ``via`` names the front-door entry a group member was expanded from (R39);
+    None for a declared entry.
+    """
 
     id: str
     declared_index: int
@@ -337,6 +394,7 @@ class EntryState:
     resets_at: Optional[int] = None
     pool: Optional[str] = None
     reachability_detail: str = ""
+    via: Optional[str] = None
 
     @property
     def status_text(self) -> str:
@@ -361,7 +419,7 @@ class EntryState:
         return label
 
     def to_json(self) -> Dict[str, Any]:
-        return {
+        data: Dict[str, Any] = {
             "id": self.id,
             "declared_index": self.declared_index,
             "resolved": self.resolved,
@@ -381,6 +439,9 @@ class EntryState:
             "default": self.default,
             "is_self": self.is_self,
         }
+        if self.via is not None:
+            data["via"] = self.via
+        return data
 
 
 @dataclass(frozen=True)
@@ -453,6 +514,12 @@ class Ranking:
     :meth:`render` adds one ``Switched off:`` line and :meth:`to_json` adds a
     ``"switched_off"`` key; when it is empty (always, without ``allow``) the
     output is byte-identical to a build without the filter.
+
+    ``expanded_names`` is the declaration with every front-door entry followed
+    by its group members (R39), deduplicated: the full ordered set of ids a
+    unit may be dispatched to, whatever is usable now. It is never emitted
+    (it may carry hidden ids); :func:`run` sizes its default attempt limit
+    from it.
     """
 
     names: tuple = field(repr=False)
@@ -463,6 +530,7 @@ class Ranking:
     # Entries switched off by the cost-class allow filter. They are SHOWN (render
     # and to_json name them when non-empty), never hidden; empty leaves output unchanged.
     switched_off: tuple = field(default=(), repr=False)
+    expanded_names: tuple = field(default=(), repr=False)
 
     @property
     def default(self) -> Optional[EntryState]:
@@ -488,6 +556,8 @@ class Ranking:
                 line += f"   {marks}"
             if entry.shares_quota_with:
                 line += f"  shares {entry.pool} with {', '.join(entry.shares_quota_with)}"
+            if entry.via:
+                line += f"  via {entry.via}"
             lines.append(line)
         if self.switched_off:
             lines.append(
@@ -682,6 +752,7 @@ def describe(
     consent_policy: Optional[Any] = None,
     discovery: bool = False,
     harness_auth: Optional[Mapping[str, Any]] = None,
+    exclude_groups: Iterable[str] = (),
 ) -> Ranking:
     """Classify, filter, pace-order and default a declaration.
 
@@ -742,6 +813,30 @@ def describe(
     unless ``discovery=True`` is also passed. With none of the three nothing is
     classified and the result is unchanged.
 
+    Front-door expansion (R39). A declared entry marked ``frontdoor: true``
+    (a transport whose ``model`` names a routing group) is followed by that
+    group's members (:func:`~llm_kit.registry.model_endpoints.frontdoor_group_members`:
+    transport entries whose ``routing.group`` is the group, by
+    ``routing.order``). A member the declaration names itself keeps its own
+    slot, and a member already added after an earlier front door is not
+    repeated; :attr:`Ranking.expanded_names` is the result. The members are
+    classified and probed only when the front door is NOT usable -- ruled out
+    (``exclude``), switched off, out of quota or unreachable -- each through
+    every filter a declared entry passes, against its own registry entry. A
+    usable front door is probed exactly as before and its members are neither
+    classified, probed, rendered nor itemised. An expanded member carries
+    ``via`` (the front door's id) on its :class:`EntryState` and
+    :class:`Disposition` and shares the front door's ``declared_index``; the
+    render appends ``via <id>`` to its line. Pace ordering moves a front door
+    and its members as one block, so the order is the front door, its members
+    in ``routing.order``, then the next declared entry.
+
+    ``exclude_groups`` names front-door entries that reported their whole group
+    failed (:data:`FALLTHROUGH_GROUP_EXHAUSTED`): every member of each one's
+    group -- expanded or declared -- is ruled out like ``exclude``, with the
+    detail ``"<front door> reported its group exhausted"``. The front door
+    itself is ruled out only by ``exclude``.
+
     Raises :class:`NoUsableRoutingTarget` when nothing usable remains, and
     ``bootstrap_lib.model_declaration.DeclarationError`` for a structurally
     invalid declaration (empty, duplicate, non-string). Skipping is silent.
@@ -791,41 +886,69 @@ def describe(
         advertised = dict(capabilities if capabilities is not None else adapter_capabilities())
         matcher = match_capabilities
 
-    dispositions: Dict[int, Disposition] = {}
-    candidates: List[Dict[str, Any]] = []
+    # R39: each declared front-door entry is followed by its group's members, in
+    # walk order. An id the caller declared itself keeps its own slot (explicit
+    # wins); a member claimed by an earlier front door is not repeated. The
+    # expansion is made whatever the front door's own disposition, so a front door
+    # ruled out at run time, switched off by ``allow`` or found down still leaves
+    # its members selectable.
+    explicit = set(declared)
+    claimed: set = set()
+    slots: List[tuple] = []  # (name, declared index, via)
     for index, name in enumerate(declared):
+        slots.append((name, index, None))
+        for member in frontdoor_group_members(entries.get(name), entries):
+            if member in explicit or member in claimed:
+                continue
+            claimed.add(member)
+            slots.append((member, index, name))
+    expanded_names = tuple(slot[0] for slot in slots)
+    group_ruled_out: Dict[str, str] = {}
+    for door in exclude_groups:
+        for member in frontdoor_group_members(entries.get(door), entries):
+            group_ruled_out.setdefault(member, f"{door} reported its group exhausted")
+
+    dispositions: Dict[int, Disposition] = {}  # keyed by slot position
+    candidates: List[Dict[str, Any]] = []
+
+    def classify_slot(pos: int, name: str, index: int, via: Optional[str]) -> None:
         def settle(
             disposition: str, detail: str = "", resets_at: Optional[int] = None,
             cost_class: Optional[str] = None,
         ) -> None:
-            dispositions[index] = Disposition(name, index, disposition, detail, resets_at, cost_class)
+            dispositions[pos] = Disposition(
+                name, index, disposition, detail, resets_at, cost_class, via=via
+            )
 
         if name in excluded:
             settle(DISPOSITION_EXCLUDED, "ruled out by the caller")
-            continue
+            return
+        if name in group_ruled_out:
+            settle(DISPOSITION_EXCLUDED, group_ruled_out[name])
+            return
         merged = entries.get(name)
         shadow = check_registry_entry(name, merged)
         if shadow is not None:
             settle(DISPOSITION_SHADOWED_CORE, shadow)
-            continue
+            return
         selection = None
         if backend_factory is not None:
             try:
                 selection = _call_factory(backend_factory, name, root)
             except (EndpointResolveError, EndpointRegistryError) as exc:
                 settle(DISPOSITION_UNROUTABLE if merged is not None else DISPOSITION_UNRESOLVED, str(exc))
-                continue
+                return
         elif merged is None:
             if injected:
                 settle(DISPOSITION_UNRESOLVED, "no registry entry")
-                continue
+                return
             from llm_kit.dispatch.factory import create_backend  # noqa: PLC0415
 
             try:
                 selection = _call_factory(create_backend, name, root)
             except (EndpointResolveError, EndpointRegistryError) as exc:
                 settle(DISPOSITION_UNRESOLVED, str(exc))
-                continue
+                return
         kind = getattr(merged, "kind", None) or getattr(selection, "kind", None) or TRANSPORT_KIND
         harness = getattr(merged, "harness", None)
         backend_name = getattr(getattr(selection, "backend", None), "name", None)
@@ -838,12 +961,12 @@ def describe(
                 "a transport entry has no agent loop" if kind != HARNESS_KIND
                 else f"harness {harness!r} has no in-session drive",
             )
-            continue
+            return
         if caller == CALLER_PROCESS and kind == HARNESS_KIND and selection is None and (
             (harness or "").lower() not in _HARNESS_ADAPTERS
         ):
             settle(DISPOSITION_UNROUTABLE, f"harness {harness!r} has no completion backend")
-            continue
+            return
         verdict = None
         if classifying:
             if isinstance(auth, _LazyHarnessAuth) and kind == HARNESS_KIND:
@@ -858,7 +981,7 @@ def describe(
                     detail,
                     cost_class=verdict.cost_class,
                 )
-                continue
+                return
         if matcher is not None:
             adapter = backend_name if isinstance(backend_name, str) else _adapter_name(kind, harness)
             record = lookup_by_adapter(advertised, adapter) if adapter else None
@@ -873,12 +996,12 @@ def describe(
                 record = endpoint_capabilities(record, profile_from_entry(merged))
             if record is None or not matcher(record, requirements):
                 settle(DISPOSITION_REQUIREMENTS_MISMATCH, f"adapter {adapter!r}")
-                continue
+                return
         spec = getattr(merged, "conserve_usage", None)
         pinned = pinned_evaluate(name, spec, harness) if spec is not None else None
         candidate = {
-            "index": index, "name": name, "merged": merged, "kind": kind,
-            "harness": harness, "backend_name": backend_name, "spec": spec,
+            "pos": pos, "index": index, "via": via, "name": name, "merged": merged,
+            "kind": kind, "harness": harness, "backend_name": backend_name, "spec": spec,
             "pinned": pinned, "model": getattr(merged, "model", None) or getattr(selection, "model", None),
             "verdict": verdict,
         }
@@ -886,18 +1009,42 @@ def describe(
             settle(DISPOSITION_OUT_OF_QUOTA, pinned.detail, pinned.resets_at)
         candidates.append(candidate)
 
-    # Probe only what can still be dispatched: hidden and out-of-quota
-    # entries gain nothing from a reachability verdict.
-    to_probe = {
-        c["name"]: {"kind": c["kind"], "harness": c["harness"]}
-        for c in candidates
-        if c["index"] not in dispositions
-        and (reachability_cache is None or c["name"] not in reachability_cache)
+    known: Dict[str, Reachability] = dict(reachability_cache or {})
+
+    def probe(stage: Iterable[Dict[str, Any]]) -> None:
+        # Probe only what can still be dispatched: hidden and out-of-quota
+        # entries gain nothing from a reachability verdict.
+        to_probe = {
+            c["name"]: {"kind": c["kind"], "harness": c["harness"]}
+            for c in stage
+            if c["pos"] not in dispositions
+            and (reachability_cache is None or c["name"] not in reachability_cache)
+        }
+        probed = check_many(to_probe, timeout=DEFAULT_VERIFY_TIMEOUT_S, project_root=root) if to_probe else {}
+        if reachability_cache is not None:
+            reachability_cache.update(probed)
+        known.update(probed)
+
+    # Stage 1: the declared entries, exactly as without front-door expansion.
+    for pos, (name, index, via) in enumerate(slots):
+        if via is None:
+            classify_slot(pos, name, index, via)
+    probe(candidates)
+
+    # Stage 2 (D1): a front door's members are classified and probed only when
+    # the front door itself is not usable, so a healthy front door costs no
+    # member probe and keeps every unit.
+    usable_doors = {
+        c["name"] for c in candidates
+        if c["pos"] not in dispositions
+        and getattr(known.get(c["name"]), "status", STATUS_UNKNOWN) != STATUS_UNREACHABLE
     }
-    probed = check_many(to_probe, timeout=DEFAULT_VERIFY_TIMEOUT_S, project_root=root) if to_probe else {}
-    if reachability_cache is not None:
-        reachability_cache.update(probed)
-    known: Mapping[str, Reachability] = {**(reachability_cache or {}), **probed}
+    first_member = len(candidates)
+    for pos, (name, index, via) in enumerate(slots):
+        if via is not None and via not in usable_doors:
+            classify_slot(pos, name, index, via)
+    probe(candidates[first_member:])
+    candidates.sort(key=lambda c: c["pos"])
 
     self_model = None
     if self_ref is not None:
@@ -910,16 +1057,18 @@ def describe(
 
     states: List[EntryState] = []
     for c in candidates:
-        index, name, merged = c["index"], c["name"], c["merged"]
+        pos, index, name, merged = c["pos"], c["index"], c["name"], c["merged"]
         pinned = c["pinned"]
-        out_of_quota = index in dispositions
+        out_of_quota = pos in dispositions
         reach = None if out_of_quota else known.get(name)
         reach_status = reach.status if reach is not None else STATUS_UNKNOWN
         if not out_of_quota:
             if reach_status == STATUS_UNREACHABLE:
-                dispositions[index] = Disposition(name, index, DISPOSITION_UNREACHABLE, reach.detail)
+                dispositions[pos] = Disposition(
+                    name, index, DISPOSITION_UNREACHABLE, reach.detail, via=c["via"]
+                )
             else:
-                dispositions[index] = Disposition(name, index, DISPOSITION_USABLE)
+                dispositions[pos] = Disposition(name, index, DISPOSITION_USABLE, via=c["via"])
         fresh = None
         if c["spec"] is not None and not out_of_quota:
             fresh = _fresh_reading(name, c["spec"], c["harness"])
@@ -940,7 +1089,7 @@ def describe(
             reachability=reach_status,
             usability=pinned.status if pinned is not None else None,
             pace=pace,
-            usable=dispositions[index].disposition == DISPOSITION_USABLE,
+            usable=dispositions[pos].disposition == DISPOSITION_USABLE,
             is_self=self_ref is not None and (name == self_ref or c["model"] == self_model),
             pace_note=note,
             remaining=fresh.remaining if fresh is not None else None,
@@ -948,11 +1097,12 @@ def describe(
             resets_at=pinned.resets_at if pinned is not None else None,
             pool=c["spec"].pool if c["spec"] is not None else None,
             reachability_detail=reach.detail if reach is not None else "",
+            via=c["via"],
             **costed,
         ))
 
-    ordered_dispositions = tuple(dispositions[i] for i in range(len(declared)))
-    ordered = order_by_pace(states)
+    ordered_dispositions = tuple(dispositions[pos] for pos in sorted(dispositions))
+    ordered = _order_blocks(states)
     if not any(state.usable for state in ordered):
         raise NoUsableRoutingTarget(declared, ordered_dispositions, caller)
 
@@ -981,10 +1131,188 @@ def describe(
         switched_off=tuple(
             d for d in ordered_dispositions if d.disposition == DISPOSITION_SWITCHED_OFF
         ),
+        expanded_names=expanded_names,
     )
     if discovery or consent_policy is not None:
         return DiscoveryRanking(consent=_consent_note(consent_policy), **ranking_fields)
     return Ranking(**ranking_fields)
+
+
+# ---------------------------------------------------------------------------
+# Fall-through: one unit moving to the next endpoint (R40, R41)
+# ---------------------------------------------------------------------------
+
+#: The endpoint answered that it is busy (``classify_backpressure``, or a
+#: ``kind == "backpressure"`` halt): skipped for this unit, no quota recorded.
+FALLTHROUGH_BUSY = "busy"
+#: The endpoint could not be connected to (refused, DNS failure, connect
+#: timeout): skipped, and remembered as unreachable by the :class:`Reselector`.
+FALLTHROUGH_UNREACHABLE = ENDPOINT_UNREACHABLE
+#: The request timed out after connecting: skipped for this unit only.
+FALLTHROUGH_TIMEOUT = ENDPOINT_TIMEOUT
+#: A front door answered that every deployment of its group failed
+#: (:func:`~llm_kit.completion.halt.is_frontdoor_group_exhausted`): the unit
+#: moves past the front door AND its group's members -- the front door already
+#: tried them -- to the next declared entry. Not remembered past the unit.
+FALLTHROUGH_GROUP_EXHAUSTED = "group-exhausted"
+
+
+def fallthrough_reason(exc: BaseException, *, caller_deadline: bool = False) -> Optional[str]:
+    """Why a failed call moves its unit to the next endpoint, or None when it must not.
+
+    :data:`FALLTHROUGH_BUSY` for transient overload (an HTTP 429/503 that
+    :func:`~llm_kit.completion.halt.classify_backpressure` marks, or an
+    exception carrying ``kind == "backpressure"``), else the endpoint
+    transport verdict of
+    :func:`~llm_kit.completion.halt.classify_endpoint_failure`
+    (:data:`FALLTHROUGH_UNREACHABLE` or :data:`FALLTHROUGH_TIMEOUT`). Anything
+    else -- a client configuration error, a bad or refused response, a model
+    error, a programming error -- is None and must fail the unit where it is.
+    The one bad response that does move it is the front door's own
+    group-exhausted 502 (:data:`FALLTHROUGH_GROUP_EXHAUSTED`); every other 502
+    or 5xx stays a failed call.
+
+    ``caller_deadline`` is True when the call carried the caller's own
+    ``timeout_s``. A timeout after the connection was made is then the
+    caller's budget expiring, not evidence about the endpoint (the rule "a
+    caller that sets the deadline owns the timeout"), so it is None; a
+    connect-phase timeout is still :data:`FALLTHROUGH_UNREACHABLE`.
+    """
+    if getattr(exc, "kind", None) == HALT_BACKPRESSURE or classify_backpressure(exc) is not None:
+        return FALLTHROUGH_BUSY
+    if is_frontdoor_group_exhausted(exc):
+        return FALLTHROUGH_GROUP_EXHAUSTED
+    verdict = classify_endpoint_failure(exc)
+    if caller_deadline and verdict == FALLTHROUGH_TIMEOUT:
+        return None
+    return verdict
+
+
+class Reselector:
+    """Re-selection for one declaration after a fall-through failure: describe again, minus what failed.
+
+    The one mechanism every declaration caller that owns its own call uses --
+    :func:`run`, the pipeline's declaration backend and the code-review lane.
+    It holds the reachability cache :func:`describe` reads and fills, so an
+    entry is probed once for the Reselector's life, and the ids it has
+    :meth:`record`-ed as unreachable, which every later selection rules out.
+    ``skip`` rules ids out for one selection only (a busy endpoint, or one
+    that already failed this unit). ``exclude`` is the caller's own
+    exclusion, applied to every selection. Every other keyword is passed to
+    :func:`describe` unchanged; the caller defaults to a process caller.
+
+    Thread-safe: selections and records are serialized, so a shared instance
+    may serve concurrent calls.
+    """
+
+    def __init__(
+        self,
+        names: Any,
+        *,
+        exclude: Iterable[str] = (),
+        reachability_cache: Optional[MutableMapping[str, Reachability]] = None,
+        **describe_kwargs: Any,
+    ) -> None:
+        if isinstance(names, (list, tuple)):
+            names = list(names)
+        self._names = names
+        self._exclude = frozenset(exclude)
+        self._cache: MutableMapping[str, Reachability] = (
+            {} if reachability_cache is None else reachability_cache
+        )
+        describe_kwargs.setdefault("caller", CALLER_PROCESS)
+        self._kwargs = describe_kwargs
+        self._unreachable: Dict[str, str] = {}
+        self._lock = threading.RLock()
+
+    @property
+    def unreachable(self) -> frozenset:
+        """Ids recorded unreachable so far; every selection rules them out."""
+        with self._lock:
+            return frozenset(self._unreachable)
+
+    def ranking(self, skip: Iterable[str] = (), exclude_groups: Iterable[str] = ()) -> Ranking:
+        """:func:`describe` with the caller's exclusion, every recorded failure and ``skip`` ruled out.
+
+        ``exclude_groups`` (front doors that reported their group exhausted)
+        is passed to :func:`describe` for this selection only.
+        """
+        with self._lock:
+            exclude = set(self._exclude) | set(self._unreachable) | set(skip)
+            return describe(
+                self._names, exclude=exclude, reachability_cache=self._cache,
+                exclude_groups=tuple(exclude_groups), **self._kwargs
+            )
+
+    def select(self, skip: Iterable[str] = (), exclude_groups: Iterable[str] = ()) -> EntryState:
+        """The default of :meth:`ranking`; :class:`NoUsableRoutingTarget` when none remains."""
+        default = self.ranking(skip, exclude_groups).default
+        assert default is not None  # describe() raises the floor otherwise
+        return default
+
+    def record(self, entry_id: str, reason: Optional[str], detail: str = "") -> None:
+        """Remember a failure. Only :data:`FALLTHROUGH_UNREACHABLE` outlives the unit.
+
+        An unreachable entry is written to the reachability cache (``checked:
+        "dispatch"``) and ruled out of every later selection; a busy or
+        timed-out entry is not remembered, since both clear on their own.
+        """
+        if reason != FALLTHROUGH_UNREACHABLE:
+            return
+        with self._lock:
+            self._unreachable[entry_id] = detail
+            self._cache[entry_id] = Reachability(
+                status=STATUS_UNREACHABLE, checked="dispatch",
+                detail=detail or "connect failed",
+            )
+
+
+def call_with_fallthrough(
+    reselector: Reselector,
+    call: Callable[[Any], Any],
+    *,
+    first: Any,
+    classify: Callable[[BaseException], Optional[str]] = fallthrough_reason,
+    on_fallthrough: Optional[Callable[[EntryState, str, BaseException], None]] = None,
+) -> Any:
+    """Run ``call(first)``; on a fall-through failure run ``call`` on the next endpoint.
+
+    ``classify`` (default :func:`fallthrough_reason`) decides each failure:
+    None re-raises it unchanged; any reason records it on ``reselector``
+    (:meth:`Reselector.record`), rules the entry out for the rest of this
+    unit, reports it to ``on_fallthrough`` and selects again. A
+    :data:`FALLTHROUGH_GROUP_EXHAUSTED` failure also rules out that front
+    door's whole group for the unit. When no usable entry remains, the LAST
+    endpoint's own exception propagates -- not the floor -- so the caller
+    classifies it exactly as it would without fall-through. Each entry is
+    called at most once per unit. ``first`` is the entry to call first (an
+    :class:`EntryState`, or any object with the entry's ``id``).
+    """
+    entry = first
+    skip: set = set()
+    exhausted_doors: set = set()
+    while True:
+        try:
+            return call(entry)
+        except Exception as exc:  # noqa: BLE001 -- classified below, re-raised when not ours
+            reason = classify(exc)
+            if reason is None:
+                raise
+            failure = exc
+        reselector.record(entry.id, reason, f"{type(failure).__name__}: {failure}")
+        skip.add(entry.id)
+        if reason == FALLTHROUGH_GROUP_EXHAUSTED:
+            exhausted_doors.add(entry.id)
+        if on_fallthrough is not None:
+            on_fallthrough(entry, reason, failure)
+        try:
+            entry = reselector.select(skip, exhausted_doors)
+        except NoUsableRoutingTarget:
+            exhausted = True
+        else:
+            exhausted = False
+        if exhausted:
+            raise failure
 
 
 # ---------------------------------------------------------------------------
@@ -1106,7 +1434,7 @@ def run(
     project_root: Optional[str | Path] = None,
     requirements: Any = None,
     exclude: Iterable[str] = (),
-    max_attempts: int = 1,
+    max_attempts: Optional[int] = None,
     on_attempt: Optional[Callable[[Attempt], None]] = None,
     capabilities: Optional[Mapping[str, Any]] = None,
     backend_factory: Optional[Callable[..., Any]] = None,
@@ -1120,12 +1448,32 @@ def run(
     For callers with NO loop of their own. Each execution is reported through
     ``on_attempt`` and counted against ``max_attempts``, which limits
     executions only: reaching it is ``RUN_ATTEMPT_LIMIT``, never the floor.
+    ``max_attempts`` None (the default) allows one execution per id of the
+    expanded declaration (:attr:`Ranking.expanded_names` of the first
+    selection: the declared ids plus every front door's group members), so
+    every endpoint can be tried once; an explicit value is the limit as given.
+    Reachability probes are not executions and count against nothing.
     A quota or credit halt writes the entry's verdict back, and every entry
     sharing its quota pool with it
     (:func:`~.usage_budget.record_observed_halt`, when it declares
     ``conserve_usage``); every classified halt and every launch failure
     excludes the entry for the rest of the run, and :func:`describe` is called
-    again. A task error stays a failed attempt. When ``request.workspace``
+    again (through a :class:`Reselector`). A launch failure is a
+    ``FileNotFoundError`` or ``ConnectionError``, or an endpoint transport
+    failure (:func:`fallthrough_reason`: a refused connection, a DNS failure,
+    a timeout -- R40 -- except a post-connect timeout of a request that set
+    its own ``timeout_s``, which stays a failed attempt), or a front door's
+    group-exhausted 502, after which its group's members are skipped too and
+    the next declared entry is tried; one that could not
+    connect also marks the entry unreachable in the reachability cache. A busy
+    endpoint (the ``backpressure`` halt, R41, also when only
+    :func:`fallthrough_reason` recognises it) is excluded like any classified
+    halt and records no quota verdict. A task error stays a failed attempt.
+
+    A transport entry's call is made with ``options.max_retries=0`` when the
+    request leaves ``max_retries`` unset, so a busy or unreachable endpoint
+    hands the unit on at once instead of waiting through SDK retries; an
+    explicit ``max_retries`` is sent as given. When ``request.workspace``
     names a git work tree, it is reset to its launch state before any
     re-selection, and a workspace that cannot be reset ends the run rather
     than layering a second model on the first one's partial edits.
@@ -1183,7 +1531,7 @@ def run(
     :class:`NoUsableRoutingTarget` before any backend call. Without ``allow``
     nothing is classified or probed.
     """
-    if max_attempts < 1:
+    if max_attempts is not None and max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
     allow_set = _cost.normalize_allow(allow) if allow is not None else None
     allow_kwargs: Dict[str, Any] = {}
@@ -1204,8 +1552,15 @@ def run(
     root = str(project_root) if project_root is not None else None
     if backend_factory is None:
         from llm_kit.dispatch.factory import create_backend as backend_factory  # noqa: PLC0415
-    cache: MutableMapping[str, Reachability] = {} if reachability_cache is None else reachability_cache
-    excluded = set(exclude)
+    reselector = Reselector(
+        names, exclude=exclude, reachability_cache=reachability_cache,
+        project_root=root, caller=CALLER_PROCESS, requirements=requirements,
+        capabilities=capabilities, backend_factory=backend_factory, entries=entries,
+        **allow_kwargs,
+    )
+    excluded: set = set()  # every entry that halted or failed to launch in this run
+    exhausted_doors: set = set()  # front doors that reported their whole group failed
+    limit = max_attempts
     attempts: List[Attempt] = []
     snapshot: Optional[_WorkspaceSnapshot] = None
     snapshot_error = ""
@@ -1230,14 +1585,13 @@ def run(
 
     while True:
         try:
-            ranking = describe(
-                names, project_root=root, caller=CALLER_PROCESS, requirements=requirements,
-                capabilities=capabilities, backend_factory=backend_factory, exclude=excluded,
-                reachability_cache=cache, entries=entries, **allow_kwargs,
-            )
+            ranking = reselector.ranking(excluded, exhausted_doors)
         except NoUsableRoutingTarget:
             emit("terminal", payload={"state": "unroutable"})
             raise
+        if limit is None:
+            # Sized once, from the first selection's stable expansion.
+            limit = max(1, len(ranking.expanded_names))
         chosen = ranking.default
         assert chosen is not None  # describe() raises the floor otherwise
         number = len(attempts) + 1
@@ -1245,6 +1599,9 @@ def run(
         options = request.options or BackendOptions()
         if options.effort is None and getattr(selection, "effort", None):
             options = replace(options, effort=selection.effort)
+        if chosen.kind == TRANSPORT_KIND and getattr(options, "max_retries", None) is None:
+            # D2: no SDK retry loop in front of the next endpoint.
+            options = replace(options, max_retries=0)
         armed = _armed_call(selection.backend, options, requirements, capabilities)
         backend, options = armed.backend, armed.options
         attempt_fields: Dict[str, Any] = {"attempt_id": str(number)}
@@ -1289,7 +1646,20 @@ def run(
             return finish(RunResult(RUN_FAILED, chosen.id, exc.response, tuple(attempts), f"task error: {exc}"))
         except Exception as exc:  # noqa: BLE001 -- transports raise heterogeneous types
             halt = backend.classify_halt(exc)
-            launch = halt is None and isinstance(exc, _LAUNCH_ERRORS)
+            endpoint_failure = None
+            if halt is None:
+                reason = fallthrough_reason(
+                    exc, caller_deadline=getattr(options, "timeout_s", None) is not None
+                )
+                if reason == FALLTHROUGH_BUSY:
+                    # Overload the backend's own classifier did not name: the
+                    # same backpressure halt (excluded, no quota verdict).
+                    halt = HALT_BACKPRESSURE
+                elif reason is not None:
+                    endpoint_failure = reason
+            launch = halt is None and (
+                isinstance(exc, _LAUNCH_ERRORS) or endpoint_failure is not None
+            )
             halted_payload: Dict[str, Any] = {"status": "halted"}
             halted_payload.update({"halt": halt} if halt else {"reason": "launch"})
             if halt is None and not launch:
@@ -1309,10 +1679,15 @@ def run(
                         chosen.id, spec, entries=registry,
                         resets_at=getattr(exc, "resets_at", None),
                     )
-            if launch:
-                cache[chosen.id] = Reachability(
-                    status=STATUS_UNREACHABLE, checked="dispatch",
-                    detail=f"launch failed: {type(exc).__name__}: {exc}",
+            if endpoint_failure == FALLTHROUGH_GROUP_EXHAUSTED:
+                # The front door already walked its group: skip its members too.
+                exhausted_doors.add(chosen.id)
+            if launch and endpoint_failure in (None, ENDPOINT_UNREACHABLE):
+                # It could not be started or connected to: unreachable for the
+                # rest of the run. A timeout or an exhausted group only excludes it.
+                reselector.record(
+                    chosen.id, FALLTHROUGH_UNREACHABLE,
+                    f"launch failed: {type(exc).__name__}: {exc}",
                 )
             excluded.add(chosen.id)
             action = ""
@@ -1334,10 +1709,10 @@ def run(
             report(Attempt(chosen.id, number, chosen.pace, halt=halt or "launch",
                            error=str(exc), outcome="halted", workspace_action=action))
             emit("result", payload=halted_payload, **attempt_fields)
-            if len(attempts) >= max_attempts:
+            if len(attempts) >= limit:
                 return finish(RunResult(
                     RUN_ATTEMPT_LIMIT, chosen.id, None, tuple(attempts),
-                    f"attempt limit reached ({max_attempts})",
+                    f"attempt limit reached ({limit})",
                 ))
             continue
         if armed.controls:
@@ -1371,6 +1746,10 @@ __all__ = [
     "DISPOSITION_UNRESOLVED",
     "DISPOSITION_UNROUTABLE",
     "DISPOSITION_USABLE",
+    "FALLTHROUGH_BUSY",
+    "FALLTHROUGH_GROUP_EXHAUSTED",
+    "FALLTHROUGH_TIMEOUT",
+    "FALLTHROUGH_UNREACHABLE",
     "RUN_ATTEMPT_LIMIT",
     "RUN_COMPLETED",
     "RUN_FAILED",
@@ -1382,10 +1761,13 @@ __all__ = [
     "ExecutionObserver",
     "NoUsableRoutingTarget",
     "Ranking",
+    "Reselector",
     "RunRequest",
     "RunResult",
+    "call_with_fallthrough",
     "check_registry_entry",
     "describe",
+    "fallthrough_reason",
     "order_by_pace",
     "run",
 ]

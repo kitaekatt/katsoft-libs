@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline",
+  "decision": "page",
+  "source_sha": "a648c7d30f2bda09563c04ebd36a75ffce220be9",
+  "generation_spec_sha256": "8573606e5f3b827eff1eb29578efe854f3b917c38f7e9b9539ce898c925d9fa1",
+  "input_sha256": "79cf557bcbfb7d71616c6df5d96a5ba341a429b3ebb166fd26ff7232ffb859e8",
+  "input_shape_sha256": "d127cdbc40fa5d772bd164c02737c743a7eec0e045f1e9990c85353d1d9f8d9a",
+  "dirty": false,
+  "identity": "Stage orchestration and durable execution for LLM-in-the-loop batch pipelines: single-pass and convergence-loop shapes, gates, work-unit strategies, and the SQLite-backed run store with its controller and worker protocol.",
+  "instructions": "",
+  "references": []
+}

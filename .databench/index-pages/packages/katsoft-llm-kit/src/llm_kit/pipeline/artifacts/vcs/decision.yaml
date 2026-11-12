@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts/vcs",
+  "decision": "none",
+  "source_sha": "e0046bdda44ae5cb06cd3c7c62f9d72fa218660c",
+  "input_sha256": "cb180108ccfa1cf157d84d37874c05fcaa4882867c393c1f0ea7c66efcf4412c",
+  "input_shape_sha256": "76ccb7593ea4698f215d42ca887ace6af55cc1a22b9d1f3696e8a28a4ab6c118",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

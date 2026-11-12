@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "directory": "tests",
+  "decision": "page",
+  "source_sha": "a0a05fe70507d2d8f9d01816a7a0c37318c04057",
+  "generation_spec_sha256": "8573606e5f3b827eff1eb29578efe854f3b917c38f7e9b9539ce898c925d9fa1",
+  "input_sha256": "ed20dde1f460624ab6107db5a707b2d29e353bc625db0353303d980fb4515b71",
+  "input_shape_sha256": "c5de6c6168ea99d9f922af412cb09103bae1dcb602f51488b929070f60141831",
+  "dirty": false,
+  "identity": "The test suite for katsoft-libs: frozen contract goldens, the llm-kit CLI and adapter behavior, the repoint from legacy plugins into the unified llm-kit package, and packaging.",
+  "instructions": "",
+  "references": []
+}
