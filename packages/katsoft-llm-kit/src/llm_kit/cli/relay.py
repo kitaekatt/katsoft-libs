@@ -51,7 +51,7 @@ Verbs:
     relay launches nothing. Exits 2, spawning nothing, unless relay.yaml holds
     ``enabled: true``, ``--cd`` is not a directory, or ``--resume`` names a thread
     that never ran a turn; exits 1 when the relay does not answer, is older than
-    katsoft-llm-kit 1.20.0 (its ``status`` lists no ``codex`` in ``harnesses``),
+    katsoft-llm-kit 1.19.0 (its ``status`` lists no ``codex`` in ``harnesses``),
     refuses the registration, or the thread is open in another Codex process.
     The first stdout line is the effective policy, hooks included; later lines
     mirror the app-server's events. Defaults: sandbox ``workspace-write`` rooted

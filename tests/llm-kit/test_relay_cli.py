@@ -590,7 +590,7 @@ def test_codex_exits_1_when_the_running_relay_lists_no_codex_harness_and_spawns_
     out = cli(["codex", "--cd", str(paths.tmp / "work"), *paths.args], capsys)
     assert out.code == 1 and out.out == ""
     assert json.loads(out.err)["error"]["message"] == (
-        "the running relay is older than katsoft-llm-kit 1.20.0; restart llm-kit relay serve")
+        "the running relay is older than katsoft-llm-kit 1.19.0; restart llm-kit relay serve")
     assert codex_launcher.launches() == 0
     assert old_relay.client.status({}, origin=f"operator:{LABEL}")["registrations"] == 0
 

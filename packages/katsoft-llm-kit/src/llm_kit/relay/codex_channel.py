@@ -383,7 +383,7 @@ class CodexChannel:
         if "codex" not in (status.get("harnesses") or []):
             raise ChannelExit(
                 EXIT_REFUSED,
-                "the running relay is older than katsoft-llm-kit 1.20.0; restart llm-kit relay serve",
+                "the running relay is older than katsoft-llm-kit 1.19.0; restart llm-kit relay serve",
             )
 
     def run(self) -> int:

@@ -445,7 +445,7 @@ def test_a_relay_without_the_codex_harness_exits_1_and_spawns_nothing(config, ro
         c = Chan(config, old, launcher, tmp_path, monkeypatch).start()
         c.thread.join(10)
         assert isinstance(c.exc, ChannelExit) and c.exc.code == 1
-        assert c.exc.message == "the running relay is older than katsoft-llm-kit 1.20.0; restart llm-kit relay serve"
+        assert c.exc.message == "the running relay is older than katsoft-llm-kit 1.19.0; restart llm-kit relay serve"
         assert launcher.launches() == 0
         assert old.operator("status", {})["registrations"] == 0
     finally:
