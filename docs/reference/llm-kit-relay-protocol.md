@@ -45,6 +45,12 @@ changed; a client of the earlier policy keeps working):
   hub-origin `answer_question` without a grant, for any question (section 3).
   Before, both were `grant_required`. (katsoft-llm-kit 1.14.0 refused hub
   answers `not_opted_in`; 1.15.0 accepts them.)
+- 2026-11-12, authority of a `/direct` message (owner ruling "Yes, count it as
+  me"): a message whose `sender` is a `direct:` origin counts as the owner's
+  own words in the receiving session, as a `claude.ai/<user>` message already
+  did (section 3). Before, it was another session's request. No relay
+  behaviour changed; the receiving session's channel server states the rule
+  (llm-kit plugin 0.20.0).
 
 ## 2. Transport binding
 
@@ -116,16 +122,34 @@ Rules that follow from the table:
   answering any question"), with the refusals a `/direct` answer meets. No
   write path needs only the relay token: a hub write also needs the hub
   bearer (section 20, "Authentication").
-- Authority of a hub message (owner ruling 2026-11-11, decision 7, "let remote
-  count as you"; switched on the same day): a message whose `sender` is
-  `claude.ai/<user>` counts as the owner's own words in the receiving session,
-  gated actions included. A message from any other origin (another session's
-  `direct:` origin, `operator:`) is another session's request, as before. The
-  owner accepted the risk this carries under alternative A: on a machine, any
-  process that can read the relay token and the hub bearer (any Claude session
-  running as the owner, for example) can send a message as `claude.ai/<user>`
-  and so impersonate the owner. The llm-kit channel server states the rule to
-  the receiving session.
+- Authority of a message. A message whose `sender` is `claude.ai/<user>`
+  counts as the owner's own words in the receiving session, gated actions
+  included (owner ruling 2026-11-11, decision 7, "let remote count as you";
+  switched on the same day). So does a message whose `sender` is
+  `direct:<machine>/claude/<session>`, the origin the client CLI sends for a
+  session where the owner typed `/direct` (owner ruling 2026-11-12, "Yes,
+  count it as me": "Any session where you've typed /direct can send messages
+  that carry your authority. The risk: that session's Claude could send one
+  without you writing it."). Only `direct` and hub origins may call
+  `send_message`, so in `relay-protocol/1` every delivered message has one of
+  these two senders; a message from any other origin (a future peer-forwarded
+  one, for example) is an untrusted request. The owner accepted these risks
+  under alternative A:
+  - any process on the machine that can read the relay token and the hub
+    bearer (any Claude session running as the owner, for example) can send a
+    message as `claude.ai/<user>` and so impersonate the owner;
+  - any process that can read the relay token can send a message as the
+    `direct` origin of any Claude session on the machine, whether or not the
+    owner typed `/direct` there. The relay refuses a `direct` `send_message`
+    without a covering grant (`grant_required`), but `grant_mint` checks only
+    the relay token and that the origin names the session it mints for
+    (section 14, `origin_proof` type `none`); the `/direct` enablement that
+    the llm-kit hooks check is a file such a process can also write;
+  - the Claude in a `/direct` session can send a message the owner did not
+    write.
+
+  The llm-kit channel server states the rule and these risks to the
+  receiving session.
 - Hub reads and `ask_llm` need no grant (design section 9, gate 4); `ask_llm`
   still needs the relay's consent policy (`consent_refused`).
 - Nothing in this protocol answers a session's permission prompt.
