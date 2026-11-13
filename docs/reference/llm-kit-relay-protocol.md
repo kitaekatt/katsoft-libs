@@ -61,6 +61,22 @@ The amendments:
   `/direct` is a Claude Code feature. A relay of 1.18.0 or earlier refuses
   `harness: codex` and a `channel:<machine>/codex/<session>` origin with
   `bad_request` (condition 2) and reports no `harnesses` (condition 3).
+- Amendment 2, 2026-11-12, katsoft-llm-kit 1.21.0 (relay-to-relay
+  forwarding). The request envelope gains the optional field `on_behalf_of`,
+  and the origin kind `relay` (`relay:<machine>`) may originate the read, llm
+  and write verbs and `status` for a peer relay that forwards a `/direct`
+  session's call (section 20, "Forwarding"). The header `X-Relay-Peer-Key`
+  carries the forward key. `status.forwarding: {"receive": true}` says a relay
+  accepts forwarded calls; `status.harnesses` is not reused for it, because
+  serving a harness does not establish forwarding support. A message stored
+  from a forwarded send carries `forwarded_by: relay:<machine>` on its
+  `message_record` and `delivered_message`, and an audit row may carry
+  `on_behalf_of`. Requests without the field are unchanged (condition 1). A
+  relay of 1.20.0 or earlier refuses `on_behalf_of` with `bad_request` at the
+  envelope stage, because its envelope schema refuses unknown fields
+  (condition 2), and reports no `forwarding` (condition 3); a forwarding relay
+  checks the field before it sends a forwarded call, so a receiver upgrades
+  first.
 
 Policy revisions inside `relay-protocol/1` (no envelope, schema or field
 changed; a client of the earlier policy keeps working):
@@ -99,6 +115,7 @@ exactly the verb's response result.
 | `X-Relay-Token` | every request to a relay | The relay token. Without a valid one, the relay refuses `unauthenticated`. |
 | `Authorization: Bearer <hub bearer>` | every request to the hub's MCP endpoint; also every hub-origin request to a relay (section 20) | The hub bearer. It authenticates the connector to the hub, and a hub-origin request to a relay. By itself it never authorizes a relay call. |
 | `X-Relay-Grant` | optional on a granted verb | A grant id. When present, that grant must cover the call. When absent, the relay picks a covering live grant of the origin's session, and refuses `grant_required` if there is none. |
+| `X-Relay-Peer-Key` | every request with a `relay:<machine>` origin (amendment 2) | The forward key the receiving relay issued to exactly that machine (`accept/<machine>/forward.key`), compared in constant time. Without it, with a wrong one, or with the key of another machine, the request is `unauthenticated`. |
 
 ### Origins
 
@@ -110,12 +127,21 @@ The envelope's `origin` names who the request is for:
 | direct | `direct:<machine>/claude/<session>` | the client CLI acting for a `/direct` session |
 | hub | `claude.ai/<user>` | the hub acting for the claude.ai connector |
 | operator | `operator:<machine>` | the local operator CLI (pause, resume, status) |
-| relay | `relay:<machine>` | the relay itself, in audit rows only; reserved for peer forwarding, which this protocol does not define |
+| relay | `relay:<machine>` | the relay itself in audit rows; and (amendment 2) a peer relay forwarding a `/direct` session's call, with `on_behalf_of` naming that session |
 
 A relay accepts a `direct` or `operator` origin only for its own machine, a
 `direct` origin only with harness `claude`, and a `channel` origin with harness
 `claude` or `codex` (amendment 1, section 1). A channel origin must match its
-registration (section 9).
+registration (section 9). A `relay:<M>` origin is accepted only with the forward
+key issued to `<M>` (`unauthenticated` otherwise), only for a `<M>` that the
+receiving relay's `relay.accept_from` lists and that is not the receiver
+itself (`origin_not_allowed` otherwise), and, for every verb but `status`,
+only with `on_behalf_of` (`origin_not_allowed` without it).
+
+The envelope field `on_behalf_of` (amendment 2) is valid only with a `relay`
+origin; on any other origin it is `bad_request`, so a client never supplies
+its own delegation. It must be `direct:<M>/claude/<S>`, where `<M>` is the
+relay origin's machine; anything else is `origin_not_allowed`.
 
 ### Who may call what
 
@@ -125,18 +151,25 @@ Each verb has a tier, the origin kinds that may call it (anything else is
 | Tier | Verbs | Origins | Grant needed for |
 |---|---|---|---|
 | channel | `register`, `heartbeat`, `deregister`, `poll`, `ack`, `reply` | channel | none (bound by the channel nonce) |
-| read | `list_machines`, `list_sessions`, `read_session`, `get_replies`, `list_questions` | direct, hub | direct |
-| llm | `ask_llm` | direct, hub | direct |
-| write | `send_message`, `answer_question` | direct, hub | direct |
+| read | `list_machines`, `list_sessions`, `read_session`, `get_replies`, `list_questions` | direct, hub, relay | direct |
+| llm | `ask_llm` | direct, hub, relay | direct |
+| write | `send_message`, `answer_question` | direct, hub, relay | direct |
 | grant | `grant_mint`, `grant_check` | direct | none |
 | control | `pause`, `resume` | operator | none |
-| control | `status` | channel, direct, hub, operator | none |
+| control | `status` | channel, direct, hub, operator, relay | none |
 
 Rules that follow from the table:
 
 - A `/direct` write needs a covering grant, checked and consumed by the
   relay, which owns the grant table. Every `/direct` client verb needs a grant,
   reads included (owner ruling 9).
+- A relay origin (amendment 2) runs no grant stage at the receiver. That is
+  safe only because the forwarding relay checked the `/direct` session's grant
+  for the exact remote target and reserved its use before it sent anything,
+  because the forward key binds the request to one requester machine, and
+  because `on_behalf_of` must name a session on that machine (section 20,
+  "Forwarding"). A relay origin never joins the channel, grant or control
+  tiers (`status` excepted).
 - A hub write needs no grant. For `send_message` the target session's opt-in
   is the permission (owner ruling 2026-11-11, "opt-in session = grant"): a
   session the owner launched with the channel (`clauder --relay`, which
@@ -157,11 +190,13 @@ Rules that follow from the table:
   session where the owner typed `/direct` (owner ruling 2026-11-12, "Yes,
   count it as me": "Any session where you've typed /direct can send messages
   that carry your authority. The risk: that session's Claude could send one
-  without you writing it."). Only `direct` and hub origins may call
-  `send_message`, so in `relay-protocol/1` every delivered message has one of
-  these two senders; a message from any other origin (a future peer-forwarded
-  one, for example) is an untrusted request. The owner accepted these risks
-  under alternative A:
+  without you writing it."). A `direct` sender may be on another of the
+  owner's machines (amendment 2): its relay forwarded the send, and the
+  receiving relay stored it with `forwarded_by: relay:<machine>` naming that
+  relay; it carries the same authority. Only `direct` and hub senders are ever
+  stored, so every delivered message has one of these two senders; a message
+  with any other sender is an untrusted request. The owner accepted these
+  risks under alternative A:
   - any process on the machine that can read the relay token and the hub
     bearer (any Claude session running as the owner, for example) can send a
     message as `claude.ai/<user>` and so impersonate the owner;
@@ -178,7 +213,13 @@ Rules that follow from the table:
     (`peers/<machine>/` in its state directory, section 13), so any process
     there that can read them can send a message as `claude.ai/<user>` to that
     peer's opted-in sessions. The first risk above is extended from the hub
-    machine's own relay to every peer the hub reaches.
+    machine's own relay to every peer the hub reaches;
+  - (amendment 2) a forwarding relay's machine holds each receiver's relay
+    token and the forward key that receiver issued to it
+    (`peers/<receiver>/`), so any process there that can read them can send a
+    message to that receiver's opted-in sessions as the `direct` origin of any
+    Claude session on the forwarding machine. The second risk above is
+    extended from one machine to every receiver that accepts it.
 
 ### Peer credentials
 
@@ -383,6 +424,10 @@ of the listing and named in its ledger's `skipped` list.
 | `resume` | | |
 | `status` | | |
 
+With forwarding peers (amendment 2), a `/direct` call naming a peer goes to that
+peer, and the grant target is the same param under the same coverage rule; the
+per-verb routing and refund rules are in section 20, "Forwarding".
+
 The client verbs are the `/direct` and `llm-kit relay client` names; each maps
 one to one to its wire verb, so a capability added to the hub gains its
 `/direct` form in the same change. The request and response of every verb are
@@ -527,8 +572,9 @@ Every other move is `invalid_transition`. Every transition is an audit row.
   or `"status": "unavailable"` with an `error` text when the ledger cannot be
   read, plus `skipped` for any interrupt left out for an over-long id. A
   broken ledger therefore never hides the others, and a missing one is never
-  silent. A `machine` other than the serving relay's is listed `unreachable`
-  (no forwarding in relay-protocol/1).
+  silent. A `machine` other than the serving relay's is listed `unreachable`,
+  unless the relay forwards a `/direct` call to that peer (section 20,
+  "Forwarding").
 - `answer_question(id, decision, input | reason)` -> the resolution
   (`id`, `decision`, `state`, `replayed`, `resolved_at`, `job_id`,
   `job_state`). `decision` `answer` carries `input` (validated against the
@@ -613,16 +659,25 @@ single-user OAuth sign-in for the claude.ai connector, specified in
   `endpoints` of `list_machines`; the `machine` and `address` of each session
   and the `machine` of each reach entry in `list_sessions`; the `machine` and
   the `q:<machine>/...` id of each question in `list_questions`; the `address`
-  of `read_session`; the `endpoint` of `ask_llm`; the `to` and `sender` of
-  each message and the `sender` of its reply in `send_message` and
-  `get_replies`; the id of `answer_question`. A hub-origin sender
-  (`claude.ai/<user>`) names no machine. A relay that names another machine,
+  of `read_session`; the `endpoint` of `ask_llm`; the `to` of each message and
+  the `sender` of its reply in `send_message` and `get_replies`; the id of
+  `answer_question`. These destination and ownership fields stay strict.
+  A message's `sender` is sender provenance and has its own rule (amendment
+  2): it may be the hub (`claude.ai/<user>`, which names no machine), a
+  `direct` session on the relay that stored it, or a `direct:<M>/...` session
+  on another machine `<M>` only when the same record has
+  `forwarded_by: relay:<M>` and `<M>` is one of the hub's configured relays.
+  A channel, operator or relay identity as sender, a foreign sender without
+  the stamp, a stamp that does not match the sender's machine, and a stamp
+  naming an unknown machine are refused. A relay that names another machine,
   or a machine field that is not well formed, is refused `internal`, naming
   both labels and the field, before the hub aggregates, routes or shows any of
   the result; the fan-out verbs list that machine `unreachable` with that
-  error. Free text (turns, bodies) is never read. The table of fields is
-  `LABELED_FIELDS` in `hub.py`, and a test fails when a response schema gains
-  a machine-bearing field that is not in it.
+  error. Free text (turns, bodies) is never read. The table of fields, with
+  `sender` and `forwarded_by` marked as provenance, is `LABELED_FIELDS` in
+  `routing.py` (re-exported by `hub.py`), and a test fails when a response
+  schema gains a machine-bearing field that is not in it. A forwarding relay
+  applies the same checks to its peers' results (section 20, "Forwarding").
 - Fan-out: `list_machines`, `list_sessions` and `list_questions` ask every
   relay in parallel and mark a relay that cannot answer `unreachable` with its
   error object instead of omitting it. `list_sessions` with a `machine` the hub
@@ -703,9 +758,13 @@ Append-only. Fields: `seq` (strictly increasing), `at`, `machine`, `ingress`
 mailbox state change), `origin` (the identity; `relay:<machine>` for the
 relay's own expiry and scan events), `verb` (a verb, or `expire` / `scan`),
 `outcome` (`ok`, `refused`, `error`), and optional `request_id`, `target`,
-`grant_id`, `message_id`, `from_state`, `to_state`, `code`, `detail`. A
-`/direct` call is recorded with origin `direct:<machine>/claude/<session>`,
-distinct from `claude.ai/<user>`.
+`grant_id`, `message_id`, `from_state`, `to_state`, `code`, `detail`,
+`on_behalf_of`. A `/direct` call is recorded with origin
+`direct:<machine>/claude/<session>`, distinct from `claude.ai/<user>`. A
+forwarded call is recorded at the receiver with origin `relay:<machine>` and
+`on_behalf_of` naming the `/direct` session (amendment 2); the forwarding
+relay records the session's own call row, whose `detail` names the peer.
+Rows written before katsoft-llm-kit 1.21.0 have a null `on_behalf_of`.
 
 ## 16. Pause
 
@@ -776,8 +835,9 @@ Files: `common`, `envelope.request`, `envelope.response`, the objects `error`,
 
 - Ports, bind addresses, state and config paths, token provisioning, machine
   labels: relay configuration (C0).
-- Relay-to-relay forwarding and its peer authentication: a later additive
-  revision (origin kind `relay` is reserved).
+- Forwarding more than one hop: a relay origin is never forwarded or fanned
+  out again (amendment 2 is one hop), and channel, operator, hub and relay
+  origins are never forwarded at all.
 - Verification of `signed` or of any `origin_proof` other than `none`:
   alternative B or the OAuth phase.
 - `continue_session`, `start_session`, `stop_session` and remote approval of
@@ -923,11 +983,11 @@ independent of the transport, so the hub can reuse them),
 - `list_machines` lists this machine only: `status` `up` or `paused`, and the
   endpoints of the relay's loopback registry.
 - `list_sessions` for another machine returns no sessions and lists that
-  machine `unreachable` with `machine_unreachable`: relay-protocol/1 defines no
-  forwarding.
+  machine `unreachable` with `machine_unreachable`, except a `/direct` call for
+  a forwarding peer (section 20, "Forwarding").
 - `status` adds `registrations` (live registrations), `harnesses` (the channel
-  harnesses served, amendment 1 of section 1) and `library_version` when the
-  package metadata is installed.
+  harnesses served, amendment 1 of section 1), `forwarding: {"receive": true}`
+  (amendment 2) and `library_version` when the package metadata is installed.
 - `list_questions` and `answer_question` are served through the normal verb
   dispatch by `llm_kit.relay.questions.QuestionService`, built over the
   ledgers of `RelayConfig.ledgers` with the relay's clock; a paused relay
@@ -974,7 +1034,13 @@ independent of the transport, so the hub can reuse them),
   roots and cannot be turned off. Redirects are never followed and proxy
   environment variables are ignored, for loopback and peers alike. A transport
   failure is `machine_unreachable`, as is an HTTP 502, 503 or 504 answer with no
-  relay envelope; a peer's connect timeout is 3 seconds. `poll` and
+  relay envelope; a peer's connect timeout is 3 seconds. Every error the
+  client makes up itself (no relay error envelope) carries `details.sent`:
+  `false` only when the connection was never opened (name resolution failed,
+  connection refused, connect timeout, no free pooled connection), `true`
+  with `outcome: "unknown"` otherwise (a read timeout or dropped connection
+  after sending, a gateway answer, a reply that is not a relay envelope). With
+  a forward key it sends `X-Relay-Peer-Key` on `relay:` origin calls. `poll` and
   `get_replies` timeouts grow by `wait_s`; `ask_llm` waits up to 660 seconds.
 - `llm-kit relay serve` runs the relay in the foreground until SIGINT or
   SIGTERM. `pause`, `resume` and `status` call the relay as
@@ -999,12 +1065,116 @@ independent of the transport, so the hub can reuse them),
   credential. `llm-kit relay status` adds `peers` (each peer's machine, URL and
   whether its two credentials are `stored` or `missing`) when `relay.peers` is
   configured, and adds nothing otherwise.
+- `llm-kit relay peer export --for <M>` (amendment 2) also mints, or reuses,
+  the forward key this relay issues to `<M>` as `accept/<M>/forward.key`
+  (private directories, a `0600` file, the protected ACL on Windows) and adds
+  it to the object as `forward_key`. `<M>` must be listed in
+  `relay.accept_from`. `peer import <machine>` accepts the object with or
+  without `forward_key` and stores it as `peers/<machine>/forward.key`. A relay
+  reads both sets of keys at start, so both relays are restarted after
+  provisioning.
 - `llm-kit relay client sessions` shows live sessions only by default
   (`live-accepting`, `live-read-only`) and adds `omitted`, the count of the
   others by state (an unfiltered listing was about 158 KB, mostly ended
   sessions). `--state all` lists every session; `--state <state>` sends that
   one state to the relay. The filter is the CLI's: the verb and the hub tool
   are unchanged.
+
+### Forwarding (amendment 2)
+
+Configuration. On the forwarding (source) relay, each `relay.peers` entry
+whose `peers/<machine>/forward.key` is stored is a forwarding peer, reached at
+its URL with its own relay token, hub bearer and that forward key. A
+configured peer without a forward key is listed `unreachable`
+(`machine_unreachable`, `details.sent: false`) and is never sent to. On the
+receiving relay, `relay: {accept_from: [<label>, ...]}` (nested in the `relay`
+block, never a new top-level key) names the machines it accepts forwarded
+calls from; each must be a non-disabled `env.json` machine other than itself,
+once. `peer export --for <M>` issues `<M>`'s key; `ssh <receiver> llm-kit
+relay peer export --for <source> | llm-kit relay peer import <receiver>` on the
+source provisions it.
+
+Source-side checks. The source relay sends a peer request only when all of
+these hold: the origin is `direct:<self>/claude/<S>` (a channel, operator, hub
+or relay origin is never forwarded); the verb is in the read, llm or write
+tier; the request carries no `on_behalf_of` (one from a client is
+`bad_request`); the grant stage passed for `S`, the verb and the target value
+the table below names, compared exactly as granted; and one use is reserved
+before the first forwarded request. The order is fixed:
+
+1. the local grant check, with no I/O: a refusal here (`grant_required`, for
+   example) sends zero peer requests of any kind, capability probes included;
+2. the capability probe: `status` as `relay:<self>`, whose result must carry
+   `forwarding.receive: true`; its answer is cached per peer for 60 seconds
+   (`PEER_PROBE_TTL_S`), a transport failure is not cached;
+3. reserving the use (`consume_grant`), so of two concurrent calls on the last
+   use one is `grant_used_up` and sends nothing;
+4. forwarding, as `relay:<self>` with `on_behalf_of: direct:<self>/claude/<S>`
+   set by the relay itself.
+
+A single-target call to a relay that does not advertise `forwarding.receive`,
+or whose probe is refused, is `not_implemented`, with nothing sent and
+nothing consumed; a probe that cannot reach the peer is `machine_unreachable`
+with `details.sent: false`, also with nothing consumed. In a fan-out, such a
+peer is listed `unreachable` with that error and the rest proceed.
+
+Per-verb rules. The grant target is the verb's target param (section 8) under
+the coverage rule of section 14: a request that names no target is covered
+only by a grant whose `targets` is empty, and a named target must be in
+`targets`. One client call reserves exactly one use, whatever the number of
+peer requests.
+
+| Verb (target param) | Request form | Routing | Use refunded only when |
+|---|---|---|---|
+| `list_machines` (none) | always | fan out: this relay plus every forwarding peer; a peer that cannot answer is listed `unreachable` | the call fails before any peer request (an ok fan-out is never refunded) |
+| `list_sessions` (`machine`) | no `machine` | fan out as above; each peer request carries `machine: <peer>` | as `list_machines` |
+| | `machine: <peer>` (grant target `<peer>`) | that peer only | the outcome rules below |
+| | `machine: <self>`, or no peer of that name | local, or `unreachable` with no I/O | the local rule (section 20, "Grants") |
+| `list_questions` (`machine`) | as `list_sessions` | as `list_sessions` (ledger entries gain `machine`) | as `list_sessions` |
+| `read_session` (`address`) | full address naming a peer | that peer | the outcome rules below |
+| | bare selector (`latest`, `cwd:`, `task:`) | local only; never fanned out | the local rule |
+| | selector with a peer prefix (`5090w/latest`) | `target_invalid`, also at `grant_mint`, no I/O | always (nothing was reserved) |
+| `ask_llm` (`endpoint`) | `<peer>/llm/<entry>` | that peer | the outcome rules below |
+| `send_message` (`to`) | full address naming a peer | that peer | the outcome rules below (a refused or replayed send refunds) |
+| `get_replies` (`address`) | full address naming a peer | that peer; `wait_s` runs there | the outcome rules below |
+| `get_replies` (`message_id`; the grant target is the id) | an id names no machine | ask this relay and every peer WITHOUT `wait_s`; exactly one may hold it; `wait_s` then runs on the holder only; several holders are `target_ambiguous` | only when every relay was asked and answered `message_not_found` |
+| `answer_question` (`id`) | `q:<peer>/...` | the peer the id names | the outcome rules below |
+
+Outcome rules for a forwarded call. The use is refunded only on a CERTAIN
+pre-effect outcome: the request was provably not sent (`details.sent:
+false`); the receiver answered with an error envelope whose code is
+pre-effect under the rule of "Grants" above; or a send answered
+`replayed: true` or one of the stored refusals (`not_opted_in`,
+`session_ended`, `hop_limit`, `too_large`), mirroring the local rule that a
+refused or replayed send consumes nothing. Everything else keeps the use spent
+and is `machine_unreachable` with `details: {sent: true, outcome: "unknown"}`:
+a read timeout or dropped connection after sending, a gateway 502, 503 or 504
+without an envelope, and a malformed reply.
+
+Deduplication. A forwarded send always carries an id: the source relay assigns
+`msg_<random>` when the client gave none, before reserving, and names it in
+every result and in every error's `details.message_id`. The receiver's
+idempotency (same id and content is `replayed`) makes a retry after an unknown
+outcome deliver once. The retry needs a fresh grant, and its replay refunds
+that grant.
+
+Provenance. A receiver that accepts a send from an authenticated
+`relay:<M>` stores `sender` as the `on_behalf_of` identity and `forwarded_by`
+as `relay:<M>`; no client can set either. The source relay checks every peer
+result with the label rules of section 13 (destination and ownership fields
+must name the peer, senders follow the provenance rule with this relay and its
+peers as the known machines), and a forwarded send's record must have exactly
+the `on_behalf_of` it sent as `sender` and `relay:<self>` as `forwarded_by`.
+A result that fails is `internal`, and the use stays spent.
+
+Receiver. A relay answers a relay-origin call from its own machine only: a
+relay-origin list verb is never fanned out again, and a relay-origin call is
+never forwarded.
+
+Mailbox. `schema_version` 2 adds the nullable `messages.forwarded_by` and
+`audit.on_behalf_of` columns; a version-1 mailbox is migrated in place at
+open, and its rows keep null. A relay of 1.20.0 or earlier refuses a
+version-2 mailbox (`internal`, naming both versions).
 
 ## 21. Session discovery decisions (unit D2)
 
