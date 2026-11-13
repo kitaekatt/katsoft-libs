@@ -78,7 +78,7 @@ def test_concurrency_holds_one_slot_per_kind(tmp_path):
 
     path = write(tmp_path / "proj" / "c.graph.yaml", text)
     for sizes, expected in (({"sound": 1}, 1), ({"other": 1}, None)):
-        r = Runner(load_graph(path), registry(Calls(), op), RunStore(tmp_path / "runs" / str(sizes)), item="it",
+        r = Runner(load_graph(path), registry(Calls(), op), RunStore(tmp_path / "runs" / "-".join(sizes)), item="it",
                    project_root=tmp_path / "proj", services={"concurrency": Limits(sizes)})
         result = r.run()
         if expected is None:

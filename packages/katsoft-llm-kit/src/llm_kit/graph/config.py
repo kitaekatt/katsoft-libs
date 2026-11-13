@@ -44,7 +44,7 @@ from types import MappingProxyType
 from typing import Any, Optional
 
 from .loader import load_yaml
-from .model import BUILTIN_OP_NAMESPACE, GraphError
+from .model import BUILTIN_OP_NAMESPACE, GraphError, is_anchored
 from .services import check_services
 
 __all__ = [
@@ -131,7 +131,7 @@ def expand_run_path(root: Path, template: str, values: Mapping[str, str], *, whe
 def _path_text(value: Any, where: str, *, tracked: bool) -> str:
     if not isinstance(value, str) or not value:
         raise GraphError("must be a non-empty path", where)
-    if tracked and Path(value).is_absolute():
+    if tracked and is_anchored(value):
         raise GraphError(f"{value!r} is absolute; the tracked config holds project-relative paths "
                          "(use the personal layer for a machine path)", where)
     return value

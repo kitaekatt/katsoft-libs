@@ -127,7 +127,7 @@ def _kind_detail(node: Node) -> dict[str, Any]:
 def _relative(path: Path, root: Optional[Path]) -> str:
     if root is not None:
         try:
-            return str(path.relative_to(root))
+            return path.relative_to(root).as_posix()
         except ValueError:
             pass
     return str(path)

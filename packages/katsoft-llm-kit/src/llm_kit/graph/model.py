@@ -30,7 +30,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import MappingProxyType
 from typing import Any, Optional, Union
 
@@ -100,6 +100,16 @@ BUILTIN_OP_NAMESPACE = "llm"
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 OP_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z][A-Za-z0-9_-]*)+$")
+
+
+def is_anchored(text: str) -> bool:
+    """Whether path text is anything but a plain relative path, on any platform.
+
+    A graph file's meaning must not depend on the machine reading it, so a leading slash or backslash, a
+    drive (``C:``) and a drive-relative path are all refused everywhere. ``Path.is_absolute`` alone misses
+    ``/x`` on Windows, where it has a root but no drive.
+    """
+    return PurePosixPath(text).is_absolute() or bool(PureWindowsPath(text).anchor)
 
 
 class GraphError(ValueError):

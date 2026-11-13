@@ -58,7 +58,8 @@ def test_run_paths_expand_their_placeholders(tmp_path):
     config = load_config(_root(tmp_path))
     assert config.run_path("dir", item="night-petition") == \
         config.root / "pipeline/moments/beta/work/night-petition/graph"
-    assert config.run_path("blobs", git_common_dir="/repo/.git") == Path("/repo/.git/beta-graph/blobs")
+    common = tmp_path / "repo" / ".git"  # absolute on every platform (a bare "/repo" has no drive on Windows)
+    assert config.run_path("blobs", git_common_dir=str(common)) == common / "beta-graph" / "blobs"
     with pytest.raises(GraphError, match=r"needs values for \['item'\]"):
         config.run_path("media")
     with pytest.raises(GraphError, match="non-empty string"):
@@ -71,16 +72,17 @@ def test_the_personal_layer_replaces_keys_one_section_deep(tmp_path):
     local = """\
 version: 1
 runs:
-  blobs: /Users/me/blobs
+  blobs: PERSONAL_BLOBS
 services:
   concurrency: {heavy: 2}
 """
-    config = load_config(_root(tmp_path, local=local))
+    personal_blobs = (tmp_path / "me" / "blobs").as_posix()  # absolute on every platform
+    config = load_config(_root(tmp_path, local=local.replace("PERSONAL_BLOBS", personal_blobs)))
     assert config.local_path == (tmp_path / "proj" / LOCAL_CONFIG_FILE).resolve()
-    assert config.runs["blobs"] == "/Users/me/blobs"
+    assert config.runs["blobs"] == personal_blobs
     assert config.runs["dir"] == "pipeline/moments/beta/work/{item}/graph"
     assert config.services == {"concurrency": {"heavy": 2}, "retries": "none"}
-    assert config.run_path("blobs") == Path("/Users/me/blobs")
+    assert config.run_path("blobs") == Path(personal_blobs)
 
 
 def test_a_minimal_config(tmp_path):

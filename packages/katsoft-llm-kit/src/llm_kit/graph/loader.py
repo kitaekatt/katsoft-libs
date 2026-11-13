@@ -62,6 +62,7 @@ from .model import (
     ParamSpec,
     Port,
     RepeatSpec,
+    is_anchored,
 )
 
 __all__ = [
@@ -238,7 +239,7 @@ def resolve_schema(schema: Any, base_dir: Path, *, where: str = "") -> dict:
             return "#/$defs/" + _escape(f"{prefix}#{name}")
         if "#" in ref:
             raise GraphError(f"$ref {ref!r}: a file reference names a whole file, without a fragment", where)
-        if Path(ref).is_absolute() or PurePosixPath(ref).is_absolute():
+        if is_anchored(ref):
             raise GraphError(f"$ref {ref!r} must be a relative path", where)
         return "#/$defs/" + _escape(include((cur_dir / ref).resolve()))
 
@@ -517,7 +518,7 @@ class _Loader:
     def _subgraph(self, ref: Any, base_dir: Path, where: str, stack: tuple[Path, ...]) -> Graph:
         if not isinstance(ref, str) or not ref:
             raise GraphError("graph must be a relative path to a graph file", where)
-        if Path(ref).is_absolute():
+        if is_anchored(ref):
             raise GraphError(f"graph {ref!r} must be a relative path", where)
         target = (base_dir / ref).resolve()
         if not target.is_file():
@@ -638,7 +639,7 @@ class ResolvedParam:
 def _relative_file(value: Any, base_dir: Path, where: str) -> Path:
     if not isinstance(value, str) or not value:
         raise GraphError("must be a relative file path", where)
-    if Path(value).is_absolute():
+    if is_anchored(value):
         raise GraphError(f"{value!r} must be a relative path", where)
     path = (base_dir / value).resolve()
     if not path.is_file():
