@@ -31,6 +31,7 @@ import math
 import os
 import re
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -98,7 +99,18 @@ def ref_kind(ref: Any) -> str:
     raise StoreError(f"{ref!r} is not a store reference (value:<64 hex>, blob:<64 hex> or media:<16 hex><ext>)")
 
 
+#: Serializes the check-then-replace of content-addressed writes inside this process. The map runner stores
+#: the same value from several threads at once; on Windows an open or replacing file refuses a concurrent
+#: read or ``os.replace`` of the same path, so the check and the replace must not interleave.
+_WRITE_LOCK = threading.Lock()
+
+
 def _write_once(path: Path, data: bytes) -> None:
+    with _WRITE_LOCK:
+        _write_once_locked(path, data)
+
+
+def _write_once_locked(path: Path, data: bytes) -> None:
     if path.exists():
         if path.read_bytes() != data:
             raise StoreError(f"{path} exists with different content")

@@ -209,3 +209,27 @@ def test_public_surface_lists_the_runtime_names():
     for module in ("run", "records", "freshness", "media"):
         for name in importlib.import_module(f"llm_kit.graph.{module}").__all__:
             assert f"llm_kit.graph.{module}.{name}" in names, name
+
+
+def test_concurrent_writers_of_one_value_all_succeed(tmp_path):
+    """Content-addressed writes are idempotent: threads storing the same value never fail each other (Windows
+    refuses to replace a file another thread is reading)."""
+    import threading
+
+    store = RunStore(tmp_path)
+    errors: list[BaseException] = []
+    refs: list[str] = []
+
+    def put() -> None:
+        try:
+            for _ in range(25):
+                refs.append(store.put_value({"same": "value"}))
+        except BaseException as exc:  # noqa: BLE001 - collected and asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=put) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == [] and len(set(refs)) == 1 and len(refs) == 200
