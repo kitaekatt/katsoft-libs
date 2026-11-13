@@ -718,6 +718,46 @@ def test_a_claude_run_stops_an_untagged_group_survivor_before_reaping_its_leader
     assert gone(orphan)
 
 
+def test_a_signal_that_raises_during_cleanup_keeps_the_claim_and_the_sweep_retries(box, tmp_path, monkeypatch):
+    log = tmp_path / "claude.log.jsonl"
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))
+    runner = R.ResumeRunner(box, claude_argv=[sys.executable, str(FAKE_CLAUDE)], term_grace_s=0.3)
+    message_id, lease_id = claim(box, runner, body="MODE=orphan")
+    address = box.leases()[0]["address"]
+    real_send_signal = psutil.Process.send_signal
+
+    def denied(self, sig):
+        raise psutil.AccessDenied(self.pid)
+
+    monkeypatch.setattr(psutil.Process, "send_signal", denied)
+    orphan = None
+    try:
+        job = R.ResumeJob(lease_id=lease_id, message_id=message_id, address=address, harness="claude",
+                          session_id=address.rsplit("/", 1)[1], cwd=str(tmp_path), prompt="MODE=orphan",
+                          timeout_s=20, proc_tag=box.leases()[0]["proc_tag"])
+        runner.start(job).join(30)
+        orphan = int(Path(str(log) + ".orphan").read_text())
+        lease = box.leases()
+        assert len(lease) == 1 and lease[0]["phase"] == "stopping"  # the failed cleanup did not release it
+        assert box.get_message(message_id)["state"] not in P.TERMINAL_STATES
+        assert runner.recover() == 0 and len(box.leases()) == 1  # a sweep that hits the error keeps it too
+        monkeypatch.setattr(psutil.Process, "send_signal", real_send_signal)
+        # its leader is reaped now, so the untagged orphan is unconfirmed: never signalled, the claim still held
+        assert runner.recover() == 0 and not gone(orphan) and len(box.leases()) == 1
+        os.kill(orphan, 9)
+        wait_for(lambda: gone(orphan), 10, "the orphan to die")
+        assert runner.recover() == 1
+        record = ended(box, message_id)
+        assert record["state"] == "answered" and record["reply"]["body"] == "answer from claude"
+    finally:
+        monkeypatch.setattr(psutil.Process, "send_signal", real_send_signal)
+        if orphan is not None:
+            try:
+                os.kill(orphan, 9)
+            except ProcessLookupError:
+                pass
+
+
 def test_a_run_whose_processes_did_not_stop_keeps_its_claim_until_a_sweep_confirms_it(box, tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "claude.log.jsonl"))
     runner = R.ResumeRunner(box, claude_argv=[sys.executable, str(FAKE_CLAUDE)], term_grace_s=0.3)

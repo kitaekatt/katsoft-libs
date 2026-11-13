@@ -313,6 +313,18 @@ def stop_processes(tag: str, leader: Optional[tuple[int, float, int]] = None, *,
     return True
 
 
+def _stop_confirmed(tag: str, leader: Optional[tuple[int, float, int]], *, grace_s: float) -> bool:
+    """:func:`stop_processes`, with any exception (for example psutil.AccessDenied on a signal) logged loudly
+    and counted as unconfirmed termination, so the caller keeps the claim held instead of releasing it."""
+    try:
+        return stop_processes(tag, leader, grace_s=grace_s)
+    except Exception:  # noqa: BLE001 -- every cleanup failure keeps the claim; none is swallowed silently
+        print(f"llm-kit relay: resume run {tag}: stopping its processes failed; termination is not confirmed",
+              file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return False
+
+
 # --------------------------------------------------------------------------
 # the run
 # --------------------------------------------------------------------------
@@ -503,7 +515,7 @@ class ResumeRunner:
 
         def stop() -> None:
             app.close(grace_s=0.5)
-            stop_processes(job.tag, active.leader, grace_s=0.0)
+            _stop_confirmed(job.tag, active.leader, grace_s=0.0)
 
         active.stop = stop
         try:
@@ -533,7 +545,10 @@ class ResumeRunner:
                 app.close(grace_s=1.0)
             except C2.CodexAppServerError:
                 pass  # the outcome is already decided
-            if not stop_processes(job.tag, active.leader, grace_s=0.5):
+            except Exception:  # noqa: BLE001 -- a cleanup defect: termination is not confirmed
+                traceback.print_exc(file=sys.stderr)
+                active.unstopped = True
+            if not _stop_confirmed(job.tag, active.leader, grace_s=0.5):
                 active.unstopped = True
 
     # -- Claude -----------------------------------------------------------------------
@@ -565,7 +580,7 @@ class ResumeRunner:
         def kill() -> None:
             # every process of the run, each by its own identity-bound handle: never the group by number,
             # which after the leader is reaped could name a stranger's group
-            stop_processes(job.tag, active.leader, grace_s=0.0)
+            _stop_confirmed(job.tag, active.leader, grace_s=0.0)
 
         active.stop = kill
         verdict: dict[str, Any] = {}
@@ -615,7 +630,7 @@ class ResumeRunner:
         finally:
             # The leader is not reaped yet: as a zombie it keeps its pid and create time, so its whole group,
             # untagged members included, is still provably the run's. Nothing of the run outlives it.
-            if not stop_processes(job.tag, active.leader, grace_s=0.5):
+            if not _stop_confirmed(job.tag, active.leader, grace_s=0.5):
                 active.unstopped = True
             try:
                 code = proc.wait(timeout=GONE_WAIT_S)
@@ -723,7 +738,7 @@ class ResumeRunner:
         leader = None
         if lease["child_pid"] is not None and lease["child_start"] is not None and lease["pgid"] is not None:
             leader = (lease["child_pid"], lease["child_start"], lease["pgid"])
-        return stop_processes(lease["proc_tag"], leader, grace_s=self._grace)
+        return _stop_confirmed(lease["proc_tag"], leader, grace_s=self._grace)
 
 
 __all__ = [
