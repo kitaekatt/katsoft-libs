@@ -208,6 +208,13 @@ Spill on a busy tier is immediate, as before. The access log records `requested`
 The mailbox moves to schema v3, and a 1.22 relay cannot read it. Remote resume is
 off until `relay.yaml` sets `resume.enabled: true`.
 
+## Windows fixes in 1.24
+
+`relay serve` and `relay hub` also stop gracefully on Ctrl+Break (`SIGBREAK`); the mailbox database is
+created with the owner-plus-SYSTEM protected ACL; Codex writer locks are probed by exclusive open (a
+`psutil.open_files` scan took about half a minute); graph files refuse rooted and drive paths on every
+platform; the graph store serializes concurrent writes of one value.
+
 ## Source
 
 The source lives in the katsoft-libs repository (`packages/katsoft-llm-kit/src/llm_kit`).
