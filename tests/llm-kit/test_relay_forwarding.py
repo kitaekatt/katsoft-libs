@@ -368,6 +368,66 @@ def test_exported_credentials_cannot_claim_the_receivers_own_origins(tmp_path, c
         receiver.stop()
 
 
+def test_rotate_credentials_revokes_a_pre_1_21_export(tmp_path, capsys, monkeypatch):
+    """A 1.19/1.20 export handed out 5090w's general credentials; rotation (and a restart) is what revokes them."""
+    import dataclasses
+
+    from test_relay_hub import Hub, make_hub
+    from test_relay_peers import as_host
+
+    fleet = RealFleet(tmp_path)
+    cfg = fleet.config(DST, "hub:\n  enabled: true\n")
+    receiver = fleet.serve(cfg)
+    old = _present({"relay_token": receiver.prepared.relay_token, "hub_bearer": receiver.prepared.hub_bearer})
+    own = f"direct:{DST}/claude/{DIRECT}"
+    mint = {"session": f"{DST}/claude/{DIRECT}", "verb": "list_sessions", "targets": [], "expires_in_s": 60, "uses": 1,
+            "origin_proof": {"type": "none"}}
+
+    def call(headers: dict[str, str], verb: str, params: dict[str, Any], origin: str) -> dict[str, Any]:
+        envelope = P.make_request(verb, params, origin=origin, request_id="req-" + secrets.token_hex(6))
+        return httpx.post(receiver.url + f"/v1/{verb}", content=json.dumps(envelope), headers=headers, timeout=10).json()
+
+    attacks = (("grant_mint", mint, own), ("pause", {"scope": "relay", "reason": "remote"}, f"operator:{DST}"))
+    try:
+        for verb, params, origin in attacks:  # the codex scenario with an old export: works before the rotation
+            assert call(old, verb, params, origin)["ok"] is True, verb
+        assert call(old, "resume", {"scope": "relay"}, f"operator:{DST}")["ok"] is True
+    finally:
+        receiver.stop()
+    as_host(monkeypatch, DST)
+    out = cli(["rotate-credentials", *fleet.args(DST)], capsys)
+    assert out.code == 0, out.err
+    shown = json.loads(out.out)
+    assert shown["rotated"] == [str(cfg.paths.relay_token), str(cfg.paths.hub_bearer)]
+    assert [item["consumer"] for item in shown["restart"]][:2] == ["llm-kit relay serve", "llm-kit relay hub"]
+    new = {"relay_token": L.read_token(cfg.paths.relay_token), "hub_bearer": L.read_token(cfg.paths.hub_bearer)}
+    assert new["relay_token"] not in old.values() and new["hub_bearer"] not in old[P.HEADER_AUTHORIZATION]
+    assert not any(value in out.out + out.err for value in (*new.values(), *old.values()))
+    if os.name != "nt":
+        assert stat.S_IMODE(cfg.paths.relay_token.stat().st_mode) == stat.S_IMODE(cfg.paths.hub_bearer.stat().st_mode) == 0o600
+    receiver = fleet.serve(cfg)  # the restart the output names
+    try:
+        for verb, params, origin in attacks:
+            body = call(old, verb, params, origin)
+            assert body["ok"] is False and body["error"]["code"] == "unauthenticated", (verb, body)
+        # consumers holding the new credentials work: a /direct client, the operator CLI and the hub
+        assert call(_present(new), "grant_mint", mint, own)["ok"] is True
+        with HttpRelayClient(receiver.url, machine=DST, relay_token=new["relay_token"]) as local:
+            assert local.call("status", {}, origin=f"operator:{DST}")["pause"]["relay"]["paused"] is False
+        hub_server = make_hub(dataclasses.replace(cfg, relay_port=receiver.address[1]), None).start()
+        try:
+            assert [m["status"] for m in Hub(hub_server).ok("list_machines")["machines"]] == ["up"]
+        finally:
+            hub_server.stop()
+    finally:
+        receiver.stop()
+    empty = fleet.args(THIRD)
+    fleet.config(THIRD)
+    as_host(monkeypatch, THIRD)
+    out = cli(["rotate-credentials", *empty], capsys)  # nothing to rotate: refused, nothing created
+    assert out.code == 2 and "nothing to rotate" in out.err and not (tmp_path / THIRD / "state" / "relay.token").exists()
+
+
 def test_a_peer_key_claims_only_its_own_relay_or_the_hub(tmp_path):
     dst = Node(DST, tmp_path, accept_from=(SRC, THIRD), accept_keys={SRC: KEY, THIRD: THIRD_KEY})
     try:
@@ -1429,10 +1489,14 @@ def test_forwarding_end_to_end_over_two_real_relays(tmp_path):
         L.write_peer_key(source_cfg.paths, DST, "placeholder")
         source_cfg.paths.peer_key(DST).unlink()
         L.write_private_file(source_cfg.paths.peer_relay_token(DST), receiver.prepared.relay_token + "\n")
-        with pytest.raises(C.RelayConfigError, match=f"Re-export.*`ssh {DST} llm-kit relay peer export --for {SRC} \\| "
-                                                     f"llm-kit relay peer import {DST}`"):
+        with pytest.raises(C.RelayConfigError, match=f"Delete them with `rm -- .*rotate-credentials` on {DST}.*Then "
+                                                     f"provision it with `ssh {DST} llm-kit relay peer export --for {SRC} "
+                                                     f"\\| llm-kit relay peer import {DST}`"):
             serve(source_cfg, SRC)
         L.write_peer_key(source_cfg.paths, DST, key)
+        with pytest.raises(C.RelayConfigError, match="Delete them with"):  # the key does not excuse the old copy
+            serve(source_cfg, SRC)
+        source_cfg.paths.peer_relay_token(DST).unlink()
         source = serve(source_cfg, SRC)
         try:
             session = sid()

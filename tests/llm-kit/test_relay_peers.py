@@ -681,13 +681,29 @@ def test_missing_peer_credentials_stop_the_hub_naming_the_import_command(machine
         make_hub(config, None).start()
     # a 1.19.0 / 1.20.0 peer directory (general relay token and hub bearer, no key) fails loudly, never used;
     # the failed starts released the singleton lock
+    import re
+
     write_legacy_peer_dir(config.paths, B)
-    with pytest.raises(C.RelayConfigError, match=r"holds the general relay token and hub bearer a katsoft-llm-kit "
-                                                 r"1\.19\.0 or 1\.20\.0 import stored.*Re-export.*" + REEXPORT):
+    legacy = [config.paths.peer_relay_token(B), config.paths.peer_hub_bearer(B)]
+    named = (r"general credentials of 'tower' that a katsoft-llm-kit 1\.19\.0 or 1\.20\.0 import stored \("
+             + re.escape(f"{legacy[0]}, {legacy[1]}") + r"\).*Delete them with " + re.escape(f"`{L.delete_command(legacy)}`")
+             + r".*`llm-kit relay rotate-credentials` on tower")
+    with pytest.raises(C.RelayConfigError, match=named + r".*Then provision it with " + REEXPORT):
         make_hub(config, None).start()
-    with pytest.raises(C.RelayConfigError, match="Re-export"):
-        L.peer_key(config.paths, B, own=A)
+    # a peer key as well does not make them acceptable: they stay valid at tower until it rotates them
     L.write_peer_key(config.paths, B, "peer-key")
+    for start in (lambda: make_hub(config, None).start(), lambda: L.peer_key(config.paths, B, own=A)):
+        with pytest.raises(C.RelayConfigError, match=named) as caught:
+            start()
+        assert "Then provision" not in str(caught.value)
+    assert all(path.exists() for path in legacy)  # named, never deleted for the owner
+    if os.name != "nt":
+        done = subprocess.run(L.delete_command(legacy), shell=True, capture_output=True, text=True)  # the named command
+        assert done.returncode == 0, done.stderr
+    else:
+        for path in legacy:
+            path.unlink()
+    assert not any(path.exists() for path in legacy)
     make_hub(config, None).start().stop()
 
 

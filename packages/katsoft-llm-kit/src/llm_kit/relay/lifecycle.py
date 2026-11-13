@@ -270,15 +270,54 @@ def peer_key(paths: StatePaths, machine: str, *, own: str) -> str:
     for directory, kind in ((peers_dir, "peers directory"), (peer_dir, "peer directory")):
         _require_real_dir(directory, kind=kind)
         _refuse_loose(directory, kind=kind)
+    legacy = [path for path in (paths.peer_relay_token(machine), paths.peer_hub_bearer(machine))
+              if path.exists() or path.is_symlink()]
+    if legacy:
+        # Refused whether or not peer.key exists: these are the peer's general credentials, valid there until it
+        # rotates them. Never deleted for the owner.
+        raise RelayConfigError(
+            f"{peer_dir} holds general credentials of {machine!r} that a katsoft-llm-kit 1.19.0 or 1.20.0 import "
+            f"stored ({', '.join(str(path) for path in legacy)}); they are never used and must not stay here. "
+            f"Delete them with `{delete_command(legacy)}`, and run `llm-kit relay rotate-credentials` on {machine} "
+            f"(then restart its relay and hub), because they stay valid there until it does"
+            + ("" if paths.peer_key(machine).exists() else f". Then{how[1:]}")
+        )
     file = paths.peer_key(machine)
     if not file.exists():
-        if paths.peer_relay_token(machine).exists() or paths.peer_hub_bearer(machine).exists():
-            raise RelayConfigError(
-                f"{peer_dir} holds the general relay token and hub bearer a katsoft-llm-kit 1.19.0 or 1.20.0 import "
-                f"stored, and no peer key; a peer is no longer reached with those. Re-export{how}"
-            )
         raise RelayConfigError(f"no peer key for peer {machine!r}: {file} does not exist{how}")
     return read_token(file)
+
+
+def delete_command(files: list[Path]) -> str:
+    """The exact command that deletes ``files`` on this platform (named in errors; never run for the owner)."""
+    if _on_nt():
+        return "Remove-Item -LiteralPath " + ", ".join("'" + str(path).replace("'", "''") + "'" for path in files)
+    import shlex
+
+    return "rm -- " + " ".join(shlex.quote(str(path)) for path in files)
+
+
+def rotate_credentials(paths: StatePaths) -> list[Path]:
+    """Replace this machine's relay token and hub bearer with new ones; returns the two files.
+
+    Each is written atomically under the private-file policy (:func:`write_private_file`), after the existing
+    file passed the same checks every read applies. Both must exist (a relay or hub has run here). Never called
+    implicitly: a running relay and hub keep the old values until they restart.
+    """
+    files = [paths.relay_token, paths.hub_bearer]
+    old = {}
+    for file in files:
+        if not file.exists():
+            raise RelayConfigError(
+                f"{file} does not exist: no relay or hub has run on this state directory, so there is nothing to rotate"
+            )
+        old[file] = read_token(file)
+    for file in files:
+        new = secrets.token_urlsafe(_TOKEN_BYTES)
+        if new == old[file]:  # pragma: no cover - 32 random bytes
+            raise RuntimeError("the new credential equals the old one")
+        write_private_file(file, new + "\n")
+    return files
 
 
 def write_peer_key(paths: StatePaths, machine: str, key: str) -> None:
@@ -709,10 +748,12 @@ __all__ = [
     "ensure_state_dir",
     "ensure_token",
     "accept_peer_keys",
+    "delete_command",
     "ensure_accept_peer_key",
     "peer_import_command",
     "peer_key",
     "peer_reexport_command",
+    "rotate_credentials",
     "prepare_state",
     "read_private_file",
     "read_token",

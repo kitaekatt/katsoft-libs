@@ -27,6 +27,13 @@ Verbs:
     Set or clear a pause flag through the running relay, as
     ``operator:<machine>`` (audited). ``--offline`` writes the pause file in the
     state directory instead, for when no relay is running (no audit row).
+``rotate-credentials``
+    Replace this machine's relay token and hub bearer with new ones, each
+    written atomically as a private file, and print the two files and the
+    local consumers that must restart to use them (never a credential). Run
+    it on a machine that ran ``peer export`` before katsoft-llm-kit 1.21.0:
+    those exports handed out the general credentials, which stay valid until
+    rotated. Never done implicitly.
 ``status``
     The relay's ``status`` result, as ``operator:<machine>``; ``--offline``
     prints the persisted pause state only. With ``relay.peers`` configured the
@@ -212,6 +219,8 @@ def _parser() -> argparse.ArgumentParser:
         if name == "pause":
             verb.add_argument("--reason", help="Why; kept with the flag.")
         verb.add_argument("--offline", action="store_true", help="Write the pause file directly; no relay needed, no audit row.")
+    sub.add_parser("rotate-credentials", parents=[common],
+                   help="Replace this machine's relay token and hub bearer (after a pre-1.21 peer export).")
     status = sub.add_parser("status", parents=[common], help="The relay's status.")
     status.add_argument("--offline", action="store_true", help="Print the persisted pause state; no relay needed.")
     peer = sub.add_parser("peer", help="Issue a peer key to another machine, or store the one a peer issued.")
@@ -403,6 +412,32 @@ def _cmd_codex(args: argparse.Namespace) -> int:
         return exc.code
 
 
+#: What reads the relay token or hub bearer once, at start, and so must restart after a rotation.
+ROTATION_RESTARTS = (
+    {"consumer": "llm-kit relay serve", "reads": ["relay.token", "hub.bearer"]},
+    {"consumer": "llm-kit relay hub", "reads": ["relay.token", "hub.bearer"]},
+    {"consumer": "llm-kit relay codex (each Codex channel)", "reads": ["relay.token"]},
+)
+#: What re-reads the relay token on every call, and so needs nothing.
+ROTATION_UNCHANGED = ("the llm-kit plugin's Claude channel server", "the /direct hooks", "llm-kit relay client")
+
+
+def _cmd_rotate(args: argparse.Namespace) -> int:
+    from llm_kit.relay.lifecycle import rotate_credentials
+
+    config = _config(args)
+    files = rotate_credentials(config.paths)
+    _emit({
+        "rotated": [str(file) for file in files],
+        "restart": [dict(item) for item in ROTATION_RESTARTS],
+        "reconnect": "the claude.ai connector, only when the hub runs without hub.public_url (bearer sign-in): "
+                     "give it the new hub bearer",
+        "unchanged": list(ROTATION_UNCHANGED),
+        "note": "a running relay and hub accept the old credentials until they restart",
+    })
+    return EXIT_OK
+
+
 def _cmd_peer(args: argparse.Namespace) -> int:
     from llm_kit.relay.lifecycle import ensure_accept_peer_key, peer_reexport_command, write_peer_key
 
@@ -551,6 +586,7 @@ _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "resume": _cmd_control,
     "status": _cmd_control,
     "peer": _cmd_peer,
+    "rotate-credentials": _cmd_rotate,
     "codex": _cmd_codex,
     "client": _cmd_client,
 }

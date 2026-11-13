@@ -82,10 +82,16 @@ The amendments:
   first. The same release moves the hub's peer calls (katsoft-llm-kit 1.19.0)
   from the peer's general relay token and hub bearer to the peer key: a
   `peer export` object is `llm-kit-relay-peer/2` and carries the key alone,
-  and the `llm-kit-relay-peer/1` object and `peers/<machine>/` directories
-  that 1.19.0 and 1.20.0 wrote are refused with the re-export command
-  (section 20, "Client and CLI"). A hub of 1.20.0 or earlier cannot reach a
-  1.21.0 peer, so both machines upgrade together.
+  and the `llm-kit-relay-peer/1` object is refused with the re-export
+  command, and a `peers/<machine>/relay.token` or `hub.bearer` that 1.19.0
+  or 1.20.0 wrote stops the hub and relay, peer key or not, naming the
+  command that deletes it (section 20, "Client and CLI"). A hub of 1.20.0 or
+  earlier cannot reach a 1.21.0 peer, so both machines upgrade together.
+  Upgrade step: if you ran `llm-kit relay peer export` on a machine before
+  1.21.0, run `llm-kit relay rotate-credentials` on that machine and restart
+  the consumers it names. Those exports handed out its general relay token
+  and hub bearer, which authenticate as the local principal and stay valid
+  until rotated; nothing rotates them implicitly.
 
 Policy revisions inside `relay-protocol/1` (no envelope, schema or field
 changed; a client of the earlier policy keeps working):
@@ -282,6 +288,15 @@ channel the owner already trusts: `ssh <peer> llm-kit relay peer export --for
 "Client and CLI"), after the peer's `relay.accept_from` lists this machine; no
 credential is written into a configuration file, a task record or a
 transcript.
+
+Before 1.21.0, `peer export` printed the general relay token and hub bearer.
+If you ran `peer export` on a machine before 1.21.0, run `llm-kit relay
+rotate-credentials` on that machine and restart the consumers it names:
+until then those credentials still authenticate as its local principal,
+with every risk listed above, whatever `relay.accept_from` says. On the
+machine that imported them, the hub and relay refuse to start while
+`peers/<machine>/relay.token` or `hub.bearer` exists, peer key or not, and
+name the command that deletes them; they are never deleted automatically.
 
   The llm-kit channel server states the rule and these risks to the
   receiving session.
@@ -699,9 +714,12 @@ single-user OAuth sign-in for the claude.ai connector, specified in
   `relay.accept_from`. The directories are private and the file is validated
   on every read like the state root. A missing directory or key is a
   configuration error at hub start that names `ssh <machine> llm-kit relay
-  peer export --for <this machine> | llm-kit relay peer import <machine>`, and
-  so is a directory that holds only the `relay.token` and `hub.bearer` a
-  1.19.0 or 1.20.0 import stored (they are never read). No hub tool needs
+  peer export --for <this machine> | llm-kit relay peer import <machine>`. A
+  `relay.token` or `hub.bearer` that a 1.19.0 or 1.20.0 import stored in that
+  directory is a configuration error too, whether or not `peer.key` exists:
+  the error names each file, the exact command that deletes it, and
+  `llm-kit relay rotate-credentials` to run on the peer (section 3, "Peer
+  credentials"). They are never read and never deleted automatically. No hub tool needs
   more than a peer key: the hub calls every relay with the hub origin only,
   and pause, resume and status as `operator:` stay with each machine's own
   CLI. The connection verifies the peer's
@@ -1137,6 +1155,18 @@ independent of the transport, so the hub can reuse them),
   provisioning. `llm-kit relay status` adds `peers` (each peer's machine, URL
   and whether its peer key is `stored` or `missing`) when `relay.peers` is
   configured, and adds nothing otherwise.
+- `llm-kit relay rotate-credentials` replaces this machine's relay token and
+  hub bearer with new random ones, each written atomically through the
+  private-file helpers after the existing file passed the read checks, and
+  prints one JSON object: `rotated` (the two files), `restart` (the local
+  consumers that read them once, at start: `llm-kit relay serve`, `llm-kit
+  relay hub`, each `llm-kit relay codex` channel), `reconnect` (the claude.ai
+  connector, only for a hub without `hub.public_url`, which signs in with the
+  bearer), `unchanged` (the Claude channel server, the `/direct` hooks and the
+  client CLI, which read the token on every call) and a note that a running
+  relay and hub accept the old values until they restart. It never prints a
+  credential, refuses (exit 2) when either file is missing, and is never run
+  implicitly, at start or otherwise.
 - `llm-kit relay client sessions` shows live sessions only by default
   (`live-accepting`, `live-read-only`) and adds `omitted`, the count of the
   others by state (an unfiltered listing was about 158 KB, mostly ended
