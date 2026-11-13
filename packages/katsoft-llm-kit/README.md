@@ -186,6 +186,12 @@ A live Novita probe on 2026-10-24 used the same prompt and a 4096-token cap.
 This evidence establishes an off switch. It does not establish positive effort levels.
 A typed effort of `None` omits the control and retains the provider's default behavior.
 
+## Upgrading to 1.21
+
+Machines that ran `llm-kit relay peer export` before 1.21 must run
+`llm-kit relay rotate-credentials`. The hub and its peers upgrade together:
+the mailbox moves to schema v2 and the peer export format moves to /2.
+
 ## Source
 
 The source lives in the katsoft-libs repository (`packages/katsoft-llm-kit/src/llm_kit`).
