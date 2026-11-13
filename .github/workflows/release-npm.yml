@@ -1,0 +1,107 @@
+# Build and publish ONE npm package release, from its release tag.
+#
+# Tag form: @katsoft/llm-kit-config@<version>. The tag holds a "/", and a "*" in
+# a GitHub filter pattern never matches "/", so release-packages.yml's '*-v*'
+# trigger never matches it (and this trigger never matches a PyPI tag).
+#
+# Publishing uses npm trusted publishing (OIDC) from environment `npm`, with
+# provenance. The job builds from the locked tree (npm ci), runs the tests and
+# the tarball check, packs once, publishes that exact tarball, and then checks
+# that the registry's integrity equals the packed tarball's integrity. When the
+# version is already on npm (the first release is published by hand), it
+# publishes nothing and checks that the published files equal the packed files.
+# Procedure: docs/reference/package-release.md, "npm packages".
+name: release-npm
+run-name: release ${{ github.ref_name }}
+
+on:
+  push:
+    tags: ['@katsoft/llm-kit-config@*']
+
+concurrency:
+  group: release-npm-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: packages/llm-kit-config
+    env:
+      PACKAGE_NAME: "@katsoft/llm-kit-config"
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ github.ref_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Check the tag, the version and the npm CLI
+        run: |
+          version="${RELEASE_TAG##*@}"
+          test "$RELEASE_TAG" = "$PACKAGE_NAME@$version" || { echo "tag $RELEASE_TAG is not $PACKAGE_NAME@<version>"; exit 1; }
+          test "$(node -p "require('./package.json').version")" = "$version" || { echo "package.json version is not $version"; exit 1; }
+          test "$(node -p "require('./package.json').name")" = "$PACKAGE_NAME" || { echo "package.json name is not $PACKAGE_NAME"; exit 1; }
+          grep -q "^## $version\$" CHANGELOG.md || { echo "CHANGELOG.md has no entry for $version"; exit 1; }
+          node -e "const [a,b,c]=process.argv[1].split('.').map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error('trusted publishing needs npm 11.5.1 or later, found '+process.argv[1]); process.exit(1) }" "$(npm --version)"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - run: npm ci
+      - run: npm test
+      - name: Pack, install the tarball in a new directory, run the examples, check the types
+        run: npm run check-pack
+
+      - name: Pack the release tarball
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          npm pack --json --pack-destination "$RUNNER_TEMP/release" > "$RUNNER_TEMP/pack.json"
+          echo "TARBALL=$RUNNER_TEMP/release/$(node -p "require(process.argv[1])[0].filename" "$RUNNER_TEMP/pack.json")" >> "$GITHUB_ENV"
+          echo "INTEGRITY=$(node -p "require(process.argv[1])[0].integrity" "$RUNNER_TEMP/pack.json")" >> "$GITHUB_ENV"
+
+      - name: Publish (trusted publishing, provenance), or verify an existing release
+        run: |
+          if published="$(npm view "$PACKAGE_NAME@$VERSION" dist.integrity 2>/dev/null)" && test -n "$published"; then
+            echo "$PACKAGE_NAME@$VERSION is already on npm; comparing its files with the packed tarball"
+            mkdir -p "$RUNNER_TEMP/published"
+            npm pack "$PACKAGE_NAME@$VERSION" --pack-destination "$RUNNER_TEMP/published" > /dev/null
+            node scripts/compare-tarballs.mjs "$TARBALL" "$RUNNER_TEMP"/published/*.tgz
+            echo "MODE=verified existing release ($published)" >> "$GITHUB_ENV"
+          else
+            npm publish "$TARBALL" --provenance --access public
+            echo "MODE=published" >> "$GITHUB_ENV"
+          fi
+
+      - name: Check the registry's integrity against the packed tarball
+        if: env.MODE == 'published'
+        run: |
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            published="$(npm view "$PACKAGE_NAME@$VERSION" dist.integrity 2>/dev/null || true)"
+            if test -n "$published"; then break; fi
+            echo "the registry does not list $VERSION yet (attempt $attempt); waiting 15 s"
+            sleep 15
+          done
+          test -n "$published" || { echo "the registry does not list $PACKAGE_NAME@$VERSION"; exit 1; }
+          test "$published" = "$INTEGRITY" || { echo "published integrity $published differs from packed $INTEGRITY"; exit 1; }
+
+      - name: Record the release in the job summary
+        run: |
+          {
+            echo "### $PACKAGE_NAME@$VERSION"
+            echo
+            echo "- commit: $GITHUB_SHA"
+            echo "- result: $MODE"
+            echo "- packed integrity: $INTEGRITY"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -22,3 +22,27 @@ jobs:
         env:
           WHEEL_CLOSURE_SOURCE: local
         run: uv run --extra dev pytest -q
+  llm-kit-config:
+    # The npm package @katsoft/llm-kit-config: locked install, tests (all shared
+    # cases), build, then the tarball check (clean install, examples, .d.ts with
+    # TypeScript 5.8). Quality bar lines 1 to 5 for npm: AGENTS.md.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: packages/llm-kit-config
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: packages/llm-kit-config/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - name: Pack, install the tarball in a new directory, run the examples, check the types
+        run: npm run check-pack
