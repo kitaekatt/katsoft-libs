@@ -117,7 +117,7 @@ from llm_kit.relay.lifecycle import (
     RoleLock,
     ensure_state_dir,
     ensure_token,
-    peer_credentials,
+    peer_key,
     token_matches,
 )
 from llm_kit.schema import json_schema as JS
@@ -168,16 +168,18 @@ class RelayPeer:
     """One relay the hub reaches: its machine label and URL.
 
     ``relay_token`` and ``hub_bearer`` default to the hub's own state
-    credentials, which is right for this machine's relay. A peer relay on
-    another machine carries its own, both of them: a non-loopback URL with
-    either missing is refused (:class:`RelayConfigError`), never filled in from
-    this machine's credentials.
+    credentials, which is right for this machine's relay (a loopback URL).
+    A peer relay on another machine is reached with ``peer_key`` alone, the
+    key that relay issued to this machine (principal ``peer:<this machine>``
+    there): a non-loopback URL without one, or with a relay token or hub
+    bearer, is refused (:class:`RelayConfigError`).
     """
 
     machine: str
     url: str
     relay_token: Optional[str] = None
     hub_bearer: Optional[str] = None
+    peer_key: Optional[str] = None
 
 
 PeerSpec = Union[RelayPeer, tuple]
@@ -820,31 +822,36 @@ class HubServer:
     def _build_clients(self, relay_token: str, hub_bearer: str) -> list[HttpRelayClient]:
         """One client per relay: the explicit ``peers`` list, else this machine's relay plus ``relay.peers``.
 
-        A configured peer's credentials come from ``peers/<machine>/`` (a
-        missing one is a :class:`RelayConfigError` naming the import command).
-        This machine's credentials go only to loopback URLs: a peer URL that
-        is not loopback needs both of its own.
+        A configured peer is reached with the peer key it issued to this
+        machine, read from ``peers/<machine>/peer.key`` (a missing key, or a
+        directory holding only a 1.19.0 or 1.20.0 import, is a
+        :class:`RelayConfigError` naming the command). This machine's
+        credentials go only to loopback URLs; a peer URL that is not loopback
+        takes its peer key alone.
         """
         peers = self._peers
         if peers is None:
             relay_host, relay_port = self.config.bind("relay")
             peers = [RelayPeer(self.config.machine_label, base_url(relay_host, relay_port))]
             for configured in self.config.peers:
-                token, bearer = peer_credentials(self.config.paths, configured.machine)
-                peers.append(RelayPeer(configured.machine, configured.url, token, bearer))
+                key = peer_key(self.config.paths, configured.machine, own=self.config.machine_label)
+                peers.append(RelayPeer(configured.machine, configured.url, peer_key=key))
         clients: list[HttpRelayClient] = []
         try:
             for peer in peers:
                 remote = not is_loopback_url(peer.url)
-                if remote and (peer.relay_token is None or peer.hub_bearer is None):
+                if remote and (peer.peer_key is None or peer.relay_token is not None or peer.hub_bearer is not None):
                     raise RelayConfigError(
-                        f"relay {peer.machine!r} at {peer.url} is not on loopback, so it needs its own relay token "
-                        "and hub bearer; this machine's credentials are never sent to a peer"
+                        f"relay {peer.machine!r} at {peer.url} is not on loopback, so it is reached with the peer key "
+                        "it issued to this machine alone; no relay token or hub bearer is ever sent to a peer"
                     )
+                if peer.peer_key is not None:
+                    creds: dict[str, Any] = {"peer_key": peer.peer_key}
+                else:
+                    creds = {"relay_token": peer.relay_token if peer.relay_token is not None else relay_token,
+                             "hub_bearer": peer.hub_bearer if peer.hub_bearer is not None else hub_bearer}
                 clients.append(HttpRelayClient(
-                    peer.url, machine=peer.machine,
-                    relay_token=peer.relay_token if peer.relay_token is not None else relay_token,
-                    hub_bearer=peer.hub_bearer if peer.hub_bearer is not None else hub_bearer,
+                    peer.url, machine=peer.machine, **creds,
                     timeout_s=self._client_timeout_s, llm_timeout_s=self._llm_timeout_s,
                     connect_timeout_s=PEER_CONNECT_TIMEOUT_S if remote or peer.machine != self.config.machine_label else None,
                 ))

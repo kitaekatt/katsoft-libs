@@ -30,16 +30,23 @@ code and no effect:
 
 Forwarding (amendment 2, protocol sections 3 and 20 "Forwarding"). A relay
 with forwarding peers (``peers``: machine -> client carrying that peer's
-forward key) sends a ``/direct`` session's read, llm and write calls that name
+peer key) sends a ``/direct`` session's read, llm and write calls that name
 a peer to that peer, as origin ``relay:<this machine>`` with ``on_behalf_of``
 set to the session, and fans ``list_machines``, ``list_sessions`` and
 ``list_questions`` out to every peer. The order is fixed: the local grant
 check (no I/O), the cached capability probe (``status.forwarding.receive``),
 reserving one grant use, then the forwarded requests. A use is refunded only
-on a certain pre-effect outcome. As a receiver, a relay accepts a
-``relay:<M>`` origin only with the relay token AND the forward key it issued
-to ``<M>`` (``X-Relay-Peer-Key``), only for ``<M>`` in ``accept_from``, and
-answers it from its own machine only: a relay origin is never forwarded again.
+on a certain pre-effect outcome.
+
+Principals (protocol section 3). The credential a request presents, never the
+origin it claims, decides who is calling: the relay token is the local
+principal; a peer key this relay issued to ``<M>`` (``accept_keys``,
+``X-Relay-Peer-Key``, never together with the relay token) is the principal
+``peer:<M>``, admitted only for ``<M>`` in ``accept_from``. ``peer:<M>`` may
+claim only ``relay:<M>`` (``on_behalf_of`` a ``direct:<M>/...`` session) or a
+hub origin (``claude.ai/...``, the hub on ``<M>``; no hub bearer); a
+``relay:`` origin needs ``peer:<M>``. Neither origin is ever forwarded, so a
+peer's call is answered from this machine only (one hop).
 
 A grant use is reserved before the effect, so two concurrent calls cannot
 share one remaining use: ``send_message`` consumes in the mailbox transaction
@@ -274,7 +281,7 @@ class _Granted:
 
 
 class _PeerLink:
-    """One forwarding peer: its client (None when no forward key is stored) and the cached capability probe."""
+    """One forwarding peer: its client (None when no peer key is stored) and the cached capability probe."""
 
     def __init__(self, machine: str, client: Any) -> None:
         self.machine = machine
@@ -335,6 +342,9 @@ class RelayService:
         for name in list(peers or {}) + list(accept_from) + list(accept_keys or {}):
             if not P.is_machine_label(name) or name == machine:
                 raise ValueError(f"{name!r} is not another machine's label")
+        keys = list((accept_keys or {}).values())
+        if len(set(keys)) != len(keys) or relay_token in keys or hub_bearer in keys:
+            raise ValueError("every peer key must be distinct, and distinct from the relay token and the hub bearer")
         for name, peer in (peers or {}).items():
             if peer is not None and peer.machine != name:
                 raise ValueError(f"the forwarding client for {name!r} names machine {peer.machine!r}")
@@ -484,11 +494,11 @@ class RelayService:
                 verb = body_verb  # known: the call row can be written whatever happens next
             if "on_behalf_of" in envelope and identity.kind != "relay":
                 raise _bad("on_behalf_of is valid only with a relay origin; a client never supplies its own delegation")
-            self._authenticate(identity, relay_token, hub_bearer, peer_key)
+            principal = self._authenticate(identity, relay_token, hub_bearer, peer_key)
             spec = self._verb(body_verb, path_verb)
             params = self._validate_request(envelope)
             target = self._target_param(spec, params)
-            delegate = self._check_origin(spec, identity, params, envelope.get("on_behalf_of"))
+            delegate = self._check_origin(spec, identity, params, envelope.get("on_behalf_of"), principal)
             self._check_pause(spec, identity)
             call = _Call(spec.name, identity, on_behalf_of=delegate)
             self._local.call = call
@@ -562,6 +572,16 @@ class RelayService:
         """Whether ``presented`` is the relay token (constant time); the transport asks before it reads a body."""
         return token_matches(presented, self._relay_token)
 
+    def peer_principal(self, presented: Optional[str]) -> Optional[str]:
+        """The machine whose peer key ``presented`` is (principal ``peer:<M>``), or None; constant time per key."""
+        if not presented:
+            return None
+        found = None
+        for machine, key in self._accept_keys.items():
+            if token_matches(presented, key):
+                found = machine
+        return found
+
     def transport_error(self, code: str, message: str, **details: Any) -> tuple[int, dict[str, Any]]:
         """``(status, envelope)`` for a refusal the transport makes before a body is read."""
         error = P.RelayError(code, message, details=details or None)
@@ -604,19 +624,31 @@ class RelayService:
         return envelope
 
     def _authenticate(self, identity: P.Identity, relay_token: Optional[str], hub_bearer: Optional[str],
-                      peer_key: Optional[str]) -> None:
+                      peer_key: Optional[str]) -> Optional[str]:
+        """The principal: None for the relay token (local), else the machine ``<M>`` of ``peer:<M>``.
+
+        Chosen by the credential presented, never by the claimed origin. A peer key is the whole credential of
+        a peer: it is never accepted together with the relay token, and a hub origin under it needs no bearer.
+        """
+        if peer_key:
+            if relay_token:
+                raise P.RelayError("unauthenticated",
+                                   f"a request carries {P.HEADER_RELAY_TOKEN} or {P.HEADER_PEER_KEY}, never both")
+            principal = self.peer_principal(peer_key)
+            if principal is None:
+                raise P.RelayError("unauthenticated", f"{P.HEADER_PEER_KEY} is not a peer key this relay issued")
+            return principal
         if not token_matches(relay_token, self._relay_token):
             raise P.RelayError("unauthenticated", f"missing or wrong {P.HEADER_RELAY_TOKEN}")
         if identity.kind == "hub" and not token_matches(hub_bearer, self._hub_bearer):
             raise P.RelayError("unauthenticated", "a hub-origin request needs the hub bearer (Authorization: Bearer)")
         if identity.kind == "relay":
-            # The key binds the request to exactly one requester machine: the one this relay issued it to.
-            expected = self._accept_keys.get(identity.subject)
-            if expected is None or not token_matches(peer_key, expected):
-                raise P.RelayError(
-                    "unauthenticated",
-                    f"a relay-origin request needs the {P.HEADER_PEER_KEY} this relay issued to {identity.subject!r}",
-                )
+            raise P.RelayError(
+                "unauthenticated",
+                f"a relay origin is authenticated only by the {P.HEADER_PEER_KEY} this relay issued to "
+                f"{identity.subject!r}, never by the relay token",
+            )
+        return None
 
     def _verb(self, body_verb: str, path_verb: Optional[str]) -> P.VerbSpec:
         for name in (path_verb, body_verb):
@@ -656,19 +688,25 @@ class RelayService:
         return None
 
     def _check_origin(self, spec: P.VerbSpec, identity: P.Identity, params: Mapping[str, Any],
-                      on_behalf_of: Optional[str] = None) -> Optional[P.Identity]:
-        """Refuse an origin the verb or this machine does not allow; returns a relay origin's delegate."""
+                      on_behalf_of: Optional[str] = None, principal: Optional[str] = None) -> Optional[P.Identity]:
+        """Refuse an origin the verb, this machine or the principal does not allow; returns a relay origin's delegate."""
+        if principal is not None:
+            if principal == self.machine or principal not in self._accept_from:
+                raise P.RelayError(
+                    "origin_not_allowed",
+                    f"this relay accepts no calls from peer {principal!r} (relay.accept_from)",
+                )
+            if not (identity.kind == "hub" or (identity.kind == "relay" and identity.subject == principal)):
+                raise P.RelayError(
+                    "origin_not_allowed",
+                    f"a peer key of {principal!r} may claim only relay:{principal} or a hub origin, not {identity}",
+                )
         if identity.kind not in spec.origins:
             raise P.RelayError(
                 "origin_not_allowed", f"a {identity.kind} origin may not call {spec.name}",
                 details={"origins": sorted(spec.origins)},
             )
         if identity.kind == "relay":
-            if identity.subject == self.machine or identity.subject not in self._accept_from:
-                raise P.RelayError(
-                    "origin_not_allowed",
-                    f"this relay accepts no forwarded calls from {identity.subject!r} (relay.accept_from)",
-                )
             delegate = P.delegated_identity(identity, on_behalf_of)
             if delegate is None and spec.name != "status":
                 raise P.RelayError("origin_not_allowed",
@@ -793,12 +831,12 @@ class RelayService:
         """None when ``link``'s relay accepts forwarded calls, else the error to report; never sends the call itself.
 
         The answer (``status.forwarding.receive``, or the probe's refusal) is cached for ``probe_ttl_s``; a
-        transport failure is not. A peer without a stored forward key is never probed.
+        transport failure is not. A peer without a stored peer key is never probed.
         """
         if link.client is None:
             return P.RelayError(
                 "machine_unreachable",
-                f"no forward key is stored for relay {link.machine!r}; import one with "
+                f"no peer key is stored for relay {link.machine!r}; import one with "
                 f"`llm-kit relay peer export --for {self.machine}` on {link.machine}, piped into "
                 f"`llm-kit relay peer import {link.machine}` here",
                 details={"machine": link.machine, "sent": False},

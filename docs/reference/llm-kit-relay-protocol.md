@@ -66,7 +66,10 @@ The amendments:
   and the origin kind `relay` (`relay:<machine>`) may originate the read, llm
   and write verbs and `status` for a peer relay that forwards a `/direct`
   session's call (section 20, "Forwarding"). The header `X-Relay-Peer-Key`
-  carries the forward key. `status.forwarding: {"receive": true}` says a relay
+  carries the peer key: the one credential another machine's hub and relay
+  hold for this relay, which authenticates the principal `peer:<machine>`
+  and never travels with the relay token (section 3, "Principals").
+  `status.forwarding: {"receive": true}` says a relay
   accepts forwarded calls; `status.harnesses` is not reused for it, because
   serving a harness does not establish forwarding support. A message stored
   from a forwarded send carries `forwarded_by: relay:<machine>` on its
@@ -76,7 +79,13 @@ The amendments:
   envelope stage, because its envelope schema refuses unknown fields
   (condition 2), and reports no `forwarding` (condition 3); a forwarding relay
   checks the field before it sends a forwarded call, so a receiver upgrades
-  first.
+  first. The same release moves the hub's peer calls (katsoft-llm-kit 1.19.0)
+  from the peer's general relay token and hub bearer to the peer key: a
+  `peer export` object is `llm-kit-relay-peer/2` and carries the key alone,
+  and the `llm-kit-relay-peer/1` object and `peers/<machine>/` directories
+  that 1.19.0 and 1.20.0 wrote are refused with the re-export command
+  (section 20, "Client and CLI"). A hub of 1.20.0 or earlier cannot reach a
+  1.21.0 peer, so both machines upgrade together.
 
 Policy revisions inside `relay-protocol/1` (no envelope, schema or field
 changed; a client of the earlier policy keeps working):
@@ -112,10 +121,10 @@ exactly the verb's response result.
 
 | Header | Where | Meaning |
 |---|---|---|
-| `X-Relay-Token` | every request to a relay | The relay token. Without a valid one, the relay refuses `unauthenticated`. |
-| `Authorization: Bearer <hub bearer>` | every request to the hub's MCP endpoint; also every hub-origin request to a relay (section 20) | The hub bearer. It authenticates the connector to the hub, and a hub-origin request to a relay. By itself it never authorizes a relay call. |
+| `X-Relay-Token` | every request to a relay from its own machine | The relay token: the local principal. Without a valid one (and without a peer key), the relay refuses `unauthenticated`. |
+| `Authorization: Bearer <hub bearer>` | every request to the hub's MCP endpoint; also every hub-origin request to a relay made with the relay token (section 20) | The hub bearer. It authenticates the connector to the hub, and a hub-origin request to a relay. By itself it never authorizes a relay call. |
 | `X-Relay-Grant` | optional on a granted verb | A grant id. When present, that grant must cover the call. When absent, the relay picks a covering live grant of the origin's session, and refuses `grant_required` if there is none. |
-| `X-Relay-Peer-Key` | every request with a `relay:<machine>` origin (amendment 2) | The forward key the receiving relay issued to exactly that machine (`accept/<machine>/forward.key`), compared in constant time. Without it, with a wrong one, or with the key of another machine, the request is `unauthenticated`. |
+| `X-Relay-Peer-Key` | every request from another machine's hub or relay (amendment 2) | The peer key the receiving relay issued to exactly one machine (`accept/<machine>/peer.key`), compared in constant time against every issued key: the principal `peer:<machine>` (section 3, "Principals"). It is the whole credential of such a request: one that also carries `X-Relay-Token`, and one whose key the relay did not issue, is `unauthenticated`. |
 
 ### Origins
 
@@ -132,11 +141,49 @@ The envelope's `origin` names who the request is for:
 A relay accepts a `direct` or `operator` origin only for its own machine, a
 `direct` origin only with harness `claude`, and a `channel` origin with harness
 `claude` or `codex` (amendment 1, section 1). A channel origin must match its
-registration (section 9). A `relay:<M>` origin is accepted only with the forward
-key issued to `<M>` (`unauthenticated` otherwise), only for a `<M>` that the
-receiving relay's `relay.accept_from` lists and that is not the receiver
-itself (`origin_not_allowed` otherwise), and, for every verb but `status`,
-only with `on_behalf_of` (`origin_not_allowed` without it).
+registration (section 9). A `relay:<M>` origin is accepted only from the
+principal `peer:<M>` (the relay token never authenticates it:
+`unauthenticated`; another machine's key: `origin_not_allowed`), and, for
+every verb but `status`, only with `on_behalf_of` (`origin_not_allowed`
+without it).
+
+### Principals
+
+The credential a request presents, never the origin its envelope claims,
+decides who is calling:
+
+- The relay token is the local principal. It may claim every origin kind but
+  `relay`, under the rules of this section (unchanged: the accepted risks
+  below).
+- A peer key is the principal `peer:<M>`, where `<M>` is the machine the
+  relay issued that key to (`llm-kit relay peer export --for <M>`, stored as
+  `accept/<M>/peer.key` under the same private-file policy as the relay
+  token: `0700`/`0600` on POSIX, a protected owner-plus-SYSTEM ACL on
+  Windows). The relay admits `peer:<M>` only while its `relay.accept_from`
+  lists `<M>` (`origin_not_allowed` otherwise, whatever the origin; a key on
+  disk binds nothing once `<M>` leaves the list).
+
+A holder of the peer key `<R>` issued to `<M>` can do exactly this at `<R>`,
+and nothing else (`origin_not_allowed`):
+
+- claim `relay:<M>`: `status`, and, with `on_behalf_of: direct:<M>/claude/<S>`,
+  the read, llm and write verbs (`list_machines`, `list_sessions`,
+  `read_session`, `get_replies`, `list_questions`, `ask_llm`, `send_message`,
+  `answer_question`) on `<R>`'s own sessions, ledgers and endpoints, with no
+  grant stage at `<R>` (the source relay checked the session's grant);
+- claim the hub origin `claude.ai/<user>`, with no hub bearer: `status` and
+  the same eight verbs with the hub's rules (an opted-in session for
+  `send_message`, any question for `answer_question`). This is the hub on
+  `<M>` reaching `<R>` (section 13).
+
+It can never claim `direct:`, `operator:` or `channel:` for any machine,
+`<R>` included, nor `relay:` for a machine other than `<M>`, nor
+`on_behalf_of` a session on another machine; so it mints no grant, pauses
+and resumes nothing and registers no channel. A request it authenticates is
+never forwarded onward (one hop): neither origin it may claim is ever
+forwarded, so `<R>` answers it from its own machine only. A local-principal
+request never claims `relay:`, so no local caller can make `<R>` act on
+behalf of a peer.
 
 The envelope field `on_behalf_of` (amendment 2) is valid only with a `relay`
 origin; on any other origin it is `bad_request`, so a client never supplies
@@ -166,7 +213,7 @@ Rules that follow from the table:
 - A relay origin (amendment 2) runs no grant stage at the receiver. That is
   safe only because the forwarding relay checked the `/direct` session's grant
   for the exact remote target and reserved its use before it sent anything,
-  because the forward key binds the request to one requester machine, and
+  because the peer key binds the request to one requester machine, and
   because `on_behalf_of` must name a session on that machine (section 20,
   "Forwarding"). A relay origin never joins the channel, grant or control
   tiers (`status` excepted).
@@ -209,31 +256,32 @@ Rules that follow from the table:
     the llm-kit hooks check is a file such a process can also write;
   - the Claude in a `/direct` session can send a message the owner did not
     write;
-  - the hub's machine holds each peer relay's token and hub bearer
-    (`peers/<machine>/` in its state directory, section 13), so any process
-    there that can read them can send a message as `claude.ai/<user>` to that
-    peer's opted-in sessions. The first risk above is extended from the hub
-    machine's own relay to every peer the hub reaches;
-  - (amendment 2) a forwarding relay's machine holds each receiver's relay
-    token and the forward key that receiver issued to it
-    (`peers/<receiver>/`), so any process there that can read them can send a
-    message to that receiver's opted-in sessions as the `direct` origin of any
-    Claude session on the forwarding machine. The second risk above is
-    extended from one machine to every receiver that accepts it.
+  - a machine holds the peer key each peer issued to it
+    (`peers/<peer>/peer.key` in its state directory, section 13), so any
+    process there that can read it can do at that peer what "Principals"
+    above lists: send a message as `claude.ai/<user>` to that peer's
+    opted-in sessions, answer its questions, read it and ask its endpoints,
+    and do the same as the `direct` origin of any Claude session on the
+    holding machine (`relay:<holder>` with `on_behalf_of`). The first two
+    risks above are extended from the holding machine to every peer that
+    accepts it, and to nothing more: the key claims none of the peer's own
+    `direct`, `operator` or `channel` origins and is never forwarded on.
 
 ### Peer credentials
 
-A relay on another machine (a peer) authenticates exactly as the local one
-does: every hub call to it carries that relay's own relay token and hub bearer
-(section 20, "Authentication"). The hub keeps copies per peer and never reuses
-its own machine's credentials for a peer. This machine's relay token and hub
-bearer are never sent to a non-loopback URL, there is no fallback to them when
-a peer's are missing (the hub refuses to start instead), and a peer's
-credentials are never sent over plain `http` or anywhere but that peer's URL.
-Provisioning is a pull by the hub's machine over a channel the owner already
-trusts, for example `ssh <peer> llm-kit relay peer export`, piped into
-`llm-kit relay peer import <peer>` (section 20, "Client and CLI"); no
-credential is written into a configuration file, a task record or a transcript.
+A relay on another machine (a peer) is reached with one secret: the peer key
+that peer issued to this machine, sent as `X-Relay-Peer-Key` by both this
+machine's hub (hub origin) and its relay (`relay:` origin). No relay token or
+hub bearer, this machine's or the peer's, is ever sent to a peer or exported:
+this machine's go only to loopback URLs, and a non-loopback URL takes the peer
+key alone. There is no fallback when a peer's key is missing (the hub and the
+relay refuse to start instead), and the key is never sent over plain `http`
+or anywhere but that peer's URL. Provisioning is a pull by this machine over a
+channel the owner already trusts: `ssh <peer> llm-kit relay peer export --for
+<this machine>`, piped into `llm-kit relay peer import <peer>` (section 20,
+"Client and CLI"), after the peer's `relay.accept_from` lists this machine; no
+credential is written into a configuration file, a task record or a
+transcript.
 
   The llm-kit channel server states the rule and these risks to the
   receiving session.
@@ -644,12 +692,19 @@ single-user OAuth sign-in for the claude.ai connector, specified in
   `env.json` machine other than this one, once; the URL is an `https` origin (a
   plain `http` origin only for a literal loopback address). Without `peers`
   the hub is the one-relay hub. Machine labels are unique.
-- Peers: each peer is reached with its own relay token and hub bearer, read
-  from `peers/<machine>/relay.token` and `peers/<machine>/hub.bearer` under the
-  hub's state directory (section 3, "Peer credentials"). The directories are
-  private and the files are validated on every read like the state root. A
-  missing directory or file is a configuration error at hub start that names
-  `llm-kit relay peer import <machine>`. The connection verifies the peer's
+- Peers: each peer is reached with the peer key it issued to this machine,
+  read from `peers/<machine>/peer.key` under the hub's state directory, and
+  nothing else (section 3, "Peer credentials"); the peer's relay authenticates
+  the call as `peer:<this machine>`, so it must list this machine in its
+  `relay.accept_from`. The directories are private and the file is validated
+  on every read like the state root. A missing directory or key is a
+  configuration error at hub start that names `ssh <machine> llm-kit relay
+  peer export --for <this machine> | llm-kit relay peer import <machine>`, and
+  so is a directory that holds only the `relay.token` and `hub.bearer` a
+  1.19.0 or 1.20.0 import stored (they are never read). No hub tool needs
+  more than a peer key: the hub calls every relay with the hub origin only,
+  and pause, resume and status as `operator:` stay with each machine's own
+  CLI. The connection verifies the peer's
   TLS certificate, follows no redirect and ignores proxy environment
   variables. A connection that cannot be opened within 3 seconds, and an HTTP
   502, 503 or 504 answer that carries no relay envelope (a tunnel in front of
@@ -837,7 +892,9 @@ Files: `common`, `envelope.request`, `envelope.response`, the objects `error`,
   labels: relay configuration (C0).
 - Forwarding more than one hop: a relay origin is never forwarded or fanned
   out again (amendment 2 is one hop), and channel, operator, hub and relay
-  origins are never forwarded at all.
+  origins are never forwarded at all. A request authenticated by a peer key
+  may claim only a relay or hub origin (section 3, "Principals"), so it is
+  never forwarded, whatever it claims.
 - Verification of `signed` or of any `origin_proof` other than `none`:
   alternative B or the OAuth phase.
 - `continue_session`, `start_session`, `stop_session` and remote approval of
@@ -890,10 +947,15 @@ independent of the transport, so the hub can reuse them),
 
 ### Authentication
 
-- Every relay request needs a valid `X-Relay-Token`, whatever its origin.
-- A hub-origin request (`claude.ai/<user>`) also needs
+- Every relay request needs a valid `X-Relay-Token` (the local principal) or
+  a valid `X-Relay-Peer-Key` (the principal `peer:<M>`), never both
+  (`unauthenticated`); the transport checks one of them before it reads the
+  body. A `relay:` origin needs the peer key. Section 3, "Principals", lists
+  what each principal may claim.
+- A hub-origin request (`claude.ai/<user>`) with the relay token also needs
   `Authorization: Bearer <hub bearer>`; without it, or with a wrong one, it is
-  `unauthenticated`. Both comparisons are constant time. The bearer alone
+  `unauthenticated`. With a peer key it needs no bearer. All comparisons are
+  constant time. The bearer alone
   never authorizes a relay call. Requiring it on hub origins stops a relay-token
   holder from claiming the hub origin to skip the `/direct` grants. A hub
   therefore sends both headers. Under alternative A this is a guardrail too: a
@@ -1040,7 +1102,9 @@ independent of the transport, so the hub can reuse them),
   connection refused, connect timeout, no free pooled connection), `true`
   with `outcome: "unknown"` otherwise (a read timeout or dropped connection
   after sending, a gateway answer, a reply that is not a relay envelope). With
-  a forward key it sends `X-Relay-Peer-Key` on `relay:` origin calls. `poll` and
+  a peer key (`peer_key=`) it sends `X-Relay-Peer-Key` alone on every call and
+  is refused, at construction, together with a relay token or hub bearer; a
+  non-loopback URL requires one. `poll` and
   `get_replies` timeouts grow by `wait_s`; `ask_llm` waits up to 660 seconds.
 - `llm-kit relay serve` runs the relay in the foreground until SIGINT or
   SIGTERM. `pause`, `resume` and `status` call the relay as
@@ -1052,27 +1116,27 @@ independent of the transport, so the hub can reuse them),
   calls one of the eight client verbs as `direct:<machine>/claude/<S>`, with
   `--grant` as `X-Relay-Grant`. Output is JSON; exit 0 ok, 1 refused or
   unreachable, 2 usage or configuration.
-- `llm-kit relay peer export` prints this machine's relay token and hub bearer
-  as one JSON object, `{"format": "llm-kit-relay-peer/1", "machine": <label>,
-  "relay_token": ..., "hub_bearer": ...}`, and refuses (exit 2) when standard
-  output is a terminal. `llm-kit relay peer import <machine>` reads that
-  object from standard input (never a terminal, at most 4096 bytes), requires
-  its `machine` to equal `<machine>`, which must be an enabled `env.json`
-  machine other than this one, and writes `peers/<machine>/relay.token` and
-  `hub.bearer` through the private-file helpers (private directories, `0600`
-  files, a protected owner-plus-SYSTEM ACL on Windows). It prints the file
-  names and whether the peer is configured in `relay.peers`, never a
-  credential. `llm-kit relay status` adds `peers` (each peer's machine, URL and
-  whether its two credentials are `stored` or `missing`) when `relay.peers` is
+- `llm-kit relay peer export --for <M>` mints, or reuses, the peer key this
+  relay issues to `<M>` as `accept/<M>/peer.key` (private directories, a
+  `0600` file, the protected ACL on Windows) and prints it as one JSON object,
+  `{"format": "llm-kit-relay-peer/2", "machine": <label>, "peer_key": ...}`.
+  `--for` is required, `<M>` must be listed in `relay.accept_from` and must
+  not be this machine, and the command refuses (exit 2) when standard output
+  is a terminal. This machine's relay token and hub bearer are never
+  exported. `llm-kit relay peer import <machine>` reads that object from
+  standard input (never a terminal, at most 4096 bytes), requires its
+  `machine` to equal `<machine>`, which must be an enabled `env.json` machine
+  other than this one, and writes `peers/<machine>/peer.key` through the
+  private-file helpers (private directories, a `0600` file, a protected
+  owner-plus-SYSTEM ACL on Windows). It prints the file name and whether the
+  peer is configured in `relay.peers`, never the key. An
+  `llm-kit-relay-peer/1` object (what 1.19.0 and 1.20.0 exported: the general
+  relay token and hub bearer) is refused with the re-export command, and
+  nothing is stored. A relay reads its issued keys at start, and the hub and
+  relay read the stored ones at start, so both machines restart after
+  provisioning. `llm-kit relay status` adds `peers` (each peer's machine, URL
+  and whether its peer key is `stored` or `missing`) when `relay.peers` is
   configured, and adds nothing otherwise.
-- `llm-kit relay peer export --for <M>` (amendment 2) also mints, or reuses,
-  the forward key this relay issues to `<M>` as `accept/<M>/forward.key`
-  (private directories, a `0600` file, the protected ACL on Windows) and adds
-  it to the object as `forward_key`. `<M>` must be listed in
-  `relay.accept_from`. `peer import <machine>` accepts the object with or
-  without `forward_key` and stores it as `peers/<machine>/forward.key`. A relay
-  reads both sets of keys at start, so both relays are restarted after
-  provisioning.
 - `llm-kit relay client sessions` shows live sessions only by default
   (`live-accepting`, `live-read-only`) and adds `omitted`, the count of the
   others by state (an unfiltered listing was about 158 KB, mostly ended
@@ -1082,17 +1146,17 @@ independent of the transport, so the hub can reuse them),
 
 ### Forwarding (amendment 2)
 
-Configuration. On the forwarding (source) relay, each `relay.peers` entry
-whose `peers/<machine>/forward.key` is stored is a forwarding peer, reached at
-its URL with its own relay token, hub bearer and that forward key. A
-configured peer without a forward key is listed `unreachable`
-(`machine_unreachable`, `details.sent: false`) and is never sent to. On the
+Configuration. On the forwarding (source) relay, each `relay.peers` entry is a
+forwarding peer, reached at its URL with the peer key it issued to the source
+(`peers/<machine>/peer.key`) and nothing else; a missing key stops the relay
+at start naming the provisioning command, as it stops the hub. On the
 receiving relay, `relay: {accept_from: [<label>, ...]}` (nested in the `relay`
-block, never a new top-level key) names the machines it accepts forwarded
-calls from; each must be a non-disabled `env.json` machine other than itself,
-once. `peer export --for <M>` issues `<M>`'s key; `ssh <receiver> llm-kit
-relay peer export --for <source> | llm-kit relay peer import <receiver>` on the
-source provisions it.
+block, never a new top-level key) names the machines whose hub and relay may
+call it with a peer key; each must be a non-disabled `env.json` machine other
+than itself, once. `peer export --for <M>` issues `<M>`'s key; `ssh <receiver>
+llm-kit relay peer export --for <source> | llm-kit relay peer import
+<receiver>` on the source provisions it, for the source's hub and relay
+alike.
 
 Source-side checks. The source relay sends a peer request only when all of
 these hold: the origin is `direct:<self>/claude/<S>` (a channel, operator, hub

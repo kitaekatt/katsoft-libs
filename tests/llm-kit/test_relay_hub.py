@@ -73,13 +73,11 @@ class Machine:
     def __init__(self, label: str, tmp_path: Path, *, question: bool = False) -> None:
         self.label = label
         self.root = tmp_path / label
-        env_json = tmp_path / "env.json"
-        env_json.write_text(json.dumps(ENV_JSON), encoding="utf-8")
-        relay_yaml = self.root / "config" / "relay.yaml"
-        relay_yaml.parent.mkdir(parents=True)
-        relay_yaml.write_text(ENABLED_YAML, encoding="utf-8")  # the opt-in: nothing listens without it
-        self.config = C.load_config(env_json=env_json, environ={}, hostname=lambda: f"{label}.local",
-                                    config_path=relay_yaml, state_root=self.root / "state")
+        self._env_json = tmp_path / "env.json"
+        self._env_json.write_text(json.dumps(ENV_JSON), encoding="utf-8")
+        self._relay_yaml = self.root / "config" / "relay.yaml"
+        self._relay_yaml.parent.mkdir(parents=True)
+        self.config = self._load(ENABLED_YAML)  # the opt-in: nothing listens without it
         self.registrations: dict[str, dict[str, Any]] = {}
         if question:  # one real ledger with one open question, watched by this relay
             ledger = self.root / "ledgers" / "jobs.sqlite3"
@@ -92,12 +90,30 @@ class Machine:
         (codex / "sessions").mkdir(parents=True)
         self.roots = D.DiscoveryRoots(claude, codex)
         self.backend = FakeBackend(label)
-        self.server = S.RelayServer(
+        self.server = self._serve()
+
+    def _load(self, text: str) -> C.RelayConfig:
+        self._relay_yaml.write_text(text, encoding="utf-8")
+        config = C.load_config(env_json=self._env_json, environ={}, hostname=lambda: f"{self.label}.local",
+                               config_path=self._relay_yaml, state_root=self.root / "state")
+        ledgers = getattr(self, "config", None)
+        return dataclasses.replace(config, ledgers=ledgers.ledgers) if ledgers is not None else config
+
+    def _serve(self) -> S.RelayServer:
+        return S.RelayServer(
             self.config, port=0, roots=self.roots, probe=D.PsutilProbe(),
             backend_factory=lambda entry: SimpleNamespace(backend=self.backend, model=entry.model),
             policy_loader=lambda scope: consent.policy(scope, path=self.root / "consent.json"),
             poll_interval_s=0.05, maintain_interval_s=3600.0,
         ).start()
+
+    def accept(self, *machines: str) -> dict[str, str]:
+        """Issue each of ``machines`` a peer key (``peer export --for``), list them in accept_from, restart the relay."""
+        self.server.stop()
+        self.config = self._load(ENABLED_YAML + f"relay:\n  accept_from: [{', '.join(machines)}]\n")
+        keys = {machine: L.ensure_accept_peer_key(self.config.paths, machine) for machine in machines}
+        self.server = self._serve()
+        return keys
 
     @property
     def url(self) -> str:
@@ -994,10 +1010,10 @@ def test_a_relay_configured_twice_or_a_bad_entry_is_refused(machine_a, tmp_path)
 
 
 def test_a_non_loopback_relay_url_is_refused(machine_a):
-    with pytest.raises(C.RelayConfigError, match="not on loopback"):  # a peer URL needs its own credentials (A2)
+    with pytest.raises(C.RelayConfigError, match="not on loopback"):  # a peer URL needs its peer key (A2, 1.21)
         make_hub(machine_a.config, [(A, "http://192.168.1.5:4710")]).start()
-    with pytest.raises(ValueError, match="https"):  # and, even with them, https
-        make_hub(machine_a.config, [H.RelayPeer(A, "http://192.168.1.5:4710", "t", "b")]).start()
+    with pytest.raises(ValueError, match="https"):  # and, even with it, https
+        make_hub(machine_a.config, [H.RelayPeer(A, "http://192.168.1.5:4710", peer_key="k")]).start()
     # the failed open released the lock
     make_hub(machine_a.config, [machine_a.peer]).start().stop()
 

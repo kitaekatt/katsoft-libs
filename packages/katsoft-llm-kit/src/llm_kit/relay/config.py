@@ -49,17 +49,19 @@ machines' relays the hub reaches (nested in the ``relay`` block, never a new
 top-level key). Each label must name a non-disabled ``env.json`` machine other
 than this one, once; the URL is an ``https`` origin (or an ``http`` literal
 loopback origin). Without ``peers`` the hub fronts this machine's relay only.
-A peer has its own credentials under ``peers/<machine>/`` in the state
-directory (:meth:`StatePaths.peer_relay_token`); this machine's credentials
-are never sent to a peer.
-
-Forwarding (amendment 2). A relay that holds ``peers/<machine>/forward.key``
-for a configured peer forwards its ``/direct`` sessions' calls to that peer.
-A receiving relay names, in ``relay: {accept_from: [<label>, ...]}``, the
-machines it accepts forwarded calls from; each must be a non-disabled
-``env.json`` machine other than this one, once. Its key for each is
-``accept/<machine>/forward.key`` (:meth:`StatePaths.accept_forward_key`),
-minted by ``llm-kit relay peer export --for <machine>``.
+Peer credentials (katsoft-llm-kit 1.21.0). A peer is reached with ONE
+secret, the peer key the peer issued to this machine, stored as
+``peers/<machine>/peer.key`` (:meth:`StatePaths.peer_key`); no relay token or
+hub bearer, this machine's or the peer's, is ever sent to a peer. A relay
+names, in ``relay: {accept_from: [<label>, ...]}``, the machines whose hub or
+relay may call it with a peer key; each must be a non-disabled ``env.json``
+machine other than this one, once. The key it issued to each is
+``accept/<machine>/peer.key`` (:meth:`StatePaths.accept_peer_key`), minted by
+``llm-kit relay peer export --for <machine>``. A relay that holds a peer's key
+also forwards its ``/direct`` sessions' calls to that peer (amendment 2).
+``peers/<machine>/relay.token`` and ``hub.bearer`` are what 1.19.0 and 1.20.0
+imported; they are never read again, and a peer directory holding only them
+is refused with a re-export instruction.
 
 Loopback model registry. ``ask_llm`` may reach only endpoints on this
 machine. The relay therefore owns a registry file of its own (served to the
@@ -96,7 +98,7 @@ CONFIG_FILENAME = "relay.yaml"
 REGISTRY_FILENAME = "model-endpoints.yaml"
 PEERS_DIRNAME = "peers"
 ACCEPT_DIRNAME = "accept"
-FORWARD_KEY_FILENAME = "forward.key"
+PEER_KEY_FILENAME = "peer.key"
 
 DEFAULT_RELAY_HOST = "127.0.0.1"
 DEFAULT_RELAY_PORT = 4710
@@ -473,22 +475,22 @@ class StatePaths:
 
     @property
     def accept_dir(self) -> Path:
-        """The directory of per-requester forward-key directories this relay accepts (private; amendment 2)."""
+        """The directory of per-machine peer-key directories this relay issued (private)."""
         return self.root / ACCEPT_DIRNAME
 
     def accept_machine_dir(self, machine: str) -> Path:
-        """``accept/<machine>``: where this relay keeps the forward key it issued to ``machine`` (private)."""
+        """``accept/<machine>``: where this relay keeps the peer key it issued to ``machine`` (private)."""
         if not P.is_machine_label(machine):
             raise RelayConfigError(f"{machine!r} is not a machine label; no accept directory exists for it")
         return self.accept_dir / machine
 
-    def accept_forward_key(self, machine: str) -> Path:
-        """The forward key ``machine``'s relay must present (``X-Relay-Peer-Key``) with origin ``relay:<machine>``."""
-        return self.accept_machine_dir(machine) / FORWARD_KEY_FILENAME
+    def accept_peer_key(self, machine: str) -> Path:
+        """The peer key ``machine``'s hub and relay must present (``X-Relay-Peer-Key``); it authenticates ``peer:<machine>``."""
+        return self.accept_machine_dir(machine) / PEER_KEY_FILENAME
 
-    def peer_forward_key(self, machine: str) -> Path:
-        """The forward key PEER ``machine`` issued to this relay (sent only to that peer, with origin ``relay:<self>``)."""
-        return self.peer_dir(machine) / FORWARD_KEY_FILENAME
+    def peer_key(self, machine: str) -> Path:
+        """The peer key PEER ``machine`` issued to this machine; the only credential ever sent to that peer."""
+        return self.peer_dir(machine) / PEER_KEY_FILENAME
 
     def peer_dir(self, machine: str) -> Path:
         """``peers/<machine>``: where the hub keeps one peer relay's credentials (private)."""
@@ -497,11 +499,11 @@ class StatePaths:
         return self.peers_dir / machine
 
     def peer_relay_token(self, machine: str) -> Path:
-        """The PEER relay's token, as that relay reported it (never this machine's own ``relay.token``)."""
+        """Legacy (1.19.0, 1.20.0): the peer's general relay token an old import stored; never read, only detected."""
         return self.peer_dir(machine) / "relay.token"
 
     def peer_hub_bearer(self, machine: str) -> Path:
-        """The PEER relay's hub bearer (sent only to that peer; never this machine's own ``hub.bearer``)."""
+        """Legacy (1.19.0, 1.20.0): the peer's hub bearer an old import stored; never read, only detected."""
         return self.peer_dir(machine) / "hub.bearer"
 
 
@@ -843,7 +845,7 @@ __all__ = [
     "DEFAULT_RELAY_HOST",
     "DEFAULT_RELAY_PORT",
     "Enablement",
-    "FORWARD_KEY_FILENAME",
+    "PEER_KEY_FILENAME",
     "MachineIdentity",
     "PEERS_DIRNAME",
     "PeerConfig",

@@ -449,8 +449,8 @@ def test_native_private_dirs_are_born_private_and_existing_ones_validated(state)
     icacls(str(peer), "/grant", f"{USERS}:(R)")
     with pytest.raises(C.RelayConfigError, match="peer directory .*grants access to S-1-5-32-545"):
         L.ensure_private_dir(peer, kind="peer directory")  # existing and broad: refused, not repaired
-    L.write_peer_credentials(C.StatePaths(state.root), "winbox", "relay-tok", "hub-bearer")
-    assert L.peer_credentials(C.StatePaths(state.root), "winbox") == ("relay-tok", "hub-bearer")
+    L.write_peer_key(C.StatePaths(state.root), "winbox", "peer-key")
+    assert L.peer_key(C.StatePaths(state.root), "winbox", own="m5pro") == "peer-key"
 
 
 def test_native_pause_file_is_validated_before_it_is_read(state):

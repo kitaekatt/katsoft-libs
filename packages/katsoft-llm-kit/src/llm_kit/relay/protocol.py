@@ -82,8 +82,9 @@ BEARER_SCHEME = "Bearer"
 #: grant must cover the call; when absent the relay picks a covering live grant
 #: of the origin's session, and refuses ``grant_required`` if there is none.
 HEADER_GRANT = "X-Relay-Grant"
-#: The forward key (amendment 2): required, with the relay token, on every request whose origin is
-#: ``relay:<M>``. It must equal the key the receiver stores for exactly ``<M>`` (``accept/<M>/forward.key``).
+#: The peer key: the whole credential of a call from another machine's hub or relay, never sent with the
+#: relay token. Equal to the key the receiver issued to exactly ``<M>`` (``accept/<M>/peer.key``), it
+#: authenticates the principal ``peer:<M>``, which may claim only ``relay:<M>`` or a hub origin.
 HEADER_PEER_KEY = "X-Relay-Peer-Key"
 
 #: Largest request envelope a relay reads, in UTF-8 bytes.

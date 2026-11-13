@@ -52,10 +52,11 @@ def hub_config(local: Machine, peers: dict[str, str], **kw: Any) -> C.RelayConfi
         peers=tuple(C.PeerConfig(machine, url) for machine, url in peers.items()), **kw)
 
 
-def store_credentials(local: Machine, peer: Machine) -> None:
-    """Import ``peer``'s relay token and hub bearer into ``local``'s peer store (what ``peer import`` does)."""
-    prepared = peer.server.prepared
-    L.write_peer_credentials(local.config.paths, peer.label, prepared.relay_token, prepared.hub_bearer)
+def store_credentials(local: Machine, peer: Machine) -> str:
+    """``peer export --for <local>`` on ``peer`` (accept_from, key, relay restart), then ``peer import`` into ``local``."""
+    key = peer.accept(local.label)[local.label]
+    L.write_peer_key(local.config.paths, peer.label, key)
+    return key
 
 
 def serving_hub(config: C.RelayConfig, **kw: Any) -> Iterator[Hub]:
@@ -205,8 +206,8 @@ def test_a_text_error_that_is_not_a_gateway_status_stays_internal(machine_b):
 
 def test_peer_label_mismatch_unreachable(machine_a, machine_b):
     # the hub machine is B (tower); its peer "m5pro" is configured at B's OWN relay, which reports "tower"
-    prepared = machine_b.server.prepared  # the right credentials for that URL, filed under the wrong label
-    L.write_peer_credentials(machine_b.config.paths, A, prepared.relay_token, prepared.hub_bearer)
+    key = machine_b.accept(A)[A]  # a key B's own relay issued, filed under the wrong label
+    L.write_peer_key(machine_b.config.paths, A, key)
     config = hub_config(machine_b, {A: machine_b.url})
     server = make_hub(config, None).start()
     try:
@@ -225,7 +226,7 @@ def test_peer_label_mismatch_unreachable(machine_a, machine_b):
 
 def test_local_token_never_sent_to_peer_url(machine_a, monkeypatch):
     peer_host, peer_url = "tower.example.ts.net", "https://tower.example.ts.net:4710"
-    L.write_peer_credentials(machine_a.config.paths, B, "peer-relay-token-b", "peer-hub-bearer-b")
+    L.write_peer_key(machine_a.config.paths, B, "peer-key-issued-by-b")
     own_token = L.read_token(machine_a.config.paths.relay_token)
     own_bearer = L.read_token(machine_a.config.paths.hub_bearer)
     seen: list[tuple[str, dict[str, str]]] = []
@@ -251,16 +252,17 @@ def test_local_token_never_sent_to_peer_url(machine_a, monkeypatch):
     assert machines[B]["status"] == "up"
     assert len(seen) == 1 and seen[0][0] == peer_host
     headers = seen[0][1]
-    assert headers[P.HEADER_RELAY_TOKEN.lower()] == "peer-relay-token-b"
-    assert headers[P.HEADER_AUTHORIZATION.lower()] == f"{P.BEARER_SCHEME} peer-hub-bearer-b"
+    assert headers[P.HEADER_PEER_KEY.lower()] == "peer-key-issued-by-b"  # the peer key alone
+    assert P.HEADER_RELAY_TOKEN.lower() not in headers and P.HEADER_AUTHORIZATION.lower() not in headers
     assert own_token not in json.dumps(headers) and own_bearer not in json.dumps(headers)
 
 
-def test_a_peer_url_without_its_own_credentials_is_refused_not_filled_in(machine_a):
-    for peer in (H.RelayPeer(B, "https://tower.example.ts.net:4710"),
-                 H.RelayPeer(B, "https://tower.example.ts.net:4710", relay_token="only-a-token"),
-                 H.RelayPeer(B, "https://tower.example.ts.net:4710", hub_bearer="only-a-bearer")):
-        with pytest.raises(C.RelayConfigError, match="its own relay token and hub bearer"):
+def test_a_peer_url_takes_its_peer_key_alone_never_a_token(machine_a):
+    url = "https://tower.example.ts.net:4710"
+    for peer in (H.RelayPeer(B, url), H.RelayPeer(B, url, relay_token="a-token", hub_bearer="a-bearer"),
+                 H.RelayPeer(B, url, relay_token="a-token", peer_key="a-key"),
+                 H.RelayPeer(B, url, hub_bearer="a-bearer", peer_key="a-key")):
+        with pytest.raises(C.RelayConfigError, match="peer key it issued to this machine alone"):
             make_hub(machine_a.config, [(A, "http://127.0.0.1:4710"), peer]).start()
     make_hub(hub_config(machine_a, {}), [machine_a.peer]).start().stop()  # the failed starts released the lock
 
@@ -270,11 +272,13 @@ def test_non_loopback_http_peer_refused(machine_a):
         CL.HttpRelayClient("http://192.168.1.10:4710", machine=B, relay_token="t", hub_bearer="b")
     with pytest.raises(ValueError, match="https"):
         CL.HttpRelayClient("http://tower.example.ts.net:4710", machine=B, relay_token="t", hub_bearer="b")
-    with pytest.raises(ValueError, match="own hub bearer"):
-        CL.HttpRelayClient("https://tower.example.ts.net:4710", machine=B, relay_token="t")
+    for creds in ({"relay_token": "t"}, {"relay_token": "t", "hub_bearer": "b"}, {"peer_key": "k", "relay_token": "t"},
+                  {"peer_key": "k", "hub_bearer": "b"}):
+        with pytest.raises(ValueError, match="peer key it issued to this machine alone"):
+            CL.HttpRelayClient("https://tower.example.ts.net:4710", machine=B, **creds)
     with pytest.raises(ValueError, match="loopback"):
         CL.HttpRelayClient("https://127.0.0.1:4710", machine=B, relay_token="t", hub_bearer="b")
-    CL.HttpRelayClient("https://tower.example.ts.net:4710", machine=B, relay_token="t", hub_bearer="b").close()
+    CL.HttpRelayClient("https://tower.example.ts.net:4710", machine=B, peer_key="k").close()
     # the same refusal at configuration time
     for url, message in (("http://tower.example.ts.net:4710", "https"), ("ftp://tower:4710", "https"),
                          ("https://tower.example.ts.net/v1", "origin only"), ("https://u:p@tower:4710", "user info")):
@@ -299,8 +303,7 @@ def test_peer_client_no_redirect_no_proxy(machine_b, monkeypatch):
 
 
 def test_peer_connect_timeout_is_three_seconds(machine_b, monkeypatch):
-    client = CL.HttpRelayClient("https://tower.example.ts.net:4710", machine=B, relay_token="t", hub_bearer="b",
-                                timeout_s=11.0)
+    client = CL.HttpRelayClient("https://tower.example.ts.net:4710", machine=B, peer_key="k", timeout_s=11.0)
     recorded: list[Any] = []
 
     def post(url, **kw):
@@ -326,7 +329,7 @@ def test_the_hub_builds_every_configured_peer_with_the_short_connect_timeout(mac
     try:
         assert [c.machine for c in clients] == [A, B]
         assert [c._connect_timeout_s for c in clients] == [None, CL.PEER_CONNECT_TIMEOUT_S]
-        assert clients[1]._token == L.read_token(machine_a.config.paths.peer_relay_token(B))
+        assert clients[1]._peer_key == L.read_token(machine_a.config.paths.peer_key(B)) and clients[1]._token is None
     finally:
         for client in clients:
             client.close()
@@ -548,14 +551,14 @@ def test_peer_tls_verified(self_signed):
     with CannedServer(status=200, body=status_envelope(B), content_type=P.CONTENT_TYPE, tls=(cert, key)) as serve:
         url = f"https://localhost:{serve.port}"
         # a certificate that no trust root vouches for is refused, and nothing reaches the server
-        client = CL.HttpRelayClient(url, machine=B, relay_token="t", hub_bearer="b")
+        client = CL.HttpRelayClient(url, machine=B, peer_key="k")
         with pytest.raises(P.RelayError) as caught:
             client.list_machines({}, origin="claude.ai/owner")
         client.close()
         assert caught.value.code == "machine_unreachable" and "CERTIFICATE_VERIFY_FAILED" in caught.value.message
         assert serve.hits == []
         # control: the same server answers a client that trusts this certificate, so verification was the refusal
-        trusting = CL.HttpRelayClient(url, machine=B, relay_token="t", hub_bearer="b",
+        trusting = CL.HttpRelayClient(url, machine=B, peer_key="k",
                                       transport=httpx.HTTPTransport(verify=ssl.create_default_context(cafile=str(cert))))
         assert trusting.list_machines({}, origin="claude.ai/owner")["machines"][0]["machine"] == B
         trusting.close()
@@ -649,9 +652,11 @@ def test_no_peers_is_todays_hub(machine_a, capsys):
 
 def test_peer_credential_paths_are_secret_paths(tmp_path):
     paths = C.StatePaths(tmp_path / "llm-kit" / "relay")
-    assert paths.peer_relay_token(B) == paths.root / "peers" / B / "relay.token"
+    assert paths.peer_key(B) == paths.root / "peers" / B / "peer.key"
+    assert paths.accept_peer_key(B) == paths.root / "accept" / B / "peer.key"
+    assert paths.peer_relay_token(B) == paths.root / "peers" / B / "relay.token"  # legacy: detected, never read
     assert paths.peer_hub_bearer(B) == paths.root / "peers" / B / "hub.bearer"
-    for path in (paths.peer_relay_token(B), paths.peer_hub_bearer(B)):
+    for path in (paths.peer_key(B), paths.accept_peer_key(B), paths.peer_relay_token(B), paths.peer_hub_bearer(B)):
         assert R.is_secret_path_use("Read", {"file_path": str(path)}) is True
         assert R.is_secret_path_use("Bash", f"cat {path}") is True
     for bad in ("../x", "Tower", "a/b", ""):
@@ -659,49 +664,62 @@ def test_peer_credential_paths_are_secret_paths(tmp_path):
             paths.peer_dir(bad)
 
 
+REEXPORT = r"`ssh tower llm-kit relay peer export --for m5pro \| llm-kit relay peer import tower`"
+
+
+def write_legacy_peer_dir(paths: C.StatePaths, machine: str) -> None:
+    """What a katsoft-llm-kit 1.19.0 or 1.20.0 ``peer import`` left: the peer's relay token and hub bearer, no key."""
+    L.write_peer_key(paths, machine, "placeholder")
+    paths.peer_key(machine).unlink()
+    L.write_private_file(paths.peer_relay_token(machine), "old-general-relay-token\n")
+    L.write_private_file(paths.peer_hub_bearer(machine), "old-general-hub-bearer\n")
+
+
 def test_missing_peer_credentials_stop_the_hub_naming_the_import_command(machine_a, machine_b):
     config = hub_config(machine_a, {B: machine_b.url})
-    with pytest.raises(C.RelayConfigError, match=r"`llm-kit relay peer import tower`"):
+    with pytest.raises(C.RelayConfigError, match=r"no peer key for peer 'tower'.*" + REEXPORT):
         make_hub(config, None).start()
-    # one file missing is named too, and the failed start released the singleton lock
-    L.write_peer_credentials(config.paths, B, "peer-token", "peer-bearer")
-    config.paths.peer_hub_bearer(B).unlink()
-    with pytest.raises(C.RelayConfigError, match=r"no hub bearer for peer 'tower'.*llm-kit relay peer import tower"):
+    # a 1.19.0 / 1.20.0 peer directory (general relay token and hub bearer, no key) fails loudly, never used;
+    # the failed starts released the singleton lock
+    write_legacy_peer_dir(config.paths, B)
+    with pytest.raises(C.RelayConfigError, match=r"holds the general relay token and hub bearer a katsoft-llm-kit "
+                                                 r"1\.19\.0 or 1\.20\.0 import stored.*Re-export.*" + REEXPORT):
         make_hub(config, None).start()
-    L.write_peer_credentials(config.paths, B, "peer-token", "peer-bearer")
+    with pytest.raises(C.RelayConfigError, match="Re-export"):
+        L.peer_key(config.paths, B, own=A)
+    L.write_peer_key(config.paths, B, "peer-key")
     make_hub(config, None).start().stop()
 
 
 @POSIX_ONLY
 def test_peer_dirs_validated(machine_a, machine_b, tmp_path):
     paths = machine_a.config.paths
-    store_credentials(machine_a, machine_b)
+    key = store_credentials(machine_a, machine_b)
     assert stat.S_IMODE(paths.peers_dir.stat().st_mode) == 0o700
     assert stat.S_IMODE(paths.peer_dir(B).stat().st_mode) == 0o700
-    assert L.peer_credentials(paths, B) == (machine_b.server.prepared.relay_token, machine_b.server.prepared.hub_bearer)
+    assert L.peer_key(paths, B, own=A) == key
     for directory, kind in ((paths.peers_dir, "peers directory"), (paths.peer_dir(B), "peer directory")):
         directory.chmod(0o755)  # a loose directory is refused, never repaired
         with pytest.raises(C.RelayConfigError, match=f"{kind} .* has mode 0755"):
-            L.peer_credentials(paths, B)
+            L.peer_key(paths, B, own=A)
         with pytest.raises(C.RelayConfigError, match=f"{kind} .* has mode 0755"):
             make_hub(hub_config(machine_a, {B: machine_b.url}), None).start()
         with pytest.raises(C.RelayConfigError, match=f"{kind} .* has mode 0755"):
-            L.write_peer_credentials(paths, B, "a", "b")
+            L.write_peer_key(paths, B, "a")
         assert stat.S_IMODE(directory.stat().st_mode) == 0o755
         directory.chmod(0o700)
-    for file in (paths.peer_relay_token(B), paths.peer_hub_bearer(B)):
-        file.chmod(0o644)
-        with pytest.raises(C.RelayConfigError, match="credential file .* has mode 0644"):
-            L.peer_credentials(paths, B)
-        file.chmod(0o600)
+    paths.peer_key(B).chmod(0o644)
+    with pytest.raises(C.RelayConfigError, match="credential file .* has mode 0644"):
+        L.peer_key(paths, B, own=A)
+    paths.peer_key(B).chmod(0o600)
     # a peers directory that is a link elsewhere is refused
     elsewhere = tmp_path / "elsewhere"
     shutil.move(str(paths.peers_dir), str(elsewhere))
     paths.peers_dir.symlink_to(elsewhere, target_is_directory=True)
     with pytest.raises(C.RelayConfigError, match="symbolic link"):
-        L.peer_credentials(paths, B)
+        L.peer_key(paths, B, own=A)
     with pytest.raises(C.RelayConfigError, match="symbolic link"):
-        L.write_peer_credentials(paths, B, "a", "b")
+        L.write_peer_key(paths, B, "a")
 
 
 def _nt_private_file_events(acl: FakeWinacl, name_prefix: str) -> list[list[tuple[str, int]]]:
@@ -718,7 +736,7 @@ def test_peer_credentials_are_private_on_nt_through_winacl(monkeypatch, tmp_path
     monkeypatch.setattr(L, "_on_nt", lambda: True)
     monkeypatch.setattr(L, "winacl", acl)
     paths = C.StatePaths(tmp_path / "relay")
-    L.write_peer_credentials(paths, B, "peer-relay-token", "peer-hub-bearer")
+    L.write_peer_key(paths, B, "peer-key-b")
     # the state root and both peer directories are each born private (CreateDirectory with the descriptor), in order,
     # never mkdir-then-provision
     assert [p for p, _, _ in acl.of("create_dir")] == [str(paths.root), str(paths.peers_dir), str(paths.peer_dir(B))]
@@ -726,17 +744,30 @@ def test_peer_credentials_are_private_on_nt_through_winacl(monkeypatch, tmp_path
     assert {str(paths.peers_dir), str(paths.peer_dir(B))} <= provisioned          # both peer directories are normalized ...
     validated = {p for p, _, _ in acl.of("validate")}
     assert {str(paths.peers_dir), str(paths.peer_dir(B))} <= validated            # ... and validated
-    for prefix in (".relay.token.", ".hub.bearer."):
-        # each credential temp file is created with the private descriptor (size 0: no secret byte yet), then
-        # provisioned and validated through the creating handle, in that order, before anything is written
-        (events,) = _nt_private_file_events(acl, prefix)
-        assert events == [("create_file", 0), ("provision_fd", 0), ("validate_fd", 0)], prefix
-    assert str(paths.peer_relay_token(B)) in validated and str(paths.peer_hub_bearer(B)) in validated  # and at the final path
-    assert paths.peer_relay_token(B).read_text(encoding="ascii") == "peer-relay-token\n"
+    # the key's temp file is created with the private descriptor (size 0: no secret byte yet), then
+    # provisioned and validated through the creating handle, in that order, before anything is written
+    (events,) = _nt_private_file_events(acl, ".peer.key.")
+    assert events == [("create_file", 0), ("provision_fd", 0), ("validate_fd", 0)]
+    assert str(paths.peer_key(B)) in validated  # and at the final path
+    assert paths.peer_key(B).read_text(encoding="ascii") == "peer-key-b\n"
     acl.events.clear()
-    assert L.peer_credentials(paths, B) == ("peer-relay-token", "peer-hub-bearer")
+    assert L.peer_key(paths, B, own=A) == "peer-key-b"
     assert {p for p, _, _ in acl.of("validate")} == {str(paths.peers_dir), str(paths.peer_dir(B))}
-    assert {p for p, _, _ in acl.of("validate_fd")} == {str(paths.peer_relay_token(B)), str(paths.peer_hub_bearer(B))}  # read through the judged handle
+    assert {p for p, _, _ in acl.of("validate_fd")} == {str(paths.peer_key(B))}  # read through the judged handle
+
+
+def test_issued_peer_keys_are_private_on_nt_through_winacl(monkeypatch, tmp_path):
+    """``accept/<M>/peer.key`` (what ``peer export --for M`` mints) is born private like every credential."""
+    acl = FakeWinacl()
+    monkeypatch.setattr(L, "_on_nt", lambda: True)
+    monkeypatch.setattr(L, "winacl", acl)
+    paths = C.StatePaths(tmp_path / "relay")
+    key = L.ensure_accept_peer_key(paths, A)
+    assert [p for p, _, _ in acl.of("create_dir")] == [str(paths.root), str(paths.accept_dir), str(paths.accept_machine_dir(A))]
+    assert {str(paths.accept_dir), str(paths.accept_machine_dir(A))} <= {p for p, d, _ in acl.of("provision") if d}
+    (events,) = _nt_private_file_events(acl, ".peer.key.")
+    assert events == [("create_file", 0), ("provision_fd", 0), ("validate_fd", 0)]
+    assert L.ensure_accept_peer_key(paths, A) == key and L.accept_peer_keys(paths) == {A: key}
 
 
 # --------------------------------------------------------------------------
@@ -836,36 +867,40 @@ def prepare(machine_args: list[str]) -> C.RelayConfig:
     return config
 
 
+ACCEPT_M5PRO = "relay:\n  accept_from: [m5pro]\n"
+
+
 def test_peer_export_refuses_tty(cli_machines, capsys, monkeypatch):
     from llm_kit.cli import relay as relay_cli
 
-    exporter = cli_machines.args("tower")
+    exporter = cli_machines.args("tower", ACCEPT_M5PRO)
     config = prepare(exporter)
-    token = L.read_token(config.paths.relay_token)
+    token, bearer = L.read_token(config.paths.relay_token), L.read_token(config.paths.hub_bearer)
     monkeypatch.setattr(relay_cli, "_is_tty", lambda stream: True)
-    out = cli(["peer", "export", *exporter], capsys)
-    assert out.code == 2 and "refusing to print relay credentials to a terminal" in out.err
-    assert out.out == "" and token not in out.err
+    out = cli(["peer", "export", "--for", "m5pro", *exporter], capsys)
+    assert out.code == 2 and "refusing to print a peer key to a terminal" in out.err
+    assert out.out == "" and not config.paths.accept_dir.exists()
     monkeypatch.setattr(relay_cli, "_is_tty", lambda stream: False)
-    out = cli(["peer", "export", *exporter], capsys)
+    out = cli(["peer", "export", "--for", "m5pro", *exporter], capsys)
     assert out.code == 0
-    assert json.loads(out.out) == {
-        "format": "llm-kit-relay-peer/1", "machine": "tower", "relay_token": token,
-        "hub_bearer": L.read_token(config.paths.hub_bearer)}
+    # the peer key alone: this machine's relay token and hub bearer are never exported
+    assert json.loads(out.out) == {"format": "llm-kit-relay-peer/2", "machine": "tower",
+                                   "peer_key": L.read_token(config.paths.accept_peer_key("m5pro"))}
+    assert token not in out.out and bearer not in out.out
+    assert cli(["peer", "export", *exporter], capsys).code == 2  # --for is required
 
 
 @POSIX_ONLY
 def test_peer_export_refuses_a_real_pty(cli_machines):
     import pty
 
-    exporter = cli_machines.args("tower")
+    exporter = cli_machines.args("tower", ACCEPT_M5PRO)
     config = prepare(exporter)
-    token = L.read_token(config.paths.relay_token)
     master, slave = pty.openpty()
     env = dict(os.environ, PYTHONPATH=f"{SRC}{os.pathsep}{os.environ.get('PYTHONPATH', '')}",
                _BOOTSTRAP_GUARD_SKIP_REEXEC="1")
     code = ("import socket, sys; socket.gethostname = lambda: 'tower.local'; "
-            "from llm_kit.cli import main; sys.exit(main(['relay', 'peer', 'export'] + sys.argv[1:]))")
+            "from llm_kit.cli import main; sys.exit(main(['relay', 'peer', 'export', '--for', 'm5pro'] + sys.argv[1:]))")
     try:
         done = subprocess.run([sys.executable, "-c", code, *exporter], stdout=slave, stderr=subprocess.PIPE,
                               stdin=subprocess.DEVNULL, env=env, text=True, timeout=60)
@@ -873,13 +908,13 @@ def test_peer_export_refuses_a_real_pty(cli_machines):
         shown = os.read(master, 65536).decode("utf-8", "replace")
     finally:
         os.close(master)
-    assert done.returncode == 2 and "refusing to print relay credentials to a terminal" in done.stderr
-    assert token not in shown and token not in done.stderr
+    assert done.returncode == 2 and "refusing to print a peer key to a terminal" in done.stderr
+    assert not config.paths.accept_dir.exists() and "peer_key" not in shown
 
 
 def test_peer_import_writes_private(cli_machines, capsys, monkeypatch):
-    exporter, hub_args = cli_machines.args("tower"), cli_machines.args("m5pro", "relay:\n  peers:\n    - {machine: tower, url: 'https://t.example.ts.net:4710'}\n")
-    exported = cli(["peer", "export", *exporter], capsys) if prepare(exporter) else None
+    exporter, hub_args = cli_machines.args("tower", ACCEPT_M5PRO), cli_machines.args("m5pro", "relay:\n  peers:\n    - {machine: tower, url: 'https://t.example.ts.net:4710'}\n")
+    exported = cli(["peer", "export", "--for", "m5pro", *exporter], capsys) if prepare(exporter) else None
     assert exported.code == 0
     as_host(monkeypatch, "m5pro")
     written: list[Path] = []
@@ -891,26 +926,24 @@ def test_peer_import_writes_private(cli_machines, capsys, monkeypatch):
     config = C.load_config(env_json=cli_machines.env, config_path=Path(hub_args[3]), state_root=Path(hub_args[5]),
                            hostname=lambda: "m5pro.local")
     paths = config.paths
-    assert json.loads(out.out) == {"imported": "tower", "configured": True,
-                                   "files": [str(paths.peer_relay_token("tower")), str(paths.peer_hub_bearer("tower"))]}
-    assert written == [paths.peer_relay_token("tower"), paths.peer_hub_bearer("tower")]  # through write_private_file, nothing else
+    assert json.loads(out.out) == {"imported": "tower", "configured": True, "files": [str(paths.peer_key("tower"))]}
+    assert written == [paths.peer_key("tower")]  # through write_private_file, nothing else
     sent = json.loads(exported.out)
-    assert L.peer_credentials(paths, "tower") == (sent["relay_token"], sent["hub_bearer"])
-    assert sent["relay_token"] not in out.out + out.err and sent["hub_bearer"] not in out.out + out.err
+    assert L.peer_key(paths, "tower", own="m5pro") == sent["peer_key"] and sent["peer_key"] not in out.out + out.err
+    assert not paths.peer_relay_token("tower").exists() and not paths.peer_hub_bearer("tower").exists()
     if os.name != "nt":
-        assert stat.S_IMODE(paths.peer_relay_token("tower").stat().st_mode) == 0o600
-        assert stat.S_IMODE(paths.peer_hub_bearer("tower").stat().st_mode) == 0o600
+        assert stat.S_IMODE(paths.peer_key("tower").stat().st_mode) == 0o600
         assert stat.S_IMODE(paths.peers_dir.stat().st_mode) == stat.S_IMODE(paths.peer_dir("tower").stat().st_mode) == 0o700
-    # a second import replaces them atomically
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(dict(sent, relay_token="replacement-token"))))
+    # a second import replaces it atomically
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(dict(sent, peer_key="replacement-key"))))
     assert cli(["peer", "import", "tower", *hub_args], capsys).code == 0
-    assert L.read_token(paths.peer_relay_token("tower")) == "replacement-token"
+    assert L.read_token(paths.peer_key("tower")) == "replacement-key"
 
 
 def test_peer_import_requires_the_machine_to_match(cli_machines, capsys, monkeypatch):
-    exporter, hub_args = cli_machines.args("tower"), cli_machines.args("m5pro")
+    exporter, hub_args = cli_machines.args("tower", ACCEPT_M5PRO), cli_machines.args("m5pro")
     prepare(exporter)
-    exported = cli(["peer", "export", *exporter], capsys).out
+    exported = cli(["peer", "export", "--for", "m5pro", *exporter], capsys).out
     sent = json.loads(exported)
     as_host(monkeypatch, "m5pro")
 
@@ -918,18 +951,23 @@ def test_peer_import_requires_the_machine_to_match(cli_machines, capsys, monkeyp
         monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
         out = cli(["peer", "import", machine, *hub_args], capsys)
         assert out.code == code and match in out.err, out.err
-        assert sent["relay_token"] not in out.err and sent["hub_bearer"] not in out.err
+        assert sent["peer_key"] not in out.err
         assert not (Path(hub_args[5]) / "peers").exists()  # nothing was stored
 
-    attempt("laptop", exported, "are for machine 'tower', not 'laptop'")      # the object names another machine
+    attempt("laptop", exported, "is from machine 'tower', not 'laptop'")      # the object names another machine
     attempt("m5pro", exported, "is this machine")
     attempt("ghost", exported, "not a machine in the fleet registry")
     attempt("Tower", exported, "not a machine label")
     attempt("tower", "not json", "not a JSON object")
-    attempt("tower", json.dumps([1]), "is not a llm-kit-relay-peer/1 object")
-    attempt("tower", json.dumps(dict(sent, extra="x")), "is not a llm-kit-relay-peer/1 object")
-    attempt("tower", json.dumps(dict(sent, relay_token="two words")), "single printable ASCII token")
-    attempt("tower", json.dumps(dict(sent, hub_bearer="")), "single printable ASCII token")
+    attempt("tower", json.dumps([1]), "is not a llm-kit-relay-peer/2 object")
+    attempt("tower", json.dumps(dict(sent, extra="x")), "is not a llm-kit-relay-peer/2 object")
+    attempt("tower", json.dumps(dict(sent, relay_token="general")), "is not a llm-kit-relay-peer/2 object")
+    attempt("tower", json.dumps(dict(sent, peer_key="two words")), "single printable ASCII token")
+    attempt("tower", json.dumps(dict(sent, peer_key="")), "single printable ASCII token")
+    # what 1.19.0 and 1.20.0 exported (the general relay token and hub bearer): refused, naming the re-export
+    legacy = {"format": "llm-kit-relay-peer/1", "machine": "tower", "relay_token": "general-token-x",
+              "hub_bearer": "general-bearer-x"}
+    attempt("tower", json.dumps(legacy), "ssh tower llm-kit relay peer export --for m5pro | llm-kit relay peer import tower")
     attempt("tower", "x" * 5000, "too large")
     from llm_kit.cli import relay as relay_cli
 
@@ -949,13 +987,13 @@ def test_status_lists_peers_without_secrets(cli_machines, capsys, monkeypatch):
     hub_args = cli_machines.args("m5pro", peers)
     config = C.load_config(env_json=cli_machines.env, config_path=Path(hub_args[3]), state_root=Path(hub_args[5]),
                            hostname=lambda: "m5pro.local")
-    L.write_peer_credentials(config.paths, "tower", "tower-secret-token", "tower-secret-bearer")
+    L.write_peer_key(config.paths, "tower", "tower-secret-key")
     out = cli(["status", "--offline", *hub_args], capsys)
     assert out.code == 0
     shown = json.loads(out.out)
     assert shown["peers"] == [
-        {"machine": "tower", "url": "https://t.example.ts.net:4710", "credentials": {"relay_token": "stored", "hub_bearer": "stored"}},
-        {"machine": "laptop", "url": "https://l.example.ts.net:4710", "credentials": {"relay_token": "missing", "hub_bearer": "missing"}},
+        {"machine": "tower", "url": "https://t.example.ts.net:4710", "credentials": {"peer_key": "stored"}},
+        {"machine": "laptop", "url": "https://l.example.ts.net:4710", "credentials": {"peer_key": "missing"}},
     ]
     assert "tower-secret" not in out.out + out.err
     # no peers configured: no `peers` key at all
@@ -972,21 +1010,21 @@ def test_native_peer_credentials_provisioned_and_loose_dirs_refused(tmp_path):
     from llm_kit.relay import winacl
 
     paths = C.StatePaths(tmp_path / "relay")
-    L.write_peer_credentials(paths, B, "peer-relay-token", "peer-hub-bearer")
-    for path in (paths.root, paths.peers_dir, paths.peer_dir(B), paths.peer_relay_token(B), paths.peer_hub_bearer(B)):
+    L.write_peer_key(paths, B, "peer-key-b")
+    for path in (paths.root, paths.peers_dir, paths.peer_dir(B), paths.peer_key(B)):
         winacl.validate(path)
-    assert L.peer_credentials(paths, B) == ("peer-relay-token", "peer-hub-bearer")
+    assert L.peer_key(paths, B, own=A) == "peer-key-b"
     # an Everyone grant on the peers directory is refused by every reader and writer, and nothing repairs it
     done = subprocess.run(["icacls", str(paths.peers_dir), "/grant", "*S-1-1-0:(R)"], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     with pytest.raises(C.RelayConfigError, match="grants access to"):
-        L.peer_credentials(paths, B)
+        L.peer_key(paths, B, own=A)
     with pytest.raises(C.RelayConfigError, match="grants access to"):
-        L.write_peer_credentials(paths, B, "a", "b")
+        L.write_peer_key(paths, B, "a")
     subprocess.run(["icacls", str(paths.peers_dir), "/remove:g", "*S-1-1-0"], capture_output=True, text=True, check=True)
-    assert L.peer_credentials(paths, B) == ("peer-relay-token", "peer-hub-bearer")
-    # a peer credential file a person made by hand (inherited ACL, not protected) is refused
-    paths.peer_hub_bearer(B).unlink()
-    paths.peer_hub_bearer(B).write_text("hand-made\n", encoding="ascii")
+    assert L.peer_key(paths, B, own=A) == "peer-key-b"
+    # a peer key file a person made by hand (inherited ACL, not protected) is refused
+    paths.peer_key(B).unlink()
+    paths.peer_key(B).write_text("hand-made\n", encoding="ascii")
     with pytest.raises(C.RelayConfigError, match="unprotected DACL"):
-        L.peer_credentials(paths, B)
+        L.peer_key(paths, B, own=A)

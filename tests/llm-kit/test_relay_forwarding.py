@@ -1,7 +1,7 @@
 """Tests for relay-to-relay forwarding (amendment 2, katsoft-llm-kit 1.21.0; plan-5090w unit D1).
 
 A source relay (``m5pro``) forwards a ``/direct`` session's calls to a receiving peer (``5090w``) as origin
-``relay:m5pro`` with ``on_behalf_of`` and the forward key the receiver issued. Most tests run both relays'
+``relay:m5pro`` with ``on_behalf_of``, authenticated by the peer key the receiver issued (principal ``peer:m5pro``). Most tests run both relays'
 ``RelayService`` in process: the source's peer client is the real ``HttpRelayClient`` over an
 ``httpx.MockTransport`` that hands each request to the receiver's service and records it, so failures (a refused
 connection, a response lost after the receiver applied the call, a gateway 502) are injected at the transport,
@@ -43,8 +43,8 @@ from test_relay_peers import FakeRelay, _schema_machine_fields, cli, cli_machine
 from test_relay_questions import _ledger as question_ledger
 
 SRC, DST, THIRD = "m5pro", "5090w", "laptop"
-KEY = "forward-key-" + "k" * 24
-THIRD_KEY = "forward-key-" + "t" * 24
+KEY = "peer-key-" + "k" * 24
+THIRD_KEY = "peer-key-" + "t" * 24
 DIRECT = "d1d1d1d1-0000-4000-8000-000000000001"
 NONCE = "nonce-" + "x" * 20
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "relay_protocol_1_20"
@@ -105,11 +105,13 @@ class Node:
 
     def handle(self, verb: str, params: dict[str, Any], origin: str, *, grant: Optional[str] = None,
                on_behalf_of: Optional[str] = None, peer_key: Optional[str] = None, hub: bool = False,
-               envelope_extra: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+               envelope_extra: Optional[dict[str, Any]] = None, token: Optional[bool] = None) -> dict[str, Any]:
+        """One call. The relay token is sent unless a peer key is (``token`` overrides: a caller holding both)."""
         envelope = dict(P.make_request(verb, params, origin=origin, request_id="req-" + secrets.token_hex(6),
                                        on_behalf_of=on_behalf_of))
         envelope.update(envelope_extra or {})
-        _, response = self.service.handle(envelope, path_verb=verb, relay_token=self.relay_token,
+        send_token = peer_key is None if token is None else token
+        _, response = self.service.handle(envelope, path_verb=verb, relay_token=self.relay_token if send_token else None,
                                           hub_bearer=self.hub_bearer if hub else None, grant=grant, peer_key=peer_key)
         if response["ok"]:
             return response["result"]
@@ -201,9 +203,11 @@ class Wire:
         return httpx.Response(status, json=body)
 
     def client(self, *, peer_key: Optional[str] = KEY) -> HttpRelayClient:
-        return HttpRelayClient("http://127.0.0.1:9", machine=self.node.label, relay_token=self.node.relay_token,
-                               hub_bearer=self.node.hub_bearer, peer_key=peer_key,
-                               transport=httpx.MockTransport(self.handler))
+        """The client a peer holds: the peer key alone (``peer_key=None``: this node's own local credentials)."""
+        creds: dict[str, Any] = {"peer_key": peer_key} if peer_key is not None else {
+            "relay_token": self.node.relay_token, "hub_bearer": self.node.hub_bearer}
+        return HttpRelayClient("http://127.0.0.1:9", machine=self.node.label, transport=httpx.MockTransport(self.handler),
+                               **creds)
 
     def verbs(self, *, probes: bool = False) -> list[str]:
         return [verb for verb, _, _ in self.requests if probes or verb != "status"]
@@ -267,10 +271,11 @@ def test_peer_key_binds_machine(tmp_path):
     dst = Node(DST, tmp_path, accept_from=(SRC, THIRD), accept_keys={SRC: KEY})
     try:
         assert dst.handle("status", {}, f"relay:{SRC}", peer_key=KEY)["forwarding"] == {"receive": True}  # control
-        refused("unauthenticated", dst.handle, "status", {}, f"relay:{SRC}")                       # no key
+        refused("unauthenticated", dst.handle, "status", {}, f"relay:{SRC}")                       # the relay token only
         refused("unauthenticated", dst.handle, "status", {}, f"relay:{SRC}", peer_key=KEY + "x")   # wrong key
-        refused("unauthenticated", dst.handle, "status", {}, "relay:otherbox", peer_key=KEY)       # m5pro's key, another name
-        refused("unauthenticated", dst.handle, "status", {}, f"relay:{THIRD}", peer_key=KEY)       # accepted, but no key issued
+        refused("unauthenticated", dst.handle, "status", {}, f"relay:{SRC}", peer_key=KEY, token=True)  # never both
+        refused("origin_not_allowed", dst.handle, "status", {}, "relay:otherbox", peer_key=KEY)    # m5pro's key, another name
+        refused("origin_not_allowed", dst.handle, "status", {}, f"relay:{THIRD}", peer_key=KEY)    # accepted, but not m5pro
         refused("unauthenticated", dst.handle, "list_sessions", {"machine": DST}, f"relay:{SRC}",
                 on_behalf_of=f"direct:{SRC}/claude/{DIRECT}", peer_key=THIRD_KEY)
     finally:
@@ -289,6 +294,185 @@ def test_relay_origin_outside_accept_from_refused(tmp_path):
         dst.close()
     with pytest.raises(ValueError, match="another machine"):
         Node(DST, tmp_path / "self", accept_from=(DST,), accept_keys={DST: KEY})
+
+
+# --------------------------------------------------------------------------
+# principals: a peer key is peer:<M>, never a local caller (security review of D1)
+# --------------------------------------------------------------------------
+
+ACCEPT_SRC = "relay:\n  accept_from: [m5pro]\n"
+
+
+def _present(exported: dict[str, Any]) -> dict[str, str]:
+    """Every credential an export object carries, as the headers a holder can send (1.20 or later shapes)."""
+    headers = {"Content-Type": P.CONTENT_TYPE}
+    for field, header in (("relay_token", P.HEADER_RELAY_TOKEN), ("forward_key", P.HEADER_PEER_KEY),
+                          ("peer_key", P.HEADER_PEER_KEY)):
+        if field in exported:
+            headers[header] = exported[field]
+    if "hub_bearer" in exported:
+        headers[P.HEADER_AUTHORIZATION] = f"{P.BEARER_SCHEME} {exported['hub_bearer']}"
+    return headers
+
+
+@pytest.mark.parametrize("listed", [True, False], ids=["in_accept_from", "not_in_accept_from"])
+def test_exported_credentials_cannot_claim_the_receivers_own_origins(tmp_path, capsys, monkeypatch, listed):
+    """The codex/sol HIGH: what `peer export --for m5pro` on 5090w hands m5pro, presented as 5090w's own origins."""
+    from test_relay_peers import as_host
+    from llm_kit.cli import relay as relay_cli
+
+    fleet = RealFleet(tmp_path)
+    receiver_cfg = fleet.config(DST, ACCEPT_SRC)
+    L.ensure_state_dir(receiver_cfg.paths)
+    for credential in (receiver_cfg.paths.relay_token, receiver_cfg.paths.hub_bearer):
+        L.ensure_token(credential)  # what a relay start leaves, so an export has every file it could read
+    monkeypatch.setattr(relay_cli, "_is_tty", lambda stream: False)
+    as_host(monkeypatch, DST)
+    out = cli(["peer", "export", "--for", SRC, *fleet.args(DST)], capsys)
+    assert out.code == 0, out.err
+    headers = _present(json.loads(out.out))
+    if not listed:
+        receiver_cfg = fleet.config(DST)  # m5pro leaves relay.accept_from; the key it was issued stays on disk
+    receiver = fleet.serve(receiver_cfg)
+    try:
+        address = fleet.register(receiver)
+        own = f"direct:{DST}/claude/{DIRECT}"
+
+        def attack(verb: str, params: dict[str, Any], origin: str, **extra: Any) -> dict[str, Any]:
+            envelope = P.make_request(verb, params, origin=origin, request_id="req-" + secrets.token_hex(6), **extra)
+            return httpx.post(receiver.url + f"/v1/{verb}", content=json.dumps(envelope), headers=headers,
+                              timeout=10).json()
+
+        mint = {"session": f"{DST}/claude/{DIRECT}", "verb": "send_message", "targets": [address], "expires_in_s": 60,
+                "uses": 1, "origin_proof": {"type": "none"}}
+        register = {"session_id": sid(), "harness": "claude", "pid": os.getpid(), "cwd": "/tmp", "version": "2.1.317",
+                    "accepts": ["note"], "channel_nonce": NONCE}
+        for verb, params, origin in (
+            ("grant_mint", mint, own),                                              # a receiver-local grant
+            ("send_message", {"to": address, "kind": "note", "body": "as 5090w"}, own),
+            ("list_sessions", {}, own),
+            ("pause", {"scope": "relay", "reason": "remote"}, f"operator:{DST}"),   # pausing the relay
+            ("pause", {"scope": "hub", "reason": "remote"}, f"operator:{DST}"),
+            ("status", {}, f"operator:{DST}"),
+            ("register", dict(register), f"channel:{DST}/claude/{register['session_id']}"),
+        ):
+            body = attack(verb, params, origin)
+            assert body["ok"] is False and body["error"]["code"] == "origin_not_allowed", (verb, origin, body)
+        with HttpRelayClient(receiver.url, machine=DST, relay_token=receiver.prepared.relay_token) as local:
+            pause = local.call("status", {}, origin=f"operator:{DST}")["pause"]
+        assert not pause["relay"]["paused"] and not pause["hub"]["paused"]
+        assert receiver.mailbox.messages_to(address) == []
+        allowed = attack("status", {}, f"relay:{SRC}")  # the one thing the key is for, while m5pro is accepted
+        assert allowed["ok"] is listed, allowed
+    finally:
+        receiver.stop()
+
+
+def test_a_peer_key_claims_only_its_own_relay_or_the_hub(tmp_path):
+    dst = Node(DST, tmp_path, accept_from=(SRC, THIRD), accept_keys={SRC: KEY, THIRD: THIRD_KEY})
+    try:
+        session = f"{THIRD}/claude/{DIRECT}"
+        for origin, on_behalf_of in (
+            (f"relay:{THIRD}", f"direct:{THIRD}/claude/{DIRECT}"),   # another accepted machine's identity
+            (f"direct:{THIRD}/claude/{DIRECT}", None), (f"operator:{THIRD}", None), (f"channel:{session}", None),
+            (f"direct:{SRC}/claude/{DIRECT}", None), (f"operator:{SRC}", None),  # its own machine, but not relay:
+            (f"channel:{SRC}/claude/{DIRECT}", None),
+            (f"direct:{DST}/claude/{DIRECT}", None), (f"operator:{DST}", None), (f"channel:{DST}/claude/{DIRECT}", None),
+        ):
+            refused("origin_not_allowed", dst.handle, "list_sessions", {}, origin, on_behalf_of=on_behalf_of, peer_key=KEY)
+        refused("origin_not_allowed", dst.handle, "list_sessions", {}, f"relay:{SRC}",
+                on_behalf_of=f"direct:{THIRD}/claude/{DIRECT}", peer_key=KEY)
+        # the two it may claim
+        assert dst.handle("list_sessions", {}, f"relay:{SRC}", on_behalf_of=f"direct:{SRC}/claude/{DIRECT}",
+                          peer_key=KEY)["machines"][0]["machine"] == DST
+        assert dst.handle("list_sessions", {}, "claude.ai/owner", peer_key=KEY)["machines"][0]["machine"] == DST
+        # the relay token never authenticates a relay origin, and is never accepted together with a key
+        refused("unauthenticated", dst.handle, "list_sessions", {}, f"relay:{SRC}",
+                on_behalf_of=f"direct:{SRC}/claude/{DIRECT}")
+        refused("unauthenticated", dst.handle, "list_sessions", {}, f"direct:{DST}/claude/{DIRECT}", peer_key=KEY,
+                token=True)
+        refused("grant_required", dst.handle, "list_sessions", {}, f"direct:{DST}/claude/{DIRECT}")  # local token: past origin
+    finally:
+        dst.close()
+    with pytest.raises(ValueError, match="distinct"):
+        Node(DST, tmp_path / "same", accept_from=(SRC,), accept_keys={SRC: f"relay-token-{DST}-" + "r" * 16})
+
+
+def test_a_peer_request_is_never_forwarded_onward(tmp_path):
+    """5090w accepts m5pro and itself forwards to laptop: nothing m5pro's key sends ever reaches laptop."""
+    laptop = Node(THIRD, tmp_path, accept_from=(DST,), accept_keys={DST: THIRD_KEY})
+    wire3 = Wire(laptop)
+    dst = Node(DST, tmp_path, accept_from=(SRC,), accept_keys={SRC: KEY}, peers={THIRD: wire3.client(peer_key=THIRD_KEY)})
+    try:
+        remote = laptop.session()
+        own = f"direct:{DST}/claude/{DIRECT}"
+        relay = {"origin": f"relay:{SRC}", "on_behalf_of": f"direct:{SRC}/claude/{DIRECT}"}
+        mint = {"session": f"{DST}/claude/{DIRECT}", "verb": "read_session", "targets": [remote], "expires_in_s": 60,
+                "uses": 1, "origin_proof": {"type": "none"}}
+        refused("origin_not_allowed", dst.handle, "grant_mint", mint, own, peer_key=KEY)
+        refused("origin_not_allowed", dst.handle, "read_session", {"address": remote}, own, peer_key=KEY)
+        for verb, params in (("read_session", {"address": remote}), ("get_replies", {"address": remote}),
+                             ("send_message", {"to": remote, "kind": "note", "body": "onward"})):
+            for kwargs in (relay, {"origin": "claude.ai/owner"}):  # answered (or refused) by 5090w itself
+                try:
+                    dst.handle(verb, params, kwargs["origin"], on_behalf_of=kwargs.get("on_behalf_of"), peer_key=KEY)
+                except P.RelayError as exc:
+                    assert exc.code != "internal", exc
+        for kwargs in (relay, {"origin": "claude.ai/owner"}):  # discovery is answered from 5090w alone
+            listed = dst.handle("list_sessions", {}, kwargs["origin"], on_behalf_of=kwargs.get("on_behalf_of"),
+                                peer_key=KEY)
+            assert [m["machine"] for m in listed["machines"]] == [DST]
+            refused("message_not_found", dst.handle, "get_replies", {"message_id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW"},
+                    kwargs["origin"], on_behalf_of=kwargs.get("on_behalf_of"), peer_key=KEY)  # never probed onward
+        assert wire3.requests == [] and laptop.rows(remote) == []
+        # control: 5090w's own /direct session (the local token) does forward to laptop
+        dst.direct("grant_mint", dict(mint))
+        assert dst.direct("read_session", {"address": remote})["address"] == remote
+        assert wire3.verbs() == ["read_session"]
+    finally:
+        dst.close()
+        laptop.close()
+
+
+def test_hub_via_peer_send_still_works(tmp_path, capsys, monkeypatch):
+    """claude.ai -> the hub on m5pro -> 5090w's session, reached with the one peer key 5090w issued to m5pro."""
+    from test_relay_hub import Hub, make_hub
+    from test_relay_peers import as_host
+    from llm_kit.cli import relay as relay_cli
+
+    fleet = RealFleet(tmp_path)
+    monkeypatch.setattr(relay_cli, "_is_tty", lambda stream: False)
+    as_host(monkeypatch, DST)
+    receiver_cfg = fleet.config(DST, ACCEPT_SRC)
+    exported = cli(["peer", "export", "--for", SRC, *fleet.args(DST)], capsys)
+    assert exported.code == 0, exported.err
+    receiver = fleet.serve(receiver_cfg)
+    try:
+        address = fleet.register(receiver)
+        as_host(monkeypatch, SRC)
+        fleet.config(SRC, f"hub:\n  enabled: true\nrelay:\n  peers:\n    - {{machine: {DST}, url: '{receiver.url}'}}\n")
+        monkeypatch.setattr(sys, "stdin", io.StringIO(exported.out))
+        assert cli(["peer", "import", DST, *fleet.args(SRC)], capsys).code == 0
+        source_cfg = fleet.config(SRC, f"hub:\n  enabled: true\nrelay:\n  peers:\n    - {{machine: {DST}, url: '{receiver.url}'}}\n")
+        source = fleet.serve(source_cfg)
+        try:
+            import dataclasses
+
+            hub_server = make_hub(dataclasses.replace(source_cfg, relay_port=source.address[1]), None).start()
+            try:
+                hub = Hub(hub_server)
+                assert address in [s["address"] for s in hub.ok("list_sessions")["sessions"]]
+                message = hub.ok("send_message", {"to": address, "kind": "note", "body": "from the app"})["message"]
+                assert message["sender"] == "claude.ai/owner" and message.get("forwarded_by") is None
+                stored = receiver.mailbox.get_message(message["id"])
+                assert stored["sender"] == "claude.ai/owner" and stored["body"] == "from the app"
+                assert hub.ok("get_replies", {"message_id": message["id"]})["messages"][0]["id"] == message["id"]
+            finally:
+                hub_server.stop()
+        finally:
+            source.stop()
+    finally:
+        receiver.stop()
 
 
 def test_accept_from_config_parsed_and_refused(tmp_path):
@@ -426,8 +610,8 @@ def test_forward_requires_grant_for_exact_remote_target(pair):
     forwarded = wire.forwarded("read_session")[0]
     assert (forwarded["origin"], forwarded["on_behalf_of"]) == (f"relay:{SRC}", src.origin())
     headers = wire.requests[-1][2]
-    assert headers["x-relay-peer-key"] == KEY and headers["x-relay-token"] == dst.relay_token
-    assert "authorization" not in headers  # the hub bearer goes only with a hub origin
+    assert headers["x-relay-peer-key"] == KEY and "x-relay-token" not in headers  # the peer key alone
+    assert "authorization" not in headers
 
 
 def test_remote_selector_target_invalid_no_io(pair):
@@ -1114,7 +1298,7 @@ def test_client_marks_gateway_and_malformed_replies_sent(status, body):
     assert caught.value.sent is True
 
 
-def test_client_sends_the_peer_key_only_on_relay_origins():
+def test_a_peer_client_sends_the_peer_key_alone_and_a_local_client_never_does():
     seen: list[dict[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -1122,18 +1306,27 @@ def test_client_sends_the_peer_key_only_on_relay_origins():
         envelope = json.loads(request.content)
         return httpx.Response(200, json=P.make_ok(envelope["id"], {}))
 
-    client = HttpRelayClient("http://127.0.0.1:9", machine=DST, relay_token="t" * 20, peer_key=KEY,
-                             transport=httpx.MockTransport(handler))
-    client.call("status", {}, origin=f"operator:{DST}")
-    client.call("status", {}, origin=f"relay:{SRC}", on_behalf_of=f"direct:{SRC}/claude/{DIRECT}")
-    assert "x-relay-peer-key" not in seen[0] and seen[1]["x-relay-peer-key"] == KEY
+    peer = HttpRelayClient("http://127.0.0.1:9", machine=DST, peer_key=KEY, transport=httpx.MockTransport(handler))
+    peer.call("status", {}, origin=f"relay:{SRC}")
+    peer.call("status", {}, origin="claude.ai/owner")
+    local = HttpRelayClient("http://127.0.0.1:9", machine=DST, relay_token="t" * 20, hub_bearer="b" * 20,
+                            transport=httpx.MockTransport(handler))
+    local.call("status", {}, origin="claude.ai/owner")
+    for headers in seen[:2]:  # every origin: the peer key, never a relay token or a hub bearer
+        assert headers["x-relay-peer-key"] == KEY and "x-relay-token" not in headers and "authorization" not in headers
+    assert "x-relay-peer-key" not in seen[2] and seen[2]["x-relay-token"] == "t" * 20
+    for creds in ({"peer_key": KEY, "relay_token": "t" * 20}, {"peer_key": KEY, "hub_bearer": "b" * 20}, {"peer_key": ""}):
+        with pytest.raises(ValueError):
+            HttpRelayClient("http://127.0.0.1:9", machine=DST, **creds)
+    with pytest.raises(ValueError, match="peer key it issued to this machine alone"):
+        HttpRelayClient("https://w.example.ts.net:4710", machine=DST, relay_token="t" * 20, hub_bearer="b" * 20)
 
 
 # --------------------------------------------------------------------------
 # the CLI: peer export --for, peer import of a forward key
 # --------------------------------------------------------------------------
 
-def test_peer_export_for_mints_and_import_stores_the_forward_key(cli_machines, capsys, monkeypatch):
+def test_peer_export_for_mints_and_import_stores_the_peer_key(cli_machines, capsys, monkeypatch):
     from test_relay_peers import as_host
     from llm_kit.cli import relay as relay_cli
 
@@ -1145,13 +1338,14 @@ def test_peer_export_for_mints_and_import_stores_the_forward_key(cli_machines, c
     out = cli(["peer", "export", "--for", "m5pro", *exporter], capsys)
     assert out.code == 0
     sent = json.loads(out.out)
-    assert sent["forward_key"] == L.read_token(config.paths.accept_forward_key("m5pro"))
-    assert json.loads(cli(["peer", "export", "--for", "m5pro", *exporter], capsys).out)["forward_key"] == sent["forward_key"]
-    assert L.accept_forward_keys(config.paths) == {"m5pro": sent["forward_key"]}
+    assert set(sent) == {"format", "machine", "peer_key"}  # no relay token, no hub bearer
+    assert sent["peer_key"] == L.read_token(config.paths.accept_peer_key("m5pro"))
+    assert json.loads(cli(["peer", "export", "--for", "m5pro", *exporter], capsys).out)["peer_key"] == sent["peer_key"]
+    assert L.accept_peer_keys(config.paths) == {"m5pro": sent["peer_key"]}
     if os.name != "nt":
-        assert stat.S_IMODE(config.paths.accept_forward_key("m5pro").stat().st_mode) == 0o600
+        assert stat.S_IMODE(config.paths.accept_peer_key("m5pro").stat().st_mode) == 0o600
         assert stat.S_IMODE(config.paths.accept_machine_dir("m5pro").stat().st_mode) == 0o700
-    assert "forward_key" not in json.loads(cli(["peer", "export", *exporter], capsys).out)  # without --for: unchanged
+    assert cli(["peer", "export", *exporter], capsys).code == 2  # --for is required: nothing general is exported
 
     as_host(monkeypatch, "m5pro")
     importer = cli_machines.args("m5pro", "relay:\n  peers:\n    - {machine: tower, url: 'https://t.example.ts.net:4710'}\n")
@@ -1159,48 +1353,86 @@ def test_peer_export_for_mints_and_import_stores_the_forward_key(cli_machines, c
     done = cli(["peer", "import", "tower", *importer], capsys)
     assert done.code == 0, done.err
     paths = C.StatePaths(Path(importer[5]))
-    assert json.loads(done.out)["forwarding"] is True and str(paths.peer_forward_key("tower")) in done.out
-    assert L.peer_forward_key(paths, "tower") == sent["forward_key"] and sent["forward_key"] not in done.out
+    assert json.loads(done.out)["files"] == [str(paths.peer_key("tower"))]
+    assert L.peer_key(paths, "tower", own="m5pro") == sent["peer_key"] and sent["peer_key"] not in done.out
 
 
 # --------------------------------------------------------------------------
 # end to end: two real relays over loopback HTTP
 # --------------------------------------------------------------------------
 
-def test_forwarding_end_to_end_over_two_real_relays(tmp_path):
-    from test_relay_server import FakeBackend
+class RealFleet:
+    """Real relays (and a hub) over loopback HTTP: one env.json, and per machine a relay.yaml, state and harness homes."""
 
-    from llm_kit.registry import consent
+    def __init__(self, tmp: Path) -> None:
+        self.tmp = tmp
+        self.env = tmp / "env.json"
+        self.env.write_text(json.dumps({"machines": {f"{label}.local": {"tailscale_hostname": label}
+                                                     for label in (SRC, DST, THIRD)}}), encoding="utf-8")
 
-    env = tmp_path / "env.json"
-    env.write_text(json.dumps({"machines": {"a.local": {"tailscale_hostname": SRC},
-                                            "b.local": {"tailscale_hostname": DST}}}), encoding="utf-8")
+    def args(self, label: str) -> list[str]:
+        """The CLI's ``--env-json/--config/--state-dir`` for ``label``."""
+        return ["--env-json", str(self.env), "--config", str(self.tmp / label / "relay.yaml"),
+                "--state-dir", str(self.tmp / label / "state")]
 
-    def config(label: str, host: str, text: str) -> C.RelayConfig:
-        path = tmp_path / label / "relay.yaml"
+    def config(self, label: str, text: str = "") -> C.RelayConfig:
+        path = self.tmp / label / "relay.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("enabled: true\n" + text, encoding="utf-8")
-        return C.load_config(env_json=env, environ={}, hostname=lambda: host, config_path=path,
-                             state_root=tmp_path / label / "state")
+        return C.load_config(env_json=self.env, environ={}, hostname=lambda: f"{label}.local", config_path=path,
+                             state_root=self.tmp / label / "state")
 
-    def serve(cfg: C.RelayConfig, label: str) -> S.RelayServer:
-        claude, codex = tmp_path / label / "claude", tmp_path / label / "codex"
-        (claude / "sessions").mkdir(parents=True)
-        (claude / "projects").mkdir(parents=True)
-        (codex / "sessions").mkdir(parents=True)
+    def serve(self, cfg: C.RelayConfig) -> S.RelayServer:
+        from test_relay_server import FakeBackend
+
+        from llm_kit.registry import consent
+
+        label = cfg.machine_label
+        claude, codex = self.tmp / label / "claude", self.tmp / label / "codex"
+        for directory in (claude / "sessions", claude / "projects", codex / "sessions"):
+            directory.mkdir(parents=True, exist_ok=True)
         backend = FakeBackend()
         return S.RelayServer(cfg, port=0, roots=D.DiscoveryRoots(claude, codex), probe=D.PsutilProbe(),
                              backend_factory=lambda entry: SimpleNamespace(backend=backend, model=entry.model),
-                             policy_loader=lambda scope: consent.policy(scope, path=tmp_path / label / "consent.json"),
+                             policy_loader=lambda scope: consent.policy(scope, path=self.tmp / label / "consent.json"),
                              poll_interval_s=0.05, maintain_interval_s=3600.0).start()
+
+    @staticmethod
+    def register(server: S.RelayServer, accepts: tuple = ("note",)) -> str:
+        """A live channel session on ``server`` (registered with that machine's own relay token); its address."""
+        session = sid()
+        address = f"{server.config.machine_label}/claude/{session}"
+        with HttpRelayClient(server.url, machine=server.config.machine_label,
+                             relay_token=server.prepared.relay_token) as channel:
+            channel.call("register", {"session_id": session, "harness": "claude", "pid": os.getpid(), "cwd": "/tmp",
+                                      "version": "2.1.317", "accepts": list(accepts), "channel_nonce": NONCE},
+                         origin=f"channel:{address}")
+        return address
+
+
+def test_forwarding_end_to_end_over_two_real_relays(tmp_path):
+    fleet = RealFleet(tmp_path)
+
+    def config(label: str, _host: str, text: str) -> C.RelayConfig:
+        return fleet.config(label, text)
+
+    def serve(cfg: C.RelayConfig, _label: str) -> S.RelayServer:
+        return fleet.serve(cfg)
 
     receiver_cfg = config(DST, "b.local", "relay:\n  accept_from: [m5pro]\n")
     L.ensure_state_dir(receiver_cfg.paths)
-    key = L.ensure_accept_forward_key(receiver_cfg.paths, SRC)  # peer export --for m5pro, before the start
+    key = L.ensure_accept_peer_key(receiver_cfg.paths, SRC)  # peer export --for m5pro, before the start
     receiver = serve(receiver_cfg, DST)
     try:
         source_cfg = config(SRC, "a.local", f"relay:\n  peers:\n    - {{machine: {DST}, url: '{receiver.url}'}}\n")
-        L.write_peer_credentials(source_cfg.paths, DST, receiver.prepared.relay_token, receiver.prepared.hub_bearer, key)
+        # a peer directory a 1.19.0 / 1.20.0 import left (general relay token and hub bearer, no key) stops the relay
+        L.write_peer_key(source_cfg.paths, DST, "placeholder")
+        source_cfg.paths.peer_key(DST).unlink()
+        L.write_private_file(source_cfg.paths.peer_relay_token(DST), receiver.prepared.relay_token + "\n")
+        with pytest.raises(C.RelayConfigError, match=f"Re-export.*`ssh {DST} llm-kit relay peer export --for {SRC} \\| "
+                                                     f"llm-kit relay peer import {DST}`"):
+            serve(source_cfg, SRC)
+        L.write_peer_key(source_cfg.paths, DST, key)
         source = serve(source_cfg, SRC)
         try:
             session = sid()

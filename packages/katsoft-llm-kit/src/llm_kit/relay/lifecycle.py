@@ -249,84 +249,66 @@ def peer_import_command(machine: str) -> str:
     return f"llm-kit relay peer import {machine}"
 
 
-def peer_credentials(paths: StatePaths, machine: str) -> tuple[str, str]:
-    """``(relay token, hub bearer)`` of peer ``machine``, read from ``peers/<machine>/``.
+def peer_reexport_command(machine: str, own: str) -> str:
+    """How to provision ``machine``'s peer key here (named in every missing- or legacy-credential error)."""
+    return f"ssh {machine} llm-kit relay peer export --for {own} | {peer_import_command(machine)}"
 
-    Reads only; creates nothing. ``peers/`` and ``peers/<machine>/`` must be
-    private directories of this user's (POSIX ``0700``, Windows protected
-    ACL) and the two files private too (:func:`read_token`). A missing
-    directory or file is a :class:`RelayConfigError` naming the import command,
-    never a fallback to this machine's own credentials.
+
+def peer_key(paths: StatePaths, machine: str, *, own: str) -> str:
+    """The peer key peer ``machine`` issued to this machine (``peers/<machine>/peer.key``); the only credential sent to it.
+
+    Reads only; creates nothing. ``peers/`` and ``peers/<machine>/`` must be private directories of this user's
+    (POSIX ``0700``, Windows protected ACL) and the file private too (:func:`read_token`). A missing directory or
+    key is a :class:`RelayConfigError` naming the provisioning command; a directory that holds only the general
+    relay token and hub bearer a 1.19.0 or 1.20.0 import stored is refused the same way, never used. ``own`` is
+    this machine's label (named in the command).
     """
-    how = f"; store them with `{peer_import_command(machine)}`"
+    how = f"; provision it with `{peer_reexport_command(machine, own)}` (katsoft-llm-kit 1.21.0 or later on both)"
     peers_dir, peer_dir = paths.peers_dir, paths.peer_dir(machine)
     if not peer_dir.exists():
-        raise RelayConfigError(f"no credentials for peer {machine!r}: {peer_dir} does not exist{how}")
+        raise RelayConfigError(f"no peer key for peer {machine!r}: {peer_dir} does not exist{how}")
     for directory, kind in ((peers_dir, "peers directory"), (peer_dir, "peer directory")):
         _require_real_dir(directory, kind=kind)
         _refuse_loose(directory, kind=kind)
-    values = []
-    for name, file in (("relay token", paths.peer_relay_token(machine)), ("hub bearer", paths.peer_hub_bearer(machine))):
-        if not file.exists():
-            raise RelayConfigError(f"no {name} for peer {machine!r}: {file} does not exist{how}")
-        values.append(read_token(file))
-    return values[0], values[1]
+    file = paths.peer_key(machine)
+    if not file.exists():
+        if paths.peer_relay_token(machine).exists() or paths.peer_hub_bearer(machine).exists():
+            raise RelayConfigError(
+                f"{peer_dir} holds the general relay token and hub bearer a katsoft-llm-kit 1.19.0 or 1.20.0 import "
+                f"stored, and no peer key; a peer is no longer reached with those. Re-export{how}"
+            )
+        raise RelayConfigError(f"no peer key for peer {machine!r}: {file} does not exist{how}")
+    return read_token(file)
 
 
-def write_peer_credentials(paths: StatePaths, machine: str, relay_token: str, hub_bearer: str,
-                           forward_key: Optional[str] = None) -> None:
-    """Store peer ``machine``'s credentials: private directories, then each file through :func:`write_private_file`.
-
-    ``forward_key`` (amendment 2) is the key ``machine``'s relay issued to this one with ``peer export --for``;
-    it is stored as ``peers/<machine>/forward.key`` and makes the peer a forwarding target of this relay.
-    """
-    named = [("relay token", relay_token), ("hub bearer", hub_bearer)]
-    if forward_key is not None:
-        named.append(("forward key", forward_key))
-    for name, value in named:
-        if not isinstance(value, str) or not value or len(value) > 512 or not value.isascii() or not value.isprintable() \
-                or any(ch.isspace() for ch in value):
-            raise RelayConfigError(f"the {name} for peer {machine!r} is not a single printable ASCII token")
+def write_peer_key(paths: StatePaths, machine: str, key: str) -> None:
+    """Store the peer key ``machine`` issued to this machine: private directories, then :func:`write_private_file`."""
+    if not isinstance(key, str) or not key or len(key) > 512 or not key.isascii() or not key.isprintable() \
+            or any(ch.isspace() for ch in key):
+        raise RelayConfigError(f"the peer key for peer {machine!r} is not a single printable ASCII token")
     ensure_state_dir(paths)
     for directory, kind in ((paths.peers_dir, "peers directory"), (paths.peer_dir(machine), "peer directory")):
         if directory.is_symlink():
             raise RelayConfigError(f"{kind} {directory} is a symbolic link; peer credential directories are never redirected")
         ensure_private_dir(directory, kind=kind)
-    write_private_file(paths.peer_relay_token(machine), relay_token + "\n")
-    write_private_file(paths.peer_hub_bearer(machine), hub_bearer + "\n")
-    if forward_key is not None:
-        write_private_file(paths.peer_forward_key(machine), forward_key + "\n")
+    write_private_file(paths.peer_key(machine), key + "\n")
 
 
-def peer_forward_key(paths: StatePaths, machine: str) -> Optional[str]:
-    """The forward key peer ``machine`` issued to this relay, or None when none is stored (no forwarding to it).
-
-    Reads only. A stored key is read like every credential (private directories and file, :func:`read_token`).
-    """
-    path = paths.peer_forward_key(machine)
-    if not path.exists():
-        return None
-    for directory, kind in ((paths.peers_dir, "peers directory"), (paths.peer_dir(machine), "peer directory")):
-        _require_real_dir(directory, kind=kind)
-        _refuse_loose(directory, kind=kind)
-    return read_token(path)
-
-
-def ensure_accept_forward_key(paths: StatePaths, machine: str) -> str:
-    """The forward key this relay issues to ``machine`` (``accept/<machine>/forward.key``), created when absent."""
+def ensure_accept_peer_key(paths: StatePaths, machine: str) -> str:
+    """The peer key this relay issues to ``machine`` (``accept/<machine>/peer.key``), created when absent."""
     ensure_state_dir(paths)
     for directory, kind in ((paths.accept_dir, "accept directory"), (paths.accept_machine_dir(machine), "accept directory")):
         if directory.is_symlink():
-            raise RelayConfigError(f"{kind} {directory} is a symbolic link; forward-key directories are never redirected")
+            raise RelayConfigError(f"{kind} {directory} is a symbolic link; peer-key directories are never redirected")
         ensure_private_dir(directory, kind=kind)
-    return ensure_token(paths.accept_forward_key(machine))
+    return ensure_token(paths.accept_peer_key(machine))
 
 
-def accept_forward_keys(paths: StatePaths) -> dict[str, str]:
-    """``{machine: forward key}`` for every ``accept/<machine>/forward.key`` this relay has issued; reads only.
+def accept_peer_keys(paths: StatePaths) -> dict[str, str]:
+    """``{machine: peer key}`` for every ``accept/<machine>/peer.key`` this relay has issued; reads only.
 
-    A requester whose key is missing cannot authenticate a ``relay:<machine>`` origin; whether it may call at
-    all is ``relay.accept_from``'s decision, checked separately.
+    A key authenticates the principal ``peer:<machine>``; whether that principal may call at all is
+    ``relay.accept_from``'s decision, checked separately.
     """
     root = paths.accept_dir
     if not root.exists():
@@ -339,7 +321,7 @@ def accept_forward_keys(paths: StatePaths) -> dict[str, str]:
             continue
         _require_real_dir(entry, kind="accept directory")
         _refuse_loose(entry, kind="accept directory")
-        key = paths.accept_forward_key(entry.name)
+        key = paths.accept_peer_key(entry.name)
         if key.exists():
             keys[entry.name] = read_token(key)
     return keys
@@ -726,15 +708,15 @@ __all__ = [
     "ensure_private_dir",
     "ensure_state_dir",
     "ensure_token",
-    "accept_forward_keys",
-    "ensure_accept_forward_key",
-    "peer_credentials",
-    "peer_forward_key",
+    "accept_peer_keys",
+    "ensure_accept_peer_key",
     "peer_import_command",
+    "peer_key",
+    "peer_reexport_command",
     "prepare_state",
     "read_private_file",
     "read_token",
     "token_matches",
-    "write_peer_credentials",
+    "write_peer_key",
     "write_private_file",
 ]

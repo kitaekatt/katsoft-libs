@@ -92,7 +92,7 @@ class HttpRelayClient:
         url: str,
         *,
         machine: str,
-        relay_token: str,
+        relay_token: Optional[str] = None,
         hub_bearer: Optional[str] = None,
         timeout_s: float = DEFAULT_TIMEOUT_S,
         llm_timeout_s: float = DEFAULT_LLM_TIMEOUT_S,
@@ -105,16 +105,20 @@ class HttpRelayClient:
             if not isinstance(url, str) or not url.startswith("https://"):
                 raise ValueError(f"relay URL {url!r} is not a loopback URL, so it must be an https URL; "
                                  "a credential never crosses a network in clear text")
-            if not hub_bearer:
-                raise ValueError(f"relay URL {url!r} is a peer; its own hub bearer must be given explicitly")
+            if peer_key is None or relay_token is not None or hub_bearer is not None:
+                raise ValueError(f"relay URL {url!r} is a peer; it is reached with the peer key it issued to this "
+                                 "machine alone, never a relay token or hub bearer")
         elif not url.startswith("http://"):
             raise ValueError(f"relay URL {url!r} is not a loopback http URL (a peer relay takes an https URL)")
         if not P.is_machine_label(machine):
             raise ValueError(f"{machine!r} is not a machine label")
-        if not relay_token:
+        if peer_key is not None:
+            if not peer_key:
+                raise ValueError("the peer key is empty")
+            if relay_token is not None or hub_bearer is not None:
+                raise ValueError("a peer client carries the peer key alone, never a relay token or hub bearer")
+        elif not relay_token:
             raise ValueError("the relay token is empty")
-        if peer_key is not None and not peer_key:
-            raise ValueError("the forward key is empty")
         import httpx
 
         self._httpx = httpx
@@ -178,13 +182,16 @@ class HttpRelayClient:
         """
         request_id = "req-" + secrets.token_hex(8)
         envelope = P.make_request(verb, params, origin=origin, request_id=request_id, on_behalf_of=on_behalf_of)
-        headers = {"Content-Type": P.CONTENT_TYPE, P.HEADER_RELAY_TOKEN: self._token}
+        headers = {"Content-Type": P.CONTENT_TYPE}
+        if self._peer_key is not None:
+            headers[P.HEADER_PEER_KEY] = self._peer_key  # the whole credential of a peer call
+        else:
+            assert self._token is not None
+            headers[P.HEADER_RELAY_TOKEN] = self._token
+            if origin.startswith("claude.ai/") and self._bearer:
+                headers[P.HEADER_AUTHORIZATION] = f"{P.BEARER_SCHEME} {self._bearer}"
         if grant is not None:
             headers[P.HEADER_GRANT] = grant
-        if origin.startswith("claude.ai/") and self._bearer:
-            headers[P.HEADER_AUTHORIZATION] = f"{P.BEARER_SCHEME} {self._bearer}"
-        if origin.startswith("relay:") and self._peer_key is not None:
-            headers[P.HEADER_PEER_KEY] = self._peer_key
         url = self._url + P.HTTP_PATH_TEMPLATE.format(verb=verb)
         body = json.dumps(envelope, ensure_ascii=True, separators=(",", ":")).encode("ascii")
         httpx = self._httpx

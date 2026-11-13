@@ -13,15 +13,15 @@ read again at start). Starting it:
 4. builds the mailbox, the registration table, session discovery and the
    ``ask_llm`` service, and the transport-independent
    :class:`llm_kit.relay.service.RelayService` over them, with the
-   forwarding peers (amendment 2: each ``relay.peers`` entry, reached with its
-   own relay token, hub bearer and the forward key it issued to this relay;
-   a peer with no ``forward.key`` is listed but never sent to) and the forward
-   keys this relay issued to the ``relay.accept_from`` machines;
+   forwarding peers (amendment 2: each ``relay.peers`` entry, reached with
+   the peer key it issued to this machine alone) and the peer keys this relay
+   issued (each authenticates ``peer:<machine>``, admitted only for a
+   ``relay.accept_from`` machine);
 5. binds ``RelayConfig.bind("relay")`` (``127.0.0.1:4710`` by default) and
    serves ``POST /v1/<verb>`` with uvicorn.
 
 The ASGI application here is a minimal callable rather than a framework: it
-checks the method, the path and ``X-Relay-Token`` (constant time) BEFORE it
+checks the method, the path and ``X-Relay-Token`` or ``X-Relay-Peer-Key`` (constant time) BEFORE it
 reads anything, then the content type and the declared body size; it takes one
 of a bounded number of in-flight slots, reads the body under a deadline,
 reads the other two auth headers, and hands the body to the service on a
@@ -60,9 +60,8 @@ from llm_kit.relay.discovery import Discovery, DiscoveryRoots, ProcessProbe, Psu
 from llm_kit.relay.lifecycle import (
     PreparedState,
     RoleLock,
-    accept_forward_keys,
-    peer_credentials,
-    peer_forward_key,
+    accept_peer_keys,
+    peer_key,
     prepare_state,
 )
 from llm_kit.relay.mailbox import Mailbox, MailboxLimits, mailbox_db_path
@@ -209,9 +208,12 @@ class RelayApp:
         headers: dict[str, str] = {}
         for raw_name, raw_value in scope.get("headers", []):
             headers[raw_name.decode("latin-1").lower()] = raw_value.decode("latin-1")
-        # Authenticate before reading a byte of the body: a caller without the relay token holds nothing open.
-        if not service.relay_token_ok(headers.get(P.HEADER_RELAY_TOKEN.lower())):
-            return service.transport_error("unauthenticated", f"missing or wrong {P.HEADER_RELAY_TOKEN}")
+        # Authenticate before reading a byte of the body: a caller without the relay token or a peer key this
+        # relay issued holds nothing open. The service decides the principal again from the same headers.
+        if not service.relay_token_ok(headers.get(P.HEADER_RELAY_TOKEN.lower())) \
+                and service.peer_principal(headers.get(P.HEADER_PEER_KEY.lower())) is None:
+            return service.transport_error("unauthenticated",
+                                           f"missing or wrong {P.HEADER_RELAY_TOKEN} or {P.HEADER_PEER_KEY}")
         content_type = headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if content_type not in _JSON_TYPES:
             return service.transport_error("bad_request", f"Content-Type must be {P.CONTENT_TYPE}")
@@ -331,24 +333,20 @@ class RelayServer:
     # -- opening and closing --------------------------------------------------------
 
     def _build_peer_clients(self) -> dict[str, Any]:
-        """``{machine: HttpRelayClient or None}`` for every ``relay.peers`` entry (None: no forward key stored).
+        """``{machine: HttpRelayClient}`` for every ``relay.peers`` entry, each carrying only that peer's key.
 
-        A peer is a forwarding target only once its ``forward.key`` is stored (``peer import`` of an export made
-        with ``--for <this machine>``); then its relay token and hub bearer must be stored too. This machine's
-        credentials are never sent to a peer.
+        Every configured peer needs ``peers/<machine>/peer.key`` (``peer export --for <this machine>`` there, then
+        ``peer import`` here); a missing key, or a directory holding only what a 1.19.0 or 1.20.0 import stored,
+        stops the relay naming the command (:func:`peer_key`). No relay token or hub bearer is sent to a peer.
         """
         if self._peer_clients_override is not None:
             return dict(self._peer_clients_override)
         clients: dict[str, Any] = {}
         try:
             for peer in self.config.peers:
-                key = peer_forward_key(self.config.paths, peer.machine)
-                if key is None:
-                    clients[peer.machine] = None
-                    continue
-                token, bearer = peer_credentials(self.config.paths, peer.machine)
+                key = peer_key(self.config.paths, peer.machine, own=self.config.machine_label)
                 clients[peer.machine] = HttpRelayClient(
-                    peer.url, machine=peer.machine, relay_token=token, hub_bearer=bearer, peer_key=key,
+                    peer.url, machine=peer.machine, peer_key=key,
                     timeout_s=self._peer_timeout_s, connect_timeout_s=PEER_CONNECT_TIMEOUT_S,
                 )
         except BaseException:
@@ -394,7 +392,7 @@ class RelayServer:
                 pause=self.prepared.pause_store(clock=self._clock), endpoints=endpoints,
                 ledgers=self.config.ledgers, clock=self._clock, poll_interval_s=self._poll_interval_s,
                 peers=self._peer_clients, accept_from=self.config.accept_from,
-                accept_keys=accept_forward_keys(self.config.paths),
+                accept_keys=accept_peer_keys(self.config.paths),
             )
             self.mailbox, self.table = mailbox, table
             self._sock = bind_loopback(self._host, self._port)
