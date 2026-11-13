@@ -41,3 +41,29 @@ def _no_ambient_user_state(monkeypatch):
     """
     for name in ("XDG_CONFIG_HOME", "LLM_KIT_CONSENT_FILE", "LLM_KIT_ENV_FILE", "MODEL_ENDPOINTS_REGISTRY"):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def tmp_path(request, tmp_path):
+    """Relay tests on Windows run in a private scratch directory under the user profile, not in %TEMP%.
+
+    Relay state refuses an ancestor that lets another trustee write (``winacl.refuse_writable_ancestors``),
+    and a real %TEMP% can carry such ACEs, so pytest's own ``tmp_path`` makes every relay test fail on a
+    machine whose %TEMP% was widened. The profile directory is the one place Windows guarantees only the
+    user, SYSTEM and Administrators can change. Other tests, and every non-Windows run, keep pytest's path.
+    """
+    if os.name != "nt" or not request.module.__name__.startswith("test_relay_"):
+        yield tmp_path
+        return
+    import shutil
+    import uuid
+    from pathlib import Path
+
+    from llm_kit.relay import winacl
+
+    base = Path.home() / f".katsoft-libs-relay-test-{uuid.uuid4().hex[:8]}"
+    winacl.create_private_dir(base)
+    try:
+        yield base
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
