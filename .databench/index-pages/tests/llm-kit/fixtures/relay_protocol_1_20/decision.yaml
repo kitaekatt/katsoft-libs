@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/llm-kit/fixtures/relay_protocol_1_20",
+  "decision": "none",
+  "source_sha": "7e5f2b0e941ec0f10cfb42df45f5c4a1154a18a4",
+  "input_sha256": "d66d60bfbf4b99554820b44615a1850bcd771a198191339acf8f7ea1884bcb6a",
+  "input_shape_sha256": "3be9b5f06593070266a023252311b17d2e1a9084d4c1e2b9f218e6949bb33a27",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}
