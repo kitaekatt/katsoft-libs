@@ -203,6 +203,11 @@ entry's window; without one, no size filter. A tier with `routing.size_only: tru
 when no ordinary tier holds the size, never as busy-spill (for a tier that costs a model swap).
 Spill on a busy tier is immediate, as before. The access log records `requested` and `size`.
 
+## Upgrading to 1.23
+
+The mailbox moves to schema v3, and a 1.22 relay cannot read it. Remote resume is
+off until `relay.yaml` sets `resume.enabled: true`.
+
 ## Source
 
 The source lives in the katsoft-libs repository (`packages/katsoft-llm-kit/src/llm_kit`).
