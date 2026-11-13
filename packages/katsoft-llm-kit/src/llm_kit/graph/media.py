@@ -30,8 +30,10 @@ import json
 import math
 import os
 import re
+import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -105,6 +107,59 @@ def ref_kind(ref: Any) -> str:
 _WRITE_LOCK = threading.Lock()
 
 
+#: Windows refuses ``os.replace`` onto a file another handle has open (a reader, or another process doing the
+#: same write). The holder lets go within milliseconds, so a replace waits this many tries, this long apart.
+_REPLACE_TRIES = 100
+_REPLACE_DELAY = 0.02
+
+
+def read_file_bytes(path: Path) -> bytes:
+    """``path.read_bytes()``; on Windows, wait out a file that a concurrent ``os.replace`` holds.
+
+    Opening a file while another thread or process replaces it raises ``PermissionError`` on Windows.
+    The wait is bounded (the same tries as :func:`replace_file`); every other platform and error raises at once.
+    """
+    for attempt in range(_REPLACE_TRIES):
+        try:
+            return path.read_bytes()
+        except PermissionError:
+            if sys.platform != "win32" or attempt == _REPLACE_TRIES - 1:
+                raise
+            time.sleep(_REPLACE_DELAY)
+    raise AssertionError("unreachable")
+
+
+def replace_file(temporary: Union[str, Path], path: Path, same_bytes: Optional[bytes] = None) -> None:
+    """``os.replace(temporary, path)``; on Windows, wait out a sharing violation.
+
+    A ``PermissionError`` on Windows means another handle has ``path`` open. With ``same_bytes`` (a
+    content-addressed write: the file name is the hash of the bytes), identical bytes already at ``path``
+    complete the write and ``temporary`` is deleted; different bytes raise :class:`StoreError`. Without
+    it the replace is retried a bounded number of times, then the error is raised. Every other platform
+    and every other error raises at once.
+    """
+    for attempt in range(_REPLACE_TRIES):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            if sys.platform != "win32":
+                raise
+            if same_bytes is not None:
+                try:
+                    existing = path.read_bytes()
+                except OSError:
+                    existing = None   # being replaced or still open elsewhere: retry
+                if existing == same_bytes:
+                    os.unlink(temporary)
+                    return
+                if existing is not None:
+                    raise StoreError(f"{path} exists with different content") from None
+            if attempt == _REPLACE_TRIES - 1:
+                raise
+            time.sleep(_REPLACE_DELAY)
+
+
 def _write_once(path: Path, data: bytes) -> None:
     with _WRITE_LOCK:
         _write_once_locked(path, data)
@@ -112,7 +167,7 @@ def _write_once(path: Path, data: bytes) -> None:
 
 def _write_once_locked(path: Path, data: bytes) -> None:
     if path.exists():
-        if path.read_bytes() != data:
+        if read_file_bytes(path) != data:
             raise StoreError(f"{path} exists with different content")
         return
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -122,7 +177,7 @@ def _write_once_locked(path: Path, data: bytes) -> None:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        replace_file(temporary, path, data)
     except BaseException:
         try:
             os.unlink(temporary)
@@ -241,7 +296,7 @@ class ContentStore:
     @staticmethod
     def _read(path: Path, digest: str) -> bytes:
         try:
-            data = path.read_bytes()
+            data = read_file_bytes(path)
         except FileNotFoundError:
             raise StoreError(f"store object {digest} is missing: {path}") from None
         if hashlib.sha256(data).hexdigest() != digest:

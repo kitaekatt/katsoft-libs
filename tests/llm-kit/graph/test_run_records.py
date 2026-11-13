@@ -233,3 +233,66 @@ def test_concurrent_writers_of_one_value_all_succeed(tmp_path):
     for thread in threads:
         thread.join()
     assert errors == [] and len(set(refs)) == 1 and len(refs) == 200
+
+
+_STORE_WRITER = """
+import sys
+from llm_kit.graph.media import ContentStore
+store = ContentStore(sys.argv[1] + "/v", sys.argv[1] + "/b", sys.argv[1] + "/m")
+for round_ in range(3):
+    for i in range(150):
+        store.put_value({"k": i})
+        store.put_blob("blob %d" % i)
+"""
+
+
+def test_concurrent_processes_storing_the_same_content_all_succeed(tmp_path):
+    """The in-process write lock does not cover other processes (parallel pipeline workers share one store).
+    A writer that finds the file already in place, and cannot replace it because another process has it open
+    (Windows), must accept the identical bytes instead of failing."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import llm_kit
+
+    source = str(Path(llm_kit.__file__).resolve().parent.parent)
+    env = {**os.environ, "PYTHONPATH": source}
+    children = [subprocess.Popen([sys.executable, "-c", _STORE_WRITER, str(tmp_path)], env=env,
+                                 stderr=subprocess.PIPE, text=True) for _ in range(4)]
+    failures = [(child.wait(), child.stderr.read()) for child in children]
+    assert [code for code, _ in failures] == [0, 0, 0, 0], [err[-300:] for _, err in failures if err]
+    store = ContentStore(tmp_path / "v", tmp_path / "b", tmp_path / "m")
+    assert store.get_value(store.put_value({"k": 7})) == {"k": 7}
+    assert store.get_text(store.put_blob("blob 7")) == "blob 7"
+
+
+def test_run_record_rewrite_while_another_thread_reads_it(tmp_path):
+    """A run record is rewritten as nodes finish while a viewer or a status call reads it. On Windows a file
+    that a reader has open cannot be replaced; the writer must wait for the reader, not fail."""
+    import threading
+
+    store = RunStore(tmp_path)
+    record = {"format": RUN_FORMAT, "run_id": "20260101T000000000000Z-0000", "kind": "run", "n": 0}
+    store.write_run(record)
+    stop = threading.Event()
+    errors: list[BaseException] = []
+
+    def read() -> None:
+        try:
+            while not stop.is_set():
+                store.load_run(record["run_id"])
+        except BaseException as exc:  # noqa: BLE001 - collected and asserted below
+            errors.append(exc)
+
+    reader = threading.Thread(target=read)
+    reader.start()
+    try:
+        for n in range(300):
+            store.write_run({**record, "n": n})
+    finally:
+        stop.set()
+        reader.join()
+    assert errors == []
+    assert store.load_run(record["run_id"])["n"] == 299

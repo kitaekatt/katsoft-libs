@@ -27,7 +27,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 
 from .config import GraphConfig, expand_run_path
-from .media import ContentStore, StoreError
+from .media import ContentStore, StoreError, read_file_bytes, replace_file
 from .model import GraphError
 
 __all__ = [
@@ -132,7 +132,7 @@ def _write_json(path: Path, payload: Mapping) -> None:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        replace_file(temporary, path)
     except BaseException:
         try:
             os.unlink(temporary)
@@ -189,7 +189,7 @@ class RunStore(ContentStore):
     def load_run(self, run_id: str) -> dict:
         path = self.run_path(run_id)
         try:
-            record = json.loads(path.read_text(encoding="ascii"))
+            record = json.loads(read_file_bytes(path).decode("ascii"))
         except FileNotFoundError:
             raise StoreError(f"run {run_id} does not exist: {path}") from None
         except (UnicodeError, ValueError) as exc:

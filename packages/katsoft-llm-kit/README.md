@@ -215,6 +215,14 @@ created with the owner-plus-SYSTEM protected ACL; Codex writer locks are probed 
 `psutil.open_files` scan took about half a minute); graph files refuse rooted and drive paths on every
 platform; the graph store serializes concurrent writes of one value.
 
+## Unreleased
+
+Graph content stores and run records no longer fail with `PermissionError` on Windows when several
+processes or threads write or read one file at once. A content-addressed write that cannot replace a file
+another handle holds open accepts identical bytes already in place (different bytes raise `StoreError`);
+reads and run-record replaces wait a bounded time (about 2 seconds) for a sharing violation to clear.
+POSIX behavior is unchanged.
+
 ## Source
 
 The source lives in the katsoft-libs repository (`packages/katsoft-llm-kit/src/llm_kit`).
