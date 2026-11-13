@@ -32,3 +32,20 @@ Quality bar for the pieces above (`llm_kit.schema.formats`, the three formats, `
 5. Examples run without a client app: pass. `tests/packaging/test_examples.py` installs the built wheels in a clean venv and runs each example.
 6. JSON Schema for each file format: pass. The three schemas ship in `llm_kit.schema.formats`. The shared-case tests validate reader output against them, and the writer tests (`render_yaml`, `render_local_yaml`, `write_project_models`, `write_local_overrides`, `set_local_override`, `graph.testing.make_project`) validate written files against them.
 7. Gate before adoption: recorded in this entry.
+
+Open-label corpus mining. Pure functions for the map-reduce half of an LLM corpus analysis; the consumer owns the corpus, prompts and model calls. The contract is `docs/reference/llm-kit-mining.md`.
+
+Added:
+
+- `llm_kit.pipeline.analysis.mining`: `stable_batches` and `batch_key` (`Batch`, `KEY_CHARS`): chunk keys that survive appends to a group; `normalize_label` and `label_inventory` (`LabelCount`); `Taxonomy.from_answer`, `family_of` and `coverage` (`Family`, `TaxonomyError`, `OTHER`): a model's label families, checked and applied by code; `family_stats`: records, distinct counts, flag shares and detail tallies per family.
+- `examples/mine_labels.py`.
+
+Quality bar for `llm_kit.pipeline.analysis.mining`:
+
+1. Public API documented: pass. Each name has a docstring (constants a `#:` comment) and is listed in `public-surface.json`.
+2. Semver release with a changelog: pass. Part of 1.25.0; this entry.
+3. Tests for each public function: pass. `tests/llm-kit/test_pipeline_mining.py` calls each function.
+4. No client names, prompts or data: pass. The tests and the example use generic data.
+5. Examples run without a client app: pass. `examples/mine_labels.py` needs no extras; `tests/packaging/test_examples.py` runs it.
+6. JSON Schema for each file format: not applicable. The module reads and writes no file; the taxonomy answer is checked by `Taxonomy.from_answer`, and a consumer passes its own output schema to its model call.
+7. Gate before adoption: recorded in this entry.
