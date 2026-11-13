@@ -215,7 +215,7 @@ created with the owner-plus-SYSTEM protected ACL; Codex writer locks are probed 
 `psutil.open_files` scan took about half a minute); graph files refuse rooted and drive paths on every
 platform; the graph store serializes concurrent writes of one value.
 
-## Unreleased
+## Windows fixes in 1.24.1
 
 Graph content stores and run records no longer fail with `PermissionError` on Windows when several
 processes or threads write or read one file at once. A content-addressed write that cannot replace a file
