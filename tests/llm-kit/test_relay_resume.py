@@ -503,18 +503,48 @@ def test_crash_after_the_claim_before_the_spawn(box):
     assert record["state"] == "declined" and record["reply"]["body"] == R.REASON_BEFORE_START
 
 
-def test_crash_while_spawning_finds_the_tagged_child_and_stops_it(box):
+def test_crash_while_spawning_keeps_the_claim_while_a_tagged_process_runs_and_never_signals_it(box):
+    # no pid was recorded, so nothing proves the tagged process is the run's: it is never signalled, and the
+    # claim stays held until no process of this user carries the tag
     dead, fresh = R.ResumeRunner(box), R.ResumeRunner(box)
     message_id, lease_id = claim(box, dead)
     box.set_lease_phase(lease_id, "spawning")
     child = sleeper(lease_id)
     try:
         wait_for(lambda: R.tagged_processes(lease_id), 10, "the tag to be readable")
+        assert fresh.recover() == 0
+        assert child.poll() is None and len(box.leases()) == 1
+        assert box.get_message(message_id)["state"] not in P.TERMINAL_STATES
+        child.kill()
+        child.wait()
         assert fresh.recover() == 1
-        assert child.wait(10) is not None
         assert ended(box, message_id)["reply"]["body"] == R.REASON_STOPPED
     finally:
         child.kill()
+
+
+def test_a_copied_tag_never_selects_a_process_and_keeps_the_claim_until_it_ends(box):
+    dead, fresh = R.ResumeRunner(box), R.ResumeRunner(box, term_grace_s=0.3)
+    tag = f"rpt_copied_{uuid.uuid4().hex[:8]}"
+    message_id, lease_id = claim(box, dead, proc_tag=tag)
+    child = sleeper(tag)
+    stranger = sleeper(tag)  # copied the tag: another session, not a descendant of the recorded child
+    try:
+        wait_for(lambda: len(R.tagged_processes(tag)) == 2, 10, "both tags to be readable")
+        box.set_lease_phase(lease_id, "running", child_pid=child.pid,
+                            child_start=psutil.Process(child.pid).create_time(), pgid=child.pid)
+        assert fresh.recover() == 0
+        assert child.wait(10) is not None  # the recorded child is stopped
+        assert stranger.poll() is None  # the copied tag is never signalled
+        assert len(box.leases()) == 1  # and termination is not confirmed while it runs
+        stranger.kill()
+        stranger.wait()
+        assert fresh.recover() == 1
+        assert ended(box, message_id)["reply"]["body"] == R.REASON_STOPPED
+    finally:
+        for proc in (child, stranger):
+            proc.kill()
+            proc.wait()
 
 
 def test_crash_while_running_with_the_child_alive_stops_it_identity_checked(box):
@@ -571,7 +601,8 @@ time.sleep(300)
 """
 
 
-def family(tmp_path: Path, tag: str, *, leader_exits: bool, untagged: bool) -> tuple[subprocess.Popen, int]:
+def family(tmp_path: Path, tag: str, *, leader_exits: bool, untagged: bool,
+           reap: bool = True) -> tuple[subprocess.Popen, int]:
     """A tagged leader in its own group with a descendant that ignores SIGTERM (and, ``untagged``, dropped the
     tag from its environment, so only its process group ties it to the run); (leader, descendant pid)."""
     pidfile = tmp_path / f"desc-{uuid.uuid4().hex}.pid"
@@ -581,8 +612,10 @@ def family(tmp_path: Path, tag: str, *, leader_exits: bool, untagged: bool) -> t
     wanted = None if untagged else tag
     wait_for(lambda: psutil.Process(desc).environ().get(R.LEASE_ENV, None) == wanted or None, 10,
              "the descendant's environment")
-    if leader_exits:
+    if leader_exits and reap:
         leader.wait(10)
+    elif leader_exits:  # left a zombie: this test process is its parent and has not reaped it
+        wait_for(lambda: psutil.Process(leader.pid).status() == psutil.STATUS_ZOMBIE, 10, "the leader to exit")
     return leader, desc
 
 
@@ -593,8 +626,8 @@ def gone(pid: int) -> bool:
         return True
 
 
-@pytest.mark.parametrize("untagged", [False, True], ids=["tagged", "untagged"])
-@pytest.mark.parametrize("leader_exits", [False, True], ids=["leader_alive", "leader_already_dead"])
+@pytest.mark.parametrize("leader_exits,untagged", [(False, False), (False, True), (True, False)],
+                         ids=["leader_alive-tagged", "leader_alive-untagged", "leader_already_dead-tagged"])
 def test_recovery_stops_a_descendant_that_ignores_sigterm(box, tmp_path, leader_exits, untagged):
     dead, fresh = R.ResumeRunner(box), R.ResumeRunner(box, term_grace_s=0.3)
     tag = f"rpt_family_{uuid.uuid4().hex[:8]}"
@@ -615,21 +648,101 @@ def test_recovery_stops_a_descendant_that_ignores_sigterm(box, tmp_path, leader_
                 pass
 
 
-def test_a_crash_between_fence_and_kill_still_finds_the_child_by_its_persisted_tag(box):
+def test_an_untagged_survivor_of_a_reaped_leader_is_never_signalled_and_keeps_the_claim(box, tmp_path):
+    # the leader is gone and reaped: its group is the run's only with the tag as well, so an untagged member is
+    # not signalled, and termination is not confirmed while it runs
     dead, fresh = R.ResumeRunner(box), R.ResumeRunner(box, term_grace_s=0.3)
-    message_id, lease_id = claim(box, dead, proc_tag="rpt_persisted")
-    box.set_lease_phase(lease_id, "spawning")
-    child = sleeper("rpt_persisted")
+    tag = f"rpt_family_{uuid.uuid4().hex[:8]}"
+    message_id, lease_id = claim(box, dead, proc_tag=tag)
+    leader, desc = family(tmp_path, tag, leader_exits=True, untagged=True)
     try:
-        wait_for(lambda: R.tagged_processes("rpt_persisted"), 10, "the tag to be readable")
-        # a recovering relay fenced the lease, then crashed before it stopped the child
-        box.take_lease(lease_id, new_lease_id=R.new_lease_id(), relay_instance="rin_crashed")
-        assert box.leases()[0]["proc_tag"] == "rpt_persisted"
+        box.set_lease_phase(lease_id, "running", child_pid=leader.pid, child_start=-1.0, pgid=leader.pid)
+        assert fresh.recover() == 0
+        assert not gone(desc) and len(box.leases()) == 1
+        os.kill(desc, 9)
+        wait_for(lambda: gone(desc), 10, "the survivor to die")
         assert fresh.recover() == 1
-        assert child.wait(10) is not None
         ended(box, message_id)
     finally:
-        child.kill()
+        try:
+            os.kill(desc, 9)
+        except ProcessLookupError:
+            pass
+
+
+def test_a_zombie_leader_with_its_recorded_identity_proves_its_group_so_untagged_survivors_stop(box, tmp_path):
+    dead, fresh = R.ResumeRunner(box), R.ResumeRunner(box, term_grace_s=0.3)
+    tag = f"rpt_zombie_{uuid.uuid4().hex[:8]}"
+    message_id, lease_id = claim(box, dead, proc_tag=tag)
+    leader, desc = family(tmp_path, tag, leader_exits=True, untagged=True, reap=False)
+    try:
+        start = psutil.Process(leader.pid).create_time()  # a zombie keeps its create time
+        box.set_lease_phase(lease_id, "running", child_pid=leader.pid, child_start=start, pgid=leader.pid)
+        assert fresh.recover() == 1
+        assert gone(desc)  # untagged, but a member of the group the zombie leader still proves
+        ended(box, message_id)
+    finally:
+        try:
+            os.kill(desc, 9)
+        except ProcessLookupError:
+            pass
+        leader.wait(10)
+
+
+def test_a_crash_between_fence_and_kill_still_finds_the_run_by_its_persisted_tag(box, tmp_path):
+    dead, fresh = R.ResumeRunner(box), R.ResumeRunner(box, term_grace_s=0.3)
+    message_id, lease_id = claim(box, dead, proc_tag="rpt_persisted_" + uuid.uuid4().hex[:8])
+    tag = box.leases()[0]["proc_tag"]
+    leader, desc = family(tmp_path, tag, leader_exits=True, untagged=False)
+    try:
+        box.set_lease_phase(lease_id, "running", child_pid=leader.pid, child_start=-1.0, pgid=leader.pid)
+        # a recovering relay fenced the lease, then crashed before it stopped the run
+        box.take_lease(lease_id, new_lease_id=R.new_lease_id(), relay_instance="rin_crashed")
+        assert box.leases()[0]["proc_tag"] == tag
+        assert fresh.recover() == 1
+        assert gone(desc)  # a member of the reaped leader's group that carries the persisted tag
+        ended(box, message_id)
+    finally:
+        try:
+            os.kill(desc, 9)
+        except ProcessLookupError:
+            pass
+
+
+def test_a_claude_run_stops_an_untagged_group_survivor_before_reaping_its_leader(world):
+    w = world()
+    target = w.claude_idle()
+    done = w.finished(w.direct(target, body="MODE=orphan")["message"]["id"])
+    assert done["state"] == "answered", done["reply"]["body"]
+    orphan = int(Path(str(w.claude_log) + ".orphan").read_text())
+    assert gone(orphan)
+
+
+def test_a_run_whose_processes_did_not_stop_keeps_its_claim_until_a_sweep_confirms_it(box, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(tmp_path / "claude.log.jsonl"))
+    runner = R.ResumeRunner(box, claude_argv=[sys.executable, str(FAKE_CLAUDE)], term_grace_s=0.3)
+    tag = f"rpt_unstopped_{uuid.uuid4().hex[:8]}"
+    message_id, lease_id = claim(box, runner, proc_tag=tag)
+    address = box.leases()[0]["address"]
+    stranger = sleeper(tag)  # a process with the run's tag that is not provably the run's: never confirmed gone
+    try:
+        wait_for(lambda: R.tagged_processes(tag), 10, "the tag to be readable")
+        job = R.ResumeJob(lease_id=lease_id, message_id=message_id, address=address, harness="claude",
+                          session_id=address.rsplit("/", 1)[1], cwd=str(tmp_path), prompt="hi", timeout_s=20,
+                          proc_tag=tag)
+        runner.start(job).join(30)
+        lease = box.leases()
+        assert len(lease) == 1 and lease[0]["phase"] == "stopping"  # the run ended; its claim did not
+        assert box.get_message(message_id)["state"] not in P.TERMINAL_STATES
+        assert runner.recover() == 0 and len(box.leases()) == 1  # every sweep retries; still unconfirmed
+        stranger.kill()
+        stranger.wait()
+        assert runner.recover() == 1
+        record = ended(box, message_id)
+        assert record["state"] == "answered" and record["reply"]["body"] == "answer from claude"
+    finally:
+        stranger.kill()
+        stranger.wait()
 
 
 def test_a_pid_created_half_a_second_later_is_a_stranger(box):
@@ -698,8 +811,15 @@ def test_a_live_runner_of_the_dead_relay_writes_nothing_after_recovery(box, tmp_
     thread = old.start(R.ResumeJob(lease_id, message_id, f"{MACHINE}/claude/x", "claude", "x", cwd,
                                    "[relay message]\n\nMODE=hang", 60.0))
     wait_for(lambda: (box.leases() or [{}])[0].get("phase") == "running", 10, "the run to record its child")
+    stop_children = new._stop_children
+
+    def stop_then_let_the_old_runner_write_first(lease):
+        stopped = stop_children(lease)
+        thread.join(15)  # the old runner sees its child die and tries its final write before recovery's
+        return stopped
+
+    monkeypatch.setattr(new, "_stop_children", stop_then_let_the_old_runner_write_first)
     assert new.recover() == 1
-    thread.join(15)
     assert not thread.is_alive()
     record = ended(box, message_id)
     assert record["reply"]["body"] == R.REASON_STOPPED  # the late runner wrote nothing over it

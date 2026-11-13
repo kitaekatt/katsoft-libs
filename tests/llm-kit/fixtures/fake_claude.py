@@ -16,6 +16,8 @@ permissionMode, then a ``result`` event. A ``MODE=<name>`` token in the prompt p
   empty            result with an empty string
   stale            a result of THIS session printed before the init, then init and result "fresh"
   hang             init, then sleep (until killed)
+  orphan           start a child in this process group that dropped the lease tag and ignores SIGTERM (its pid
+                   written to ``FAKE_CLAUDE_LOG`` + ".orphan"), then init and result, and exit
 """
 import json
 import os
@@ -80,4 +82,12 @@ if mode == "empty":
 if mode == "hang":
     time.sleep(300)
     sys.exit(0)
+if mode == "orphan":
+    import subprocess
+    env = {k: v for k, v in os.environ.items() if k != "LLM_KIT_RESUME_LEASE"}
+    code = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(300)"
+    child = subprocess.Popen([sys.executable, "-c", code], env=env, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    with open(log + ".orphan", "w") as handle:
+        handle.write(str(child.pid))
 result("fresh" if mode == "stale" else "answer from claude")

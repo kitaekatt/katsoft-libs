@@ -1398,7 +1398,30 @@ that lost its lease stops its run's processes and writes nothing.
   user's Claude Code hooks run as in any `claude -p` (measured 2026-11-13:
   SessionStart hooks fired); unlike the Codex run there is no flag here that
   turns them off.
-- A timeout or a relay stop kills the child's group and declines.
+- A timeout or a relay stop stops the run's processes and declines.
+
+Which processes are the run's. The tag never selects a process by itself:
+any process of the same user can copy an environment variable. A process is
+the run's only when it runs under this user's uid and has independent
+membership through the recorded child: while the child's pid has exactly the
+recorded create time (alive, or a zombie its parent has not reaped), the
+child, its descendants and every member of its process group, tagged or not;
+once the child is gone and its pid is free (a pid is not reused while a group
+of that id has members), the members of its group that also carry the tag.
+A Claude run waits for its child to exit without reaping it, so the child's
+group stays provable while the rest of the run is stopped. Other processes of
+this user that carry the tag, and untagged members of a group whose child is
+gone, are unconfirmed: they are never signalled, but they keep the claim
+held. With no pid recorded (a crash before it was written), no process is a
+member and any process carrying the tag keeps the claim held.
+
+Termination must be confirmed before a claim ends: no member left and no
+unconfirmed process. A run whose final stop is not confirmed does not end its
+claim: the lease moves to phase `stopping`, the relay logs it to stderr, and
+every maintenance sweep retries the stop and then writes the run's decided
+outcome (or, after a relay restart, declines with "the run ended but
+termination of its processes was not confirmed until a later sweep; its
+outcome was lost").
 
 The claim ends only through one transaction that writes the reply (sender
 `relay:<machine>`, over 8192 bytes truncated with a marker pointing to
@@ -1409,15 +1432,13 @@ Orphan recovery, at relay start and on every maintenance sweep (5 s). A lease
 is an orphan when another relay instance holds it, when it expired (a runner
 stops renewing past its deadline), or when its recorded child is gone and no
 runner of this relay owns it. The orphan is fenced first (its lease id is
-replaced), then every process of its run is stopped: each of this user's
-processes carrying the persisted tag, the recorded child when its create time
-is exactly the recorded one, and the members of the child's group while that
-group is provably the run's (the child alive with its identity, or no process
-holding its pid). Each is signalled on its own identity-bound handle: SIGTERM,
-a grace period, then SIGKILL for every survivor, whether or not the child
-already exited; no group is signalled by number and a pid whose create time
-differs is never signalled. All of them must be gone before the claim is
-cleared; otherwise the fenced lease waits for a later sweep. A heartbeat that
+replaced), then every process of its run (above) is stopped. Each is
+signalled on its own identity-bound handle: SIGTERM, a grace period, then
+SIGKILL for every survivor, whether or not the child already exited; no group
+is signalled by number and a pid whose create time differs is never
+signalled. Termination must be confirmed (above) before the claim is cleared;
+otherwise the fenced lease waits for a later sweep. A lease in phase
+`stopping` is an orphan once no runner owns it. A heartbeat that
 would rename a registration onto an address a run holds is
 `registration_conflict` (`why: resume_running`), like a register. A child is never
 adopted: its output pipe belonged to the dead relay. The message is declined

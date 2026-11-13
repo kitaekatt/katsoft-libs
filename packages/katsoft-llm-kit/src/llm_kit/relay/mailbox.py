@@ -100,8 +100,9 @@ _MIGRATIONS: Mapping[int, tuple[str, ...]] = {
     ),
 }
 #: Phases of a resume lease: claimed (nothing spawned), spawning (a child may exist, pid not yet recorded),
-#: running (child pid, create time and process group recorded).
-LEASE_PHASES = ("claimed", "spawning", "running")
+#: running (child pid, create time and process group recorded), stopping (the run ended but termination of its
+#: processes is not confirmed: the claim stays held until a sweep confirms it).
+LEASE_PHASES = ("claimed", "spawning", "running", "stopping")
 MAILBOX_FILENAME = "mailbox.sqlite3"
 _DB_MODE = 0o600
 
