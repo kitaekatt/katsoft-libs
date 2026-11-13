@@ -60,3 +60,70 @@ uv run --extra dev python scripts/import_package_targets.py --library-repo "$DEV
 Run that command from plugins-kit. It checks the published versions and generates its local package-target artifact.
 Review and push that artifact in plugins-kit. Plugin publication keeps its separate approval requirement.
 Applications install the libraries directly from PyPI and need neither repository at runtime.
+
+## npm packages
+
+`packages/llm-kit-config` is the npm package `@katsoft/llm-kit-config`.
+`scripts/release.py` and `release-packages.yml` do not release it.
+Its version is in `packages/llm-kit-config/package.json`.
+Each version has an entry in `packages/llm-kit-config/CHANGELOG.md` that records which quality bar lines pass.
+
+The release tag is `@katsoft/llm-kit-config@<version>`, for example `@katsoft/llm-kit-config@1.0.0`.
+A push of this tag starts `.github/workflows/release-npm.yml`.
+The tag contains `/`, and `*` in a GitHub filter pattern does not match `/`.
+Thus the `*-v*` trigger of `release-packages.yml` does not match an npm tag, and the npm trigger does not match a PyPI tag.
+
+The workflow uses npm trusted publishing (OIDC) from the GitHub environment `npm`, with provenance.
+It installs from the lockfile (`npm ci`), runs `npm test` and `npm run check-pack`, and packs one tarball.
+It publishes that tarball with `npm publish <tarball> --provenance --access public`.
+Then it compares the registry's `dist.integrity` with the integrity of the packed tarball, and fails when they differ.
+When the version is already on npm, the workflow does not publish.
+It downloads the published tarball and compares its files with the packed files.
+The job summary records the commit, the result and the integrity.
+
+### Prepare an npm release
+
+1. Change the version in `package.json` and `package-lock.json` (`npm version <new> --no-git-tag-version` in `packages/llm-kit-config`).
+2. Add the `CHANGELOG.md` entry, with the result of each quality bar line.
+3. In `packages/llm-kit-config`, run `npm ci`, `npm test` and `npm run check-pack`.
+4. From the repository root, run `uv run --extra dev pytest`.
+5. Commit and push the reviewed changes to `dev`.
+6. Obtain the user's publication approval.
+
+### First publish by hand (one time)
+
+Trusted publishing can be set only on a package that exists on npm, so the user publishes version 1.0.0 by hand.
+
+1. On npmjs.com, use an account with two-factor authentication. Create the organization `katsoft` (free plan, public packages), unless the `@katsoft` scope exists.
+2. Run `npm login`.
+3. Use a clean checkout of the reviewed commit: `git status` shows no changes.
+4. Publish:
+
+   ```sh
+   cd packages/llm-kit-config
+   npm ci
+   npm test
+   npm run check-pack
+   npm pack --dry-run --json   # note the "integrity" value
+   npm publish --access public # prepack builds dist/ and copies the schemas; npm asks for the 2FA code
+   npm view @katsoft/llm-kit-config@1.0.0 dist.integrity
+   ```
+
+   The integrity from `npm view` must equal the value from `npm pack --dry-run`. If it does not, stop and report it.
+5. On the package page on npmjs.com, open Settings, Trusted Publisher, GitHub Actions. Enter organization or user `kitaekatt`, repository `katsoft-libs`, workflow filename `release-npm.yml`, environment `npm`.
+6. In the same settings, set Publishing access to "Require two-factor authentication and disallow tokens".
+7. In the GitHub repository settings, create the environment `npm`.
+8. Tag the published commit and push the tag: `git tag @katsoft/llm-kit-config@1.0.0 <commit>` and `git push origin @katsoft/llm-kit-config@1.0.0`. The workflow finds 1.0.0 on npm, compares the files and records the release.
+
+### Later npm releases
+
+After the steps in "Prepare an npm release", tag the reviewed commit on `dev` and push the tag:
+
+```sh
+git tag @katsoft/llm-kit-config@<version> <commit>
+git push origin @katsoft/llm-kit-config@<version>
+```
+
+If the workflow fails, read `gh run view <id> --log-failed`, correct the cause, and run `gh run rerun <id>`.
+A rerun is safe: when the version is already on npm, the workflow only compares the files.
+Never move or delete a pushed release tag.
