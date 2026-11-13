@@ -15,6 +15,17 @@
       "expires_at": 1793667600.0,
       "attempt": 1,
       "task": "plugins-kit/harness-messaging"
+    },
+    {
+      "id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0WX",
+      "sender": "direct:m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+      "forwarded_by": "relay:m5pro",
+      "kind": "question",
+      "body": "Are the relay tests green on 5090w?",
+      "hop": 0,
+      "created_at": 1793664000.0,
+      "expires_at": 1793667600.0,
+      "attempt": 1
     }
   ]
 }

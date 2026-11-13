@@ -178,6 +178,7 @@ def test_status_pause_and_resume_through_the_relay(relay, paths, capsys):
     assert scrub(json.loads(out.out), paths.tmp) == {
         "protocol": P.PROTOCOL, "machine": LABEL, "now": "<t>", "registrations": 0,
         "pause": {"relay": PAUSE_CLEAR, "hub": PAUSE_CLEAR}, "harnesses": ["claude", "codex"],
+        "forwarding": {"receive": True},
     }
     out = cli(["pause", "--reason", "owner away", *paths.args], capsys)
     assert out.code == 0 and scrub(json.loads(out.out), paths.tmp) == {"pause": {

@@ -425,7 +425,10 @@ def set_values(result: Any, path: str, kind: str) -> int:
     return count
 
 
-ALL_FIELDS = [(verb, path, kind) for verb, fields in H.LABELED_FIELDS.items() for path, kind in fields]
+#: Every field the schema examples carry. ``forwarded_by`` appears only on a forwarded record, whose provenance cases
+#: (a foreign sender with and without the stamp, a mismatched or unknown stamp) are in test_relay_forwarding.py.
+ALL_FIELDS = [(verb, path, kind) for verb, fields in H.LABELED_FIELDS.items() for path, kind in fields
+              if kind != "forwarded_by"]
 
 
 @pytest.mark.parametrize("verb", list(H.LABELED_FIELDS))
@@ -611,8 +614,8 @@ def test_peers_config_refusals(machine_a):
         load_with_peers(machine_a, "relay:\n  peers: tower\n")
     with pytest.raises(C.RelayConfigError, match="unknown keys: peers"):  # never a new top-level key
         load_with_peers(machine_a, f"peers:\n  - {{machine: tower, url: '{ok}'}}\n")
-    with pytest.raises(C.RelayConfigError, match="'relay' has unknown keys: accept_from"):
-        load_with_peers(machine_a, "relay:\n  accept_from: []\n")
+    with pytest.raises(C.RelayConfigError, match="'relay' has unknown keys: forward_to"):
+        load_with_peers(machine_a, "relay:\n  forward_to: []\n")
 
 
 def test_the_opt_in_reader_accepts_peers_in_the_relay_block(machine_a):

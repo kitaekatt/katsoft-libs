@@ -101,6 +101,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from llm_kit.relay import protocol as P
+from llm_kit.relay import routing
 from llm_kit.relay.client import DEFAULT_LLM_TIMEOUT_S, PEER_CONNECT_TIMEOUT_S, HttpRelayClient, base_url
 from llm_kit.relay.config import (
     RelayConfig,
@@ -221,70 +222,12 @@ class _Schemas:
 
 
 # --------------------------------------------------------------------------
-# the label check: which result fields carry a machine
+# the label check: which result fields carry a machine (shared with a forwarding relay, llm_kit.relay.routing)
 # --------------------------------------------------------------------------
 
-#: Per hub tool, every field of the verb's result that names a machine, as ``(path, kind)``. ``[]`` iterates a
-#: list. Kinds: ``label`` (a machine label), ``address`` (``<machine>/...``), ``identity`` (a relay identity),
-#: ``question_id`` (``q:<machine>/...``). The check is fail closed: a test compares this table to the response
-#: schemas, so a new machine-bearing field that is not listed here fails there.
-LABELED_FIELDS: Mapping[str, tuple[tuple[str, str], ...]] = {
-    "list_machines": (("machines[].machine", "label"), ("machines[].endpoints[]", "address")),
-    "list_sessions": (("sessions[].machine", "label"), ("sessions[].address", "address"), ("machines[].machine", "label")),
-    "list_questions": (("questions[].machine", "label"), ("questions[].id", "question_id"), ("machines[].machine", "label")),
-    "read_session": (("address", "address"),),
-    "ask_llm": (("endpoint", "address"),),
-    "send_message": (("message.to", "address"), ("message.sender", "identity"), ("message.reply.sender", "identity")),
-    "get_replies": (("messages[].to", "address"), ("messages[].sender", "identity"), ("messages[].reply.sender", "identity")),
-    "answer_question": (("id", "question_id"),),
-}
-
-
-def _field_values(result: Any, path: str) -> list[Any]:
-    """The values at ``path`` (``a.b[].c``) in ``result``; nothing where the shape does not match."""
-    nodes = [result]
-    for segment in path.split("."):
-        each = segment.endswith("[]")
-        key = segment[:-2] if each else segment
-        stepped = []
-        for node in nodes:
-            if isinstance(node, Mapping) and key in node:
-                value = node[key]
-                if each:
-                    stepped.extend(value if isinstance(value, list) else [])
-                else:
-                    stepped.append(value)
-        nodes = stepped
-    return nodes
-
-
-def _is_hub_identity(value: object) -> bool:
-    try:
-        return isinstance(value, str) and P.parse_identity(value).kind == "hub"
-    except P.RelayError:
-        return False
-
-
-def _machine_in(kind: str, value: object) -> Optional[str]:
-    """The machine a labeled field's value names, or None when it names none or is malformed."""
-    if not isinstance(value, str):
-        return None
-    if kind == "label":
-        return value
-    if kind == "address":
-        return value.split("/", 1)[0]
-    if kind == "question_id":
-        try:
-            return question_machine(value)
-        except P.RelayError:
-            return None
-    try:
-        identity = P.parse_identity(value)
-    except P.RelayError:
-        return None
-    if identity.kind == "hub":
-        return None
-    return identity.subject.split("/", 1)[0]
+#: Per hub tool, every machine-bearing field of the verb's result (:data:`llm_kit.relay.routing.LABELED_FIELDS`).
+LABELED_FIELDS = routing.LABELED_FIELDS
+question_machine = routing.question_machine
 
 
 # --------------------------------------------------------------------------
@@ -378,31 +321,19 @@ class HubRouter:
         self._check_label(client, verb, result)
         return result
 
-    @staticmethod
-    def _check_label(client: Any, verb: str, result: Mapping[str, Any]) -> None:
-        """Every machine a relay's result names must be the label it is configured under (``internal`` otherwise).
+    def _check_label(self, client: Any, verb: str, result: Mapping[str, Any]) -> None:
+        """Every machine a relay's result names must be allowed there (``internal`` otherwise).
 
-        :data:`LABELED_FIELDS` lists, per verb, each field of the result that
-        carries a machine: machine labels, addresses, endpoints, identities and
-        question ids. A relay that names another machine in any of them is a
-        mis-pointed URL or a wrong or hostile peer, and the whole result is
-        refused before the hub aggregates, routes or shows any of it. A value
-        that is present but not a well-formed machine-bearing string is refused
-        too. Free text (session turns, bodies) is never read.
+        Destination and ownership fields must name the label the relay is
+        configured under; a message's sender follows the provenance rule, under
+        which a ``/direct`` sender on another configured machine is valid only
+        with that machine's ``forwarded_by`` stamp
+        (:func:`llm_kit.relay.routing.check_result`). A relay that names another
+        machine is a mis-pointed URL or a wrong or hostile peer, and the whole
+        result is refused before the hub aggregates, routes or shows any of it.
+        Free text (session turns, bodies) is never read.
         """
-        configured = client.machine
-        for path, kind in LABELED_FIELDS.get(verb, ()):
-            for value in _field_values(result, path):
-                reported = _machine_in(kind, value)
-                if reported != configured and not (reported is None and kind == "identity" and _is_hub_identity(value)):
-                    shown = repr(reported) if reported is not None else f"{str(value)[:80]!r} (no machine)"
-                    raise P.RelayError(
-                        "internal",
-                        f"the relay configured as machine {configured!r} reports machine {shown} in {verb}.{path}; "
-                        "check its URL and the label in relay.yaml",
-                        details={"machine": configured, "reported": reported if reported is not None else str(value)[:80],
-                                 "field": f"{verb}.{path}"},
-                    )
+        routing.check_result(verb, result, machine=client.machine, known=self._clients.keys())
 
     def _client_for(self, machine: str) -> Any:
         client = self._clients.get(machine)
@@ -415,14 +346,7 @@ class HubRouter:
 
     def _fan_out(self, clients: Sequence[Any], verb: str, params: Mapping[str, Any]) -> list[tuple[Any, Any]]:
         """``verb`` on every client in parallel: ``(client, result)`` or ``(client, RelayError)``, in order."""
-        pending = [(c, self._fan.submit(self._send, c, verb, params)) for c in clients]
-        outcomes: list[tuple[Any, Any]] = []
-        for client, future in pending:
-            try:
-                outcomes.append((client, future.result()))
-            except P.RelayError as exc:
-                outcomes.append((client, exc))
-        return outcomes
+        return routing.fan_out(self._fan, clients, lambda client: self._send(client, verb, params))
 
     # -- tools --------------------------------------------------------------------------
 
@@ -531,31 +455,8 @@ class HubRouter:
         Returns the one relay's result, or ``(client, result)`` with ``return_client``.
         """
         outcomes = self._fan_out(clients, verb, params)
-        found = [(c, o) for c, o in outcomes if not isinstance(o, P.RelayError)]
-        errors = [(c, o) for c, o in outcomes if isinstance(o, P.RelayError)]
-        if len(found) == 1:
-            return found[0] if return_client else found[0][1]
-        if len(found) > 1:
-            raise P.RelayError(
-                "target_ambiguous", f"{target!r} resolves on more than one machine; name one",
-                details={"candidates": [str(o.get("address", c.machine)) for c, o in found]},
-            )
-        unreachable = [c.machine for c, e in errors if e.code == "machine_unreachable"]
-        if unreachable:
-            raise P.RelayError(
-                "machine_unreachable", f"no reachable relay resolved {target!r}; unreachable: {', '.join(unreachable)}",
-                details={"machines": unreachable},
-            )
-        raise errors[0][1]
-
-
-def question_machine(question_id: object) -> str:
-    """The machine label a question id ``q:<machine>/<local id>`` names; ``bad_request`` when it names none."""
-    if isinstance(question_id, str) and question_id.startswith("q:"):
-        machine, slash, local = question_id[2:].partition("/")
-        if slash and local and P.is_machine_label(machine):
-            return machine
-    raise P.RelayError("bad_request", f"{question_id!r} is not a question id (q:<machine>/<local id>)")
+        machine, result = routing.resolve_one([(c.machine, o) for c, o in outcomes], target)
+        return (self._clients[machine], result) if return_client else result
 
 
 # --------------------------------------------------------------------------

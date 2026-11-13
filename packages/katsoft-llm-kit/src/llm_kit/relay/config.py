@@ -53,6 +53,14 @@ A peer has its own credentials under ``peers/<machine>/`` in the state
 directory (:meth:`StatePaths.peer_relay_token`); this machine's credentials
 are never sent to a peer.
 
+Forwarding (amendment 2). A relay that holds ``peers/<machine>/forward.key``
+for a configured peer forwards its ``/direct`` sessions' calls to that peer.
+A receiving relay names, in ``relay: {accept_from: [<label>, ...]}``, the
+machines it accepts forwarded calls from; each must be a non-disabled
+``env.json`` machine other than this one, once. Its key for each is
+``accept/<machine>/forward.key`` (:meth:`StatePaths.accept_forward_key`),
+minted by ``llm-kit relay peer export --for <machine>``.
+
 Loopback model registry. ``ask_llm`` may reach only endpoints on this
 machine. The relay therefore owns a registry file of its own (served to the
 registry reader through ``MODEL_ENDPOINTS_REGISTRY``), never the user's
@@ -87,6 +95,8 @@ RELAY_STATE_DIRNAME = "relay"
 CONFIG_FILENAME = "relay.yaml"
 REGISTRY_FILENAME = "model-endpoints.yaml"
 PEERS_DIRNAME = "peers"
+ACCEPT_DIRNAME = "accept"
+FORWARD_KEY_FILENAME = "forward.key"
 
 DEFAULT_RELAY_HOST = "127.0.0.1"
 DEFAULT_RELAY_PORT = 4710
@@ -336,6 +346,39 @@ def fleet_machine_labels(env_json: Optional[Path]) -> dict[str, bool]:
     return labels
 
 
+def _fleet_label(raw: object, what: str, known: Mapping[str, bool], own_label: str, *, own_note: str) -> str:
+    """``raw`` as a machine label naming an enabled fleet machine other than this one; RelayConfigError otherwise."""
+    if not isinstance(raw, str) or not P.is_machine_label(raw.strip()):
+        raise RelayConfigError(f"{what} {raw!r} is not a machine label")
+    machine = raw.strip()
+    if machine == own_label:
+        raise RelayConfigError(f"{what} {machine!r} is this machine; {own_note}")
+    if machine not in known:
+        raise RelayConfigError(f"{what} {machine!r} is not a machine in the fleet registry (no env.json machine has that tailscale_hostname)")
+    if known[machine]:
+        raise RelayConfigError(f"{what} {machine!r} is disabled in the fleet registry")
+    return machine
+
+
+def _accept_from(raw: object, cfg_path: Path, env_json: Optional[Path], own_label: str) -> tuple[str, ...]:
+    """Validate ``relay.accept_from``: distinct enabled fleet machines other than this one (amendment 2)."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise RelayConfigError(f"relay config {cfg_path}: 'relay.accept_from' is not a list")
+    if not raw:
+        return ()
+    known = fleet_machine_labels(env_json)
+    accepted: list[str] = []
+    for item in raw:
+        machine = _fleet_label(item, f"relay config {cfg_path}: accept_from machine", known, own_label,
+                               own_note="a relay does not accept forwarded calls from itself")
+        if machine in accepted:
+            raise RelayConfigError(f"relay config {cfg_path}: accept_from machine {machine!r} is listed twice")
+        accepted.append(machine)
+    return tuple(accepted)
+
+
 def _peers(raw: object, cfg_path: Path, env_json: Optional[Path], own_label: str) -> tuple[PeerConfig, ...]:
     """Validate ``relay.peers``: a list of ``{machine, url}``, each machine a distinct enabled fleet machine but this one."""
     if raw is None:
@@ -427,6 +470,25 @@ class StatePaths:
     def peers_dir(self) -> Path:
         """The directory of per-peer credential directories (private)."""
         return self.root / PEERS_DIRNAME
+
+    @property
+    def accept_dir(self) -> Path:
+        """The directory of per-requester forward-key directories this relay accepts (private; amendment 2)."""
+        return self.root / ACCEPT_DIRNAME
+
+    def accept_machine_dir(self, machine: str) -> Path:
+        """``accept/<machine>``: where this relay keeps the forward key it issued to ``machine`` (private)."""
+        if not P.is_machine_label(machine):
+            raise RelayConfigError(f"{machine!r} is not a machine label; no accept directory exists for it")
+        return self.accept_dir / machine
+
+    def accept_forward_key(self, machine: str) -> Path:
+        """The forward key ``machine``'s relay must present (``X-Relay-Peer-Key``) with origin ``relay:<machine>``."""
+        return self.accept_machine_dir(machine) / FORWARD_KEY_FILENAME
+
+    def peer_forward_key(self, machine: str) -> Path:
+        """The forward key PEER ``machine`` issued to this relay (sent only to that peer, with origin ``relay:<self>``)."""
+        return self.peer_dir(machine) / FORWARD_KEY_FILENAME
 
     def peer_dir(self, machine: str) -> Path:
         """``peers/<machine>``: where the hub keeps one peer relay's credentials (private)."""
@@ -570,6 +632,8 @@ class RelayConfig:
     hub_public_url: Optional[str] = None
     #: Other machines' relays the hub reaches (``relay.peers``); empty means this machine's relay only.
     peers: tuple[PeerConfig, ...] = ()
+    #: Machines whose relays may forward ``/direct`` calls to this relay (``relay.accept_from``, amendment 2).
+    accept_from: tuple[str, ...] = ()
 
     def bind(self, role: str) -> tuple[str, int]:
         """The ``(host, port)`` ``role`` listens on."""
@@ -583,7 +647,7 @@ class RelayConfig:
 _CONFIG_KEYS = frozenset({"enabled", "relay", "hub", "ledgers", "llm_endpoints"})
 _LISTENER_KEYS = frozenset({"host", "port"})
 _HUB_KEYS = _LISTENER_KEYS | {"enabled", "public_url"}
-_RELAY_KEYS = _LISTENER_KEYS | {"peers"}
+_RELAY_KEYS = _LISTENER_KEYS | {"peers", "accept_from"}
 
 
 def _read_config_file(path: Path) -> dict[str, Any]:
@@ -751,6 +815,7 @@ def load_config(
     endpoints = validate_llm_endpoints(endpoints)
 
     peers = _peers(_block(data, "relay", cfg_path).get("peers"), cfg_path, env_json, machine.label)
+    accept_from = _accept_from(_block(data, "relay", cfg_path).get("accept_from"), cfg_path, env_json, machine.label)
 
     root = Path(state_root) if state_root is not None else state_dir(env)
     return RelayConfig(
@@ -765,10 +830,12 @@ def load_config(
         llm_endpoints=endpoints,
         hub_public_url=public,
         peers=peers,
+        accept_from=accept_from,
     )
 
 
 __all__ = [
+    "ACCEPT_DIRNAME",
     "CONFIG_FILENAME",
     "DEFAULT_HUB_HOST",
     "DEFAULT_HUB_PORT",
@@ -776,6 +843,7 @@ __all__ = [
     "DEFAULT_RELAY_HOST",
     "DEFAULT_RELAY_PORT",
     "Enablement",
+    "FORWARD_KEY_FILENAME",
     "MachineIdentity",
     "PEERS_DIRNAME",
     "PeerConfig",

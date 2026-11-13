@@ -19,6 +19,20 @@ loopback alike. A peer connection that cannot be opened within 3 seconds
 answer (HTTP 502, 503 or 504) that carries no relay envelope, which is what a
 tunnel in front of a relay that is down returns.
 
+Sent or not (amendment 2). Every error this client makes up itself, rather
+than reads from the relay's error envelope, is a :class:`ClientRelayError`
+whose ``sent`` says whether the request may have reached the relay: ``False``
+only when the connection was never opened (name resolution failed, the
+connection was refused, the connect timed out, no pooled connection became
+free), ``True`` for everything after (a read or write timeout, a dropped
+connection, a gateway answer, a reply that is not a relay envelope). Its
+``details`` carry ``sent`` and, when sent, ``outcome: "unknown"``. A
+forwarding relay refunds a grant use only for ``sent: False``.
+
+Forwarding (amendment 2). ``peer_key`` is sent as ``X-Relay-Peer-Key`` on
+every call whose origin is a ``relay:`` identity, and ``call`` takes
+``on_behalf_of`` for the request envelope.
+
 :meth:`HttpRelayClient.local` builds a client for this machine's relay from
 the relay configuration: the bound address from ``RelayConfig.bind("relay")``
 and the token read (not created) from the state directory.
@@ -41,6 +55,18 @@ _LONG_POLL_VERBS = frozenset({"poll", "get_replies"})
 PEER_CONNECT_TIMEOUT_S = 3.0
 #: HTTP statuses a gateway (a tunnel, a proxy) answers with, as text, when the relay behind it is down.
 _GATEWAY_STATUSES = frozenset({502, 503, 504})
+
+
+class ClientRelayError(P.RelayError):
+    """An error this client made up (no relay error envelope); ``sent`` is whether the request may have arrived."""
+
+    def __init__(self, code: str, message: str, *, sent: bool, details: Optional[Mapping[str, Any]] = None) -> None:
+        merged = dict(details or {})
+        merged["sent"] = sent
+        if sent:
+            merged["outcome"] = "unknown"
+        super().__init__(code, message, details=merged)
+        self.sent = sent
 
 
 def base_url(host: str, port: int) -> str:
@@ -72,6 +98,7 @@ class HttpRelayClient:
         llm_timeout_s: float = DEFAULT_LLM_TIMEOUT_S,
         transport: Any = None,
         connect_timeout_s: Optional[float] = None,
+        peer_key: Optional[str] = None,
     ) -> None:
         peer = not is_loopback_url(url)
         if peer:
@@ -86,6 +113,8 @@ class HttpRelayClient:
             raise ValueError(f"{machine!r} is not a machine label")
         if not relay_token:
             raise ValueError("the relay token is empty")
+        if peer_key is not None and not peer_key:
+            raise ValueError("the forward key is empty")
         import httpx
 
         self._httpx = httpx
@@ -93,6 +122,7 @@ class HttpRelayClient:
         self._machine = machine
         self._token = relay_token
         self._bearer = hub_bearer
+        self._peer_key = peer_key
         self._timeout_s = timeout_s
         self._llm_timeout_s = llm_timeout_s
         self._connect_timeout_s = connect_timeout_s if connect_timeout_s is not None else (
@@ -140,51 +170,64 @@ class HttpRelayClient:
         return self._httpx.Timeout(total, connect=min(total, self._connect_timeout_s))
 
     def call(self, verb: str, params: Mapping[str, Any], *, origin: str,
-             grant: Optional[str] = None) -> dict[str, Any]:
-        """Send ``verb`` as ``origin`` and return its result; raise ``RelayError`` on an error envelope."""
+             grant: Optional[str] = None, on_behalf_of: Optional[str] = None) -> dict[str, Any]:
+        """Send ``verb`` as ``origin`` and return its result; raise ``RelayError`` on an error envelope.
+
+        An error the relay did not answer with (transport, gateway, malformed reply) is a
+        :class:`ClientRelayError` saying whether the request may have been sent.
+        """
         request_id = "req-" + secrets.token_hex(8)
-        envelope = P.make_request(verb, params, origin=origin, request_id=request_id)
+        envelope = P.make_request(verb, params, origin=origin, request_id=request_id, on_behalf_of=on_behalf_of)
         headers = {"Content-Type": P.CONTENT_TYPE, P.HEADER_RELAY_TOKEN: self._token}
         if grant is not None:
             headers[P.HEADER_GRANT] = grant
         if origin.startswith("claude.ai/") and self._bearer:
             headers[P.HEADER_AUTHORIZATION] = f"{P.BEARER_SCHEME} {self._bearer}"
+        if origin.startswith("relay:") and self._peer_key is not None:
+            headers[P.HEADER_PEER_KEY] = self._peer_key
         url = self._url + P.HTTP_PATH_TEMPLATE.format(verb=verb)
         body = json.dumps(envelope, ensure_ascii=True, separators=(",", ":")).encode("ascii")
+        httpx = self._httpx
         try:
             response = self._http.post(url, content=body, headers=headers, timeout=self._timeout(verb, params))
-        except self._httpx.TransportError as exc:
-            raise P.RelayError(
+        except httpx.TransportError as exc:
+            # Only a connection that was never opened proves the request was not sent.
+            sent = not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
+            raise ClientRelayError(
                 "machine_unreachable", f"relay {self._machine} at {self._url} did not answer: {type(exc).__name__}: {exc}",
-                details={"machine": self._machine},
+                sent=sent, details={"machine": self._machine},
             ) from exc
         try:
             reply = response.json()
         except ValueError as exc:
             if response.status_code in _GATEWAY_STATUSES:
                 raise self._gateway_error(response.status_code) from exc
-            raise P.RelayError("internal", f"relay {self._machine} answered HTTP {response.status_code} with a body that is not JSON") from exc
+            raise ClientRelayError("internal", f"relay {self._machine} answered HTTP {response.status_code} with a body that is not JSON",
+                                   sent=True) from exc
         if not isinstance(reply, dict) or reply.get("protocol") != P.PROTOCOL:
             if response.status_code in _GATEWAY_STATUSES:
                 raise self._gateway_error(response.status_code)
-            raise P.RelayError("internal", f"relay {self._machine} answered HTTP {response.status_code} without a {P.PROTOCOL} envelope")
+            raise ClientRelayError("internal", f"relay {self._machine} answered HTTP {response.status_code} without a {P.PROTOCOL} envelope",
+                                   sent=True)
         if reply.get("id") not in (request_id, None):
-            raise P.RelayError("internal", f"relay {self._machine} answered request {reply.get('id')!r}, not {request_id!r}")
+            raise ClientRelayError("internal", f"relay {self._machine} answered request {reply.get('id')!r}, not {request_id!r}",
+                                   sent=True)
         if reply.get("ok") is True:
             result = reply.get("result")
             if not isinstance(result, dict):
-                raise P.RelayError("internal", f"relay {self._machine} sent an ok response without a result object")
+                raise ClientRelayError("internal", f"relay {self._machine} sent an ok response without a result object", sent=True)
             return result
         try:
-            raise P.RelayError.from_error_object(reply.get("error") or {})
+            error = P.RelayError.from_error_object(reply.get("error") or {})
         except ValueError as exc:
-            raise P.RelayError("internal", f"relay {self._machine} sent a malformed error object: {exc}") from exc
+            raise ClientRelayError("internal", f"relay {self._machine} sent a malformed error object: {exc}", sent=True) from exc
+        raise error
 
     def _gateway_error(self, status: int) -> P.RelayError:
-        return P.RelayError(
+        return ClientRelayError(
             "machine_unreachable",
             f"relay {self._machine} at {self._url} is not answering: a gateway answered HTTP {status} without a relay envelope",
-            details={"machine": self._machine},
+            sent=True, details={"machine": self._machine},
         )
 
     # -- one method per verb (protocol.RelayClient) ------------------------------------
@@ -247,4 +290,5 @@ class HttpRelayClient:
         return self.call("status", params, origin=origin, grant=grant)
 
 
-__all__ = ["DEFAULT_LLM_TIMEOUT_S", "DEFAULT_TIMEOUT_S", "HttpRelayClient", "PEER_CONNECT_TIMEOUT_S", "base_url"]
+__all__ = ["ClientRelayError", "DEFAULT_LLM_TIMEOUT_S", "DEFAULT_TIMEOUT_S", "HttpRelayClient", "PEER_CONNECT_TIMEOUT_S",
+           "base_url"]

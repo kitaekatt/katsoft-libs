@@ -82,6 +82,9 @@ BEARER_SCHEME = "Bearer"
 #: grant must cover the call; when absent the relay picks a covering live grant
 #: of the origin's session, and refuses ``grant_required`` if there is none.
 HEADER_GRANT = "X-Relay-Grant"
+#: The forward key (amendment 2): required, with the relay token, on every request whose origin is
+#: ``relay:<M>``. It must equal the key the receiver stores for exactly ``<M>`` (``accept/<M>/forward.key``).
+HEADER_PEER_KEY = "X-Relay-Peer-Key"
 
 #: Largest request envelope a relay reads, in UTF-8 bytes.
 MAX_REQUEST_BYTES = 65536
@@ -139,11 +142,13 @@ AUDIT_OUTCOMES = ("ok", "refused", "error")
 #: Relay-internal causes an audit row may name in place of a verb.
 AUDIT_INTERNAL_VERBS = ("expire", "scan")
 
-#: Identity kinds. ``channel``, ``direct``, ``hub`` and ``operator`` may
-#: originate a request; ``relay`` names the relay itself in audit rows and is
-#: reserved for peer forwarding, which relay-protocol/1 does not define.
+#: Identity kinds. Every kind may originate a request. ``relay`` names the relay
+#: itself in audit rows and, since amendment 2 (katsoft-llm-kit 1.21.0), a peer
+#: relay forwarding a ``/direct`` call (``on_behalf_of`` names that session).
 IDENTITY_KINDS = ("channel", "direct", "hub", "operator", "relay")
-REQUEST_ORIGIN_KINDS = ("channel", "direct", "hub", "operator")
+REQUEST_ORIGIN_KINDS = ("channel", "direct", "hub", "operator", "relay")
+#: Tiers a relay forwards to a peer for a ``/direct`` origin, and that a ``relay`` origin may call (amendment 2).
+FORWARDED_TIERS = ("read", "llm", "write")
 
 # --------------------------------------------------------------------------
 # error codes: code -> (retryable, HTTP status)
@@ -493,6 +498,7 @@ class RequestEnvelope(TypedDict):
     origin: str
     params: dict[str, Any]
     signed: NotRequired[Signed]
+    on_behalf_of: NotRequired[str]
 
 
 class OkResponse(TypedDict):
@@ -564,6 +570,7 @@ class MessageRecord(TypedDict):
     task: NotRequired[str]
     state_reason: NotRequired[str]
     reply: NotRequired[Reply]
+    forwarded_by: NotRequired[str]
 
 
 class DeliveredMessage(TypedDict):
@@ -577,6 +584,7 @@ class DeliveredMessage(TypedDict):
     attempt: int
     task: NotRequired[str]
     signed: NotRequired[Signed]
+    forwarded_by: NotRequired[str]
 
 
 class Session(TypedDict):
@@ -686,6 +694,7 @@ class AuditRow(TypedDict):
     to_state: NotRequired[Optional[str]]
     code: NotRequired[Optional[str]]
     detail: NotRequired[Optional[str]]
+    on_behalf_of: NotRequired[Optional[str]]
 
 
 # --------------------------------------------------------------------------
@@ -955,6 +964,12 @@ class StatusParams(TypedDict):
     pass
 
 
+class Forwarding(TypedDict):
+    """``status.forwarding`` (amendment 2): what this relay accepts from peer relays."""
+
+    receive: bool
+
+
 class StatusResult(TypedDict):
     protocol: str
     machine: str
@@ -963,6 +978,7 @@ class StatusResult(TypedDict):
     library_version: NotRequired[str]
     registrations: NotRequired[int]
     harnesses: NotRequired[list[str]]
+    forwarding: NotRequired[Forwarding]
 
 
 # --------------------------------------------------------------------------
@@ -1009,7 +1025,10 @@ def _verb(name, tier, origins, grant_for, target_params, client_verb, hub_tool, 
 
 
 _CHANNEL = ("channel",)
-_HUB_SIDE = ("direct", "hub")
+#: Origins of the read, llm and write tiers: a ``/direct`` session, the hub, and (amendment 2) a peer relay
+#: forwarding for a ``/direct`` session. Only ``direct`` needs a grant; a relay origin is bound to its
+#: ``on_behalf_of`` session by the forwarding relay's grant check (protocol section 3).
+_HUB_SIDE = ("direct", "hub", "relay")
 
 VERBS: Mapping[str, VerbSpec] = {
     spec.name: spec
@@ -1163,6 +1182,7 @@ def make_request(
     origin: str,
     request_id: str,
     signed: Optional[Signed] = None,
+    on_behalf_of: Optional[str] = None,
 ) -> RequestEnvelope:
     if verb not in VERBS:
         raise KeyError(f"unknown relay verb {verb!r}")
@@ -1175,7 +1195,29 @@ def make_request(
     }
     if signed is not None:
         envelope["signed"] = signed
+    if on_behalf_of is not None:
+        envelope["on_behalf_of"] = on_behalf_of
     return envelope
+
+
+def delegated_identity(origin: Identity, on_behalf_of: Optional[str]) -> Optional[Identity]:
+    """The ``/direct`` session a ``relay`` origin forwards for (amendment 2), or None when there is none.
+
+    ``on_behalf_of`` is valid only with a ``relay`` origin (``bad_request`` otherwise: a client never
+    supplies its own delegation) and must be ``direct:<M>/claude/<S>`` where ``<M>`` is the relay
+    origin's machine (``origin_not_allowed`` otherwise).
+    """
+    if on_behalf_of is None:
+        return None
+    if origin.kind != "relay":
+        raise RelayError("bad_request", f"on_behalf_of is valid only with a relay origin, not {origin.kind}")
+    delegate = parse_identity(on_behalf_of)
+    if delegate.kind != "direct" or delegate.subject.split("/", 1)[0] != origin.subject:
+        raise RelayError(
+            "origin_not_allowed",
+            f"{origin} may forward only for a direct session on {origin.subject!r}, not {on_behalf_of!r}",
+        )
+    return delegate
 
 
 def make_ok(request_id: str, result: Mapping[str, Any]) -> OkResponse:
@@ -1205,7 +1247,7 @@ class RelayClient(Protocol):
     def machine(self) -> str: ...
 
     def call(self, verb: str, params: Mapping[str, Any], *, origin: str,
-             grant: Optional[str] = None) -> dict[str, Any]: ...
+             grant: Optional[str] = None, on_behalf_of: Optional[str] = None) -> dict[str, Any]: ...
 
     def register(self, params: RegisterParams, *, origin: str,
                  grant: Optional[str] = None) -> RegisterResult: ...

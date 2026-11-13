@@ -273,9 +273,17 @@ def peer_credentials(paths: StatePaths, machine: str) -> tuple[str, str]:
     return values[0], values[1]
 
 
-def write_peer_credentials(paths: StatePaths, machine: str, relay_token: str, hub_bearer: str) -> None:
-    """Store peer ``machine``'s credentials: private directories, then each file through :func:`write_private_file`."""
-    for name, value in (("relay token", relay_token), ("hub bearer", hub_bearer)):
+def write_peer_credentials(paths: StatePaths, machine: str, relay_token: str, hub_bearer: str,
+                           forward_key: Optional[str] = None) -> None:
+    """Store peer ``machine``'s credentials: private directories, then each file through :func:`write_private_file`.
+
+    ``forward_key`` (amendment 2) is the key ``machine``'s relay issued to this one with ``peer export --for``;
+    it is stored as ``peers/<machine>/forward.key`` and makes the peer a forwarding target of this relay.
+    """
+    named = [("relay token", relay_token), ("hub bearer", hub_bearer)]
+    if forward_key is not None:
+        named.append(("forward key", forward_key))
+    for name, value in named:
         if not isinstance(value, str) or not value or len(value) > 512 or not value.isascii() or not value.isprintable() \
                 or any(ch.isspace() for ch in value):
             raise RelayConfigError(f"the {name} for peer {machine!r} is not a single printable ASCII token")
@@ -286,6 +294,55 @@ def write_peer_credentials(paths: StatePaths, machine: str, relay_token: str, hu
         ensure_private_dir(directory, kind=kind)
     write_private_file(paths.peer_relay_token(machine), relay_token + "\n")
     write_private_file(paths.peer_hub_bearer(machine), hub_bearer + "\n")
+    if forward_key is not None:
+        write_private_file(paths.peer_forward_key(machine), forward_key + "\n")
+
+
+def peer_forward_key(paths: StatePaths, machine: str) -> Optional[str]:
+    """The forward key peer ``machine`` issued to this relay, or None when none is stored (no forwarding to it).
+
+    Reads only. A stored key is read like every credential (private directories and file, :func:`read_token`).
+    """
+    path = paths.peer_forward_key(machine)
+    if not path.exists():
+        return None
+    for directory, kind in ((paths.peers_dir, "peers directory"), (paths.peer_dir(machine), "peer directory")):
+        _require_real_dir(directory, kind=kind)
+        _refuse_loose(directory, kind=kind)
+    return read_token(path)
+
+
+def ensure_accept_forward_key(paths: StatePaths, machine: str) -> str:
+    """The forward key this relay issues to ``machine`` (``accept/<machine>/forward.key``), created when absent."""
+    ensure_state_dir(paths)
+    for directory, kind in ((paths.accept_dir, "accept directory"), (paths.accept_machine_dir(machine), "accept directory")):
+        if directory.is_symlink():
+            raise RelayConfigError(f"{kind} {directory} is a symbolic link; forward-key directories are never redirected")
+        ensure_private_dir(directory, kind=kind)
+    return ensure_token(paths.accept_forward_key(machine))
+
+
+def accept_forward_keys(paths: StatePaths) -> dict[str, str]:
+    """``{machine: forward key}`` for every ``accept/<machine>/forward.key`` this relay has issued; reads only.
+
+    A requester whose key is missing cannot authenticate a ``relay:<machine>`` origin; whether it may call at
+    all is ``relay.accept_from``'s decision, checked separately.
+    """
+    root = paths.accept_dir
+    if not root.exists():
+        return {}
+    _require_real_dir(root, kind="accept directory")
+    _refuse_loose(root, kind="accept directory")
+    keys: dict[str, str] = {}
+    for entry in sorted(root.iterdir()):
+        if not P.is_machine_label(entry.name):
+            continue
+        _require_real_dir(entry, kind="accept directory")
+        _refuse_loose(entry, kind="accept directory")
+        key = paths.accept_forward_key(entry.name)
+        if key.exists():
+            keys[entry.name] = read_token(key)
+    return keys
 
 
 # --------------------------------------------------------------------------
@@ -669,7 +726,10 @@ __all__ = [
     "ensure_private_dir",
     "ensure_state_dir",
     "ensure_token",
+    "accept_forward_keys",
+    "ensure_accept_forward_key",
     "peer_credentials",
+    "peer_forward_key",
     "peer_import_command",
     "prepare_state",
     "read_private_file",

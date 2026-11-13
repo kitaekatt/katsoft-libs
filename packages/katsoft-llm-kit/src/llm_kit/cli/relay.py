@@ -32,17 +32,23 @@ Verbs:
     prints the persisted pause state only. With ``relay.peers`` configured the
     output also carries ``peers``: each peer's machine, URL and whether its
     credentials are stored (never the credentials).
-``peer export``
+``peer export [--for <machine>]``
     Print this machine's relay token and hub bearer as one JSON object, for the
     hub machine to import (``ssh <machine> llm-kit relay peer export | llm-kit
     relay peer import <machine>``). Refuses a terminal on standard output, so a
-    credential is never printed to a screen or a scrollback.
+    credential is never printed to a screen or a scrollback. ``--for <M>``
+    (amendment 2) also mints, or reuses, the forward key this relay issues to
+    ``<M>`` (``accept/<M>/forward.key``) and adds it as ``forward_key``; ``<M>``
+    must be listed in ``relay.accept_from``. A relay reads its issued keys at
+    start, so restart it after minting.
 ``peer import <machine>``
     Read that JSON object from standard input (never a terminal) and store the
     credentials as ``peers/<machine>/relay.token`` and ``hub.bearer`` in the
-    state directory, private files in private directories. The object's
-    ``machine`` must equal ``<machine>``, which must be an enabled fleet
-    machine other than this one.
+    state directory, private files in private directories, plus
+    ``peers/<machine>/forward.key`` when the object carries ``forward_key``
+    (this relay then forwards ``/direct`` calls to that peer after a restart).
+    The object's ``machine`` must equal ``<machine>``, which must be an enabled
+    fleet machine other than this one.
 ``codex --cd DIR [--resume THREAD_ID] [--sandbox read-only|workspace-write] [--network] [--allow-tmp] [--hooks] ...``
     Run a Codex channel in the foreground (unit CH): own one ``codex app-server``
     child over stdio, register its thread with this machine's relay as
@@ -97,6 +103,8 @@ from llm_kit.relay.config import RelayConfig, RelayConfigError, fleet_machine_la
 #: The ``format`` of the object ``peer export`` prints and ``peer import`` reads.
 PEER_FORMAT = "llm-kit-relay-peer/1"
 _PEER_OBJECT_KEYS = frozenset({"format", "machine", "relay_token", "hub_bearer"})
+#: ``peer export --for <M>`` adds the forward key (amendment 2).
+_PEER_OBJECT_FORWARD_KEYS = _PEER_OBJECT_KEYS | {"forward_key"}
 _MAX_PEER_OBJECT_BYTES = 4096
 
 EXIT_OK = 0
@@ -204,8 +212,11 @@ def _parser() -> argparse.ArgumentParser:
     status.add_argument("--offline", action="store_true", help="Print the persisted pause state; no relay needed.")
     peer = sub.add_parser("peer", help="Hand this machine's relay credentials to a hub machine, or store a peer's.")
     peer_verbs = peer.add_subparsers(dest="peer_verb", required=True, metavar="peer-verb")
-    peer_verbs.add_parser("export", parents=[common],
-                          help="Print this machine's relay token and hub bearer as JSON (refuses a terminal).")
+    peer_export = peer_verbs.add_parser("export", parents=[common],
+                                        help="Print this machine's relay token and hub bearer as JSON (refuses a terminal).")
+    peer_export.add_argument("--for", dest="for_machine", metavar="MACHINE",
+                             help="Also mint (or reuse) the forward key this relay issues to MACHINE, which must be "
+                                  "listed in relay.accept_from, and export it.")
     peer_import = peer_verbs.add_parser("import", parents=[common],
                                         help="Store a peer's credentials, read as JSON from standard input.")
     peer_import.add_argument("machine", help="The peer's machine label; must equal the JSON object's machine.")
@@ -393,7 +404,7 @@ def _cmd_codex(args: argparse.Namespace) -> int:
 
 
 def _cmd_peer(args: argparse.Namespace) -> int:
-    from llm_kit.relay.lifecycle import read_token, write_peer_credentials
+    from llm_kit.relay.lifecycle import ensure_accept_forward_key, read_token, write_peer_credentials
 
     config = _config(args)
     if args.peer_verb == "export":
@@ -407,8 +418,19 @@ def _cmd_peer(args: argparse.Namespace) -> int:
                 raise RelayConfigError(
                     f"{file} does not exist: no relay has run on this state directory (start one with `llm-kit relay serve`)"
                 )
-        _emit({"format": PEER_FORMAT, "machine": config.machine_label, "relay_token": read_token(paths.relay_token),
-               "hub_bearer": read_token(paths.hub_bearer)})
+        exported = {"format": PEER_FORMAT, "machine": config.machine_label, "relay_token": read_token(paths.relay_token),
+                    "hub_bearer": read_token(paths.hub_bearer)}
+        requester = args.for_machine
+        if requester is not None:
+            if not P.is_machine_label(requester):
+                raise RelayConfigError(f"--for {requester!r} is not a machine label")
+            if requester not in config.accept_from:
+                raise RelayConfigError(
+                    f"--for {requester!r}: that machine is not in relay.accept_from in {config.config_path}; add it "
+                    "there first (this relay accepts forwarded calls only from the machines listed)"
+                )
+            exported["forward_key"] = ensure_accept_forward_key(paths, requester)
+        _emit(exported)
         return EXIT_OK
     machine = args.machine
     if not P.is_machine_label(machine):
@@ -429,15 +451,21 @@ def _cmd_peer(args: argparse.Namespace) -> int:
         data = json.loads(raw)
     except ValueError:
         raise RelayConfigError("peer import input is not a JSON object (the output of `llm-kit relay peer export`)") from None
-    if not isinstance(data, dict) or set(data) != _PEER_OBJECT_KEYS or data.get("format") != PEER_FORMAT:
+    if not isinstance(data, dict) or set(data) not in (_PEER_OBJECT_KEYS, _PEER_OBJECT_FORWARD_KEYS) \
+            or data.get("format") != PEER_FORMAT:
         raise RelayConfigError(f"peer import input is not a {PEER_FORMAT} object")
     if data["machine"] != machine:
         raise RelayConfigError(
             f"the exported credentials are for machine {data['machine']!r}, not {machine!r}; nothing was stored"
         )
-    write_peer_credentials(config.paths, machine, data["relay_token"], data["hub_bearer"])
-    _emit({"imported": machine, "files": [str(config.paths.peer_relay_token(machine)), str(config.paths.peer_hub_bearer(machine))],
-           "configured": any(peer.machine == machine for peer in config.peers)})
+    write_peer_credentials(config.paths, machine, data["relay_token"], data["hub_bearer"], data.get("forward_key"))
+    files = [str(config.paths.peer_relay_token(machine)), str(config.paths.peer_hub_bearer(machine))]
+    if "forward_key" in data:
+        files.append(str(config.paths.peer_forward_key(machine)))
+    out = {"imported": machine, "files": files, "configured": any(peer.machine == machine for peer in config.peers)}
+    if "forward_key" in data:
+        out["forwarding"] = True  # this relay forwards /direct calls to the peer once restarted
+    _emit(out)
     return EXIT_OK
 
 

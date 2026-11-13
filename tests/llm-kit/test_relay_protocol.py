@@ -484,7 +484,8 @@ def test_grants_are_for_direct_and_a_hub_write_rests_on_the_sessions_opt_in():
         # channel opt-in, enforced by the relay's messaging refusals (owner ruling 2026-11-11).
         assert "hub" not in spec.grant_for, name
         if spec.tier == "write":
-            assert spec.origins == {"direct", "hub"} and spec.grant_for == {"direct"}, name
+            # amendment 2: a peer relay forwards for a /direct session; only direct needs a grant
+            assert spec.origins == {"direct", "hub", "relay"} and spec.grant_for == {"direct"}, name
     for client, verb in P.CLIENT_VERBS.items():
         assert "direct" in P.VERBS[verb].grant_for, f"/direct {client} must need a grant (ruling 9)"
     assert {v for v, s in P.VERBS.items() if s.tier == "write"} == {"send_message", "answer_question"}

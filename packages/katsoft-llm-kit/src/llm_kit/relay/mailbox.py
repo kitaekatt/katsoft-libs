@@ -4,7 +4,10 @@ One database file per machine (``mailbox.sqlite3`` under the relay state
 directory, see :func:`mailbox_db_path`), opened through :mod:`llm_kit.storage`.
 Every write runs in ``BEGIN IMMEDIATE``, so concurrent relay threads or
 processes serialize on the write lock and a read-then-write sequence cannot
-interleave. ``schema_version`` is 1.
+interleave. ``schema_version`` is 2: version 2 (katsoft-llm-kit 1.21.0,
+amendment 2) adds the nullable ``messages.forwarded_by`` and
+``audit.on_behalf_of`` columns, and a version-1 file is migrated in place
+(old rows keep null).
 
 What lives here (protocol sections 10-15 of ``llm-kit-relay-protocol.md``):
 
@@ -61,7 +64,14 @@ from llm_kit.storage.connection import ConnectionPolicy, connect
 from llm_kit.storage.schema_version import read_schema_version
 from llm_kit.storage.transaction import read_transaction, write_transaction
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+#: Version -> the statements that move a mailbox from the previous version to it (additive only).
+_MIGRATIONS: Mapping[int, tuple[str, ...]] = {
+    2: (
+        "ALTER TABLE messages ADD COLUMN forwarded_by TEXT",
+        "ALTER TABLE audit ADD COLUMN on_behalf_of TEXT",
+    ),
+}
 MAILBOX_FILENAME = "mailbox.sqlite3"
 _DB_MODE = 0o600
 
@@ -135,7 +145,8 @@ CREATE TABLE messages (
     state_reason TEXT,
     attempts INTEGER NOT NULL DEFAULT 0,
     delivered_at REAL,
-    content_hash TEXT NOT NULL
+    content_hash TEXT NOT NULL,
+    forwarded_by TEXT
 );
 CREATE INDEX messages_to_state ON messages (to_addr, state);
 CREATE INDEX messages_sender_created ON messages (sender, created_at);
@@ -164,7 +175,8 @@ CREATE TABLE audit (
     from_state TEXT,
     to_state TEXT,
     code TEXT,
-    detail TEXT
+    detail TEXT,
+    on_behalf_of TEXT
 );
 CREATE TRIGGER audit_no_update BEFORE UPDATE ON audit
 BEGIN SELECT RAISE(ABORT, 'audit rows are append-only'); END;
@@ -265,13 +277,19 @@ class Mailbox:
             version = read_schema_version(conn, as_int=True)  # re-read under the lock
             if version == SCHEMA_VERSION:
                 return
-            if version != 0:
+            if version == 0:
+                for statement in _split_script(_SCHEMA):
+                    conn.execute(statement)
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+                return
+            if not 1 <= version < SCHEMA_VERSION:
                 raise P.RelayError(
                     "internal", f"mailbox {self.db_path} has schema_version {version}, expected {SCHEMA_VERSION}"
                 )
-            for statement in _split_script(_SCHEMA):
-                conn.execute(statement)
-            conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
+            for step in range(version + 1, SCHEMA_VERSION + 1):
+                for statement in _MIGRATIONS[step]:
+                    conn.execute(statement)
+            conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
     def schema_version(self) -> int:
         with self._connect() as conn:
@@ -297,6 +315,7 @@ class Mailbox:
         code: Optional[str] = None,
         detail: Optional[str] = None,
         at: Optional[float] = None,
+        on_behalf_of: Optional[Union[str, P.Identity]] = None,
     ) -> int:
         if event not in P.AUDIT_EVENTS:
             raise _bad(f"unknown audit event {event!r}")
@@ -309,15 +328,16 @@ class Mailbox:
         if code is not None and code not in P.ERROR_CODES:
             raise _bad(f"unknown audit code {code!r}")
         origin_text = str(_identity(origin))
+        delegate = None if on_behalf_of is None else str(_identity(on_behalf_of))
         if detail is not None:
             detail = detail[:MAX_AUDIT_DETAIL_CHARS]
         cursor = conn.execute(
             "INSERT INTO audit (at, machine, ingress, event, origin, verb, outcome, request_id, target,"
-            " grant_id, message_id, from_state, to_state, code, detail)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " grant_id, message_id, from_state, to_state, code, detail, on_behalf_of)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 self._clock() if at is None else at, self.machine, ingress, event, origin_text, verb, outcome,
-                request_id, target, grant_id, message_id, from_state, to_state, code, detail,
+                request_id, target, grant_id, message_id, from_state, to_state, code, detail, delegate,
             ),
         )
         return int(cursor.lastrowid)
@@ -338,13 +358,14 @@ class Mailbox:
         to_state: Optional[str] = None,
         code: Optional[str] = None,
         detail: Optional[str] = None,
+        on_behalf_of: Optional[Union[str, P.Identity]] = None,
     ) -> P.AuditRow:
         """Append one audit row (the server records a ``call`` row per request)."""
         with self._write() as conn:
             seq = self._audit(
                 conn, event=event, origin=origin, verb=verb, outcome=outcome, ingress=ingress,
                 request_id=request_id, target=target, grant_id=grant_id, message_id=message_id,
-                from_state=from_state, to_state=to_state, code=code, detail=detail,
+                from_state=from_state, to_state=to_state, code=code, detail=detail, on_behalf_of=on_behalf_of,
             )
             return _audit_row(conn.execute("SELECT * FROM audit WHERE seq = ?", (seq,)).fetchone())
 
@@ -466,6 +487,7 @@ class Mailbox:
         grant: Optional[GrantUse] = None,
         refuse: Optional[str] = None,
         ingress: str = "relay",
+        forwarded_by: Optional[Union[str, P.Identity]] = None,
     ) -> P.SendMessageResult:
         """Queue one message for ``to`` (a RESOLVED address) and return ``{message, replayed}``.
 
@@ -478,10 +500,23 @@ class Mailbox:
         ``rate_limited``, ``hop_limit``, ``too_large``, ``refuse``, insert.
         A refusal stored as a row raises AFTER that row is committed; a replay
         of a refused id raises the same refusal again, writing nothing.
+
+        ``forwarded_by`` (amendment 2) is ``relay:<M>`` for a send the relay
+        accepted from the authenticated peer ``<M>`` on behalf of ``origin``,
+        which must then be ``direct:<M>/claude/<S>``. It is stored on the row
+        and returned on the record, and the transition audit row names the
+        peer as its origin with ``origin`` as ``on_behalf_of``. Only the relay's
+        authenticated relay-origin path passes it.
         """
         sender = _identity(origin)
         if sender.kind not in ("direct", "hub"):
             raise P.RelayError("origin_not_allowed", f"a {sender.kind} origin may not send messages")
+        forwarder: Optional[P.Identity] = None
+        if forwarded_by is not None:
+            forwarder = _identity(forwarded_by)
+            if forwarder.kind != "relay" or sender.kind != "direct" or sender.subject.split("/", 1)[0] != forwarder.subject \
+                    or forwarder.subject == self.machine:
+                raise P.RelayError("internal", f"relay defect: {forwarder} cannot have forwarded a send from {sender}")
         address = P.parse_address(to) if not isinstance(to, P.Address) else to
         to_text = str(address)
         if kind not in P.MESSAGE_KINDS:
@@ -503,7 +538,10 @@ class Mailbox:
         if refuse is not None and refuse not in CALLER_REFUSALS:
             raise _bad(f"refuse must be one of {sorted(CALLER_REFUSALS)}")
         sender_text = str(sender)
-        content = _fingerprint(to_text, kind, body, task or "", hop, sender_text)
+        forwarded_text = None if forwarder is None else str(forwarder)
+        # the forwarder joins the fingerprint only when set, so every stored hash of version 1 stays valid
+        content = _fingerprint(to_text, kind, body, task or "", hop, sender_text,
+                               *(() if forwarded_text is None else (forwarded_text,)))
         body_bytes = len(body.encode("utf-8"))
         refusal: Optional[P.RelayError] = None
         result: Optional[P.SendMessageResult] = None
@@ -540,15 +578,16 @@ class Mailbox:
             state = "refused" if code else "queued"
             conn.execute(
                 "INSERT INTO messages (id, to_addr, sender, kind, body, hop, task, created_at, expires_at,"
-                " updated_at, state, state_reason, attempts, content_hash)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                " updated_at, state, state_reason, attempts, content_hash, forwarded_by)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
                 (id, to_text, sender_text, kind, stored_body, hop, task, now, now + expires_in_s, now,
-                 state, code, content),
+                 state, code, content, forwarded_text),
             )
             self._audit(
-                conn, event="transition", origin=sender, verb="send_message",
+                conn, event="transition", origin=forwarder if forwarder is not None else sender, verb="send_message",
                 outcome="refused" if code else "ok", ingress=ingress, message_id=id, target=to_text,
                 from_state=None, to_state=state, code=code, at=now,
+                on_behalf_of=sender if forwarder is not None else None,
             )
             if code:
                 refusal = P.RelayError(
@@ -635,6 +674,8 @@ class Mailbox:
                 }
                 if row["task"] is not None:
                     delivered["task"] = row["task"]
+                if row["forwarded_by"] is not None:
+                    delivered["forwarded_by"] = row["forwarded_by"]
                 out.append(delivered)
         return out
 
@@ -750,6 +791,8 @@ class Mailbox:
             record["task"] = row["task"]
         if row["state_reason"] is not None:
             record["state_reason"] = row["state_reason"]
+        if row["forwarded_by"] is not None:
+            record["forwarded_by"] = row["forwarded_by"]
         reply = conn.execute("SELECT * FROM replies WHERE in_reply_to = ?", (row["id"],)).fetchone()
         if reply is not None:
             record["reply"] = _reply(reply)

@@ -35,6 +35,20 @@
         ]
       },
       "description": "The channel harnesses this relay serves (amendment 1, katsoft-llm-kit 1.19.0). A relay that omits the field serves claude only."
+    },
+    "forwarding": {
+      "type": "object",
+      "properties": {
+        "receive": {
+          "type": "boolean",
+          "description": "true: this relay accepts relay:<M> origins with on_behalf_of from the peers its relay.accept_from names."
+        }
+      },
+      "required": [
+        "receive"
+      ],
+      "additionalProperties": true,
+      "description": "Amendment 2 (katsoft-llm-kit 1.21.0): relay-to-relay forwarding. A relay that omits the field accepts no forwarded call; a forwarding relay checks it before it sends one."
     }
   },
   "required": [
@@ -61,12 +75,15 @@
           "reason": null
         }
       },
-      "library_version": "1.19.0",
+      "library_version": "1.21.0",
       "registrations": 2,
       "harnesses": [
         "claude",
         "codex"
-      ]
+      ],
+      "forwarding": {
+        "receive": true
+      }
     }
   ]
 }

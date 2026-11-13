@@ -47,6 +47,24 @@
       "outcome": "refused",
       "target": "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
       "code": "grant_required"
+    },
+    {
+      "seq": 44,
+      "at": 1793664003.0,
+      "machine": "5090w",
+      "ingress": "relay",
+      "event": "call",
+      "origin": "relay:m5pro",
+      "on_behalf_of": "direct:m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+      "verb": "send_message",
+      "outcome": "ok",
+      "request_id": "req-0004",
+      "target": "5090w/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+      "message_id": null,
+      "from_state": null,
+      "to_state": null,
+      "code": null,
+      "detail": null
     }
   ]
 }

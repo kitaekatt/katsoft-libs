@@ -12,7 +12,11 @@ read again at start). Starting it:
    on the same state directory is refused ``already_running``;
 4. builds the mailbox, the registration table, session discovery and the
    ``ask_llm`` service, and the transport-independent
-   :class:`llm_kit.relay.service.RelayService` over them;
+   :class:`llm_kit.relay.service.RelayService` over them, with the
+   forwarding peers (amendment 2: each ``relay.peers`` entry, reached with its
+   own relay token, hub bearer and the forward key it issued to this relay;
+   a peer with no ``forward.key`` is listed but never sent to) and the forward
+   keys this relay issued to the ``relay.accept_from`` machines;
 5. binds ``RelayConfig.bind("relay")`` (``127.0.0.1:4710`` by default) and
    serves ``POST /v1/<verb>`` with uvicorn.
 
@@ -41,10 +45,10 @@ import sys
 import threading
 import time
 import traceback
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from llm_kit.relay import protocol as P
-from llm_kit.relay.client import base_url
+from llm_kit.relay.client import PEER_CONNECT_TIMEOUT_S, HttpRelayClient, base_url
 from llm_kit.relay.config import (
     RelayConfig,
     RelayConfigError,
@@ -53,7 +57,14 @@ from llm_kit.relay.config import (
     require_enabled,
 )
 from llm_kit.relay.discovery import Discovery, DiscoveryRoots, ProcessProbe, PsutilProbe, RegistrationTable
-from llm_kit.relay.lifecycle import PreparedState, RoleLock, prepare_state
+from llm_kit.relay.lifecycle import (
+    PreparedState,
+    RoleLock,
+    accept_forward_keys,
+    peer_credentials,
+    peer_forward_key,
+    prepare_state,
+)
 from llm_kit.relay.mailbox import Mailbox, MailboxLimits, mailbox_db_path
 from llm_kit.relay.service import RelayService
 
@@ -226,6 +237,7 @@ class RelayApp:
                 hub_bearer=_bearer(headers.get(P.HEADER_AUTHORIZATION.lower())),
                 grant=headers.get(P.HEADER_GRANT.lower()) or None,
                 ingress="relay",
+                peer_key=headers.get(P.HEADER_PEER_KEY.lower()) or None,
             )
             work = self._executor.submit(call)
             work.add_done_callback(self._free_slot)  # the slot is held until the worker is done, even if the client leaves
@@ -243,6 +255,8 @@ class RelayServer:
     ``roots`` and ``probe`` steer session discovery (default: the user's real
     harness homes, read only, and psutil). ``backend_factory`` and
     ``policy_loader`` pass through to :class:`llm_kit.relay.llm.LlmService`.
+    ``peer_clients`` replaces the forwarding clients built from ``relay.peers``
+    (``{machine: client or None}``; tests inject fakes there).
 
     Use :meth:`serve_forever` in the foreground (SIGINT or SIGTERM stops it) or
     :meth:`start` / :meth:`stop` (or ``with``) to serve on a background thread.
@@ -264,6 +278,8 @@ class RelayServer:
         workers: int = DEFAULT_WORKERS,
         body_deadline_s: float = DEFAULT_BODY_DEADLINE_S,
         max_in_flight: int = DEFAULT_MAX_IN_FLIGHT,
+        peer_clients: Optional[Mapping[str, Any]] = None,
+        peer_timeout_s: float = 30.0,
     ) -> None:
         require_enabled(ROLE, config.config_path)
         self.config = config
@@ -281,6 +297,9 @@ class RelayServer:
         self._workers = workers
         self._body_deadline_s = body_deadline_s
         self._max_in_flight = max_in_flight
+        self._peer_clients_override = peer_clients
+        self._peer_timeout_s = peer_timeout_s
+        self._peer_clients: dict[str, Any] = {}
         self.prepared: Optional[PreparedState] = None
         self.service: Optional[RelayService] = None
         self.mailbox: Optional[Mailbox] = None
@@ -311,6 +330,39 @@ class RelayServer:
 
     # -- opening and closing --------------------------------------------------------
 
+    def _build_peer_clients(self) -> dict[str, Any]:
+        """``{machine: HttpRelayClient or None}`` for every ``relay.peers`` entry (None: no forward key stored).
+
+        A peer is a forwarding target only once its ``forward.key`` is stored (``peer import`` of an export made
+        with ``--for <this machine>``); then its relay token and hub bearer must be stored too. This machine's
+        credentials are never sent to a peer.
+        """
+        if self._peer_clients_override is not None:
+            return dict(self._peer_clients_override)
+        clients: dict[str, Any] = {}
+        try:
+            for peer in self.config.peers:
+                key = peer_forward_key(self.config.paths, peer.machine)
+                if key is None:
+                    clients[peer.machine] = None
+                    continue
+                token, bearer = peer_credentials(self.config.paths, peer.machine)
+                clients[peer.machine] = HttpRelayClient(
+                    peer.url, machine=peer.machine, relay_token=token, hub_bearer=bearer, peer_key=key,
+                    timeout_s=self._peer_timeout_s, connect_timeout_s=PEER_CONNECT_TIMEOUT_S,
+                )
+        except BaseException:
+            self._close_peer_clients(clients)
+            raise
+        return clients
+
+    @staticmethod
+    def _close_peer_clients(clients: Mapping[str, Any]) -> None:
+        for client in clients.values():
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
+
     def _open(self) -> None:
         if self._sock is not None:
             raise RuntimeError("the relay server is already open")
@@ -335,15 +387,23 @@ class RelayServer:
                 llm_kw["policy_loader"] = self._policy_loader
             llm = LlmService.from_state(self.prepared, mailbox, **llm_kw)
             endpoints = sorted(load_loopback_registry(self.prepared.registry_file).entries)
+            self._peer_clients = self._build_peer_clients()
             self.service = RelayService(
                 machine=machine, relay_token=self.prepared.relay_token, hub_bearer=self.prepared.hub_bearer,
                 mailbox=mailbox, table=table, discovery=discovery, llm=llm,
                 pause=self.prepared.pause_store(clock=self._clock), endpoints=endpoints,
                 ledgers=self.config.ledgers, clock=self._clock, poll_interval_s=self._poll_interval_s,
+                peers=self._peer_clients, accept_from=self.config.accept_from,
+                accept_keys=accept_forward_keys(self.config.paths),
             )
             self.mailbox, self.table = mailbox, table
             self._sock = bind_loopback(self._host, self._port)
         except BaseException:
+            if self.service is not None:
+                self.service.close()
+                self.service = None
+            self._close_peer_clients(self._peer_clients)
+            self._peer_clients = {}
             lock.release()
             raise
         self._lock = lock
@@ -383,6 +443,9 @@ class RelayServer:
         if self._executor is not None:
             self._executor.shutdown(wait=True, cancel_futures=True)
             self._executor = None
+        if self._peer_clients_override is None:
+            self._close_peer_clients(self._peer_clients)
+        self._peer_clients = {}
         if self._sock is not None:
             self._sock.close()
             self._sock = None

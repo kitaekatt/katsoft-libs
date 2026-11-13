@@ -28,6 +28,19 @@ code and no effect:
    ``answer_question`` answers any question, with the same refusals a
    ``/direct`` answer meets (owner rulings 2026-11-11, protocol section 3).
 
+Forwarding (amendment 2, protocol sections 3 and 20 "Forwarding"). A relay
+with forwarding peers (``peers``: machine -> client carrying that peer's
+forward key) sends a ``/direct`` session's read, llm and write calls that name
+a peer to that peer, as origin ``relay:<this machine>`` with ``on_behalf_of``
+set to the session, and fans ``list_machines``, ``list_sessions`` and
+``list_questions`` out to every peer. The order is fixed: the local grant
+check (no I/O), the cached capability probe (``status.forwarding.receive``),
+reserving one grant use, then the forwarded requests. A use is refunded only
+on a certain pre-effect outcome. As a receiver, a relay accepts a
+``relay:<M>`` origin only with the relay token AND the forward key it issued
+to ``<M>`` (``X-Relay-Peer-Key``), only for ``<M>`` in ``accept_from``, and
+answers it from its own machine only: a relay origin is never forwarded again.
+
 A grant use is reserved before the effect, so two concurrent calls cannot
 share one remaining use: ``send_message`` consumes in the mailbox transaction
 that inserts the message; every other granted verb reserves its use
@@ -45,9 +58,11 @@ mint a grant for its own session. None of it is a security boundary.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import hmac
 import importlib.metadata
 import json
+import secrets
 import socket
 import sys
 import threading
@@ -58,9 +73,11 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from llm_kit.relay import protocol as P
+from llm_kit.relay import routing
+from llm_kit.relay.client import ClientRelayError
 from llm_kit.relay.discovery import Discovery, EndEvent, RegistrationTable, SessionInfo
 from llm_kit.relay.lifecycle import PauseStore, token_matches
-from llm_kit.relay.mailbox import GrantUse, Mailbox
+from llm_kit.relay.mailbox import STORED_REFUSALS, GrantUse, Mailbox
 from llm_kit.relay.questions import QuestionService
 from llm_kit.schema import json_schema as JS
 
@@ -93,6 +110,11 @@ AUTH_AUDIT_MAX_TOTAL_ROWS = 10_000
 
 #: Error codes of a handler that ran an effect: a use reserved for such a call stays spent.
 _AFTER_EFFECT_CODES = frozenset({"too_large", "internal"})
+
+#: Seconds a peer's capability probe answer (``status.forwarding``) is reused; a transport failure is never cached.
+PEER_PROBE_TTL_S = 60.0
+#: The fan-out verbs (protocol section 4a of the forwarding plan): local plus every forwarding peer.
+FAN_OUT_VERBS = frozenset({"list_machines", "list_sessions", "list_questions"})
 
 
 def failed_before_effect(exc: BaseException) -> bool:
@@ -237,6 +259,10 @@ class _Call:
     verb: str
     origin: P.Identity
     ended: dict[str, int] = field(default_factory=dict)
+    #: The direct session a relay origin acts for (amendment 2); None for every other origin.
+    on_behalf_of: Optional[P.Identity] = None
+    #: What the call row's ``detail`` records for an ok forwarded call.
+    note: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -245,6 +271,24 @@ class _Granted:
 
     target: Optional[str]
     use: Optional[GrantUse]
+
+
+class _PeerLink:
+    """One forwarding peer: its client (None when no forward key is stored) and the cached capability probe."""
+
+    def __init__(self, machine: str, client: Any) -> None:
+        self.machine = machine
+        self.client = client
+        self.lock = threading.Lock()
+        self.probed: Optional[tuple[float, Optional[P.RelayError]]] = None
+
+
+@dataclass(frozen=True)
+class _Plan:
+    """Where a ``/direct`` call goes: ``single`` (one peer), ``fanout`` or ``message_id`` (probe every relay)."""
+
+    kind: str
+    machine: Optional[str] = None
 
 
 class RelayService:
@@ -277,6 +321,10 @@ class RelayService:
         clock: Callable[[], float] = time.time,
         poll_interval_s: float = 1.0,
         version: Optional[str] = None,
+        peers: Optional[Mapping[str, Any]] = None,
+        accept_from: Sequence[str] = (),
+        accept_keys: Optional[Mapping[str, str]] = None,
+        probe_ttl_s: float = PEER_PROBE_TTL_S,
     ) -> None:
         if not P.is_machine_label(machine):
             raise ValueError(f"{machine!r} is not a machine label")
@@ -284,6 +332,12 @@ class RelayService:
             raise ValueError("the relay token and the hub bearer must be non-empty")
         if discovery.table is not table:
             raise ValueError("discovery must merge the same registration table the service serves")
+        for name in list(peers or {}) + list(accept_from) + list(accept_keys or {}):
+            if not P.is_machine_label(name) or name == machine:
+                raise ValueError(f"{name!r} is not another machine's label")
+        for name, peer in (peers or {}).items():
+            if peer is not None and peer.machine != name:
+                raise ValueError(f"the forwarding client for {name!r} names machine {peer.machine!r}")
         self.machine = machine
         self._relay_token = relay_token
         self._hub_bearer = hub_bearer
@@ -299,6 +353,14 @@ class RelayService:
         self._version = version if version is not None else library_version()
         self._schemas = _Schemas()
         self._auth_audit = _AuthAuditLimiter(machine)
+        self._peers: dict[str, _PeerLink] = {name: _PeerLink(name, peer) for name, peer in (peers or {}).items()}
+        self._known = frozenset({machine, *self._peers})
+        self._accept_from = frozenset(accept_from)
+        self._accept_keys = dict(accept_keys or {})
+        self._probe_ttl_s = probe_ttl_s
+        self._fan = (concurrent.futures.ThreadPoolExecutor(max_workers=max(4, 2 * len(self._peers)),
+                                                           thread_name_prefix="llm-kit-relay-fan")
+                     if self._peers else None)
         self._local = threading.local()
         self._wake = threading.Condition()
         self._generation = 0
@@ -335,6 +397,13 @@ class RelayService:
         """Wake every waiting poll so it returns at once (the server is stopping)."""
         self._closing.set()
         self._notify()
+        if self._fan is not None:
+            self._fan.shutdown(wait=False, cancel_futures=True)
+
+    @property
+    def forwarding_peers(self) -> tuple[str, ...]:
+        """The peers this relay forwards ``/direct`` calls to (amendment 2), in configuration order."""
+        return tuple(self._peers)
 
     def maintain(self) -> None:
         """End lapsed registrations and lapse expired messages (the server calls this periodically)."""
@@ -388,20 +457,24 @@ class RelayService:
         hub_bearer: Optional[str] = None,
         grant: Optional[str] = None,
         ingress: str = "relay",
+        peer_key: Optional[str] = None,
     ) -> tuple[int, dict[str, Any]]:
         """Answer one request; returns ``(http_status, response_envelope)``. Never raises a RelayError.
 
         ``body`` is the raw request bytes (HTTP) or an already parsed envelope
-        (in process). ``relay_token``, ``hub_bearer`` and ``grant`` are what the
-        transport carried as ``X-Relay-Token``, the ``Authorization`` bearer and
-        ``X-Relay-Grant``. ``path_verb`` is the verb the transport addressed
-        (``/v1/<verb>``), which must equal the envelope's.
+        (in process). ``relay_token``, ``hub_bearer``, ``grant`` and ``peer_key``
+        are what the transport carried as ``X-Relay-Token``, the
+        ``Authorization`` bearer, ``X-Relay-Grant`` and ``X-Relay-Peer-Key``.
+        ``path_verb`` is the verb the transport addressed (``/v1/<verb>``),
+        which must equal the envelope's.
         """
         request_id: Optional[str] = None
         identity: Optional[P.Identity] = None
+        delegate: Optional[P.Identity] = None
         verb: Optional[str] = None
         target: Optional[str] = None
         granted: Optional[_Granted] = None
+        call: Optional[_Call] = None
         try:
             envelope = self._parse(body)
             request_id = envelope["id"]
@@ -409,37 +482,39 @@ class RelayService:
             body_verb = envelope["verb"]
             if body_verb in P.VERBS:
                 verb = body_verb  # known: the call row can be written whatever happens next
-            self._authenticate(identity, relay_token, hub_bearer)
+            if "on_behalf_of" in envelope and identity.kind != "relay":
+                raise _bad("on_behalf_of is valid only with a relay origin; a client never supplies its own delegation")
+            self._authenticate(identity, relay_token, hub_bearer, peer_key)
             spec = self._verb(body_verb, path_verb)
             params = self._validate_request(envelope)
             target = self._target_param(spec, params)
-            self._check_origin(spec, identity, params)
+            delegate = self._check_origin(spec, identity, params, envelope.get("on_behalf_of"))
             self._check_pause(spec, identity)
-            call = _Call(spec.name, identity)
+            call = _Call(spec.name, identity, on_behalf_of=delegate)
             self._local.call = call
             try:
                 granted = self._grant_stage(spec, identity, params, grant)
                 target = granted.target if granted.target is not None else target
-                reserved: Optional[str] = None
-                if granted.use is not None and spec.name != "send_message":
-                    # Reserve the use before the effect: of two concurrent calls on the last use, one is refused here.
-                    self._mailbox.consume_grant(
-                        session=granted.use.session, verb=spec.name, target=granted.target,
-                        grant_id=granted.use.grant_id,
-                    )
-                    reserved = granted.use.grant_id
-                try:
-                    result = self._handlers[spec.name](call, params, granted, ingress)
-                except BaseException as failure:
-                    if reserved is not None and failed_before_effect(failure):
-                        self._mailbox.refund_grant(reserved)
-                    raise
+                plan = self._forward_plan(spec, identity, params, granted)
+                if plan is not None:
+                    result = self._forward(call, spec, params, granted, plan, ingress)
+                else:
+                    reserved: Optional[str] = None
+                    if granted.use is not None and spec.name != "send_message":
+                        # Reserve the use before the effect: of two concurrent calls on the last use, one is refused here.
+                        reserved = self._reserve(spec, granted)
+                    try:
+                        result = self._handlers[spec.name](call, params, granted, ingress)
+                    except BaseException as failure:
+                        if reserved is not None and failed_before_effect(failure):
+                            self._mailbox.refund_grant(reserved)
+                        raise
             finally:
                 self._local.call = None
             if spec.name in _WAKES:
                 self._notify()
             self._validate_result(spec.name, result)
-            status, response, outcome, code, detail = 200, P.make_ok(request_id, result), "ok", None, None
+            status, response, outcome, code, detail = 200, P.make_ok(request_id, result), "ok", None, call.note
         except P.RelayError as exc:
             status, response = exc.http_status, P.make_error(request_id, exc)
             outcome = "error" if exc.code in _ERROR_OUTCOMES else "refused"
@@ -456,7 +531,7 @@ class RelayService:
                         event="call", origin=identity, verb=verb, outcome=outcome, ingress=ingress,
                         request_id=request_id, target=target[:1100] if isinstance(target, str) else None,
                         grant_id=granted.use.grant_id if granted is not None and granted.use is not None else None,
-                        code=code, detail=detail,
+                        code=code, detail=detail, on_behalf_of=delegate,
                     )
             except Exception as exc:  # noqa: BLE001 -- an unaudited call is a relay defect, answered as internal
                 traceback.print_exc(file=sys.stderr)
@@ -528,11 +603,20 @@ class RelayService:
             raise _bad("params must be a JSON object")
         return envelope
 
-    def _authenticate(self, identity: P.Identity, relay_token: Optional[str], hub_bearer: Optional[str]) -> None:
+    def _authenticate(self, identity: P.Identity, relay_token: Optional[str], hub_bearer: Optional[str],
+                      peer_key: Optional[str]) -> None:
         if not token_matches(relay_token, self._relay_token):
             raise P.RelayError("unauthenticated", f"missing or wrong {P.HEADER_RELAY_TOKEN}")
         if identity.kind == "hub" and not token_matches(hub_bearer, self._hub_bearer):
             raise P.RelayError("unauthenticated", "a hub-origin request needs the hub bearer (Authorization: Bearer)")
+        if identity.kind == "relay":
+            # The key binds the request to exactly one requester machine: the one this relay issued it to.
+            expected = self._accept_keys.get(identity.subject)
+            if expected is None or not token_matches(peer_key, expected):
+                raise P.RelayError(
+                    "unauthenticated",
+                    f"a relay-origin request needs the {P.HEADER_PEER_KEY} this relay issued to {identity.subject!r}",
+                )
 
     def _verb(self, body_verb: str, path_verb: Optional[str]) -> P.VerbSpec:
         for name in (path_verb, body_verb):
@@ -571,12 +655,25 @@ class RelayService:
                 return params[name]
         return None
 
-    def _check_origin(self, spec: P.VerbSpec, identity: P.Identity, params: Mapping[str, Any]) -> None:
+    def _check_origin(self, spec: P.VerbSpec, identity: P.Identity, params: Mapping[str, Any],
+                      on_behalf_of: Optional[str] = None) -> Optional[P.Identity]:
+        """Refuse an origin the verb or this machine does not allow; returns a relay origin's delegate."""
         if identity.kind not in spec.origins:
             raise P.RelayError(
                 "origin_not_allowed", f"a {identity.kind} origin may not call {spec.name}",
                 details={"origins": sorted(spec.origins)},
             )
+        if identity.kind == "relay":
+            if identity.subject == self.machine or identity.subject not in self._accept_from:
+                raise P.RelayError(
+                    "origin_not_allowed",
+                    f"this relay accepts no forwarded calls from {identity.subject!r} (relay.accept_from)",
+                )
+            delegate = P.delegated_identity(identity, on_behalf_of)
+            if delegate is None and spec.name != "status":
+                raise P.RelayError("origin_not_allowed",
+                                   f"a relay origin calls {spec.name} only on behalf of a direct session (on_behalf_of)")
+            return delegate
         if identity.kind in ("channel", "direct"):
             machine = identity.subject.split("/", 1)[0]
         elif identity.kind == "operator":
@@ -594,6 +691,7 @@ class RelayService:
                 raise P.RelayError("origin_not_allowed", f"origin {identity} does not name the session in the params")
             if spec.name == "register" and identity.subject.split("/", 2)[1] != params.get("harness"):
                 raise P.RelayError("origin_not_allowed", f"origin {identity} does not name the harness in the params")
+        return None
 
     def _check_pause(self, spec: P.VerbSpec, identity: P.Identity) -> None:
         if identity.kind in P.HUB_PAUSE_REFUSES_ORIGINS:
@@ -608,6 +706,12 @@ class RelayService:
         except P.RelayError:
             return target
         if isinstance(parsed, P.Selector):
+            if parsed.machine is not None and parsed.machine in self._peers:
+                raise P.RelayError(
+                    "target_invalid",
+                    f"{target!r} is a selector on another machine; a selector is resolved here only, so name the "
+                    f"session's full address from list_sessions",
+                )
             return self._discovery.resolve(target).address(self.machine)
         return target
 
@@ -625,6 +729,263 @@ class RelayService:
             code = check["code"] or "grant_required"
             raise P.RelayError(code, f"no grant of {session} covers {spec.name}" + (f" on {target}" if target else ""))
         return _Granted(target, GrantUse(session, check["grant_id"]))
+
+    def _reserve(self, spec: P.VerbSpec, granted: _Granted) -> Optional[str]:
+        """Consume one use of the covering grant now, before any effect; the grant id to refund, or None."""
+        if granted.use is None:
+            return None
+        self._mailbox.consume_grant(session=granted.use.session, verb=spec.name, target=granted.target,
+                                    grant_id=granted.use.grant_id)
+        return granted.use.grant_id
+
+    # -- forwarding (amendment 2) --------------------------------------------------------
+
+    def _forward_plan(self, spec: P.VerbSpec, identity: P.Identity, params: Mapping[str, Any],
+                      granted: _Granted) -> Optional[_Plan]:
+        """Where a call goes when it is not this machine's alone; None to serve it locally. No I/O.
+
+        Only a ``/direct`` origin is ever forwarded: a channel, operator, hub or relay origin is answered
+        here (a hub call naming another machine keeps today's local answer, and a relay origin is never
+        forwarded or fanned out again).
+        """
+        if identity.kind != "direct" or spec.tier not in P.FORWARDED_TIERS or not self._peers:
+            return None
+        verb = spec.name
+        if verb in FAN_OUT_VERBS:
+            machine = params.get("machine")
+            if machine is None:
+                return _Plan("fanout")
+            return _Plan("single", machine) if machine in self._peers else None
+        if verb == "get_replies" and "message_id" in params:
+            return _Plan("message_id")
+        machine = self._target_machine(verb, params, granted)
+        return _Plan("single", machine) if machine is not None and machine in self._peers else None
+
+    @staticmethod
+    def _target_machine(verb: str, params: Mapping[str, Any], granted: _Granted) -> Optional[str]:
+        """The machine a single-target call names: an address's, an endpoint's or a question id's."""
+        if verb == "answer_question":
+            try:
+                return routing.question_machine(params["id"])
+            except P.RelayError:
+                return None
+        name = {"read_session": "address", "ask_llm": "endpoint", "send_message": "to", "get_replies": "address"}[verb]
+        value = granted.target if granted.target is not None else params.get(name)
+        try:
+            parsed = P.parse_target(value)
+        except P.RelayError:
+            return None
+        return parsed.machine if isinstance(parsed, P.Address) else None
+
+    def _forward(self, call: _Call, spec: P.VerbSpec, params: Mapping[str, Any], granted: _Granted, plan: _Plan,
+                 ingress: str) -> dict[str, Any]:
+        if plan.kind == "single":
+            assert plan.machine is not None
+            call.note = f"forwarded to relay {plan.machine}"
+            return self._forward_single(call, spec, params, granted, plan.machine)
+        if plan.kind == "fanout":
+            call.note = f"fanned out to relays {', '.join(self._peers)}"
+            return self._forward_fanout(call, spec, params, granted, ingress)
+        call.note = f"probed relays {', '.join(self._peers)}"
+        return self._forward_message_id(call, spec, params, granted, ingress)
+
+    def _capability(self, link: _PeerLink) -> Optional[P.RelayError]:
+        """None when ``link``'s relay accepts forwarded calls, else the error to report; never sends the call itself.
+
+        The answer (``status.forwarding.receive``, or the probe's refusal) is cached for ``probe_ttl_s``; a
+        transport failure is not. A peer without a stored forward key is never probed.
+        """
+        if link.client is None:
+            return P.RelayError(
+                "machine_unreachable",
+                f"no forward key is stored for relay {link.machine!r}; import one with "
+                f"`llm-kit relay peer export --for {self.machine}` on {link.machine}, piped into "
+                f"`llm-kit relay peer import {link.machine}` here",
+                details={"machine": link.machine, "sent": False},
+            )
+        with link.lock:  # one probe per peer at a time: concurrent calls share its answer
+            now = time.monotonic()
+            if link.probed is not None and now - link.probed[0] < self._probe_ttl_s:
+                return link.probed[1]
+            try:
+                status = link.client.call("status", {}, origin=f"relay:{self.machine}")
+            except ClientRelayError as exc:
+                return P.RelayError(
+                    "machine_unreachable", f"relay {link.machine} did not answer the capability probe: {exc.message}",
+                    details={"machine": link.machine, "sent": False},
+                )
+            except P.RelayError as exc:
+                answer: Optional[P.RelayError] = P.RelayError(
+                    "not_implemented",
+                    f"relay {link.machine} does not accept forwarded calls from {self.machine}: {exc.code}",
+                    details={"machine": link.machine, "sent": False, "probe": exc.to_error_object()},
+                )
+            else:
+                forwarding = status.get("forwarding")
+                if status.get("machine") != link.machine:
+                    return P.RelayError(
+                        "internal", f"the relay configured as machine {link.machine!r} reports machine "
+                        f"{status.get('machine')!r} in status; check its URL and the label in relay.yaml",
+                        details={"machine": link.machine, "sent": False},
+                    )
+                if isinstance(forwarding, Mapping) and forwarding.get("receive") is True:
+                    answer = None
+                else:
+                    answer = P.RelayError(
+                        "not_implemented",
+                        f"relay {link.machine} does not accept forwarded calls (no status.forwarding.receive; "
+                        "katsoft-llm-kit 1.21.0 or later is needed there)",
+                        details={"machine": link.machine, "sent": False},
+                    )
+            link.probed = (now, answer)
+            return answer
+
+    def _capabilities(self, links: Sequence[_PeerLink]) -> dict[str, Optional[P.RelayError]]:
+        """The capability of every link, probed in parallel."""
+        assert self._fan is not None
+        return {link.machine: outcome for link, outcome in
+                ((link, future.result()) for link, future in
+                 [(link, self._fan.submit(self._capability, link)) for link in links])}
+
+    def _call_peer(self, call: _Call, link: _PeerLink, verb: str, params: Mapping[str, Any]) -> dict[str, Any]:
+        """One forwarded request as ``relay:<this machine>`` on behalf of the ``/direct`` session; result checked."""
+        result = link.client.call(verb, dict(params), origin=f"relay:{self.machine}", on_behalf_of=str(call.origin))
+        routing.check_result(verb, result, machine=link.machine, known=self._known)
+        if verb == "send_message":
+            message = result.get("message") if isinstance(result.get("message"), Mapping) else {}
+            stamp = f"relay:{self.machine}"
+            if message.get("sender") != str(call.origin) or message.get("forwarded_by") != stamp:
+                raise P.RelayError(
+                    "internal",
+                    f"relay {link.machine} stored the forwarded send as sender {message.get('sender')!r} forwarded_by "
+                    f"{message.get('forwarded_by')!r}; expected {str(call.origin)!r} and {stamp!r}",
+                    details={"machine": link.machine, "field": "send_message.message.sender"},
+                )
+        return result
+
+    def _forward_single(self, call: _Call, spec: P.VerbSpec, params: Mapping[str, Any], granted: _Granted,
+                        machine: str) -> dict[str, Any]:
+        """The call on peer ``machine`` alone: probe, reserve, send; refund only on a certain pre-effect outcome."""
+        link = self._peers[machine]
+        refusal = self._capability(link)
+        if refusal is not None:
+            raise refusal  # nothing reserved, nothing sent
+        send = spec.name == "send_message"
+        params = dict(params)
+        if send and "id" not in params:
+            params["id"] = "msg_" + secrets.token_hex(12)  # a retry after an unknown outcome then delivers once
+        extra = {"message_id": params["id"]} if send else {}
+        reserved = self._reserve(spec, granted)
+        try:
+            result = self._call_peer(call, link, spec.name, params)
+        except ClientRelayError as exc:
+            if not exc.sent:
+                self._refund(reserved)
+                raise P.RelayError(
+                    "machine_unreachable", f"relay {machine} could not be reached; the call was not sent: {exc.message}",
+                    details={"machine": machine, "sent": False, **extra},
+                ) from exc
+            raise P.RelayError(
+                "machine_unreachable",
+                f"relay {machine} did not answer after the call was sent, so its outcome is unknown and the grant use "
+                f"stays spent: {exc.message}",
+                details={"machine": machine, "sent": True, "outcome": "unknown", **extra},
+            ) from exc
+        except P.RelayError as exc:
+            if exc.code != "internal" and (failed_before_effect(exc) or (send and exc.code in STORED_REFUSALS)):
+                self._refund(reserved)
+            if extra:
+                raise P.RelayError(exc.code, exc.message, details={**(exc.details or {}), **extra}) from exc
+            raise
+        if send and result.get("replayed") is True:
+            self._refund(reserved)  # a replayed send consumes nothing, as a local one
+        return result
+
+    def _refund(self, grant_id: Optional[str]) -> None:
+        if grant_id is not None:
+            self._mailbox.refund_grant(grant_id)
+
+    def _forward_fanout(self, call: _Call, spec: P.VerbSpec, params: Mapping[str, Any], granted: _Granted,
+                        ingress: str) -> dict[str, Any]:
+        """This machine plus every forwarding peer; a peer that cannot answer is listed unreachable."""
+        verb = spec.name
+        links = list(self._peers.values())
+        refusals = self._capabilities(links)
+        reserved = self._reserve(spec, granted)
+        try:
+            local = self._handlers[verb](call, params, granted, ingress)
+        except BaseException as failure:
+            if reserved is not None and failed_before_effect(failure):
+                self._refund(reserved)  # the call failed before any peer request
+            raise
+        ready = [link for link in links if refusals[link.machine] is None]
+
+        def ask(link: _PeerLink) -> dict[str, Any]:
+            forwarded = dict(params)
+            if verb != "list_machines":
+                forwarded["machine"] = link.machine
+            return self._call_peer(call, link, verb, forwarded)
+
+        assert self._fan is not None
+        answers = dict((link.machine, outcome) for link, outcome in routing.fan_out(self._fan, ready, ask))
+        merged: dict[str, Any] = {key: list(value) for key, value in local.items() if isinstance(value, list)}
+        merged.setdefault("machines", [])
+        if verb == "list_questions":
+            merged["ledgers"] = [{**entry, "machine": self.machine} for entry in local.get("ledgers", [])]
+        for link in links:
+            outcome = refusals[link.machine] or answers[link.machine]
+            if isinstance(outcome, P.RelayError):
+                merged["machines"].append({"machine": link.machine, "status": "unreachable",
+                                           "error": outcome.to_error_object()})
+                continue
+            for key, value in outcome.items():
+                if key == "ledgers":
+                    merged["ledgers"].extend({**entry, "machine": link.machine} for entry in value)
+                elif key in merged and isinstance(value, list):
+                    merged[key].extend(value)
+        if verb == "list_questions":
+            merged["questions"].sort(key=lambda q: (q["created_at"], q["id"]))
+        return {**local, **merged}
+
+    def _forward_message_id(self, call: _Call, spec: P.VerbSpec, params: Mapping[str, Any], granted: _Granted,
+                            ingress: str) -> dict[str, Any]:
+        """``get_replies(message_id)``: probe this relay and every peer without ``wait_s``; one may hold it."""
+        links = list(self._peers.values())
+        refusals = self._capabilities(links)
+        reserved = self._reserve(spec, granted)
+        probe = {k: v for k, v in params.items() if k != "wait_s"}
+        ready = [link for link in links if refusals[link.machine] is None]
+        assert self._fan is not None
+        peer_outcomes = routing.fan_out(self._fan, ready, lambda link: self._call_peer(call, link, spec.name, probe))
+        try:
+            local: Any = self._get_replies(call, probe, granted, ingress)
+        except P.RelayError as exc:
+            local = exc
+        outcomes: list[tuple[str, Any]] = [(self.machine, local)] + [(link.machine, o) for link, o in peer_outcomes]
+        holders = [(m, o) for m, o in outcomes if not isinstance(o, P.RelayError)]
+        uncertain = [m for m, error in refusals.items() if error is not None]
+        if not holders:
+            certain = not uncertain and all(
+                isinstance(o, P.RelayError) and not isinstance(o, ClientRelayError) and o.code == "message_not_found"
+                for _, o in outcomes)
+            if certain:
+                self._refund(reserved)
+                raise P.RelayError("message_not_found", f"no relay holds message {params['message_id']}",
+                                   details={"machines": [m for m, _ in outcomes]})
+            if uncertain:
+                raise P.RelayError(
+                    "machine_unreachable",
+                    f"no reachable relay holds message {params['message_id']}; not asked: {', '.join(uncertain)}",
+                    details={"machines": uncertain},
+                )
+            # a holder may have been missed: report the error that says so, not another relay's message_not_found
+            outcomes.sort(key=lambda item: isinstance(item[1], P.RelayError) and item[1].code == "message_not_found")
+        machine, result = routing.resolve_one(outcomes, params["message_id"])
+        if params.get("wait_s", 0) == 0:
+            return result
+        if machine == self.machine:
+            return self._get_replies(call, params, granted, ingress)
+        return self._call_peer(call, self._peers[machine], spec.name, params)
 
     # -- channel verbs ------------------------------------------------------------
 
@@ -776,10 +1137,12 @@ class RelayService:
             if ended is None:
                 raise
             address, refuse = ended, "session_ended"
+        forwarded = call.origin.kind == "relay"  # authenticated peer (auth stage), its delegate checked (origin stage)
         return dict(self._mailbox.send_message(
-            origin=call.origin, to=address, kind=params["kind"], body=params["body"], id=params.get("id"),
-            expires_in_s=params.get("expires_in_s"), task=params.get("task"), hop=params.get("hop", 0),
-            grant=granted.use, refuse=refuse, ingress=ingress,
+            origin=call.on_behalf_of if forwarded else call.origin, to=address, kind=params["kind"], body=params["body"],
+            id=params.get("id"), expires_in_s=params.get("expires_in_s"), task=params.get("task"),
+            hop=params.get("hop", 0), grant=granted.use, refuse=refuse, ingress=ingress,
+            forwarded_by=call.origin if forwarded else None,
         ))
 
     def _ended_address(self, target: str) -> Optional[str]:
@@ -871,6 +1234,7 @@ class RelayService:
             "pause": self._pause.state(),
             "registrations": len(self._table.active()),
             "harnesses": list(P.CHANNEL_HARNESSES),
+            "forwarding": {"receive": True},
         }
         if self._version is not None:
             result["library_version"] = self._version
