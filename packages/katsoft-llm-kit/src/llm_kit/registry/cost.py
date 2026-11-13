@@ -30,7 +30,8 @@ Classification rules, applied in order:
    or is not a transport entry is metered, with a reason naming it. Any other harness
    without an ``endpoint`` is metered.
 3. ``kind == "transport"`` with ``frontdoor: true``: tiers are the transport entries in
-   ``entries`` whose ``routing.group == entry.model``. Local only if that set is
+   ``entries`` whose ``routing.group`` is the group the entry stands for
+   (``frontdoor_group``, else ``model``). Local only if that set is
    non-empty and every tier is unmetered and self-owned; otherwise metered. The entry's
    own ``billing`` does not count.
 4. Any other transport is local if unmetered and self-owned, metered otherwise.
@@ -47,6 +48,7 @@ from llm_kit.registry.model_endpoints import (
     HARNESS_KIND,
     TRANSPORT_KIND,
     EndpointEntry,
+    frontdoor_group_of,
 )
 
 # The harness auth states SUBSCRIPTION and METERED share their spelling with the
@@ -181,7 +183,7 @@ def _classify_harness_endpoint(
 def _classify_frontdoor(
     entry: EndpointEntry, entries: Optional[Mapping[str, EndpointEntry]]
 ) -> CostVerdict:
-    group = entry.model
+    group = frontdoor_group_of(entry) or entry.model
     tiers = [
         e
         for e in (entries or {}).values()

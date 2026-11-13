@@ -23,7 +23,9 @@ from ..registry.model_endpoints import (
     EndpointRegistryError,
     TRANSPORT_KIND,
     deployment_effort_style,
+    frontdoor_group_of,
     load_endpoint_registry,
+    tiers_for_size,
 )
 
 
@@ -97,6 +99,58 @@ def _groups(registry: EndpointRegistry) -> dict[str, list[RuntimeDeployment]]:
     return result
 
 
+@dataclass(frozen=True)
+class FrontdoorName:
+    """What a model name sent to the front door means: a group and a size.
+
+    ``size`` is the largest request, in tokens, the caller says it may send (the
+    front-door entry's ``context_window``); None means the caller stated none, and
+    no tier is dropped for size.
+    """
+
+    group: str
+    size: Optional[int] = None
+
+
+def _names(registry: EndpointRegistry, groups: dict[str, list[RuntimeDeployment]]) -> dict[str, FrontdoorName]:
+    """Every model name the door answers to.
+
+    A routing group's own name is always one (size unknown). A ``frontdoor: true``
+    entry adds its ``model`` as a name for its group (``frontdoor_group``, else
+    ``model``) at its ``context_window``; for a plain group name that is the size
+    the name has always meant. Two entries giving one name different meanings are
+    a registry defect and fail loudly.
+    """
+    names = {group: FrontdoorName(group) for group in groups}
+    declared: dict[str, str] = {}
+    for entry in registry.entries.values():
+        group = frontdoor_group_of(entry)
+        if group is None or group not in groups:
+            continue
+        name = FrontdoorName(group, entry.context_window)
+        if entry.model in declared and names[entry.model] != name:
+            raise EndpointRegistryError(
+                f"front-door entries '{declared[entry.model]}' and '{entry.id}' both name "
+                f"'{entry.model}' but mean different group or size"
+            )
+        declared[entry.model] = entry.id
+        names[entry.model] = name
+    return names
+
+
+def _pool(deployments: list[RuntimeDeployment], size: Optional[int]) -> list[RuntimeDeployment]:
+    """The deployments of one group that may serve a request of ``size`` tokens."""
+    allowed = {entry.id for entry in tiers_for_size([d.entry for d in deployments], size)}
+    return [deployment for deployment in deployments if deployment.entry.id in allowed]
+
+
+def _too_big_message(group: str, size: int, deployments: list[RuntimeDeployment]) -> str:
+    largest = max((d.entry.context_window or 0 for d in deployments), default=0)
+    return (
+        f"no {group} server holds {size:,} tokens; the largest size {group} holds is {largest:,}"
+    )
+
+
 def _check_text(registry: EndpointRegistry) -> str:
     lines: list[str] = []
     groups = _groups(registry)
@@ -104,10 +158,17 @@ def _check_text(registry: EndpointRegistry) -> str:
         lines.append(f"{group}:")
         for deployment in deployments:
             routing = deployment.routing
+            window = deployment.entry.context_window
             lines.append(
                 f"  order={routing.order} max_parallel={routing.max_parallel or 'uncapped'} "
+                f"context_window={window if window is not None else 'unknown'} "
+                f"{'size_only ' if routing.size_only else ''}"
                 f"{deployment.entry.id} -> {deployment.entry.model}"
             )
+    lines.append("names:")
+    for name, meaning in sorted(_names(registry, groups).items()):
+        size = f"{meaning.size:,}" if meaning.size is not None else "unsized"
+        lines.append(f"  {name} -> {meaning.group} ({size})")
     untagged = [
         entry.id for entry in registry.entries.values()
         if entry.kind == TRANSPORT_KIND and entry.routing is None
@@ -243,11 +304,11 @@ def create_app(
         raise RuntimeError("frontdoor requires the 'frontdoor' extra") from exc
 
     groups = _groups(registry)
+    names = _names(registry, groups)
     condition = asyncio.Condition()
     log_path = access_log or (Path.home() / ".claude" / "plugins" / "data" / "plugins-kit" / "llm-scripting-kit" / "frontdoor-access.jsonl")
 
-    async def choose(group: str, excluded: set[str]) -> RuntimeDeployment:
-        deployments = groups[group]
+    async def choose(deployments: list[RuntimeDeployment], excluded: set[str]) -> RuntimeDeployment:
         while True:
             by_order: dict[int, list[RuntimeDeployment]] = {}
             for deployment in deployments:
@@ -324,9 +385,14 @@ def create_app(
             return JSONResponse(_error("request body must be JSON"), status_code=400)
         if not isinstance(body, dict):
             return JSONResponse(_error("request body must be an object"), status_code=400)
-        group = body.get("model")
-        if group not in groups:
-            return JSONResponse(_error(f"unknown model group: {group}"), status_code=404)
+        requested = body.get("model")
+        if not isinstance(requested, str) or requested not in names:
+            return JSONResponse(_error(f"unknown model group: {requested}"), status_code=404)
+        group, size = names[requested].group, names[requested].size
+        pool = _pool(groups[group], size)
+        if not pool:
+            assert size is not None  # an unsized request never drops a tier
+            return JSONResponse(_error(_too_big_message(group, size, groups[group])), status_code=400)
         stream = bool(body.get("stream"))
         user = body.get("user")
         excluded: set[str] = set()
@@ -338,20 +404,20 @@ def create_app(
         reported_cost: Optional[float] = None
         cost_source: Optional[str] = None
         while True:
-            if all(deployment.entry.id in excluded for deployment in groups[group]):
+            if all(candidate.entry.id in excluded for candidate in pool):
                 if deployment is not None:
-                    _log(deployment, user, group, body, 502, started, prompt_tokens, completion_tokens, stream, error, log_path)
+                    _log(deployment, user, group, body, 502, started, prompt_tokens, completion_tokens, stream, error, log_path, requested=requested, size=size)
                 return Response(
                     content=json.dumps(_error(error or "all deployments failed")),
                     status_code=502,
                     media_type="application/json",
                     headers=_header_value(deployment.entry) if deployment is not None else {},
                 )
-            deployment = await choose(group, excluded)
+            deployment = await choose(pool, excluded)
             try:
                 payload, user = _normalize_body(body, deployment.entry)
             except ValueError as exc:
-                _log(deployment, user, group, body, 400, started, None, None, stream, str(exc), log_path)
+                _log(deployment, user, group, body, 400, started, None, None, stream, str(exc), log_path, requested=requested, size=size)
                 return JSONResponse(_error(str(exc)), status_code=400)
             deployment.in_flight += 1
             deployment.users.append(user)
@@ -386,7 +452,7 @@ def create_app(
                             await context.__aexit__(None, None, None)
                             await client.aclose()
                             await release(deployment, user)
-                            _log(deployment, user, group, body, status, started, prompt_tokens, completion_tokens, stream, error, log_path)
+                            _log(deployment, user, group, body, status, started, prompt_tokens, completion_tokens, stream, error, log_path, requested=requested, size=size)
 
                     return StreamingResponse(chunks(), status_code=status, media_type=response_context.headers.get("content-type"), headers=_header_value(deployment.entry))
                 response = upstream
@@ -422,11 +488,11 @@ def create_app(
             finally:
                 if not stream and acquired and deployment is not None:
                     await release(deployment, user)
-                    _log(deployment, user, group, body, status, started, prompt_tokens, completion_tokens, stream, error, log_path, reported_cost, cost_source)
+                    _log(deployment, user, group, body, status, started, prompt_tokens, completion_tokens, stream, error, log_path, reported_cost, cost_source, requested=requested, size=size)
 
     @app.get("/v1/models")
     async def models() -> Any:
-        return {"object": "list", "data": [{"id": group, "object": "model", "owned_by": "frontdoor"} for group in sorted(groups)]}
+        return {"object": "list", "data": [{"id": name, "object": "model", "owned_by": "frontdoor"} for name in sorted(names)]}
 
     @app.get("/health")
     async def health() -> Any:
@@ -483,15 +549,15 @@ def create_app(
 
 def _deployment_json(deployment: RuntimeDeployment, *, include_users: bool = False) -> dict[str, Any]:
     routing = deployment.routing
-    value = {"id": deployment.entry.id, "group": routing.group, "order": routing.order, "max_parallel": routing.max_parallel, "in_flight": deployment.in_flight, "last_error": deployment.last_error, "last_error_at": deployment.last_error_at}
+    value = {"id": deployment.entry.id, "group": routing.group, "order": routing.order, "max_parallel": routing.max_parallel, "context_window": deployment.entry.context_window, "size_only": routing.size_only, "in_flight": deployment.in_flight, "last_error": deployment.last_error, "last_error_at": deployment.last_error_at}
     if include_users:
         value["users"] = list(deployment.users)
     return value
 
 
-def _log(deployment: RuntimeDeployment, user: Optional[str], group: str, body: dict[str, Any], status: Optional[int], started: float, prompt_tokens: Optional[int], completion_tokens: Optional[int], stream: bool, error: Optional[str], path: Path, reported_cost: Optional[float] = None, cost_source: Optional[str] = None) -> None:
+def _log(deployment: RuntimeDeployment, user: Optional[str], group: str, body: dict[str, Any], status: Optional[int], started: float, prompt_tokens: Optional[int], completion_tokens: Optional[int], stream: bool, error: Optional[str], path: Path, reported_cost: Optional[float] = None, cost_source: Optional[str] = None, requested: Optional[str] = None, size: Optional[int] = None) -> None:
     routing = deployment.routing
-    record: dict[str, Any] = {"ts": _iso_now(), "user": user, "group": group, "deployment": deployment.entry.id, "api_base": deployment.entry.base_url, "model": deployment.entry.model, "order": routing.order, "status": status, "latency_ms": int((time.monotonic() - started) * 1000), "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "stream": stream, "error": error}
+    record: dict[str, Any] = {"ts": _iso_now(), "user": user, "group": group, "deployment": deployment.entry.id, "api_base": deployment.entry.base_url, "model": deployment.entry.model, "order": routing.order, "status": status, "latency_ms": int((time.monotonic() - started) * 1000), "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "stream": stream, "error": error, "requested": requested, "size": size}
     if reported_cost is not None and cost_source is not None:
         record["reported_cost_usd"] = reported_cost
         record["reported_cost_source"] = cost_source

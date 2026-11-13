@@ -47,7 +47,12 @@ the schema can grow additively)::
         key_env: <ENV VAR>                  # optional; omitted = keyless
         key_file: <path>                    # optional bare-value credential file
         frontdoor: true                     # optional; base_url IS an llm-scripting-kit
-                                            #   front door and `model` names its group
+                                            #   front door and `model` is the NAME sent to it
+        frontdoor_group: <group>            # optional, frontdoor entries only; the routing
+                                            #   group `model` stands for. Omitted = `model` IS
+                                            #   the group. A sized name (qwen3.8-240k) maps to
+                                            #   its group here and its context_window is the
+                                            #   size the front door routes on.
         billing:                            # optional; transport entries only
           mode: unmetered                   # unmetered | provider-reported
           owner: self                       # optional; the user owns the hardware (see below)
@@ -55,6 +60,9 @@ the schema can grow additively)::
           group: <front-door model name>
           order: 1                          # lower tiers fill first
           max_parallel: <int>               # omitted = uncapped
+          size_only: <bool>                 # omitted = false; true = a tier the door uses only
+                                            #   for a request no ordinary tier can hold (never
+                                            #   as busy-spill; for a tier that costs a swap)
           effort_style: top-level           # top-level | ninfer | chat_template_kwargs | reasoning-object
                                             #   | unsupported; omitted = top-level
       <harness entry id>:
@@ -98,7 +106,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Mapping, Optional
+from typing import Dict, Mapping, Optional, Sequence
 
 from .effort import (
     EFFORT_STYLES,
@@ -206,6 +214,7 @@ class EndpointEntry:
     effort_style_declared: bool = False
     billing_owner: Optional[str] = None
     endpoint: Optional[str] = None
+    frontdoor_group: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -223,6 +232,9 @@ class RoutingConfig:
     # top-level | ninfer (top-level, high->xhigh) | chat_template_kwargs | reasoning-object | unsupported
     effort_style: Optional[str] = TOP_LEVEL
     effort_style_declared: bool = False
+    # A tier the front door uses only when no ordinary tier of the group can
+    # hold the request's size -- never as a busy-spill (see tiers_for_size).
+    size_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -369,7 +381,7 @@ def parse_routing(
     if not isinstance(value, dict):
         notes.append(f"{source}: entry '{entry_id}' has invalid 'routing'; ignored")
         return None
-    known = {"group", "order", "max_parallel", "effort_style"}
+    known = {"group", "order", "max_parallel", "effort_style", "size_only"}
     for key in value:
         if key not in known:
             notes.append(f"{source}: entry '{entry_id}' routing key '{key}' ignored")
@@ -389,6 +401,13 @@ def parse_routing(
             f"{source}: entry '{entry_id}' routing has invalid 'max_parallel'; treated as uncapped"
         )
         max_parallel = None
+    size_only = value.get("size_only", False)
+    if not isinstance(size_only, bool):
+        notes.append(
+            f"{source}: entry '{entry_id}' routing has invalid 'size_only' ({size_only!r}); "
+            "expected true or false; treated as false"
+        )
+        size_only = False
     declared = "effort_style" in value
     effort_style: Optional[str] = value.get("effort_style", TOP_LEVEL)
     if effort_style not in EFFORT_STYLES:
@@ -404,7 +423,35 @@ def parse_routing(
         max_parallel=max_parallel,
         effort_style=effort_style,
         effort_style_declared=declared,
+        size_only=size_only,
     )
+
+
+def parse_frontdoor_group(
+    raw: Mapping[str, object], *, frontdoor: bool, source: str, entry_id: str, notes: list[str]
+) -> Optional[str]:
+    """Parse the optional ``frontdoor_group`` of a front-door entry.
+
+    The key names the routing group the entry's ``model`` (the name sent to the
+    front door) stands for. An invalid value, or the key on an entry that is not
+    a front door, is noted and ignored; the entry is retained.
+    """
+    if "frontdoor_group" not in raw:
+        return None
+    value = raw["frontdoor_group"]
+    if not frontdoor:
+        notes.append(
+            f"{source}: entry '{entry_id}' frontdoor_group ignored; only a "
+            "'frontdoor: true' entry maps a name to a group"
+        )
+        return None
+    if not isinstance(value, str) or not value.strip():
+        notes.append(
+            f"{source}: entry '{entry_id}' has invalid 'frontdoor_group' ({value!r}); "
+            "expected a non-empty string; ignored"
+        )
+        return None
+    return value.strip()
 
 
 def parse_effort_style(
@@ -751,6 +798,9 @@ def load_endpoint_registry(
             effort_style, effort_style_declared = parse_effort_style(
                 raw, source=f"model-endpoints registry '{path}'", entry_id=key, notes=notes
             )
+            frontdoor = parse_frontdoor(
+                raw, source=f"model-endpoints registry '{path}'", entry_id=key, notes=notes
+            )
             entries[key] = EndpointEntry(
                 id=key,
                 base_url=_require_str(
@@ -786,8 +836,13 @@ def load_endpoint_registry(
                 routing=parse_routing(
                     raw, source=f"model-endpoints registry '{path}'", entry_id=key, notes=notes
                 ),
-                frontdoor=parse_frontdoor(
-                    raw, source=f"model-endpoints registry '{path}'", entry_id=key, notes=notes
+                frontdoor=frontdoor,
+                frontdoor_group=parse_frontdoor_group(
+                    raw,
+                    frontdoor=frontdoor,
+                    source=f"model-endpoints registry '{path}'",
+                    entry_id=key,
+                    notes=notes,
                 ),
                 billing_mode=parse_billing_mode(
                     raw, source=f"model-endpoints registry '{path}'", entry_id=key, notes=notes
@@ -842,18 +897,49 @@ def load_endpoint_registry(
     return EndpointRegistry(default_id=default_id, entries=entries, path=path, notes=notes)
 
 
+def frontdoor_group_of(entry: object) -> Optional[str]:
+    """The routing group a ``frontdoor: true`` entry stands for.
+
+    The entry's ``frontdoor_group`` when declared, else its ``model`` (a plain
+    group name). None for an entry that is not a front-door transport.
+    """
+    if not getattr(entry, "frontdoor", False) or getattr(entry, "kind", None) != TRANSPORT_KIND:
+        return None
+    declared = getattr(entry, "frontdoor_group", None)
+    return declared if declared else getattr(entry, "model", None)
+
+
+def tiers_for_size(tiers: Sequence[EndpointEntry], size: Optional[int]) -> list[EndpointEntry]:
+    """The tiers of one group that may serve a request of ``size`` tokens.
+
+    A tier whose ``context_window`` is below ``size`` is dropped (an unknown
+    window, or no ``size``, never drops a tier). A ``routing.size_only`` tier is
+    kept only when no ordinary tier remains, so a tier that costs a model swap is
+    chosen because the request is big, never because the others are busy.
+    Input order is preserved.
+    """
+    fitting = [
+        tier for tier in tiers
+        if size is None or tier.context_window is None or tier.context_window >= size
+    ]
+    ordinary = [tier for tier in fitting if tier.routing is None or not tier.routing.size_only]
+    return ordinary or fitting
+
+
 def frontdoor_group_members(entry: object, entries: Mapping[str, object]) -> list[str]:
     """The ids of the deployments a ``frontdoor: true`` entry routes to, in walk order.
 
-    A front-door entry's ``model`` names its routing group. Its members are the
-    transport entries in ``entries`` whose ``routing.group`` is that group, ordered
-    by ``(routing.order, id)`` -- the order the front door walks them. A front-door
-    entry is never a member (no nested expansion), so an entry that is not a
-    front door, or a group with no members, yields an empty list.
+    A front-door entry stands for a routing group (:func:`frontdoor_group_of`).
+    Its members are the transport entries in ``entries`` whose ``routing.group``
+    is that group, ordered by ``(routing.order, id)`` -- the order the front door
+    walks them -- and limited to the tiers the front door would use for the
+    entry's own ``context_window`` (:func:`tiers_for_size`). A front-door entry is
+    never a member (no nested expansion), so an entry that is not a front door,
+    or a group with no members, yields an empty list.
     """
-    if not getattr(entry, "frontdoor", False) or getattr(entry, "kind", None) != TRANSPORT_KIND:
+    group = frontdoor_group_of(entry)
+    if group is None:
         return []
-    group = getattr(entry, "model", None)
     own_id = getattr(entry, "id", None)
     members = []
     for candidate in entries.values():
@@ -868,6 +954,7 @@ def frontdoor_group_members(entry: object, entries: Mapping[str, object]) -> lis
             continue
         members.append(candidate)
     members.sort(key=lambda member: (member.routing.order, member.id))
+    members = tiers_for_size(members, getattr(entry, "context_window", None))
     return [member.id for member in members]
 
 
@@ -936,5 +1023,8 @@ __all__ = [
     "BILLING_MODES",
     "load_endpoint_registry",
     "frontdoor_group_members",
+    "frontdoor_group_of",
+    "parse_frontdoor_group",
+    "tiers_for_size",
     "resolve_registry_entry",
 ]

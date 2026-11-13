@@ -192,6 +192,17 @@ Machines that ran `llm-kit relay peer export` before 1.21 must run
 `llm-kit relay rotate-credentials`. The hub and its peers upgrade together:
 the mailbox moves to schema v2 and the peer export format moves to /2.
 
+## Front door: sized names
+
+A `frontdoor: true` registry entry may carry `frontdoor_group` (the routing group its `model`
+name stands for) and a `context_window`, the largest request a caller of that name may send.
+The front door routes that name only to tiers whose `context_window` holds it, answers HTTP 400
+when no tier does (naming the largest size the group holds), and lists the sized names in
+`/v1/models`. A plain group name keeps its meaning: with a front-door entry for it, that
+entry's window; without one, no size filter. A tier with `routing.size_only: true` is used only
+when no ordinary tier holds the size, never as busy-spill (for a tier that costs a model swap).
+Spill on a busy tier is immediate, as before. The access log records `requested` and `size`.
+
 ## Source
 
 The source lives in the katsoft-libs repository (`packages/katsoft-llm-kit/src/llm_kit`).
