@@ -13,7 +13,9 @@ from pathlib import Path
 import pytest
 
 import llm_kit.cli as cli
+from llm_kit.schema.formats import PROJECT_MODELS_LOCAL_V1, PROJECT_MODELS_V1, load_schema
 from llm_kit.registry import project_models as pm
+from llm_kit.schema.json_schema import validate
 from test_cli_harness import home, run, write  # noqa: F401 -- home is a fixture
 
 _REGISTRY = """\
@@ -113,6 +115,34 @@ def test_a_hand_edited_entry_equal_to_the_default_is_no_override(project):
     (project / LOCAL).write_text("version: 1\nselections:\n  draft: {model: luna, effort: high}\n")
     got = pm.read_resolved_models(project_root=str(project)).selections["draft"]
     assert got["source"] == "default" and got["effective"] == got["default"]
+
+
+# --- the format schemas ---------------------------------------------------------------
+
+
+def test_the_fixtures_and_the_stored_files_conform_to_the_format_schemas(project):
+    assert validate(load_schema(PROJECT_MODELS_V1), _DOC) == ()
+    local_schema = load_schema(PROJECT_MODELS_LOCAL_V1)
+    document = _local_doc(draft={"model": "luna", "effort": "low"}, art={"model": "alpha"})
+    assert validate(local_schema, document) == ()
+    _put(project, **document["selections"])
+    assert validate(local_schema, pm.parse_yaml_document((project / LOCAL).read_bytes())) == ()
+    assert pm.validate_portable_local_document(document, _DOC)["selections"] == \
+        pm.read_resolved_models(project_root=str(project)).local.selections
+    pm.set_local_override("extra", "luna", "low", project_root=str(project))
+    assert validate(local_schema, pm.parse_yaml_document((project / LOCAL).read_bytes())) == ()
+
+
+def test_resolve_models_layers_the_local_file_and_returns_the_result_types(project):
+    write_result = _put(project, draft={"model": "luna", "effort": "low"})
+    tracked = pm.read_project_models(project_root=str(project))
+    local = pm.read_local_overrides(tracked, project_root=str(project))
+    resolved = pm.resolve_models(tracked, local)
+    assert isinstance(write_result, pm.LocalWriteResult) and isinstance(local, pm.LocalOverrides)
+    assert isinstance(resolved, pm.ResolvedModels) and resolved == pm.read_resolved_models(project_root=str(project))
+    assert resolved.selections["draft"]["source"] == pm.SOURCE_OVERRIDE
+    checked = pm.validate_local_overrides(_local_doc(art={"model": "alpha"}), project_root=str(project))
+    assert isinstance(checked, pm.LocalValidation) and checked.selections == 1
 
 
 # --- writing ----------------------------------------------------------------------------

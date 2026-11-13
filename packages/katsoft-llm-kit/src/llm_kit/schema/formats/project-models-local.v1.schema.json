@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.project-models-local/v1",
+  "title": "llm-kit project model personal layer, version 1",
+  "description": "The personal layer beside the tracked file (default .llm-kit/models.local.yaml) after YAML parsing. Written in llm-scripting-kit.json-schema-subset/v1. It holds no catalog: each selection is checked against the tracked file's catalog with the reader rules of llm-kit.project-models/v1. Contract and shared cases: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "version": {"type": "integer", "const": 1},
+    "selections": {"type": "object", "additionalProperties": {"$ref": "#/$defs/selection"}}
+  },
+  "required": ["version"],
+  "additionalProperties": false,
+  "$defs": {
+    "text": {"type": "string", "minLength": 1},
+    "selection": {
+      "description": "A selection key's model (a tracked catalog id) and effort. An omitted effort and a null effort mean the same: no effort.",
+      "type": "object",
+      "properties": {
+        "model": {"$ref": "#/$defs/text"},
+        "effort": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/text"}]}
+      },
+      "required": ["model"],
+      "additionalProperties": false
+    }
+  }
+}

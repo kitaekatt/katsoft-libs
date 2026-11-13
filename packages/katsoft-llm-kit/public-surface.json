@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily.",
+  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0.",
   "package": "llm_kit",
   "current_version_file": ".claude-plugin/plugin.json",
   "covers": [
@@ -8,7 +8,9 @@
     "llm_kit.scaffold",
     "llm_kit.cli.run",
     "llm_kit.jobs.supervisor",
-    "llm_kit.graph"
+    "llm_kit.graph",
+    "llm_kit.registry.project_models",
+    "llm_kit.schema.formats"
   ],
   "entries": [
     {
@@ -2166,6 +2168,10 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.graph.loader.prompt_parts",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.graph.loader.prompt_slots",
       "status": "public"
     },
@@ -2255,6 +2261,18 @@
     },
     {
       "name": "llm_kit.graph.prompt.PromptError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.prompt.PromptFile",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.prompt.parse_prompt_file",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.prompt.read_prompt_file",
       "status": "public"
     },
     {
@@ -2651,6 +2669,226 @@
     },
     {
       "name": "llm_kit.graph.replay.replay_node",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.PROJECT_MODELS_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.PROJECT_MODELS_LOCAL_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.PROMPT_FILE_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.SCHEMA_FILES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.load_schema",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.SCHEMA",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.FILE_VERSION",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.DEFAULT_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.CODE_INVALID",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.CODE_STALE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.CODE_PATH",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.CODE_SYMLINK",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.CODE_MISSING",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.CODE_DEPENDENCY",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.LOCAL_SUFFIX",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.LAYER_TRACKED",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.LAYER_LOCAL",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.SOURCE_DEFAULT",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.SOURCE_OVERRIDE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.ProjectModelsError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.EndpointInfo",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.EffortMenuResolver",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.library_effort_menu_with_source",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.library_effort_menu",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.parse_json_document",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.parse_yaml_document",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.validate_document",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.validate_portable_document",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.render_yaml",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.digest",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.ProjectFile",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.resolve_project_file",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.ProjectModels",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.Validation",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.WriteResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.read_project_models",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.validate_project_models",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.write_project_models",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.local_file_name",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.resolve_local_file",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.validate_local_document",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.validate_portable_local_document",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.render_local_yaml",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.resolve_selections",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.LocalOverrides",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.ResolvedModels",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.read_local_overrides",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.resolve_models",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.read_resolved_models",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.LocalValidation",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.LocalWriteResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.validate_local_overrides",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.write_local_overrides",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.set_local_override",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.clear_local_override",
       "status": "public"
     }
   ]

@@ -1,0 +1,565 @@
+{
+  "format": "llm-kit.prompt-file/v1",
+  "description": "Shared cases for every reader of llm-kit prompt files. 'input' is 'text' (encode as UTF-8) or 'base64' (the exact bytes). Read the bytes as the format says. 'expect' is the parsed form {header, body, slots, sha256}, which conforms to the format's JSON Schema, or {error: 'invalid'} when the reader must refuse the file. Each 'render' entry fills the parsed file with 'slots' (and appends 'suffix' when present) and gives 'output', or 'error': 'slot' when the reader must refuse the values. The contract is docs/reference/llm-kit-formats.md.",
+  "schema": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/prompt-file.v1.schema.json",
+  "cases": [
+    {
+      "name": "no-marker",
+      "note": "A file without the marker line is all body.",
+      "input": {
+        "text": "Hi {{who}}"
+      },
+      "expect": {
+        "header": null,
+        "body": "Hi {{who}}",
+        "slots": [
+          "who"
+        ],
+        "sha256": "9bab5cb483f3852b033695348788b7867e7cfbe8b4f772183d7720b68e45da18"
+      },
+      "render": [
+        {
+          "slots": {
+            "who": "you"
+          },
+          "output": "Hi you"
+        }
+      ]
+    },
+    {
+      "name": "header-and-body",
+      "note": "The header is for people; its slot-like text is not a slot.",
+      "input": {
+        "text": "Notes for people about {{not_a_slot}}.\n---PROMPT---\nWrite {{kind}} about {{topic}}.\nAgain: {{kind}}.\n"
+      },
+      "expect": {
+        "header": "Notes for people about {{not_a_slot}}.",
+        "body": "Write {{kind}} about {{topic}}.\nAgain: {{kind}}.\n",
+        "slots": [
+          "kind",
+          "topic"
+        ],
+        "sha256": "adbb318c377079e9ae2147568028b7f91232fcdc21d01fe688a23e858e828923"
+      },
+      "render": [
+        {
+          "slots": {
+            "kind": "a poem",
+            "topic": "tea"
+          },
+          "output": "Write a poem about tea.\nAgain: a poem.\n"
+        },
+        {
+          "slots": {
+            "kind": "a",
+            "topic": "b",
+            "not_a_slot": "c"
+          },
+          "error": "slot"
+        }
+      ]
+    },
+    {
+      "name": "marker-on-first-line",
+      "note": "A marker on the first line gives an empty header.",
+      "input": {
+        "text": "---PROMPT---\nbody"
+      },
+      "expect": {
+        "header": "",
+        "body": "body",
+        "slots": [],
+        "sha256": "230d8358dc8e8890b4c58deeb62912ee2f20357ae92a5cc861b98e68fe31acb5"
+      }
+    },
+    {
+      "name": "marker-on-last-line-without-newline",
+      "note": "Nothing after the marker line is an empty body.",
+      "input": {
+        "text": "head\n---PROMPT---"
+      },
+      "expect": {
+        "header": "head",
+        "body": "",
+        "slots": [],
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "marker-on-last-line-with-newline",
+      "note": "The LF that ends the marker line is not part of the body.",
+      "input": {
+        "text": "head\n---PROMPT---\n"
+      },
+      "expect": {
+        "header": "head",
+        "body": "",
+        "slots": [],
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "name": "blank-lines-around-marker",
+      "note": "Only the LF before the marker and the LF after it are dropped.",
+      "input": {
+        "text": "head\n\n---PROMPT---\n\nbody\n"
+      },
+      "expect": {
+        "header": "head\n",
+        "body": "\nbody\n",
+        "slots": [],
+        "sha256": "3e8fd58dd19a3986cfca99a9cf81fd6955669ca02b3d1c0e1ae91fed6d8ef958"
+      }
+    },
+    {
+      "name": "marker-with-trailing-space-is-text",
+      "note": "The marker line is exactly ---PROMPT---.",
+      "input": {
+        "text": "head\n---PROMPT--- \nbody"
+      },
+      "expect": {
+        "header": null,
+        "body": "head\n---PROMPT--- \nbody",
+        "slots": [],
+        "sha256": "676e33febb5387933df7d531045346d49f2b894cf0de8b3c0682e8b7a5e7ba61"
+      }
+    },
+    {
+      "name": "marker-inside-a-line-is-text",
+      "note": "The marker must be the whole line.",
+      "input": {
+        "text": "x ---PROMPT---\n{{a}}"
+      },
+      "expect": {
+        "header": null,
+        "body": "x ---PROMPT---\n{{a}}",
+        "slots": [
+          "a"
+        ],
+        "sha256": "53632959939c85642dbd964117decb3b1e8b09139360324c8c9ffd25073dc458"
+      }
+    },
+    {
+      "name": "two-marker-lines",
+      "note": "A file has at most one marker line.",
+      "input": {
+        "text": "a\n---PROMPT---\nb\n---PROMPT---\nc"
+      },
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "two-marker-lines-with-crlf",
+      "note": "CRLF reads as LF before the marker search, so these are two marker lines.",
+      "input": {
+        "text": "a\r\n---PROMPT---\r\nb\n---PROMPT---\n"
+      },
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "crlf",
+      "note": "CRLF reads as LF in the header and the body.",
+      "input": {
+        "text": "head\r\n---PROMPT---\r\nline one {{x}}\r\nline two\r\n"
+      },
+      "expect": {
+        "header": "head",
+        "body": "line one {{x}}\nline two\n",
+        "slots": [
+          "x"
+        ],
+        "sha256": "52e5866bfc90c4c0452c7f78c0812c6c2268df9b6b219eac069e4ae1d737f84e"
+      },
+      "render": [
+        {
+          "slots": {
+            "x": "X"
+          },
+          "output": "line one X\nline two\n"
+        }
+      ]
+    },
+    {
+      "name": "lone-cr",
+      "note": "A lone CR reads as LF.",
+      "input": {
+        "text": "head\r---PROMPT---\rline one\rline two"
+      },
+      "expect": {
+        "header": "head",
+        "body": "line one\nline two",
+        "slots": [],
+        "sha256": "b6858b03a6cae635deeaeab09a74e598979b72c917cbfff0bb3fe2cd05111dbc"
+      }
+    },
+    {
+      "name": "mixed-newlines",
+      "note": "CRLF, CR and LF in one file all read as LF.",
+      "input": {
+        "text": "a\r\nb\rc\n"
+      },
+      "expect": {
+        "header": null,
+        "body": "a\nb\nc\n",
+        "slots": [],
+        "sha256": "880553fca8fcea94e325ee2cfb48e5a985cc797f39a14cc6d3cedecfeb2ae4d2"
+      }
+    },
+    {
+      "name": "cr-then-crlf",
+      "note": "CR followed by CRLF is two line ends.",
+      "input": {
+        "text": "a\r\r\nb"
+      },
+      "expect": {
+        "header": null,
+        "body": "a\n\nb",
+        "slots": [],
+        "sha256": "38022fd2b8dbc5cb3d2cee74e083edbf59e3d4e13d067ebcb5db633d4cff4d8c"
+      }
+    },
+    {
+      "name": "byte-order-mark",
+      "note": "One leading byte order mark is removed before the marker search.",
+      "input": {
+        "base64": "77u/LS0tUFJPTVBULS0tCmJvZHk="
+      },
+      "expect": {
+        "header": "",
+        "body": "body",
+        "slots": [],
+        "sha256": "230d8358dc8e8890b4c58deeb62912ee2f20357ae92a5cc861b98e68fe31acb5"
+      }
+    },
+    {
+      "name": "byte-order-mark-without-marker",
+      "note": "The removed byte order mark is not part of the body.",
+      "input": {
+        "base64": "77u/SGk="
+      },
+      "expect": {
+        "header": null,
+        "body": "Hi",
+        "slots": [],
+        "sha256": "3639efcd08abb273b1619e82e78c29a7df02c1051b1820e99fc395dcaa3326b8"
+      }
+    },
+    {
+      "name": "two-byte-order-marks",
+      "note": "Only one leading byte order mark is removed.",
+      "input": {
+        "base64": "77u/77u/SGk="
+      },
+      "expect": {
+        "header": null,
+        "body": "\ufeffHi",
+        "slots": [],
+        "sha256": "7169d3eccde6a49cc40d142c2196ccfc46c5deca049a00b92c677c7b72759feb"
+      }
+    },
+    {
+      "name": "byte-order-mark-later-is-text",
+      "note": "U+FEFF after the first character is text.",
+      "input": {
+        "text": "Hi\ufeff"
+      },
+      "expect": {
+        "header": null,
+        "body": "Hi\ufeff",
+        "slots": [],
+        "sha256": "1200295edd7118b7e423091fd9e0fe60cb721f945ce8548779dc51a4da135631"
+      }
+    },
+    {
+      "name": "malformed-utf-8",
+      "note": "Bytes that are not UTF-8 are refused.",
+      "input": {
+        "base64": "SGkg/w=="
+      },
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "overlong-utf-8",
+      "note": "An overlong encoding is not UTF-8.",
+      "input": {
+        "base64": "wK8="
+      },
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "utf-8-surrogate",
+      "note": "An encoded surrogate is not UTF-8.",
+      "input": {
+        "base64": "7aCA"
+      },
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "utf-16",
+      "note": "UTF-16 is not UTF-8.",
+      "input": {
+        "base64": "//5IAGkA"
+      },
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "empty-file",
+      "note": "An empty file is an empty body.",
+      "input": {
+        "text": ""
+      },
+      "expect": {
+        "header": null,
+        "body": "",
+        "slots": [],
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "render": [
+        {
+          "slots": {},
+          "output": ""
+        }
+      ]
+    },
+    {
+      "name": "slot-grammar",
+      "note": "A slot is {{name}} with name [a-z][a-z0-9_]*; any other brace text is literal.",
+      "input": {
+        "text": "{{a}} {{a1_b}} {{ spaced }} {{Upper}} {{1a}} {{_a}} {{a-b}} {single} {{\u00e9}} {{a\n}}"
+      },
+      "expect": {
+        "header": null,
+        "body": "{{a}} {{a1_b}} {{ spaced }} {{Upper}} {{1a}} {{_a}} {{a-b}} {single} {{\u00e9}} {{a\n}}",
+        "slots": [
+          "a",
+          "a1_b"
+        ],
+        "sha256": "3ff9fd526c33129d3b11152649ecade541938874f0827c06a79e3379beedc2b0"
+      },
+      "render": [
+        {
+          "slots": {
+            "a": "A",
+            "a1_b": "B"
+          },
+          "output": "A B {{ spaced }} {{Upper}} {{1a}} {{_a}} {{a-b}} {single} {{\u00e9}} {{a\n}}"
+        }
+      ]
+    },
+    {
+      "name": "triple-braces",
+      "note": "The scan is leftmost and does not overlap: {{{x}}} holds the slot x.",
+      "input": {
+        "text": "{{{x}}}"
+      },
+      "expect": {
+        "header": null,
+        "body": "{{{x}}}",
+        "slots": [
+          "x"
+        ],
+        "sha256": "bbc9dffd2d991a2e0ab2f2c60298d38156b3ee3f4a6ffa625d077a1832dcbd21"
+      },
+      "render": [
+        {
+          "slots": {
+            "x": "V"
+          },
+          "output": "{V}"
+        }
+      ]
+    },
+    {
+      "name": "slot-order-is-first-use",
+      "note": "Slots are listed once, in order of first use.",
+      "input": {
+        "text": "{{b}} {{a}} {{b}}"
+      },
+      "expect": {
+        "header": null,
+        "body": "{{b}} {{a}} {{b}}",
+        "slots": [
+          "b",
+          "a"
+        ],
+        "sha256": "568d5fd23ed8d709d39030a74f09248b786a8a96511e78e2c633e286b1808e7f"
+      },
+      "render": [
+        {
+          "slots": {
+            "a": "1",
+            "b": "2"
+          },
+          "output": "2 1 2"
+        }
+      ]
+    },
+    {
+      "name": "value-containing-a-slot",
+      "note": "Values are inserted in one pass and never scanned for slots.",
+      "input": {
+        "text": "{{a}} {{b}}"
+      },
+      "expect": {
+        "header": null,
+        "body": "{{a}} {{b}}",
+        "slots": [
+          "a",
+          "b"
+        ],
+        "sha256": "f053e33c19d48abf4118fa44999e60d1e6c78037057407c7f9fe8b948cbf8941"
+      },
+      "render": [
+        {
+          "slots": {
+            "a": "{{b}}",
+            "b": "B"
+          },
+          "output": "{{b}} B"
+        }
+      ]
+    },
+    {
+      "name": "values-and-suffix-keep-their-bytes",
+      "note": "Values and the suffix are inserted as written, CR included.",
+      "input": {
+        "text": "A {{a}}\n"
+      },
+      "expect": {
+        "header": null,
+        "body": "A {{a}}\n",
+        "slots": [
+          "a"
+        ],
+        "sha256": "6327e683debfac522c68675d2512f790fc579367bae7b921c171ab69a8098dd7"
+      },
+      "render": [
+        {
+          "slots": {
+            "a": "x\r\ny"
+          },
+          "suffix": "\r\nend",
+          "output": "A x\r\ny\n\r\nend"
+        }
+      ]
+    },
+    {
+      "name": "suffix-is-appended",
+      "note": "The suffix follows the filled body; it owns its leading newlines.",
+      "input": {
+        "text": "A{{x}}"
+      },
+      "expect": {
+        "header": null,
+        "body": "A{{x}}",
+        "slots": [
+          "x"
+        ],
+        "sha256": "83d4cbbc88b8d6936e389f8e6c0f24513cbdf7e7847253005f0451f127361708"
+      },
+      "render": [
+        {
+          "slots": {
+            "x": "B"
+          },
+          "suffix": "\n\nC",
+          "output": "AB\n\nC"
+        },
+        {
+          "slots": {
+            "x": "B"
+          },
+          "suffix": "",
+          "output": "AB"
+        }
+      ]
+    },
+    {
+      "name": "strict-values",
+      "note": "A slot without a value, a value without a slot, and a value that is not text are refused.",
+      "input": {
+        "text": "{{a}}"
+      },
+      "expect": {
+        "header": null,
+        "body": "{{a}}",
+        "slots": [
+          "a"
+        ],
+        "sha256": "ddaf367904d70ba6e3bfbf56aec4ef9927dce8fb0b27189f355654e636c35224"
+      },
+      "render": [
+        {
+          "slots": {},
+          "error": "slot"
+        },
+        {
+          "slots": {
+            "a": "x",
+            "b": "y"
+          },
+          "error": "slot"
+        },
+        {
+          "slots": {
+            "a": 3
+          },
+          "error": "slot"
+        },
+        {
+          "slots": {
+            "a": null
+          },
+          "error": "slot"
+        }
+      ]
+    },
+    {
+      "name": "non-ascii-body",
+      "note": "The hash covers the UTF-8 bytes of the body.",
+      "input": {
+        "text": "caf\u00e9 \ud83d\ude00 {{x}}"
+      },
+      "expect": {
+        "header": null,
+        "body": "caf\u00e9 \ud83d\ude00 {{x}}",
+        "slots": [
+          "x"
+        ],
+        "sha256": "1172db4fff65dcf46b12648e4cf97bab74118b1cb9ce9fce3c4f6c8a72c523e4"
+      },
+      "render": [
+        {
+          "slots": {
+            "x": "\u6771\u4eac"
+          },
+          "output": "caf\u00e9 \ud83d\ude00 \u6771\u4eac"
+        }
+      ]
+    },
+    {
+      "name": "control-characters-are-text",
+      "note": "NUL and other control characters are ordinary text.",
+      "input": {
+        "text": "a\u0000b\u0007c"
+      },
+      "expect": {
+        "header": null,
+        "body": "a\u0000b\u0007c",
+        "slots": [],
+        "sha256": "bc715055f66757fc58fa9712a1bf53b8a7cec69b9c0f2c766e1fc0b0e312f0ce"
+      }
+    }
+  ]
+}

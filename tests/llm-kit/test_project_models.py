@@ -15,7 +15,9 @@ from pathlib import Path
 
 import pytest
 
+from llm_kit.schema.formats import PROJECT_MODELS_V1, load_schema
 from llm_kit.registry import project_models as pm
+from llm_kit.schema.json_schema import validate
 from test_cli_harness import home, run, write  # noqa: F401 -- home is a fixture
 
 _REGISTRY = """\
@@ -112,6 +114,41 @@ def leftovers(root: Path) -> list[str]:
 def seed(root: Path, rel: str = DEFAULT_REL) -> bytes:
     pm.write_project_models(doc(), project_root=str(root), file=rel)
     return stored(root, rel)
+
+
+# --- the format schema (llm-kit.project-models/v1) ---------------------------
+
+
+def test_the_fixture_and_every_stored_file_conform_to_the_format_schema(project):
+    schema = load_schema(PROJECT_MODELS_V1)
+    assert validate(schema, _DOC) == ()
+    assert validate(schema, pm.parse_yaml_document(_CANONICAL.encode("utf-8"))) == ()
+    seed(project)
+    assert validate(schema, pm.parse_yaml_document(stored(project))) == ()
+    assert validate(schema, pm.read_project_models(project_root=str(project)).document) == ()
+    assert pm.validate_portable_document(_DOC) == pm.read_project_models(project_root=str(project)).document
+
+
+@pytest.mark.parametrize("name", ["unknown_top_key", "missing_label", "wrong_version", "selection_without_model",
+                                  "catalog_not_a_list", "unknown_row_key", "efforts_not_a_list"])
+def test_the_schema_refuses_the_structural_refusals(name):
+    build, _needle = REFUSALS[name]
+    assert validate(load_schema(PROJECT_MODELS_V1), build()) != ()
+
+
+def test_every_refusal_names_its_path(project):
+    for name, (build, _needle) in REFUSALS.items():
+        with pytest.raises(pm.ProjectModelsError) as caught:
+            pm.validate_project_models(build(), project_root=str(project))
+        assert str(caught.value).startswith(f"{caught.value.where}: ") and caught.value.where, name
+
+
+def test_the_result_types(project):
+    assert isinstance(pm.resolve_project_file(str(project)), pm.ProjectFile)
+    assert isinstance(pm.validate_project_models(doc(), project_root=str(project)), pm.Validation)
+    assert isinstance(pm.write_project_models(doc(), project_root=str(project)), pm.WriteResult)
+    menu_for: pm.EffortMenuResolver = pm.library_effort_menu
+    assert isinstance(pm.read_project_models(project_root=str(project), menu_for=menu_for), pm.ProjectModels)
 
 
 # --- order and canonical round trip -----------------------------------------

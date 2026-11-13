@@ -1,0 +1,2399 @@
+{
+  "format": "llm-kit.project-models/v1",
+  "description": "Shared cases for every reader of the llm-kit project model file and its personal layer. Each case has a tracked input and may have a local input. An input is 'lines' (join with LF and add one final LF), 'text' (encode as UTF-8) or 'base64' (the exact bytes). Read the tracked bytes as the format says and run portable validation; when the case has a local input, read it and run portable validation of the personal layer against the tracked document, then resolve the selections. 'expect' is one of: {document} (the normalized tracked document); {local, resolved} (the normalized personal layer and the resolved selections); {error: {layer, code, path}} (the first problem; 'schema', when present, says whether the layer's JSON Schema accepts or refuses the parsed data, which shows the reader rules the schema cannot state). A valid case's parsed data and normalized result conform to the schema. Compare JSON values; object key order does not count. The contract is docs/reference/llm-kit-formats.md.",
+  "schemas": {
+    "tracked": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/project-models.v1.schema.json",
+    "local": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/project-models-local.v1.schema.json"
+  },
+  "cases": [
+    {
+      "name": "minimal",
+      "note": "Only version is required; catalog and selections default to empty.",
+      "tracked": {
+        "lines": [
+          "version: 1"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [],
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "full-document",
+      "note": "Every field. Selections are keyed by any non-empty text; an omitted effort is null.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: fast",
+          "    label: Fast",
+          "    endpoint: api",
+          "    model: vendor/fast-1",
+          "    efforts: [low, high]",
+          "    max_output_tokens: 65536",
+          "    request_defaults:",
+          "      extras:",
+          "        provider: {sort: latency}",
+          "        temperature: 0.7",
+          "        stop: [\"\\n\\n\", END]",
+          "  - id: plain",
+          "    label: Plain",
+          "    endpoint: api",
+          "    model: vendor/plain-2",
+          "selections:",
+          "  draft.write: {model: fast, effort: high}",
+          "  draft.check: {model: plain}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "fast",
+              "label": "Fast",
+              "endpoint": "api",
+              "model": "vendor/fast-1",
+              "efforts": [
+                "low",
+                "high"
+              ],
+              "max_output_tokens": 65536,
+              "request_defaults": {
+                "extras": {
+                  "provider": {
+                    "sort": "latency"
+                  },
+                  "temperature": 0.7,
+                  "stop": [
+                    "\n\n",
+                    "END"
+                  ]
+                }
+              }
+            },
+            {
+              "id": "plain",
+              "label": "Plain",
+              "endpoint": "api",
+              "model": "vendor/plain-2"
+            }
+          ],
+          "selections": {
+            "draft.check": {
+              "model": "plain",
+              "effort": null
+            },
+            "draft.write": {
+              "model": "fast",
+              "effort": "high"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "omitted-versus-empty-efforts",
+      "note": "A row that omits efforts does not narrow the menu: portable validation accepts any non-empty effort (binding checks the library menu). A row with efforts [] has no effort: its selections must carry null. The normalized row keeps the difference (no efforts key versus []).",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: open",
+          "    label: Open",
+          "    endpoint: api",
+          "    model: vendor/open",
+          "  - id: fixed",
+          "    label: Fixed",
+          "    endpoint: api",
+          "    model: vendor/fixed",
+          "    efforts: []",
+          "selections:",
+          "  a: {model: open, effort: medium}",
+          "  b: {model: fixed}",
+          "  c: {model: fixed, effort: null}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "open",
+              "label": "Open",
+              "endpoint": "api",
+              "model": "vendor/open"
+            },
+            {
+              "id": "fixed",
+              "label": "Fixed",
+              "endpoint": "api",
+              "model": "vendor/fixed",
+              "efforts": []
+            }
+          ],
+          "selections": {
+            "a": {
+              "model": "open",
+              "effort": "medium"
+            },
+            "b": {
+              "model": "fixed",
+              "effort": null
+            },
+            "c": {
+              "model": "fixed",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "omitted-versus-null-effort",
+      "note": "An omitted effort, null, ~ and Null all mean no effort and normalize to null.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  one: {model: a}",
+          "  two: {model: a, effort: null}",
+          "  three: {model: a, effort: ~}",
+          "  four: {model: a, effort: Null}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a"
+            }
+          ],
+          "selections": {
+            "four": {
+              "model": "a",
+              "effort": null
+            },
+            "one": {
+              "model": "a",
+              "effort": null
+            },
+            "three": {
+              "model": "a",
+              "effort": null
+            },
+            "two": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "byte-order-mark",
+      "note": "A leading UTF-8 byte order mark is skipped.",
+      "tracked": {
+        "base64": "77u/dmVyc2lvbjogMQo="
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [],
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "crlf-line-ends",
+      "note": "CRLF line ends read as LF.",
+      "tracked": {
+        "text": "version: 1\r\ncatalog:\r\n  - id: a\r\n    label: A\r\n    endpoint: api\r\n    model: vendor/a\r\n"
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a"
+            }
+          ],
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "cr-line-ends",
+      "note": "Lone CR line ends read as LF (YAML 1.1 line breaks).",
+      "tracked": {
+        "text": "version: 1\rcatalog:\r  - id: a\r    label: A\r    endpoint: api\r    model: vendor/a\r"
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a"
+            }
+          ],
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "anchors-and-aliases",
+      "note": "An alias stands for a copy of its anchored value.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras:",
+          "        first: &pair [1, 2]",
+          "        second: *pair",
+          "selections:",
+          "  one: &pick {model: a, effort: low}",
+          "  two: *pick"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "request_defaults": {
+                "extras": {
+                  "first": [
+                    1,
+                    2
+                  ],
+                  "second": [
+                    1,
+                    2
+                  ]
+                }
+              }
+            }
+          ],
+          "selections": {
+            "one": {
+              "model": "a",
+              "effort": "low"
+            },
+            "two": {
+              "model": "a",
+              "effort": "low"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "yaml-1.1-integer-forms",
+      "note": "YAML 1.1 integers: 0x10000 is 65536, 0100 is octal 64, 65_536 is 65536, 1:30 is base 60 (90). 019 and 0o17 are not YAML 1.1 integers, so they are strings.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: hex",
+          "    label: Hex",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    max_output_tokens: 0x10000",
+          "  - id: octal",
+          "    label: Octal",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    max_output_tokens: 0100",
+          "  - id: grouped",
+          "    label: Grouped",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    max_output_tokens: 65_536",
+          "    request_defaults:",
+          "      extras: {sixty: 1:30, leading-zero: 019, octal-1-2: 0o17}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "hex",
+              "label": "Hex",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "max_output_tokens": 65536
+            },
+            {
+              "id": "octal",
+              "label": "Octal",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "max_output_tokens": 64
+            },
+            {
+              "id": "grouped",
+              "label": "Grouped",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "max_output_tokens": 65536,
+              "request_defaults": {
+                "extras": {
+                  "sixty": 90,
+                  "leading-zero": "019",
+                  "octal-1-2": "0o17"
+                }
+              }
+            }
+          ],
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "yaml-1.1-words",
+      "note": "y and n are strings (only yes/no/on/off/true/false are booleans); a quoted word stays a string; !!str keeps a date as text.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: !!str 2026-11-13",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {y: y, n: n, \"on\": \"off\", tilde: ~}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "2026-11-13",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "request_defaults": {
+                "extras": {
+                  "y": "y",
+                  "n": "n",
+                  "on": "off",
+                  "tilde": null
+                }
+              }
+            }
+          ],
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "yaml-1.1-float-forms",
+      "note": "YAML 1.1 floats need a dot, and an exponent needs a sign: 1.0e+3 is 1000.0, but 1.0e3 and 1e3 are strings.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras:",
+          "        a: 0.1",
+          "        b: 1.0e+3",
+          "        c: 1.0e3",
+          "        d: 1e3",
+          "        e: .5",
+          "        f: 1.5e-7"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "request_defaults": {
+                "extras": {
+                  "a": 0.1,
+                  "b": 1000.0,
+                  "c": "1.0e3",
+                  "d": "1e3",
+                  "e": 0.5,
+                  "f": 1.5e-07
+                }
+              }
+            }
+          ],
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "largest-exact-integers",
+      "note": "Integers up to 2**53 - 1 in magnitude are held exactly by every reader.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    max_output_tokens: 9007199254740991",
+          "    request_defaults:",
+          "      extras: {high: 9007199254740991, low: -9007199254740991}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "max_output_tokens": 9007199254740991,
+              "request_defaults": {
+                "extras": {
+                  "high": 9007199254740991,
+                  "low": -9007199254740991
+                }
+              }
+            }
+          ],
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "reserved-extras-are-binding",
+      "note": "Portable validation accepts any extras key. Binding refuses keys the call owns (model, messages, stream, api_key, reasoning_effort).",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {model: other, stream: true}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "request_defaults": {
+                "extras": {
+                  "model": "other",
+                  "stream": true
+                }
+              }
+            }
+          ],
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "unicode-text",
+      "note": "Text is Unicode; keys and values may hold any character.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: \"Caf\u00e9 \u6771\u4eac \ud83d\ude00\"",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  draft.\u00fcber: {model: a}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "Caf\u00e9 \u6771\u4eac \ud83d\ude00",
+              "endpoint": "api",
+              "model": "vendor/a"
+            }
+          ],
+          "selections": {
+            "draft.\u00fcber": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "comments-and-flow-style",
+      "note": "Comments are ignored; flow and block style read the same.",
+      "tracked": {
+        "lines": [
+          "# models",
+          "version: 1  # the format version",
+          "catalog: [{id: a, label: A, endpoint: api, model: vendor/a}]",
+          "selections: {k: {model: a}}  # one key"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a"
+            }
+          ],
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-catalog-and-selections",
+      "note": "Explicit empty values are the same as omitted ones.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog: []",
+          "selections: {}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [],
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "block-scalars",
+      "note": "Literal (|), folded (>) and strip (|-) block scalars follow YAML chomping rules.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras:",
+          "        literal: |",
+          "          one",
+          "          two",
+          "        folded: >",
+          "          one",
+          "          two",
+          "        stripped: |-",
+          "          kept"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "request_defaults": {
+                "extras": {
+                  "literal": "one\ntwo\n",
+                  "folded": "one two\n",
+                  "stripped": "kept"
+                }
+              }
+            }
+          ],
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "local-override-wins",
+      "note": "A local entry that differs from the tracked one replaces it whole.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: fast",
+          "    label: Fast",
+          "    endpoint: api",
+          "    model: vendor/fast",
+          "    efforts: [low, high]",
+          "  - id: plain",
+          "    label: Plain",
+          "    endpoint: api",
+          "    model: vendor/plain",
+          "selections:",
+          "  draft: {model: fast, effort: high}",
+          "  check: {model: plain, effort: null}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  draft: {model: fast, effort: low}"
+        ]
+      },
+      "expect": {
+        "local": {
+          "version": 1,
+          "selections": {
+            "draft": {
+              "model": "fast",
+              "effort": "low"
+            }
+          }
+        },
+        "resolved": {
+          "check": {
+            "effective": {
+              "model": "plain",
+              "effort": null
+            },
+            "default": {
+              "model": "plain",
+              "effort": null
+            },
+            "source": "default"
+          },
+          "draft": {
+            "effective": {
+              "model": "fast",
+              "effort": "low"
+            },
+            "default": {
+              "model": "fast",
+              "effort": "high"
+            },
+            "source": "override"
+          }
+        }
+      }
+    },
+    {
+      "name": "local-only-key",
+      "note": "A key only the local layer names is an override with no default.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: fast",
+          "    label: Fast",
+          "    endpoint: api",
+          "    model: vendor/fast",
+          "    efforts: [low, high]",
+          "  - id: plain",
+          "    label: Plain",
+          "    endpoint: api",
+          "    model: vendor/plain",
+          "selections:",
+          "  draft: {model: fast, effort: high}",
+          "  check: {model: plain, effort: null}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  extra.key: {model: plain}"
+        ]
+      },
+      "expect": {
+        "local": {
+          "version": 1,
+          "selections": {
+            "extra.key": {
+              "model": "plain",
+              "effort": null
+            }
+          }
+        },
+        "resolved": {
+          "check": {
+            "effective": {
+              "model": "plain",
+              "effort": null
+            },
+            "default": {
+              "model": "plain",
+              "effort": null
+            },
+            "source": "default"
+          },
+          "draft": {
+            "effective": {
+              "model": "fast",
+              "effort": "high"
+            },
+            "default": {
+              "model": "fast",
+              "effort": "high"
+            },
+            "source": "default"
+          },
+          "extra.key": {
+            "effective": {
+              "model": "plain",
+              "effort": null
+            },
+            "default": null,
+            "source": "override"
+          }
+        }
+      }
+    },
+    {
+      "name": "local-equal-override",
+      "note": "A local entry equal to the tracked one is no override: the source stays default.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: fast",
+          "    label: Fast",
+          "    endpoint: api",
+          "    model: vendor/fast",
+          "    efforts: [low, high]",
+          "  - id: plain",
+          "    label: Plain",
+          "    endpoint: api",
+          "    model: vendor/plain",
+          "selections:",
+          "  draft: {model: fast, effort: high}",
+          "  check: {model: plain, effort: null}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  draft: {model: fast, effort: high}"
+        ]
+      },
+      "expect": {
+        "local": {
+          "version": 1,
+          "selections": {
+            "draft": {
+              "model": "fast",
+              "effort": "high"
+            }
+          }
+        },
+        "resolved": {
+          "check": {
+            "effective": {
+              "model": "plain",
+              "effort": null
+            },
+            "default": {
+              "model": "plain",
+              "effort": null
+            },
+            "source": "default"
+          },
+          "draft": {
+            "effective": {
+              "model": "fast",
+              "effort": "high"
+            },
+            "default": {
+              "model": "fast",
+              "effort": "high"
+            },
+            "source": "default"
+          }
+        }
+      }
+    },
+    {
+      "name": "local-omitted-effort-equals-null",
+      "note": "An omitted effort equals a null effort, so this entry is no override.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: fast",
+          "    label: Fast",
+          "    endpoint: api",
+          "    model: vendor/fast",
+          "    efforts: [low, high]",
+          "  - id: plain",
+          "    label: Plain",
+          "    endpoint: api",
+          "    model: vendor/plain",
+          "selections:",
+          "  draft: {model: fast, effort: high}",
+          "  check: {model: plain, effort: null}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  check: {model: plain}"
+        ]
+      },
+      "expect": {
+        "local": {
+          "version": 1,
+          "selections": {
+            "check": {
+              "model": "plain",
+              "effort": null
+            }
+          }
+        },
+        "resolved": {
+          "check": {
+            "effective": {
+              "model": "plain",
+              "effort": null
+            },
+            "default": {
+              "model": "plain",
+              "effort": null
+            },
+            "source": "default"
+          },
+          "draft": {
+            "effective": {
+              "model": "fast",
+              "effort": "high"
+            },
+            "default": {
+              "model": "fast",
+              "effort": "high"
+            },
+            "source": "default"
+          }
+        }
+      }
+    },
+    {
+      "name": "local-empty",
+      "note": "A personal layer with no selections changes nothing.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: fast",
+          "    label: Fast",
+          "    endpoint: api",
+          "    model: vendor/fast",
+          "    efforts: [low, high]",
+          "  - id: plain",
+          "    label: Plain",
+          "    endpoint: api",
+          "    model: vendor/plain",
+          "selections:",
+          "  draft: {model: fast, effort: high}",
+          "  check: {model: plain, effort: null}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1"
+        ]
+      },
+      "expect": {
+        "local": {
+          "version": 1,
+          "selections": {}
+        },
+        "resolved": {
+          "check": {
+            "effective": {
+              "model": "plain",
+              "effort": null
+            },
+            "default": {
+              "model": "plain",
+              "effort": null
+            },
+            "source": "default"
+          },
+          "draft": {
+            "effective": {
+              "model": "fast",
+              "effort": "high"
+            },
+            "default": {
+              "model": "fast",
+              "effort": "high"
+            },
+            "source": "default"
+          }
+        }
+      }
+    },
+    {
+      "name": "local-unknown-model",
+      "note": "A local selection must name a tracked catalog id.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: fast",
+          "    label: Fast",
+          "    endpoint: api",
+          "    model: vendor/fast",
+          "    efforts: [low, high]",
+          "  - id: plain",
+          "    label: Plain",
+          "    endpoint: api",
+          "    model: vendor/plain",
+          "selections:",
+          "  draft: {model: fast, effort: high}",
+          "  check: {model: plain, effort: null}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  k: {model: ghost}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "local",
+          "code": "invalid",
+          "path": "selections['k'].model"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "local-with-catalog",
+      "note": "The personal layer holds no catalog.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: fast",
+          "    label: Fast",
+          "    endpoint: api",
+          "    model: vendor/fast",
+          "    efforts: [low, high]",
+          "  - id: plain",
+          "    label: Plain",
+          "    endpoint: api",
+          "    model: vendor/plain",
+          "selections:",
+          "  draft: {model: fast, effort: high}",
+          "  check: {model: plain, effort: null}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "catalog: []"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "local",
+          "code": "invalid",
+          "path": "document"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "local-missing-version",
+      "note": "The personal layer needs version 1.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: fast",
+          "    label: Fast",
+          "    endpoint: api",
+          "    model: vendor/fast",
+          "    efforts: [low, high]",
+          "  - id: plain",
+          "    label: Plain",
+          "    endpoint: api",
+          "    model: vendor/plain",
+          "selections:",
+          "  draft: {model: fast, effort: high}",
+          "  check: {model: plain, effort: null}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "selections: {}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "local",
+          "code": "invalid",
+          "path": "version"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "local-effort-not-declared",
+      "note": "A local effort must be in the tracked row's declared efforts.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: fast",
+          "    label: Fast",
+          "    endpoint: api",
+          "    model: vendor/fast",
+          "    efforts: [low, high]",
+          "  - id: plain",
+          "    label: Plain",
+          "    endpoint: api",
+          "    model: vendor/plain",
+          "selections:",
+          "  draft: {model: fast, effort: high}",
+          "  check: {model: plain, effort: null}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  k: {model: fast, effort: max}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "local",
+          "code": "invalid",
+          "path": "selections['k'].effort"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "local-boolean-effort",
+      "note": "YAML 1.1 reads off as false, which is not an effort.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: fast",
+          "    label: Fast",
+          "    endpoint: api",
+          "    model: vendor/fast",
+          "    efforts: [low, high]",
+          "  - id: plain",
+          "    label: Plain",
+          "    endpoint: api",
+          "    model: vendor/plain",
+          "selections:",
+          "  draft: {model: fast, effort: high}",
+          "  check: {model: plain, effort: null}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  k: {model: fast, effort: off}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "local",
+          "code": "invalid",
+          "path": "selections['k'].effort"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "yaml-1.1-on-is-true",
+      "note": "YAML 1.1 reads on as true; quote the word.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a, effort: on}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections['k'].effort"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "yaml-1.1-yes-in-efforts",
+      "note": "YAML 1.1 reads yes as true.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    efforts: [low, yes]"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].efforts[1]"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "yaml-1.1-off-as-selection-key",
+      "note": "YAML 1.1 reads the key off as false; a key must be text.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  off: {model: a}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections"
+        }
+      }
+    },
+    {
+      "name": "yaml-1.1-date-label",
+      "note": "YAML 1.1 reads 2026-11-13 as a date, which is not text.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: 2026-11-13",
+          "    endpoint: api",
+          "    model: vendor/a"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].label"
+        }
+      }
+    },
+    {
+      "name": "yaml-1.1-timestamp-in-extras",
+      "note": "A timestamp is not JSON data.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {since: 2026-11-13T10:00:00Z}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.since"
+        }
+      }
+    },
+    {
+      "name": "duplicate-top-level-key",
+      "note": "A duplicate key is refused, not resolved to the last value.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "version: 1"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "duplicate-selection-key",
+      "note": "A duplicate key is refused at any depth.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a}",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "duplicate-key-in-extras",
+      "note": "A duplicate key is refused inside free-form values too.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {x: 1, x: 2}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "merge-key",
+      "note": "Merge keys (<<) are refused; write the keys out.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras:",
+          "        base: &base {x: 1}",
+          "        copy:",
+          "          <<: *base",
+          "          y: 2"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "omap",
+      "note": "!!omap is not JSON data.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {order: !!omap [a: 1, b: 2]}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "pairs",
+      "note": "!!pairs is not JSON data.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {order: !!pairs [a: 1, a: 2]}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "set",
+      "note": "!!set is not JSON data.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {tags: !!set {a, b}}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.tags"
+        }
+      }
+    },
+    {
+      "name": "binary",
+      "note": "!!binary is not JSON data.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {blob: !!binary aGk=}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.blob"
+        }
+      }
+    },
+    {
+      "name": "alias-cycle",
+      "note": "A value that holds itself through an alias is refused at the alias.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: &self {loop: *self}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.loop"
+        }
+      }
+    },
+    {
+      "name": "integer-above-exact-range",
+      "note": "2**53 is outside the range every JSON reader holds exactly.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {seed: 9007199254740992}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.seed"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "integer-below-exact-range",
+      "note": "-(2**53) is outside the exact range.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {seed: -9007199254740992}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.seed"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "max-output-tokens-above-exact-range",
+      "note": "max_output_tokens is at most 2**53 - 1.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    max_output_tokens: 9007199254740992"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].max_output_tokens"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "max-output-tokens-decimal",
+      "note": "65536.0 is a decimal, not an integer, in the file (a JSON reader may see 65536).",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    max_output_tokens: 65536.0"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].max_output_tokens"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "max-output-tokens-zero",
+      "note": "max_output_tokens is at least 1.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    max_output_tokens: 0"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].max_output_tokens"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "infinity",
+      "note": ".inf is not a JSON number.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {t: .inf}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.t"
+        }
+      }
+    },
+    {
+      "name": "overflow-to-infinity",
+      "note": "1.0e+400 overflows to infinity, which is not a JSON number.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {t: 1.0e+400}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.t"
+        }
+      }
+    },
+    {
+      "name": "not-a-number",
+      "note": ".nan is not a JSON number.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {t: .nan}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.t"
+        }
+      }
+    },
+    {
+      "name": "malformed-utf-8",
+      "note": "Bytes that are not UTF-8 are refused.",
+      "tracked": {
+        "base64": "dmVyc2lvbjogMQpjYXRhbG9nOgogIC0gaWQ6IP8K"
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "utf-8-surrogate",
+      "note": "An encoded surrogate (ED A0 80) is not UTF-8.",
+      "tracked": {
+        "base64": "dmVyc2lvbjogMQpjYXRhbG9nOgogIC0gaWQ6IO2ggAo="
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "utf-16",
+      "note": "UTF-16 is not UTF-8.",
+      "tracked": {
+        "base64": "//52AGUAcgBzAGkAbwBuADoAIAAxAAoA"
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "control-character",
+      "note": "YAML refuses control characters such as U+0007 in the text.",
+      "tracked": {
+        "text": "version: 1\ncatalog:\n  - id: a\u0007b\n    label: A\n    endpoint: api\n    model: vendor/a\n"
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "empty-file",
+      "note": "An empty file is refused.",
+      "tracked": {
+        "text": ""
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "comment-only-file",
+      "note": "A file with no document is refused.",
+      "tracked": {
+        "lines": [
+          "# nothing here"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "two-documents",
+      "note": "The file holds one YAML document.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "---",
+          "version: 1"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "not-yaml",
+      "note": "Text that is not YAML is refused.",
+      "tracked": {
+        "lines": [
+          "version: [1"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": ""
+        }
+      }
+    },
+    {
+      "name": "top-level-list",
+      "note": "The document is a mapping.",
+      "tracked": {
+        "lines": [
+          "- 1"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "document"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "unknown-top-level-key",
+      "note": "Only version, catalog and selections are allowed.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "models: []"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "document"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "missing-version",
+      "note": "version is required.",
+      "tracked": {
+        "lines": [
+          "catalog: []"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "version"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "version-2",
+      "note": "version must be 1.",
+      "tracked": {
+        "lines": [
+          "version: 2"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "version"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "version-string",
+      "note": "version is an integer, not text.",
+      "tracked": {
+        "lines": [
+          "version: \"1\""
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "version"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "version-decimal",
+      "note": "version is the integer 1, not the decimal 1.0.",
+      "tracked": {
+        "lines": [
+          "version: 1.0"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "version"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "version-true",
+      "note": "true is not 1.",
+      "tracked": {
+        "lines": [
+          "version: true"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "version"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "catalog-null",
+      "note": "catalog is a list.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "row-unknown-key",
+      "note": "A row holds only id, label, endpoint, model, efforts, max_output_tokens and request_defaults.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    base_url: http://h.invalid"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0]"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "row-missing-label",
+      "note": "id, label, endpoint and model are required.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    endpoint: api",
+          "    model: vendor/a"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0]"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "duplicate-id",
+      "note": "Catalog ids are unique.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[1].id"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "label-with-outer-space",
+      "note": "Text has no leading or trailing whitespace.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: \" A\"",
+          "    endpoint: api",
+          "    model: vendor/a"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].label"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "empty-model",
+      "note": "Text is not empty.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: \"\""
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].model"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "efforts-not-a-list",
+      "note": "efforts is a list.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    efforts: low"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].efforts"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "efforts-repeat",
+      "note": "An efforts list has no repeats.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    efforts: [low, low]"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].efforts[1]"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "efforts-empty-word",
+      "note": "An effort is non-empty text.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    efforts: [\"\"]"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].efforts[0]"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "request-defaults-unknown-key",
+      "note": "request_defaults holds only extras.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults: {headers: {}}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "extras-not-a-mapping",
+      "note": "extras is a mapping.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults: {extras: [1]}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "extras-integer-key",
+      "note": "A mapping key is text.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults: {extras: {1: x}}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras"
+        }
+      }
+    },
+    {
+      "name": "selections-not-a-mapping",
+      "note": "selections is a mapping.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "selections: []"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "selection-null",
+      "note": "A selection is a mapping.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  k:"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections['k']"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "selection-unknown-model",
+      "note": "A selection names a catalog id.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: ghost}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections['k'].model"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "selection-missing-model",
+      "note": "model is required.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {effort: low}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections['k']"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "selection-unknown-key",
+      "note": "A selection holds only model and effort.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a, label: x}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections['k']"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "effort-not-in-declared-efforts",
+      "note": "When the row declares efforts, the effort is one of them.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    efforts: [low, high]",
+          "selections:",
+          "  k: {model: a, effort: max}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections['k'].effort"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "effort-on-row-with-empty-efforts",
+      "note": "A row with efforts [] takes no effort.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    efforts: []",
+          "selections:",
+          "  k: {model: a, effort: low}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections['k'].effort"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "empty-effort",
+      "note": "An effort is non-empty text or null.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a, effort: \"\"}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections['k'].effort"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "selection-key-with-outer-space",
+      "note": "A selection key has no leading or trailing whitespace.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  \" k\": {model: a}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections[' k']"
+        },
+        "schema": "accepts"
+      }
+    }
+  ]
+}

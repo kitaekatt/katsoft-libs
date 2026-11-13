@@ -58,6 +58,24 @@ meant to be untracked. Its entries override the tracked selections per key; see
 ``write`` is optimistic: ``if_match`` compares the digest and the replacement
 follows, with no lock between the two. A concurrent writer in that window wins
 silently; callers that need more serialize their own writes.
+
+Portable validation and binding. Validation has two parts. The PORTABLE part
+checks what any reader in any language can check from the file alone: the
+structure, the JSON values, and the references (a selection names a catalogue
+id; an effort is in the row's declared ``efforts``). The BINDING part checks
+what only this machine knows: that each ``endpoint`` resolves in the endpoint
+registry, that each effort is in the library menu for that endpoint and model,
+and that ``extras`` holds no reserved key. :func:`validate_portable_document`
+and :func:`validate_portable_local_document` run the portable part only;
+:func:`validate_document` and every read and write run both. The shared format
+rules, the JSON Schemas (``llm_kit.schema.formats``) and the cases every reader runs
+are in ``docs/reference/llm-kit-formats.md``.
+
+The YAML reader (:func:`parse_yaml_document`) reads YAML 1.1 as PyYAML's safe
+loader resolves it, and refuses duplicate keys, merge keys (``<<``) and the
+``!!omap`` and ``!!pairs`` types. Anchors and aliases are allowed; an alias
+cycle is refused. Every value must be JSON data, and an integer must be in the
+range -(2**53 - 1) to 2**53 - 1, which every JSON reader holds exactly.
 """
 from __future__ import annotations
 
@@ -82,11 +100,34 @@ from .model_profiles import (
     route_of_base_url,
 )
 
+__all__ = [
+    "SCHEMA", "FILE_VERSION", "DEFAULT_FILE",
+    "CODE_INVALID", "CODE_STALE", "CODE_PATH", "CODE_SYMLINK", "CODE_MISSING", "CODE_DEPENDENCY",
+    "LOCAL_SUFFIX", "LAYER_TRACKED", "LAYER_LOCAL", "SOURCE_DEFAULT", "SOURCE_OVERRIDE",
+    "ProjectModelsError", "EndpointInfo", "EffortMenuResolver",
+    "library_effort_menu_with_source", "library_effort_menu",
+    "parse_json_document", "parse_yaml_document",
+    "validate_document", "validate_portable_document",
+    "render_yaml", "digest",
+    "ProjectFile", "resolve_project_file",
+    "ProjectModels", "Validation", "WriteResult",
+    "read_project_models", "validate_project_models", "write_project_models",
+    "local_file_name", "resolve_local_file",
+    "validate_local_document", "validate_portable_local_document", "render_local_yaml",
+    "resolve_selections", "LocalOverrides", "ResolvedModels",
+    "read_local_overrides", "resolve_models", "read_resolved_models",
+    "LocalValidation", "LocalWriteResult",
+    "validate_local_overrides", "write_local_overrides", "set_local_override", "clear_local_override",
+]
+
+#: The format id of the project model file (and the ``schema`` field of every result's JSON).
 SCHEMA = "llm-kit.project-models/v1"
+#: The ``version`` value a file must hold.
 FILE_VERSION = 1
+#: The project-relative file read and written when a call names no ``file``.
 DEFAULT_FILE = ".llm-kit/models.yaml"
 
-# ProjectModelsError.code values.
+#: ProjectModelsError.code values: see :class:`ProjectModelsError`.
 CODE_INVALID = "invalid"
 CODE_STALE = "stale"
 CODE_PATH = "path"
@@ -94,10 +135,12 @@ CODE_SYMLINK = "symlink"
 CODE_MISSING = "missing"
 CODE_DEPENDENCY = "dependency"
 
-# The personal layer: ``<file-stem>.local.yaml`` beside the project file.
+#: The personal layer: ``<file-stem>.local.yaml`` beside the project file.
 LOCAL_SUFFIX = ".local.yaml"
+#: The ``layer`` values: the tracked file and the personal layer.
 LAYER_TRACKED = "tracked"
 LAYER_LOCAL = "local"
+#: The ``source`` values of a resolved selection (:func:`resolve_selections`).
 SOURCE_DEFAULT = "default"
 SOURCE_OVERRIDE = "override"
 
@@ -112,6 +155,8 @@ _DEFAULTS_KEYS = ("extras",)
 # call itself owns.
 _RESERVED_EXTRAS = frozenset({"model", "messages", "stream", "api_key", EFFORT_KEY})
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+# The largest integer every JSON reader holds exactly (an IEEE 754 double).
+_MAX_INTEGER = 2**53 - 1
 
 
 class ProjectModelsError(ValueError):
@@ -122,18 +167,28 @@ class ProjectModelsError(ValueError):
     escapes the project root), ``symlink`` (a path component is a symlink),
     ``missing`` (the file or root does not exist), ``dependency`` (PyYAML is
     not installed).
+
+    ``where`` is the path of the first problem in the document, such as
+    ``catalog[1].efforts[0]`` or ``selections['draft'].effort``; it is ``""``
+    when the problem is the file as a whole (not UTF-8, not YAML, a duplicate
+    key) or not in the document.
     """
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, where: str = "") -> None:
         super().__init__(message)
         self.code = code
+        self.where = where
 
     def to_json(self) -> dict[str, str]:
         return {"kind": "project-models", "code": self.code, "message": str(self)}
 
 
-def _invalid(where: str, message: str) -> ProjectModelsError:
-    return ProjectModelsError(CODE_INVALID, f"{where}: {message}" if where else message)
+def _invalid(where: str, message: str, *, path: Optional[str] = None) -> ProjectModelsError:
+    """An ``invalid`` error; ``path`` is the document path when it differs from the ``where`` text."""
+    return ProjectModelsError(
+        CODE_INVALID, f"{where}: {message}" if where else message,
+        where=where if path is None else path,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +214,8 @@ class EndpointInfo:
     route: Optional[str] = None
 
 
+#: A function ``(endpoint, model) -> menu`` that returns the ordered effort menu
+#: the binding check accepts; :func:`library_effort_menu` is the default.
 EffortMenuResolver = Callable[[EndpointInfo, str], "tuple[str, ...]"]
 
 
@@ -296,7 +353,11 @@ def _json_constant(token: str) -> Any:
 
 
 def parse_json_document(text: str) -> Any:
-    """Parse JSON input strictly: no duplicate keys, no NaN or Infinity."""
+    """Parse JSON ``text`` strictly: no duplicate keys, no NaN or Infinity.
+
+    Returns the parsed value. Raises :class:`ProjectModelsError` (``invalid``)
+    for text that is not JSON, a duplicate key, NaN or Infinity.
+    """
     try:
         return json.loads(text, object_pairs_hook=_json_pairs, parse_constant=_json_constant)
     except json.JSONDecodeError as exc:
@@ -329,6 +390,24 @@ def _yaml_types() -> "tuple[type, type, type]":
                 )
             return mapping
 
+        def flatten_mapping(self, node: Any) -> None:
+            for key_node, _value_node in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    raise yaml.constructor.ConstructorError(
+                        None, None, "merge keys (<<) are not supported; write the keys out",
+                        key_node.start_mark,
+                    )
+            super().flatten_mapping(node)
+
+    def refuse(loader: Any, node: Any) -> Any:
+        raise yaml.constructor.ConstructorError(
+            None, None, f"{node.tag} is not JSON data", node.start_mark
+        )
+
+    # PyYAML builds these as lists of tuples, which would pass as nested lists.
+    Loader.add_constructor("tag:yaml.org,2002:omap", refuse)
+    Loader.add_constructor("tag:yaml.org,2002:pairs", refuse)
+
     class FlowList(list):
         """A list rendered in flow style (``[a, b]``)."""
 
@@ -349,7 +428,16 @@ def _yaml_types() -> "tuple[type, type, type]":
 
 
 def parse_yaml_document(data: bytes) -> Any:
-    """Parse the stored file's bytes: one UTF-8 YAML document, duplicate keys refused."""
+    """Parse the stored file's bytes: one UTF-8 YAML document, duplicate keys refused.
+
+    The bytes must be UTF-8; a leading byte order mark is skipped. YAML 1.1
+    resolves plain words as PyYAML's safe loader does (``on`` is true, ``0x10``
+    is 16). Merge keys (``<<``), ``!!omap`` and ``!!pairs`` are refused. Returns
+    the document as Python data; raises :class:`ProjectModelsError`
+    (``invalid``, ``where`` ``""``) for bytes that are not UTF-8, text that is
+    not one YAML document, and an empty document, and (``dependency``) when
+    PyYAML is not installed.
+    """
     yaml = _import_yaml()
     loader = _yaml_types()[0]
     try:
@@ -370,11 +458,11 @@ def parse_yaml_document(data: bytes) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _text(value: Any, where: str) -> str:
+def _text(value: Any, where: str, *, path: Optional[str] = None) -> str:
     if not isinstance(value, str):
-        raise _invalid(where, f"must be a string, not {type(value).__name__}")
+        raise _invalid(where, f"must be a string, not {type(value).__name__}", path=path)
     if not value or value != value.strip():
-        raise _invalid(where, "must be non-empty with no leading or trailing whitespace")
+        raise _invalid(where, "must be non-empty with no leading or trailing whitespace", path=path)
     return value
 
 
@@ -390,33 +478,48 @@ def _mapping(value: Any, where: str, allowed: "tuple[str, ...]") -> Mapping:
     return value
 
 
-def _json_value(value: Any, where: str) -> Any:
-    """A deep, key-sorted copy of a JSON value; anything else is refused."""
+def _json_value(value: Any, where: str, _open: "frozenset[int]" = frozenset()) -> Any:
+    """A deep, key-sorted copy of a JSON value; anything else is refused.
+
+    ``_open`` holds the containers on the path to ``value``: a container that
+    holds itself (a YAML alias cycle) is refused instead of recursing forever.
+    """
     if value is None or isinstance(value, (bool, str)):
         return value
     if isinstance(value, int):
+        if abs(value) > _MAX_INTEGER:
+            raise _invalid(
+                where, f"must be an integer from -{_MAX_INTEGER} to {_MAX_INTEGER}, not {value}"
+            )
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
             raise _invalid(where, "must be a finite number")
         return value
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item, f"{where}[{i}]") for i, item in enumerate(value)]
-    if isinstance(value, Mapping):
+    if isinstance(value, (list, tuple, Mapping)):
+        if id(value) in _open:
+            raise _invalid(where, "holds itself (a YAML alias cycle)")
+        inner = _open | {id(value)}
+        if not isinstance(value, Mapping):
+            return [_json_value(item, f"{where}[{i}]", inner) for i, item in enumerate(value)]
         out = {}
         for key in sorted(value, key=lambda k: (not isinstance(k, str), str(k))):
             if not isinstance(key, str):
                 raise _invalid(where, f"key {key!r} must be a string")
-            out[key] = _json_value(value[key], f"{where}.{key}")
+            out[key] = _json_value(value[key], f"{where}.{key}", inner)
         return out
     raise _invalid(where, f"must be JSON data, not {type(value).__name__}")
 
 
-def _request_defaults(value: Any, where: str, *, reasoning_reserved: bool = False) -> dict:
+def _request_defaults(
+    value: Any, where: str, *, bound: bool = True, reasoning_reserved: bool = False
+) -> dict:
     """Validate a row's request defaults.
 
-    ``reasoning_reserved`` is set for a ``reasoning-object`` endpoint only: there a
-    raw ``reasoning`` extra would override the selected effort and bypass the menu.
+    ``bound`` (binding) refuses the reserved extras; portable validation passes
+    False. ``reasoning_reserved`` is set for a ``reasoning-object`` endpoint only:
+    there a raw ``reasoning`` extra would override the selected effort and bypass
+    the menu.
     """
     defaults = _mapping(value, where, _DEFAULTS_KEYS)
     out: dict = {}
@@ -425,6 +528,9 @@ def _request_defaults(value: Any, where: str, *, reasoning_reserved: bool = Fals
         if not isinstance(extras, Mapping):
             raise _invalid(f"{where}.extras", "must be a mapping")
         copy = _json_value(extras, f"{where}.extras")
+        if not bound:
+            out["extras"] = copy
+            return out
         for key in copy:
             if key in _RESERVED_EXTRAS or (reasoning_reserved and key == REASONING_KEY):
                 raise _invalid(
@@ -441,15 +547,19 @@ def _request_defaults(value: Any, where: str, *, reasoning_reserved: bool = Fals
 
 
 def _max_output_tokens(value: Any, where: str, row_id: str, model: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= _MAX_INTEGER:
         raise _invalid(
             where,
-            f"must be a positive integer, not {value!r} (row {row_id!r}, model {model!r})",
+            f"must be a positive integer up to {_MAX_INTEGER}, not {value!r} "
+            f"(row {row_id!r}, model {model!r})",
         )
     return value
 
 
-def _efforts(value: Any, where: str, menu: "tuple[str, ...]", endpoint: str, model: str) -> list[str]:
+def _efforts(
+    value: Any, where: str, menu: "Optional[tuple[str, ...]]", endpoint: str, model: str
+) -> list[str]:
+    """A row's declared efforts; ``menu`` None (portable) checks only strings and repeats."""
     if not isinstance(value, (list, tuple)):
         raise _invalid(where, f"must be a list, not {value!r} (an empty list declares no effort)")
     out: list[str] = []
@@ -461,6 +571,11 @@ def _efforts(value: Any, where: str, menu: "tuple[str, ...]", endpoint: str, mod
                 item_where,
                 f"must be a non-empty string, not {item!r} (YAML reads on/off/yes/no as booleans; quote the word)",
             )
+        if menu is None:
+            if item in out:
+                raise _invalid(item_where, f"{item!r} repeats")
+            out.append(item)
+            continue
         if not menu:
             raise _invalid(
                 item_where,
@@ -479,13 +594,17 @@ def _efforts(value: Any, where: str, menu: "tuple[str, ...]", endpoint: str, mod
 
 
 def _validate_catalog(
-    catalog_in: Any, endpoints: "_Endpoints", menu_of: EffortMenuResolver
-) -> "tuple[list[dict], dict[str, tuple[str, ...]], dict[str, Optional[list[str]]]]":
-    """``(rows, menus, efforts_of)``: the normalized catalogue and each row's library menu and declared efforts."""
+    catalog_in: Any, endpoints: "Optional[_Endpoints]", menu_of: Optional[EffortMenuResolver]
+) -> "tuple[list[dict], dict[str, Optional[tuple[str, ...]]], dict[str, Optional[list[str]]]]":
+    """``(rows, menus, efforts_of)``: the normalized catalogue and each row's library menu and declared efforts.
+
+    ``endpoints`` None is portable validation: no endpoint is resolved, every
+    menu is None and no extra is reserved.
+    """
     if not isinstance(catalog_in, (list, tuple)):
         raise _invalid("catalog", f"must be a list, not {type(catalog_in).__name__}")
     rows: list[dict] = []
-    menus: dict[str, "tuple[str, ...]"] = {}
+    menus: dict[str, "Optional[tuple[str, ...]]"] = {}
     efforts_of: dict[str, Optional[list[str]]] = {}
     for i, raw in enumerate(catalog_in):
         where = f"catalog[{i}]"
@@ -499,13 +618,16 @@ def _validate_catalog(
         label = _text(row["label"], f"{where}.label")
         endpoint = _text(row["endpoint"], f"{where}.endpoint")
         model = _text(row["model"], f"{where}.model")
-        info = endpoints.info(endpoint)
-        if info is None:
-            raise _invalid(
-                f"{where}.endpoint",
-                f"{endpoint!r} resolves to no registry endpoint (known: {', '.join(endpoints.known()) or '<none>'})",
-            )
-        menu = tuple(menu_of(info, model))
+        info: Optional[EndpointInfo] = None
+        menu: "Optional[tuple[str, ...]]" = None
+        if endpoints is not None:
+            info = endpoints.info(endpoint)
+            if info is None:
+                raise _invalid(
+                    f"{where}.endpoint",
+                    f"{endpoint!r} resolves to no registry endpoint (known: {', '.join(endpoints.known()) or '<none>'})",
+                )
+            menu = tuple((menu_of or library_effort_menu)(info, model))
         out: dict = {"id": row_id, "label": label, "endpoint": endpoint, "model": model}
         efforts: Optional[list[str]] = None
         if "efforts" in row:
@@ -519,7 +641,8 @@ def _validate_catalog(
             out["request_defaults"] = _request_defaults(
                 row["request_defaults"],
                 f"{where}.request_defaults",
-                reasoning_reserved=info.effort_style == REASONING_OBJECT,
+                bound=info is not None,
+                reasoning_reserved=info is not None and info.effort_style == REASONING_OBJECT,
             )
         menus[row_id] = menu
         efforts_of[row_id] = efforts
@@ -529,10 +652,14 @@ def _validate_catalog(
 
 def _validate_selections(
     selections_in: Any,
-    menus: "Mapping[str, tuple[str, ...]]",
+    menus: "Mapping[str, Optional[tuple[str, ...]]]",
     efforts_of: "Mapping[str, Optional[list[str]]]",
 ) -> "dict[str, dict]":
-    """The key-sorted normalized selections; each must name a catalog id and an accepted effort."""
+    """The key-sorted normalized selections; each must name a catalog id and an accepted effort.
+
+    The accepted efforts are the row's declared ``efforts``; a row that declares
+    none accepts its library menu, or (portable, menu None) any non-empty string.
+    """
     if not isinstance(selections_in, Mapping):
         raise _invalid("selections", f"must be a mapping, not {type(selections_in).__name__}")
     selections: dict[str, dict] = {}
@@ -540,7 +667,7 @@ def _validate_selections(
         where = f"selections[{key!r}]" if isinstance(key, str) else "selections"
         if not isinstance(key, str):
             raise _invalid(where, f"key {key!r} must be a string")
-        _text(key, f"selections key {key!r}")
+        _text(key, f"selections key {key!r}", path=where)
         picked = _mapping(selections_in[key], where, _SELECTION_KEYS)
         if "model" not in picked:
             raise _invalid(where, "'model' is required")
@@ -555,8 +682,9 @@ def _validate_selections(
                     f"must be a non-empty string or null, not {effort!r} "
                     "(YAML reads on/off/yes/no as booleans; quote the word)",
                 )
-            allowed = efforts_of[target] if efforts_of[target] is not None else list(menus[target])
-            if effort not in allowed:
+            declared, menu = efforts_of[target], menus[target]
+            allowed = declared if declared is not None else (None if menu is None else list(menu))
+            if allowed is not None and effort not in allowed:
                 raise _invalid(
                     f"{where}.effort",
                     f"{effort!r} is not accepted for {target!r} (accepted: {list(allowed)})",
@@ -578,15 +706,40 @@ def validate_document(
     ``menu_for`` replaces :func:`library_effort_menu` (the exact-model seam).
     """
     _import_yaml()  # the registry and the canonical form both need it: name the extra first
-    menu_of = menu_for or library_effort_menu
-    top = _mapping(data, "document", _TOP_KEYS)
-    version = top.get("version")
+    return _validate_top(data, _Endpoints(project_root), menu_for or library_effort_menu)
+
+
+def validate_portable_document(data: Any) -> dict:
+    """Validate ``data`` as a project model file without this machine's registry.
+
+    ``data`` is the parsed document (see :func:`parse_yaml_document`). The
+    check is the portable part of :func:`validate_document`: structure, JSON
+    values and references. It does not resolve endpoints, does not check
+    efforts against the library menu, and does not refuse reserved extras; a
+    row that declares no ``efforts`` accepts any non-empty effort string here.
+    It needs no PyYAML and reads no file. Returns the normalized document (the
+    same shape :func:`validate_document` returns). Raises
+    :class:`ProjectModelsError` (``invalid``) for the first problem, with its
+    path in ``where``.
+    """
+    return _validate_top(data, None, None)
+
+
+def _check_version(top: Mapping) -> None:
     if "version" not in top:
         raise _invalid("version", "is required")
+    version = top["version"]
     if not isinstance(version, int) or isinstance(version, bool) or version != FILE_VERSION:
         raise _invalid("version", f"must be {FILE_VERSION}, not {version!r}")
 
-    rows, menus, efforts_of = _validate_catalog(top.get("catalog", []), _Endpoints(project_root), menu_of)
+
+def _validate_top(
+    data: Any, endpoints: "Optional[_Endpoints]", menu_of: Optional[EffortMenuResolver]
+) -> dict:
+    """The normalized tracked document; ``endpoints`` None is portable validation."""
+    top = _mapping(data, "document", _TOP_KEYS)
+    _check_version(top)
+    rows, menus, efforts_of = _validate_catalog(top.get("catalog", []), endpoints, menu_of)
     selections = _validate_selections(top.get("selections", {}), menus, efforts_of)
     return {
         "version": FILE_VERSION,
@@ -601,7 +754,13 @@ def validate_document(
 
 
 def render_yaml(document: Mapping) -> bytes:
-    """The canonical bytes of an already-validated document."""
+    """The canonical bytes of an already-validated document.
+
+    ``document`` is a result of :func:`validate_document` (or
+    :func:`validate_portable_document`). Returns UTF-8 YAML in the canonical
+    form the module docstring describes. Raises :class:`ProjectModelsError`
+    (``dependency``) when PyYAML is not installed.
+    """
     yaml = _import_yaml()
     _loader, dumper, flow_list = _yaml_types()
     rows = []
@@ -628,7 +787,7 @@ def render_yaml(document: Mapping) -> bytes:
 
 
 def digest(data: bytes) -> str:
-    """The SHA-256 hex digest the ``if_match`` guard compares."""
+    """The lowercase SHA-256 hex digest of ``data``, as the ``if_match`` guard compares it."""
     return hashlib.sha256(data).hexdigest()
 
 
@@ -785,7 +944,14 @@ def validate_project_models(
     file: Optional[str] = None,
     menu_for: Optional[EffortMenuResolver] = None,
 ) -> Validation:
-    """Validate ``document`` and confine ``file``; nothing is read or written."""
+    """Validate ``document`` and confine ``file``; nothing is read or written.
+
+    Runs :func:`validate_document` with the endpoint registry of
+    ``project_root``. Returns a :class:`Validation` with the digest a write
+    would store. Raises :class:`ProjectModelsError`: ``invalid`` for the first
+    problem (path in ``where``), ``path``, ``symlink`` or ``missing`` for the
+    file name, ``dependency`` without PyYAML.
+    """
     project_file = resolve_project_file(project_root, file)
     normalized = validate_document(document, project_root=str(project_file.root), menu_for=menu_for)
     return Validation(
@@ -901,20 +1067,27 @@ def write_project_models(
 
 
 def local_file_name(relative: str) -> str:
-    """The root-relative POSIX name of the personal layer for the tracked file ``relative``."""
+    """The root-relative POSIX name of the personal layer for the tracked file ``relative``.
+
+    ``.llm-kit/models.yaml`` gives ``.llm-kit/models.local.yaml``. Pure; raises nothing.
+    """
     path = PurePosixPath(relative)
     return path.with_name(path.stem + LOCAL_SUFFIX).as_posix()
 
 
 def resolve_local_file(project_file: ProjectFile) -> ProjectFile:
-    """The confined personal-layer file beside ``project_file`` (same confinement rules). Touches nothing."""
+    """The confined personal-layer file beside ``project_file`` (same confinement rules). Touches nothing.
+
+    Returns a :class:`ProjectFile`. Raises :class:`ProjectModelsError` as
+    :func:`resolve_project_file` does.
+    """
     return resolve_project_file(str(project_file.root), local_file_name(project_file.relative))
 
 
 def _name_local(local_file: ProjectFile, exc: ProjectModelsError) -> ProjectModelsError:
     if exc.code != CODE_INVALID:
         return exc
-    return ProjectModelsError(exc.code, f"{local_file.relative}: {exc}")
+    return ProjectModelsError(exc.code, f"{local_file.relative}: {exc}", where=exc.where)
 
 
 def validate_local_document(
@@ -932,23 +1105,47 @@ def validate_local_document(
     """
     try:
         _import_yaml()
-        top = _mapping(data, "document", _LOCAL_TOP_KEYS)
-        if "version" not in top:
-            raise _invalid("version", "is required")
-        version = top["version"]
-        if not isinstance(version, int) or isinstance(version, bool) or version != FILE_VERSION:
-            raise _invalid("version", f"must be {FILE_VERSION}, not {version!r}")
-        _rows, menus, efforts_of = _validate_catalog(
-            tracked.document["catalog"], _Endpoints(str(local_file.root)), menu_for or library_effort_menu
+        return _validate_local(
+            data, tracked.document["catalog"], _Endpoints(str(local_file.root)),
+            menu_for or library_effort_menu,
         )
-        selections = _validate_selections(top.get("selections", {}), menus, efforts_of)
     except ProjectModelsError as exc:
         raise _name_local(local_file, exc) from None
+
+
+def validate_portable_local_document(data: Any, tracked_document: Any) -> dict:
+    """Validate ``data`` as a personal layer over ``tracked_document``, without this machine's registry.
+
+    ``tracked_document`` is the tracked file's parsed or normalized document;
+    it is validated first with :func:`validate_portable_document`, so a fault
+    in it is reported with its own path. ``data`` must then pass the same
+    portable checks as the tracked selections, against the tracked catalogue.
+    It needs no PyYAML and reads no file. Returns the normalized personal layer
+    ``{"version": 1, "selections": {...}}``. Raises :class:`ProjectModelsError`
+    (``invalid``) for the first problem, with its path in ``where``.
+    """
+    tracked = validate_portable_document(tracked_document)
+    return _validate_local(data, tracked["catalog"], None, None)
+
+
+def _validate_local(
+    data: Any, catalog: Any, endpoints: "Optional[_Endpoints]", menu_of: Optional[EffortMenuResolver]
+) -> dict:
+    """The normalized personal layer against ``catalog``; ``endpoints`` None is portable validation."""
+    top = _mapping(data, "document", _LOCAL_TOP_KEYS)
+    _check_version(top)
+    _rows, menus, efforts_of = _validate_catalog(catalog, endpoints, menu_of)
+    selections = _validate_selections(top.get("selections", {}), menus, efforts_of)
     return {"version": FILE_VERSION, "selections": selections}
 
 
 def render_local_yaml(document: Mapping) -> bytes:
-    """The canonical bytes of an already-validated personal-layer document."""
+    """The canonical bytes of an already-validated personal-layer document.
+
+    ``document`` is ``{"version": 1, "selections": {...}}`` as
+    :func:`validate_local_document` returns it. Returns UTF-8 YAML. Raises
+    :class:`ProjectModelsError` (``dependency``) when PyYAML is not installed.
+    """
     yaml = _import_yaml()
     dumper = _yaml_types()[1]
     text = yaml.dump(
@@ -1039,13 +1236,18 @@ def read_local_overrides(
     file: Optional[str] = None,
     menu_for: Optional[EffortMenuResolver] = None,
 ) -> LocalOverrides:
-    """Read and validate the personal layer for ``tracked``; an absent file is no overrides."""
+    """Read and validate the personal layer for ``tracked``; an absent file is no overrides.
+
+    Returns :class:`LocalOverrides`. Raises :class:`ProjectModelsError`
+    (``invalid``, message prefixed with the local file's name) for a bad file,
+    and as :func:`resolve_project_file` does for the file name.
+    """
     local_file = resolve_local_file(resolve_project_file(project_root, file))
     return _read_local(tracked, local_file, menu_for)
 
 
 def resolve_models(tracked: ProjectModels, local: LocalOverrides) -> ResolvedModels:
-    """Layer ``local`` over ``tracked``."""
+    """Layer ``local`` over ``tracked``; returns :class:`ResolvedModels` (see :func:`resolve_selections`)."""
     return ResolvedModels(
         tracked, local, resolve_selections(tracked.document["selections"], local.selections)
     )
@@ -1057,7 +1259,11 @@ def read_resolved_models(
     file: Optional[str] = None,
     menu_for: Optional[EffortMenuResolver] = None,
 ) -> ResolvedModels:
-    """Read the tracked file and the personal layer over it, both validated."""
+    """Read the tracked file and the personal layer over it, both validated.
+
+    Returns :class:`ResolvedModels`. Raises :class:`ProjectModelsError` as
+    :func:`read_project_models` and :func:`read_local_overrides` do.
+    """
     project_file = resolve_project_file(project_root, file)
     tracked = _read_tracked(project_file, menu_for)
     local = _read_local(tracked, resolve_local_file(project_file), menu_for)
@@ -1143,7 +1349,13 @@ def validate_local_overrides(
     file: Optional[str] = None,
     menu_for: Optional[EffortMenuResolver] = None,
 ) -> LocalValidation:
-    """Validate a personal-layer ``document`` against the tracked file; nothing is written."""
+    """Validate a personal-layer ``document`` against the tracked file; nothing is written.
+
+    Reads and validates the tracked file first. Returns a
+    :class:`LocalValidation` (entries equal to the tracked default are listed
+    in ``dropped_defaults``). Raises :class:`ProjectModelsError` as
+    :func:`read_project_models` does, and ``invalid`` for the document.
+    """
     local_file, kept, _normalized, dropped = _tidy_local(document, project_root, file, menu_for)
     stored = digest(render_local_yaml(kept)) if kept["selections"] else None
     return LocalValidation(local_file.relative, stored, len(kept["selections"]), dropped)
@@ -1197,7 +1409,11 @@ def set_local_override(
     if_match: Optional[str] = None,
     menu_for: Optional[EffortMenuResolver] = None,
 ) -> LocalWriteResult:
-    """Set one override (``effort`` None omits the effort); equal to the default, it clears the key."""
+    """Set one override (``effort`` None omits the effort); equal to the default, it clears the key.
+
+    Returns the :class:`LocalWriteResult` of the write. Raises
+    :class:`ProjectModelsError` as :func:`write_local_overrides` does.
+    """
     project_file = resolve_project_file(project_root, file)
     tracked = _read_tracked(project_file, menu_for)
     current = _read_local(tracked, resolve_local_file(project_file), menu_for).selections

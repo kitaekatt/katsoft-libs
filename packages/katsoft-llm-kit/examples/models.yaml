@@ -1,0 +1,17 @@
+# An example project model file (format llm-kit.project-models/v1).
+# The endpoint names are placeholders: portable validation does not resolve them.
+version: 1
+catalog:
+  - id: quick
+    label: Quick
+    endpoint: example-api
+    model: example/quick-1
+    efforts: [low, high]
+    max_output_tokens: 4096
+  - id: careful
+    label: Careful
+    endpoint: example-api
+    model: example/careful-2
+selections:
+  summary.write: {model: quick, effort: low}
+  summary.review: {model: careful}

@@ -89,7 +89,7 @@ A commit adapter (`commit=True`) takes exactly one input, `bundle`. Only a `comm
 
 ## Prompt templates
 
-An optional header for people, then one line that is exactly `---PROMPT---`, then the prompt. A file without the marker is all prompt; two marker lines are refused. Slots are `{{name}}` (`[a-z][a-z0-9_]*`). `loader.prompt_body` and `loader.prompt_slots` read them.
+An optional header for people, then one line that is exactly `---PROMPT---`, then the prompt. A file without the marker is all prompt; two marker lines are refused. Slots are `{{name}}` (`[a-z][a-z0-9_]*`). `loader.prompt_body` and `loader.prompt_slots` read them. The file is the format `llm-kit.prompt-file/v1`: its decoding, byte order mark, newline and body hash rules are in [llm-kit-formats.md](llm-kit-formats.md), and `prompt.read_prompt_file` returns its parsed form.
 
 ## Project config
 

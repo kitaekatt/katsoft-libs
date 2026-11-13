@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.project-models/v1",
+  "title": "llm-kit project model file, version 1",
+  "description": "The tracked project model file (default .llm-kit/models.yaml) after YAML parsing. Written in llm-scripting-kit.json-schema-subset/v1. Reader rules this subset cannot state: text values have no leading or trailing whitespace; catalog ids are unique; an efforts list has no repeats; a selection names a catalog id; a selection effort is in the row's efforts when the row declares them, and is null when the row declares an empty list; an integer is in -(2**53 - 1) to 2**53 - 1; version and max_output_tokens are integers, not decimals such as 1.0. Contract and shared cases: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "version": {"type": "integer", "const": 1},
+    "catalog": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+    "selections": {"type": "object", "additionalProperties": {"$ref": "#/$defs/selection"}}
+  },
+  "required": ["version"],
+  "additionalProperties": false,
+  "$defs": {
+    "text": {"type": "string", "minLength": 1},
+    "row": {
+      "description": "One catalog row. Omitted efforts: the row does not narrow the effort menu. efforts []: the row has no effort.",
+      "type": "object",
+      "properties": {
+        "id": {"$ref": "#/$defs/text"},
+        "label": {"$ref": "#/$defs/text"},
+        "endpoint": {"$ref": "#/$defs/text"},
+        "model": {"$ref": "#/$defs/text"},
+        "efforts": {"type": "array", "items": {"$ref": "#/$defs/text"}},
+        "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "request_defaults": {
+          "type": "object",
+          "properties": {
+            "extras": {"type": "object", "additionalProperties": {"$ref": "#/$defs/json"}}
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": ["id", "label", "endpoint", "model"],
+      "additionalProperties": false
+    },
+    "selection": {
+      "description": "A selection key's model (a catalog id) and effort. An omitted effort and a null effort mean the same: no effort.",
+      "type": "object",
+      "properties": {
+        "model": {"$ref": "#/$defs/text"},
+        "effort": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/text"}]}
+      },
+      "required": ["model"],
+      "additionalProperties": false
+    },
+    "json": {
+      "description": "Any JSON value.",
+      "anyOf": [
+        {"type": "null"},
+        {"type": "boolean"},
+        {"type": "number"},
+        {"type": "string"},
+        {"type": "array", "items": {"$ref": "#/$defs/json"}},
+        {"type": "object", "additionalProperties": {"$ref": "#/$defs/json"}}
+      ]
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.prompt-file/v1",
+  "title": "llm-kit prompt file, version 1 (parsed form)",
+  "description": "What a reader returns for one prompt file. The text grammar (UTF-8, one leading byte order mark removed, CRLF and lone CR read as LF, at most one ---PROMPT--- line, slots {{name}} with name [a-z][a-z0-9_]*) is fixed by the shared cases, not by this schema. Written in llm-scripting-kit.json-schema-subset/v1. Contract and shared cases: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "header": {
+      "description": "The text before the marker line; null when the file has no marker line.",
+      "type": ["string", "null"]
+    },
+    "body": {"description": "The prompt text.", "type": "string"},
+    "slots": {
+      "description": "The body's slot names in order of first use, each once.",
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "sha256": {
+      "description": "The lowercase SHA-256 hex digest of the body encoded as UTF-8.",
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "source": {"description": "Where the text was read from, such as a path. Not part of the file.", "type": "string"}
+  },
+  "required": ["header", "body", "slots", "sha256"],
+  "additionalProperties": false
+}

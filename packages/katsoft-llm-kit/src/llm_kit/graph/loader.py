@@ -25,10 +25,14 @@ delivered as the referenced schema itself: providers require a root with its own
 referenced entry leaves ``$defs`` unless something still names it, and every
 other definition stays.
 
-Prompt templates: an optional header for people, then one line that is exactly
-:data:`PROMPT_MARKER`; only the text after it is the prompt. A file without the
-marker line is all prompt. Slots are ``{{name}}`` (lower-case letters, digits
-and ``_``, starting with a letter).
+Prompt templates (format ``llm-kit.prompt-file/v1``): an optional header for
+people, then one line that is exactly :data:`PROMPT_MARKER`; only the text after
+it is the prompt. A file without the marker line is all prompt. Slots are
+``{{name}}`` (lower-case letters, digits and ``_``, starting with a letter).
+Before the marker search, one leading byte order mark (U+FEFF) is removed and
+every CRLF and every lone CR becomes LF, so a file reads the same on every
+platform and through every reader. The full contract is in
+``docs/reference/llm-kit-formats.md``.
 """
 
 from __future__ import annotations
@@ -72,6 +76,7 @@ __all__ = [
     "load_graph",
     "load_yaml",
     "prompt_body",
+    "prompt_parts",
     "prompt_slots",
     "resolve_params",
     "resolve_schema",
@@ -372,15 +377,43 @@ def _ports(value: Any, base_dir: Path, where: str) -> dict[str, Port]:
 # ---------------------------------------------------------------------------
 
 
-def prompt_body(text: str, *, where: str = "") -> str:
-    """The prompt text: after the one marker line, or the whole text without one."""
-    lines = text.split("\n")
+def _prompt_lines(text: str) -> list[str]:
+    """The lines of a template: one leading U+FEFF removed, CRLF and lone CR read as LF."""
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+
+def _marker_index(lines: list[str], where: str) -> Optional[int]:
     at = [i for i, line in enumerate(lines) if line == PROMPT_MARKER]
-    if not at:
-        return text
     if len(at) > 1:
         raise GraphError(f"template has {len(at)} {PROMPT_MARKER!r} lines; it may have one", where)
-    return "\n".join(lines[at[0] + 1:])
+    return at[0] if at else None
+
+
+def prompt_parts(text: str, *, where: str = "") -> tuple[Optional[str], str]:
+    """``(header, body)`` of a template's text under ``llm-kit.prompt-file/v1``.
+
+    One leading U+FEFF is removed and every CRLF and lone CR becomes LF first.
+    ``header`` is the text before the marker line (``None`` when the text has
+    no marker line); ``body`` is the text after it, or the whole text. The LF
+    that ends the marker line, and the LF before it, belong to neither part.
+    Raises :class:`GraphError` when the text has more than one marker line.
+    """
+    lines = _prompt_lines(text)
+    at = _marker_index(lines, where)
+    if at is None:
+        return None, "\n".join(lines)
+    return "\n".join(lines[:at]), "\n".join(lines[at + 1:])
+
+
+def prompt_body(text: str, *, where: str = "") -> str:
+    """The prompt text: after the one marker line, or the whole text without one.
+
+    The newline and byte order mark rules of :func:`prompt_parts` apply.
+    Raises :class:`GraphError` when the text has more than one marker line.
+    """
+    return prompt_parts(text, where=where)[1]
 
 
 def prompt_slots(text: str, *, where: str = "") -> tuple[str, ...]:
@@ -679,7 +712,7 @@ def resolve_params(node: Node, op: Op, graph: Graph) -> dict[str, ResolvedParam]
         elif spec.kind == "template":
             path = _relative_file(value, graph.base_dir, pw)
             try:
-                text = path.read_text(encoding="utf-8")
+                text = path.read_bytes().decode("utf-8")
             except UnicodeDecodeError as exc:
                 raise GraphError(f"template is not UTF-8: {exc}", pw) from None
             body = prompt_body(text, where=pw)
