@@ -865,7 +865,7 @@ def test_a_hub_that_is_not_enabled_is_refused_before_any_state_is_touched(machin
     state = tmp_path / "hub-off-state"
     config = dataclasses.replace(machine_a.config, config_path=conf, paths=C.StatePaths(state))
     for public_url in (None, "https://hub.example.test"):
-        with pytest.raises(C.RelayNotEnabled, match=f"the hub is not enabled on this machine.*in {conf}"):
+        with pytest.raises(C.RelayNotEnabled, match=f"the hub is not enabled on this machine.*in {re.escape(str(conf))}"):
             H.HubServer(config, peers=[machine_a.peer], port=0, public_url=public_url)
     assert not state.exists()
 

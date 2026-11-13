@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -117,7 +118,7 @@ def make_server(config, roots, backend, tmp_path, **kw) -> S.RelayServer:
 @pytest.mark.parametrize("text", ["", "enabled: false\n", "hub: {enabled: true}\n"])
 def test_a_relay_that_is_not_enabled_is_refused_before_any_state_is_touched(config, roots, backend, tmp_path, text):
     config.config_path.write_text(text, encoding="utf-8")
-    with pytest.raises(C.RelayNotEnabled, match=f"enabled: true` in {config.config_path}"):
+    with pytest.raises(C.RelayNotEnabled, match=f"enabled: true` in {re.escape(str(config.config_path))}"):
         make_server(config, roots, backend, tmp_path)
     assert not config.paths.root.exists()
 

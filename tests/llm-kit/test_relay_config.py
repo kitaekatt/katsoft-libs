@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 from pathlib import Path
 
 import pytest
@@ -16,6 +15,7 @@ from llm_kit.registry import model_endpoints as ME
 from llm_kit.relay import config as C
 from llm_kit.relay import lifecycle as L
 from llm_kit.relay import protocol as P
+from relay_private import POSIX_ONLY, assert_private, set_home
 
 ENV_JSON = {
     "machines": {
@@ -101,7 +101,7 @@ def test_missing_or_malformed_env_json_is_refused(tmp_path):
 
 
 def test_default_env_json_path_is_home_relative(monkeypatch, tmp_path):
-    monkeypatch.setenv("HOME", str(tmp_path))
+    set_home(monkeypatch, str(tmp_path))
     assert C.default_env_json_path() == tmp_path / ".claude" / "env.json"
 
 
@@ -216,7 +216,7 @@ def test_a_malformed_relay_yaml_fails_loudly(tmp_path, text):
 
 
 def test_the_default_file_is_the_convention_path(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    set_home(monkeypatch, str(tmp_path / "home"))
     environ = {"XDG_CONFIG_HOME": str(tmp_path / "xdg")}
     assert C.relay_enabled(environ=environ) is False
     target = tmp_path / "xdg" / "llm-kit" / "relay.yaml"
@@ -227,7 +227,7 @@ def test_the_default_file_is_the_convention_path(tmp_path, monkeypatch):
 
 
 def test_no_environment_variable_turns_the_relay_on(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    set_home(monkeypatch, str(tmp_path / "home"))
     for name in ("LLM_KIT_RELAY_ENABLED", "LLM_KIT_RELAY", "RELAY_ENABLED", "LLM_KIT_HUB_ENABLED"):
         monkeypatch.setenv(name, "1")
     assert C.relay_enabled() is False and C.hub_enabled() is False
@@ -312,7 +312,7 @@ def test_the_oauth_store_lives_in_the_state_directory(tmp_path):
 
 
 def test_xdg_paths_and_defaults(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    set_home(monkeypatch, str(tmp_path / "home"))
     assert C.state_dir({"XDG_STATE_HOME": str(tmp_path / "s")}) == tmp_path / "s" / "llm-kit" / "relay"
     assert C.state_dir({}) == tmp_path / "home" / ".local" / "state" / "llm-kit" / "relay"
     assert C.state_dir({"XDG_STATE_HOME": "relative/dir"}) == tmp_path / "home" / ".local" / "state" / "llm-kit" / "relay"
@@ -346,7 +346,7 @@ def test_prepared_registry_is_valid_loopback_and_has_the_two_entries(tmp_path, e
         assert entry.kind == ME.TRANSPORT_KIND and entry.billing_owner == "self"
     assert registry.entries["qwen38-m5-32k-local"].model == "qwen3.8-27b-unleashed"
     assert registry.entries["qwen36-m5-local"].model == "mlx-community/Qwen3.6-35B-A3B-OptiQ-4bit"
-    assert stat.S_IMODE(state.registry_file.stat().st_mode) == 0o600
+    assert_private(state.registry_file)
 
 
 def test_remote_registry_entry_is_refused(tmp_path, env_json):
@@ -413,14 +413,15 @@ def test_empty_endpoint_set_is_refused():
 def test_tokens_are_generated_0600_and_stable(tmp_path, env_json):
     cfg = _config(tmp_path, env_json)
     first = L.prepare_state(cfg)
-    assert stat.S_IMODE(cfg.paths.root.stat().st_mode) == 0o700
+    assert_private(cfg.paths.root, directory=True)
     for path in (cfg.paths.relay_token, cfg.paths.hub_bearer):
-        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        assert_private(path)
     assert first.relay_token != first.hub_bearer and len(first.relay_token) >= 32
     again = L.prepare_state(cfg)
     assert (again.relay_token, again.hub_bearer) == (first.relay_token, first.hub_bearer)
 
 
+@POSIX_ONLY
 def test_a_loose_token_or_state_dir_is_refused(tmp_path, env_json):
     cfg = _config(tmp_path, env_json)
     L.prepare_state(cfg)
@@ -469,7 +470,7 @@ def test_second_holder_of_a_role_is_refused(tmp_path, env_json):
 def test_a_dead_holders_leftover_pidfile_does_not_block(tmp_path, env_json):
     cfg = _config(tmp_path, env_json)
     L.prepare_state(cfg)
-    cfg.paths.pidfile("relay").write_text("999999\n", encoding="ascii")
+    L.write_private_file(cfg.paths.pidfile("relay"), "999999\n")
     with L.RoleLock(cfg.paths, "relay") as lock:
         assert lock.held and cfg.paths.pidfile("relay").read_text().strip() == str(os.getpid())
 
@@ -519,7 +520,7 @@ def test_pause_is_persisted_across_a_reload(tmp_path, env_json):
     reloaded.resume("relay")
     final = L.PauseStore(cfg.paths).state()
     assert final["relay"] == C_clear() and final["hub"]["paused"] is True
-    assert stat.S_IMODE(cfg.paths.pause_file.stat().st_mode) == 0o600
+    assert_private(cfg.paths.pause_file)
 
 
 def C_clear():
@@ -556,9 +557,9 @@ def test_bad_scope_and_a_corrupt_pause_file_fail_loudly(tmp_path, env_json):
     with pytest.raises(P.RelayError) as caught:
         store.pause("everything")
     assert caught.value.code == "bad_request"
-    cfg.paths.pause_file.write_text("{oops", encoding="utf-8")
+    L.write_private_file(cfg.paths.pause_file, "{oops")
     with pytest.raises(C.RelayConfigError, match="unreadable"):
         store.state()  # a corrupt file never reads as "not paused"
-    cfg.paths.pause_file.write_text(json.dumps({"relay": {"paused": True, "paused_since": None, "reason": None}, "hub": C_clear()}))
+    L.write_private_file(cfg.paths.pause_file, json.dumps({"relay": {"paused": True, "paused_since": None, "reason": None}, "hub": C_clear()}))
     with pytest.raises(C.RelayConfigError, match="invalid flag"):
         store.is_paused("relay")

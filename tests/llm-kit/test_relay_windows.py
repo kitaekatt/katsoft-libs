@@ -560,3 +560,11 @@ def test_winacl_refuses_to_run_off_windows(tmp_path):
         pytest.skip("the real Win32 calls are exercised natively")
     with pytest.raises(C.RelayConfigError, match="only available on Windows"):
         winacl.validate(tmp_path)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the POSIX client starts normally")
+def test_the_app_server_client_refuses_to_start_on_windows():
+    from llm_kit.relay.codex_appserver import CodexAppServer, CodexAppServerError
+
+    with pytest.raises(CodexAppServerError, match="supports POSIX only"):
+        CodexAppServer([sys.executable], cwd=os.getcwd()).start()

@@ -18,7 +18,6 @@ import os
 import re
 import secrets
 import socket
-import stat
 import threading
 import time
 from pathlib import Path
@@ -34,6 +33,7 @@ from llm_kit.relay import hub_oauth as OA
 from llm_kit.relay import lifecycle as L
 from llm_kit.relay import protocol as P
 
+from relay_private import POSIX_ONLY, assert_private
 from test_relay_hub import A, Hub, Machine
 
 PUBLIC = "https://hub.example.test"
@@ -909,7 +909,7 @@ def test_the_store_is_private_and_holds_no_presentable_secret(oauth):
     tokens = oauth.tokens()
     code, verifier = oauth.sign_in()
     path = oauth.server.config.paths.hub_oauth
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert_private(path)
     text = path.read_text()
     for secret in (tokens["access_token"], tokens["refresh_token"], code, verifier):
         assert secret not in text
@@ -926,6 +926,7 @@ def test_no_token_code_or_verifier_is_logged(oauth):
         assert secret not in text
 
 
+@POSIX_ONLY
 def test_a_loose_store_is_refused_and_the_lock_released(oauth, machine):
     oauth.tokens()
     oauth.close()

@@ -32,6 +32,10 @@ from llm_kit.relay.codex_appserver import (
     TurnInProgress,
 )
 
+# The client is POSIX only (process groups are not measured on Windows); `start` refuses loudly there, which
+# test_the_app_server_client_refuses_to_start_on_windows (test_relay_windows.py) measures.
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="the codex app-server client is POSIX only")
+
 STUB = str(Path(__file__).parent / "fixtures" / "fake_codex_app_server.py")
 
 

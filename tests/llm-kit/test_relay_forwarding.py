@@ -1490,7 +1490,7 @@ def test_forwarding_end_to_end_over_two_real_relays(tmp_path):
         L.write_peer_key(source_cfg.paths, DST, "placeholder")
         source_cfg.paths.peer_key(DST).unlink()
         L.write_private_file(source_cfg.paths.peer_relay_token(DST), receiver.prepared.relay_token + "\n")
-        with pytest.raises(C.RelayConfigError, match=f"Delete them with `rm -- .*rotate-credentials` on {DST}.*Then "
+        with pytest.raises(C.RelayConfigError, match=f"Delete them with `(?:rm --|Remove-Item -LiteralPath) .*rotate-credentials` on {DST}.*Then "
                                                      f"provision it with `ssh {DST} llm-kit relay peer export --for {SRC} "
                                                      f"\\| llm-kit relay peer import {DST}`"):
             serve(source_cfg, SRC)
