@@ -6,10 +6,11 @@
 #
 # Publishing uses npm trusted publishing (OIDC) from environment `npm`, with
 # provenance. The job builds from the locked tree (npm ci), runs the tests and
-# the tarball check, packs once, publishes that exact tarball, and then checks
-# that the registry's integrity equals the packed tarball's integrity. When the
+# the tarball check, packs once, and publishes that exact tarball. When the
 # version is already on npm (the first release is published by hand), it
 # publishes nothing and checks that the published files equal the packed files.
+# On both paths it then checks that the registry's integrity equals the packed
+# tarball's integrity, and fails on a mismatch, before it records the release.
 # Procedure: docs/reference/package-release.md, "npm packages".
 name: release-npm
 run-name: release ${{ github.ref_name }}
@@ -85,7 +86,6 @@ jobs:
           fi
 
       - name: Check the registry's integrity against the packed tarball
-        if: env.MODE == 'published'
         run: |
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             published="$(npm view "$PACKAGE_NAME@$VERSION" dist.integrity 2>/dev/null || true)"

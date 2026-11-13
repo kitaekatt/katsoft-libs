@@ -79,6 +79,7 @@ It publishes that tarball with `npm publish <tarball> --provenance --access publ
 Then it compares the registry's `dist.integrity` with the integrity of the packed tarball, and fails when they differ.
 When the version is already on npm, the workflow does not publish.
 It downloads the published tarball and compares its files with the packed files.
+On both paths, the registry's `dist.integrity` must equal the packed tarball's integrity, or the job fails.
 The job summary records the commit, the result and the integrity.
 
 ### Prepare an npm release

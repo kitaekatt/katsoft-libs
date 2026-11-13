@@ -10,7 +10,7 @@ Keep the libraries usable from a plain Python installation without an AI harness
 Keep plugin integrations in the plugins-kit repository.
 
 Run `uv run --extra dev pytest` after code changes.
-For the npm package in `packages/llm-kit-config`, run `npm ci` and `npm test` there after its code changes.
+For the npm package in `packages/llm-kit-config`, run `npm ci`, `npm test` and `npm run check-pack` there after its code changes.
 Read `docs/reference/package-release.md` before changing release code or releasing a package.
 Package releases require the user's explicit publication approval.
 
