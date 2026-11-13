@@ -1369,11 +1369,13 @@ in a TUI or `claude --resume` meanwhile. A Codex run then fails with "thread
 is open in another Codex process"; a Claude run is a documented residual race.
 
 The run. The lease phase becomes `spawning`; the child starts in a new
-session (its own process group) with `LLM_KIT_RESUME_LEASE=<lease id>` in its
-environment; its pid, create time and group are recorded (phase `running`).
-Every phase write, every renewal (every 30 s, lease 90 s, until the run's
-deadline) and the final write are fenced by the lease id: a runner that lost
-its lease kills its own child's group and writes nothing.
+session (its own process group) with `LLM_KIT_RESUME_LEASE=<process tag>` in
+its environment, which its descendants inherit. The tag is persisted on the
+lease (`proc_tag`) and, unlike the lease id (the fencing token), never
+replaced. The child's pid, exact create time and group are recorded (phase
+`running`). Every phase write, every renewal (every 30 s, lease 90 s, until
+the run's deadline) and the final write are fenced by the lease id: a runner
+that lost its lease stops its run's processes and writes nothing.
 
 - Codex: `codex app-server --listen stdio://` with the Codex channel's
   defaults (approval `never`, `workspace-write` rooted at the rollout's
@@ -1406,11 +1408,18 @@ lease row together.
 Orphan recovery, at relay start and on every maintenance sweep (5 s). A lease
 is an orphan when another relay instance holds it, when it expired (a runner
 stops renewing past its deadline), or when its recorded child is gone and no
-runner of this relay owns it. A recorded child that is alive with the same
-pid AND create time is stopped (SIGTERM to its group, a grace period,
-SIGKILL) and must be gone before the claim is cleared; a pid whose create
-time differs is never signalled. A `spawning` lease with no recorded pid is
-matched to this user's processes by the environment tag. A child is never
+runner of this relay owns it. The orphan is fenced first (its lease id is
+replaced), then every process of its run is stopped: each of this user's
+processes carrying the persisted tag, the recorded child when its create time
+is exactly the recorded one, and the members of the child's group while that
+group is provably the run's (the child alive with its identity, or no process
+holding its pid). Each is signalled on its own identity-bound handle: SIGTERM,
+a grace period, then SIGKILL for every survivor, whether or not the child
+already exited; no group is signalled by number and a pid whose create time
+differs is never signalled. All of them must be gone before the claim is
+cleared; otherwise the fenced lease waits for a later sweep. A heartbeat that
+would rename a registration onto an address a run holds is
+`registration_conflict` (`why: resume_running`), like a register. A child is never
 adopted: its output pipe belonged to the dead relay. The message is declined
 with the reason: "relay restarted before the run started", "relay restarted
 during the run; it was stopped", "the run's result was lost; for Codex the
