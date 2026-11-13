@@ -1,0 +1,50 @@
+{
+  "name": "@katsoft/llm-kit-config",
+  "version": "1.0.0",
+  "description": "Readers for the llm-kit shared file formats: the project model file, its overlays, and prompt files.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kitaekatt/katsoft-libs.git",
+    "directory": "packages/llm-kit-config"
+  },
+  "homepage": "https://github.com/kitaekatt/katsoft-libs/tree/dev/packages/llm-kit-config#readme",
+  "keywords": ["llm", "config", "yaml", "prompt", "llm-kit"],
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schemas/*.json": "./schemas/*.json",
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/",
+    "schemas/",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test --test-reporter=dot \"test/*.test.mjs\"",
+    "copy-schemas": "node scripts/copy-schemas.mjs",
+    "prepack": "npm run build && node scripts/copy-schemas.mjs",
+    "check-pack": "node scripts/check-pack.mjs"
+  },
+  "dependencies": {
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "ajv": "8.20.0",
+    "typescript": "5.8.3"
+  }
+}
