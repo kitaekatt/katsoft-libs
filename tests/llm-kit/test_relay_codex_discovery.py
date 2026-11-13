@@ -104,7 +104,22 @@ def test_the_probe_reports_a_lock_held_open_through_a_symlinked_codex_home_and_n
     via_link = link / "thread-writer-locks"
     locks = {held_id: via_link / f"{held_id}.lock", stale_id: via_link / f"{stale_id}.lock"}  # asked through the symlink
 
-    assert D.PsutilCodexLockProbe().held(locks) == frozenset({held_id})
+    assert D.default_codex_lock_probe().held(locks) == frozenset({held_id})
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the exclusive-open probe is the Windows probe")
+def test_the_exclusive_open_probe_reports_held_unheld_and_vanished_files(tmp_path, held_locks) -> None:
+    held, unheld = tmp_path / "held.lock", tmp_path / "unheld.lock"
+    unheld.write_text("")
+    held.write_text("")
+    hold(held_locks, held)
+    locks = {"held": held, "unheld": unheld, "gone": tmp_path / "gone.lock"}
+    probe = D.ExclusiveOpenCodexLockProbe()
+    assert probe.held(locks) == frozenset({"held"})
+    held_locks.pop().close()
+    assert probe.held(locks) == frozenset()  # released: the leftover file is not a lock
+    with pytest.raises(D.ProbeError, match="Windows error"):
+        probe.held({"directory": tmp_path})  # a directory cannot be opened as a file: not an answer
 
 
 def test_a_lock_held_by_another_process_is_live_until_that_process_is_killed_and_the_leftover_file_is_not(

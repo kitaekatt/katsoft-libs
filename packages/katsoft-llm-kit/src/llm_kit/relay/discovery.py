@@ -43,8 +43,8 @@ the rollout says nothing about liveness. The writer lock does:
 ``<codex_home>/thread-writer-locks/<thread id>.lock`` is held OPEN by the
 process that owns the thread, from ``thread/start`` until it exits. A scanned
 Codex thread is ``live-read-only`` while some process holds its lock open
-(:class:`CodexLockProbe`, over ``psutil.open_files`` with a realpath compare:
-``~/.codex`` may be a symlink); the lock FILE merely existing never counts,
+(:class:`CodexLockProbe`: ``psutil.open_files`` with a realpath compare, since
+``~/.codex`` may be a symlink; an exclusive open on Windows); the lock FILE merely existing never counts,
 because a killed process leaves it behind unheld. A held lock whose thread has
 no rollout yet (no turn run) is listed from the lock alone. Otherwise a
 scanned thread is ``idle`` when the rollout was written within
@@ -243,6 +243,61 @@ class PsutilCodexLockProbe:
         except psutil.Error as exc:
             raise ProbeError(f"cannot list the files open in processes: {exc}") from exc
         return frozenset(found)
+
+
+class ExclusiveOpenCodexLockProbe:
+    """:class:`CodexLockProbe` for Windows: a lock is held while another handle to its file is open.
+
+    ``psutil.open_files`` costs about 70 ms per process on Windows (a few hundred processes make one
+    scan take half a minute), so each lock file is instead opened once with share mode 0, which Windows
+    refuses with a sharing violation exactly while any process holds a handle to the file. A file that
+    is gone is not held; any other failure raises :class:`ProbeError`.
+    """
+
+    _GENERIC_READ = 0x80000000
+    _OPEN_EXISTING = 3
+    _FILE_ATTRIBUTE_NORMAL = 0x80
+    _NOT_FOUND = (2, 3)  # ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND
+    _SHARING_VIOLATION = 32
+
+    def __init__(self) -> None:
+        if os.name != "nt":
+            raise ProbeError("the exclusive-open lock probe is only available on Windows")
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        kernel32.CreateFileW.argtypes = [
+            wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+            wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+        ]
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        self._ctypes = ctypes
+        self._kernel32 = kernel32
+
+    def _is_held(self, path: Path) -> bool:
+        handle = self._kernel32.CreateFileW(
+            str(path), self._GENERIC_READ, 0, None, self._OPEN_EXISTING, self._FILE_ATTRIBUTE_NORMAL, None
+        )
+        if handle in (None, -1, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF):
+            code = self._ctypes.get_last_error()  # type: ignore[attr-defined]
+            if code == self._SHARING_VIOLATION:
+                return True
+            if code in self._NOT_FOUND:
+                return False
+            raise ProbeError(f"cannot examine {path}: Windows error {code}")
+        self._kernel32.CloseHandle(handle)
+        return False
+
+    def held(self, locks: Mapping[str, Path]) -> frozenset[str]:
+        return frozenset(thread_id for thread_id, path in locks.items() if self._is_held(path))
+
+
+def default_codex_lock_probe() -> CodexLockProbe:
+    """The probe for this platform: exclusive-open on Windows, ``psutil.open_files`` elsewhere."""
+    return ExclusiveOpenCodexLockProbe() if os.name == "nt" else PsutilCodexLockProbe()
 
 
 def process_matches(
@@ -905,7 +960,7 @@ class Discovery:
         if not locks:
             return {}
         if self._codex_lock_probe is None:
-            self._codex_lock_probe = PsutilCodexLockProbe()
+            self._codex_lock_probe = default_codex_lock_probe()
         try:
             held = self._codex_lock_probe.held(locks)
         except ProbeError as exc:
