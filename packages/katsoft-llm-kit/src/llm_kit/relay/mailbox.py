@@ -329,8 +329,11 @@ class Mailbox:
     def _init_schema(self) -> None:
         if not self.db_path.exists():
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(str(self.db_path), os.O_CREAT | os.O_RDWR, _DB_MODE)
-            os.close(fd)
+            if os.name == "nt":
+                self._create_private_nt()
+            else:
+                fd = os.open(str(self.db_path), os.O_CREAT | os.O_RDWR, _DB_MODE)
+                os.close(fd)
         with self._connect() as conn:
             if read_schema_version(conn, as_int=True) == SCHEMA_VERSION:
                 return
@@ -351,6 +354,20 @@ class Mailbox:
                 for statement in _MIGRATIONS[step]:
                     conn.execute(statement)
             conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+
+    def _create_private_nt(self) -> None:
+        """Create the database file with the owner-plus-SYSTEM protected ACL (``os.open`` modes do nothing here)."""
+        from llm_kit.relay import winacl
+
+        try:
+            fd = winacl.create_private_file(self.db_path)
+        except FileExistsError:
+            return  # another process created it first, with the same descriptor
+        try:
+            winacl.provision_fd(fd, self.db_path)
+            winacl.validate_fd(fd, self.db_path)
+        finally:
+            os.close(fd)
 
     def schema_version(self) -> int:
         with self._connect() as conn:
