@@ -98,7 +98,7 @@ from llm_kit.relay.config import RelayConfigError, ResumeConfig
 from llm_kit.relay.discovery import LIVE_STATES, Discovery, EndEvent, RegistrationTable, SessionInfo
 from llm_kit.relay.lifecycle import PauseStore, token_matches
 from llm_kit.relay.mailbox import STORED_REFUSALS, GrantUse, LeaseClaim, Mailbox
-from llm_kit.relay.resume import ResumeJob, ResumeRunner, new_lease_id
+from llm_kit.relay.resume import ResumeJob, ResumeRunner, new_lease_id, new_proc_tag
 from llm_kit.relay.questions import QuestionService
 from llm_kit.schema import json_schema as JS
 
@@ -1104,12 +1104,23 @@ class RelayService:
         }
 
     def _heartbeat(self, call: _Call, params: Mapping[str, Any], granted: _Granted, ingress: str) -> dict[str, Any]:
-        outcome = self._table.heartbeat(
-            params["registration_id"], params["session_id"], params["channel_nonce"],
-            previous_session_id=params.get("previous_session_id"), cwd=params.get("cwd"),
-            title=params.get("title"), task=params.get("task"), accepts=params.get("accepts"),
-            harness=self._harness(call),
-        )
+        # The address the registration holds after this call (the new id on a /clear rename) may not be one a
+        # continue_session run holds; checked and renamed under the same gate as register and the claim.
+        destination = self._table.address(params["session_id"], self._harness(call))
+        with self._resume_gate:
+            lease = self._mailbox.lease_for(destination)
+            if lease is not None:
+                raise P.RelayError(
+                    "registration_conflict",
+                    f"a continue_session run holds {destination}; heartbeat again once it finished",
+                    details={"why": "resume_running", "message_id": lease["message_id"]},
+                )
+            outcome = self._table.heartbeat(
+                params["registration_id"], params["session_id"], params["channel_nonce"],
+                previous_session_id=params.get("previous_session_id"), cwd=params.get("cwd"),
+                title=params.get("title"), task=params.get("task"), accepts=params.get("accepts"),
+                harness=self._harness(call),
+            )
         registration = outcome.registration
         if registration.accepts and (outcome.session_changed or params.get("accepts")):
             self._mailbox.record_opt_in(self._table.address(registration.session_id, registration.harness))
@@ -1316,7 +1327,7 @@ class RelayService:
         if not self._mailbox.opted_in(text):
             raise P.RelayError("not_opted_in", f"{text} never registered through a channel that accepted messages",
                                details={"why": "never_opted_in"})
-        lease = LeaseClaim(new_lease_id(), self._runner.relay_instance, self._runner.lease_s)
+        lease = LeaseClaim(new_lease_id(), self._runner.relay_instance, self._runner.lease_s, proc_tag=new_proc_tag())
         common = dict(origin=call.origin, to=text, kind=params["kind"], body=params["body"], id=params.get("id"),
                       expires_in_s=params.get("expires_in_s"), task=params.get("task"), hop=0, grant=granted.use,
                       ingress=ingress, lease=lease)
@@ -1340,6 +1351,7 @@ class RelayService:
             prompt=turn_text({"id": message["id"], "sender": message["sender"], "kind": message["kind"],
                               "body": message["body"]}),
             timeout_s=float(settings.timeout_s), claude_permission_mode=settings.claude_permission_mode,
+            proc_tag=lease.proc_tag,
         ))
         return result
 

@@ -83,7 +83,8 @@ _OPT_INS_DDL = (
 )
 _LEASES_DDL = (
     "CREATE TABLE resume_leases (address TEXT PRIMARY KEY, message_id TEXT NOT NULL UNIQUE REFERENCES messages (id),"
-    " lease_id TEXT NOT NULL UNIQUE, relay_instance TEXT NOT NULL, phase TEXT NOT NULL, child_pid INTEGER,"
+    " lease_id TEXT NOT NULL UNIQUE, proc_tag TEXT NOT NULL UNIQUE, relay_instance TEXT NOT NULL, phase TEXT NOT NULL,"
+    " child_pid INTEGER,"
     " child_start REAL, pgid INTEGER, created_at REAL NOT NULL, expires_at REAL NOT NULL)"
 )
 #: Version -> the statements that move a mailbox from the previous version to it (additive only).
@@ -251,11 +252,20 @@ class LeaseLost(Exception):
 
 @dataclass(frozen=True)
 class LeaseClaim:
-    """What ``send_message(lease=...)`` needs to claim the stored message for a ``continue_session`` run."""
+    """What ``send_message(lease=...)`` needs to claim the stored message for a ``continue_session`` run.
+
+    ``lease_id`` is the fencing token (replaced when a relay takes the lease over for recovery); ``proc_tag``
+    is the immutable tag the run's processes carry in their environment, so a later relay still finds them
+    after any number of takeovers. It defaults to the lease id."""
 
     lease_id: str
     relay_instance: str
     lease_s: float
+    proc_tag: Optional[str] = None
+
+    @property
+    def tag(self) -> str:
+        return self.proc_tag or self.lease_id
 
 
 def _fingerprint(*parts: Any) -> str:
@@ -905,9 +915,9 @@ class Mailbox:
                          delivered_at=now, attempts=row["attempts"] + 1, reason="claimed for a resume run")
         conn.execute("UPDATE messages SET claimed_by = ? WHERE id = ?", (lease.lease_id, row["id"]))
         conn.execute(
-            "INSERT INTO resume_leases (address, message_id, lease_id, relay_instance, phase, created_at, expires_at)"
-            " VALUES (?, ?, ?, ?, 'claimed', ?, ?)",
-            (row["to_addr"], row["id"], lease.lease_id, lease.relay_instance, now, now + lease.lease_s),
+            "INSERT INTO resume_leases (address, message_id, lease_id, proc_tag, relay_instance, phase, created_at,"
+            " expires_at) VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?)",
+            (row["to_addr"], row["id"], lease.lease_id, lease.tag, lease.relay_instance, now, now + lease.lease_s),
         )
 
     def claim_message(self, message_id: str, *, lease_id: str, relay_instance: str, lease_s: float) -> P.DeliveredMessage:
@@ -1000,7 +1010,8 @@ class Mailbox:
     def take_lease(self, lease_id: str, *, new_lease_id: str, relay_instance: str) -> None:
         """Fence an orphaned lease before recovering it: ``lease_id`` becomes ``new_lease_id`` owned by
         ``relay_instance``, on the lease row and the message's claim together. Every later write with the old
-        id (a runner that outlived its relay) raises :class:`LeaseLost`; so does this call if the old id is gone."""
+        id (a runner that outlived its relay) raises :class:`LeaseLost`; so does this call if the old id is gone.
+        ``proc_tag`` never changes: the run's processes are found by it after any takeover."""
         with self._write() as conn:
             lease = self._owned_lease(conn, lease_id)
             conn.execute("UPDATE resume_leases SET lease_id = ?, relay_instance = ? WHERE lease_id = ?",

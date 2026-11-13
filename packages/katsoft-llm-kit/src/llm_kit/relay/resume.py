@@ -7,9 +7,10 @@ phase ``claimed``, :meth:`llm_kit.relay.mailbox.Mailbox.send_message`). The
 :class:`ResumeRunner` then, on a thread of its own:
 
 1. sets the lease phase ``spawning`` and starts the child in a new session
-   (its own process group) with ``LLM_KIT_RESUME_LEASE=<lease id>`` in its
-   environment, so a relay that dies before it records the pid can still find
-   the child;
+   (its own process group) with ``LLM_KIT_RESUME_LEASE=<process tag>`` in its
+   environment. The tag is persisted on the lease (``proc_tag``) and, unlike
+   the lease id (the fencing token), never replaced, so any later relay finds
+   the child and its descendants, which inherit the tag;
 2. records the child's pid, create time and process group (phase
    ``running``); every lease write is fenced by the lease id;
 3. renews the lease every ``renew_s`` until the run's deadline, and stops
@@ -46,11 +47,14 @@ Measured with Claude Code 2.1.317 on 2026-11-13 (plan-codex H16): ``-p
 Orphan recovery (:meth:`ResumeRunner.recover`, at relay start and on every
 maintenance sweep). A lease is an orphan when another relay instance took it,
 when it expired, or when its recorded child is gone and no runner of this
-relay owns it. A recorded child that is alive with the same pid AND create
-time is terminated (SIGTERM to its group, a grace period, SIGKILL) and must be
-gone before the claim is cleared; a pid whose create time differs is never
-signalled. A ``spawning`` lease with no pid is matched to this user's
-processes by the environment tag (psutil ``environ``). Every orphan is
+relay owns it. The orphan is fenced first (:meth:`Mailbox.take_lease`), then
+every process of its run is stopped (:func:`stop_processes`): each process
+carrying the persisted tag, the recorded child when its create time is exactly
+the recorded one, and its group's members while that group is provably the
+run's. Each is signalled on its own identity-bound psutil handle (SIGTERM, a
+grace period, SIGKILL for every survivor, whether or not the leader already
+exited); no group is ever signalled by number, so a reused pid or group is
+never touched. All of them must be gone before the claim is cleared. Every orphan is
 declined with the reason through the fenced
 :meth:`~llm_kit.relay.mailbox.Mailbox.recover_lease`. A surviving child is
 never adopted: its stdout belonged to the dead relay, so its output cannot be
@@ -81,8 +85,6 @@ DEFAULT_RENEW_S = 30.0
 TERM_GRACE_S = 3.0
 #: Seconds a stopped child may take to disappear before recovery waits for a later sweep.
 GONE_WAIT_S = 5.0
-#: A recorded create time matches the live process within this many seconds.
-START_TOLERANCE_S = 1.0
 _STDERR_TAIL = 2000
 
 REASON_BEFORE_START = "relay restarted before the run started"
@@ -96,16 +98,21 @@ def new_lease_id() -> str:
     return "lse_" + secrets.token_hex(12)
 
 
+def new_proc_tag() -> str:
+    """The immutable tag a run's processes carry (``resume_leases.proc_tag``); never replaced by a takeover."""
+    return "rpt_" + secrets.token_hex(12)
+
+
 def new_relay_instance() -> str:
     return "rin_" + secrets.token_hex(8)
 
 
-def child_env(lease_id: str, base: Optional[Mapping[str, str]] = None) -> dict[str, str]:
+def child_env(tag: str, base: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     """The child's environment: ``base`` (default: this process's) without ``CLAUDECODE`` and
-    ``CLAUDE_CODE_*``, plus the lease tag."""
+    ``CLAUDE_CODE_*``, plus the run's immutable process tag."""
     env = {k: v for k, v in (os.environ if base is None else base).items()
            if k != "CLAUDECODE" and not k.startswith("CLAUDE_CODE_")}
-    env[LEASE_ENV] = lease_id
+    env[LEASE_ENV] = tag
     return env
 
 
@@ -134,61 +141,92 @@ def create_time(pid: int) -> Optional[float]:
 
 
 def same_process(pid: Optional[int], start: Optional[float]) -> bool:
-    """Whether ``pid`` is alive AND was created at ``start`` (a reused pid is a different process)."""
+    """Whether ``pid`` is alive AND its create time is exactly ``start`` (the value psutil reported when the
+    child was recorded; a reused pid, even one created a moment later, is a different process)."""
     if pid is None or start is None:
         return False
     actual = create_time(pid)
-    return actual is not None and abs(actual - start) <= START_TOLERANCE_S
+    return actual is not None and actual == start
 
 
-def stop_group(pid: int, start: float, pgid: int, *, grace_s: float = TERM_GRACE_S,
-               gone_wait_s: float = GONE_WAIT_S) -> bool:
-    """Terminate the process group of the identity-checked child ``pid``; True once the child is gone.
-
-    Never signals anything unless ``pid`` is alive with create time ``start`` and still leads ``pgid``.
-    A child that is already gone is True at once.
-    """
-    if not same_process(pid, start):
-        return True
-    try:
-        if os.getpgid(pid) != pgid:
-            return False  # the process left its group: not ours to signal by group
-    except ProcessLookupError:
-        return True
-    for sig, wait in ((signal.SIGTERM, grace_s), (signal.SIGKILL, gone_wait_s)):
-        try:
-            os.killpg(pgid, sig)
-        except ProcessLookupError:
-            return True
-        end = time.monotonic() + wait
-        while time.monotonic() < end:
-            if not same_process(pid, start):
-                _reap(pid)
-                return True
-            _reap(pid)
-            time.sleep(0.05)
-    return not same_process(pid, start)
+def tagged_processes(tag: str) -> list[tuple[int, float]]:
+    """``(pid, create time)`` of every process of this user whose environment carries the run's tag."""
+    return [(proc.pid, start) for proc, start in _tagged(tag)]
 
 
-def _reap(pid: int) -> None:
-    """Collect ``pid`` if it is our own exited child (so it is not left a zombie)."""
-    try:
-        os.waitpid(pid, os.WNOHANG)
-    except ChildProcessError:
-        pass  # not our child: its parent reaps it
-
-
-def tagged_processes(lease_id: str) -> list[tuple[int, float]]:
-    """``(pid, create time)`` of every process of this user whose environment carries the lease tag."""
+def _tagged(tag: str) -> list[tuple[Any, float]]:
     psutil = _psutil()
-    found: list[tuple[int, float]] = []
+    found: list[tuple[Any, float]] = []
     for proc in psutil.process_iter():
         try:
-            if proc.environ().get(LEASE_ENV) == lease_id:
-                found.append((proc.pid, float(proc.create_time())))
+            if proc.environ().get(LEASE_ENV) == tag:
+                found.append((proc, float(proc.create_time())))
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
     return found
+
+
+def run_processes(tag: str, leader: Optional[tuple[int, float, int]] = None) -> list[Any]:
+    """Every live process of one run, as psutil handles (each bound to its exact create time).
+
+    The members are the processes whose environment carries ``tag`` (descendants inherit it) and, when
+    ``leader`` = ``(pid, create time, pgid)`` is given, the leader itself if it is exactly that process, and
+    the members of its process group if that group is provably still the run's: the leader is alive with its
+    recorded identity, or no process holds the leader's pid at all (a pid is not reused while a process group
+    of that id has members). A pid held by another process means the group may be a stranger's, and no group
+    member is added.
+    """
+    psutil = _psutil()
+    members: dict[int, Any] = {proc.pid: proc for proc, _ in _tagged(tag)}
+    if leader is not None:
+        pid, start, pgid = leader
+        lead = None
+        try:
+            candidate = psutil.Process(pid)
+            if float(candidate.create_time()) == start and candidate.status() != psutil.STATUS_ZOMBIE:
+                lead = candidate
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            lead = None
+        if lead is not None:
+            members[pid] = lead
+        if lead is not None or (pgid == pid and not psutil.pid_exists(pid)):
+            for proc in psutil.process_iter():
+                try:
+                    if proc.pid not in members and os.getpgid(proc.pid) == pgid:
+                        proc.create_time()  # binds the handle to this process's identity
+                        members[proc.pid] = proc
+                except (ProcessLookupError, PermissionError, psutil.Error):
+                    continue
+    members.pop(os.getpid(), None)  # never this relay
+    return list(members.values())
+
+
+def stop_processes(tag: str, leader: Optional[tuple[int, float, int]] = None, *, grace_s: float = TERM_GRACE_S,
+                   gone_wait_s: float = GONE_WAIT_S, rounds: int = 3) -> bool:
+    """Terminate every process of one run (:func:`run_processes`); True once none is left.
+
+    Each member is signalled on its own psutil handle, which refuses to signal a pid whose create time
+    changed, so no reused pid and no process group by number is ever signalled. SIGTERM, a grace period, then
+    SIGKILL for every survivor, whether or not the leader already exited; then the run is enumerated again
+    (a descendant may have started meanwhile), up to ``rounds`` times.
+    """
+    psutil = _psutil()
+    for _ in range(rounds):
+        procs = run_processes(tag, leader)
+        if not procs:
+            return True
+        for sig, wait in ((signal.SIGTERM, grace_s), (signal.SIGKILL, gone_wait_s)):
+            for proc in procs:
+                try:
+                    proc.send_signal(sig)
+                except (psutil.NoSuchProcess, psutil.ZombieProcess):
+                    pass  # already gone (or the pid now names another process, which psutil refuses)
+            _, procs = psutil.wait_procs(procs, timeout=max(wait, 0.05))
+            if not procs:
+                break
+        if procs:
+            return False
+    return not run_processes(tag, leader)
 
 
 # --------------------------------------------------------------------------
@@ -208,6 +246,12 @@ class ResumeJob:
     prompt: str
     timeout_s: float
     claude_permission_mode: str = "default"
+    #: The immutable process tag of the lease (``resume_leases.proc_tag``); the lease id when not given.
+    proc_tag: Optional[str] = None
+
+    @property
+    def tag(self) -> str:
+        return self.proc_tag or self.lease_id
 
 
 @dataclass
@@ -215,6 +259,8 @@ class _Active:
     job: ResumeJob
     thread: Optional[threading.Thread] = None
     stop: Callable[[], None] = lambda: None
+    #: ``(pid, create time, pgid)`` of the recorded child, once recorded.
+    leader: Optional[tuple[int, float, int]] = None
     stopped_by: Optional[str] = None
     lost: threading.Event = field(default_factory=threading.Event)
 
@@ -250,9 +296,9 @@ class ResumeRunner:
         self._grace = term_grace_s
         self._lock = threading.Lock()
         self._active: dict[str, _Active] = {}
-        #: Leases this relay fenced for recovery whose child has not stopped yet:
-        #: new lease id -> (reason, the lease id the child's environment carries).
-        self._taken: dict[str, tuple[str, str]] = {}
+        #: Leases this relay fenced for recovery whose processes have not stopped yet: new lease id -> reason.
+        #: Only the reason lives here; the process tag is persisted (``resume_leases.proc_tag``).
+        self._taken: dict[str, str] = {}
         self._closing = False
 
     # -- starting and stopping ------------------------------------------------------
@@ -341,7 +387,8 @@ class ResumeRunner:
     def _record(self, active: _Active, pid: int, pgid: int) -> None:
         start = create_time(pid)
         if start is None:
-            start = time.time()  # already gone: nothing will match it, so nothing is ever signalled
+            start = -1.0  # already gone: no process has this create time, so nothing is ever signalled by it
+        active.leader = (pid, start, pgid)
         self.mailbox.set_lease_phase(active.job.lease_id, "running", child_pid=pid, child_start=start, pgid=pgid,
                                      lease_s=self.lease_s)
 
@@ -355,8 +402,13 @@ class ResumeRunner:
         job = active.job
         argv = build_codex_app_server_argv(root=job.cwd, sandbox="workspace-write", network=False, hooks=False,
                                            argv_prefix=self._codex_prefix)
-        app = C2.CodexAppServer(argv, cwd=job.cwd, env=child_env(job.lease_id), client_name="llm-kit-relay-resume")
-        active.stop = lambda: app.close(grace_s=0.5)
+        app = C2.CodexAppServer(argv, cwd=job.cwd, env=child_env(job.tag), client_name="llm-kit-relay-resume")
+
+        def stop() -> None:
+            app.close(grace_s=0.5)
+            stop_processes(job.tag, active.leader, grace_s=0.0)
+
+        active.stop = stop
         try:
             info = app.start()
             self._record(active, info.pid, info.pgid)
@@ -383,7 +435,9 @@ class ResumeRunner:
             try:
                 app.close(grace_s=1.0)
             except C2.CodexAppServerError:
-                pass  # the outcome is already decided; close killed the group either way
+                pass  # the outcome is already decided
+            if not stop_processes(job.tag, active.leader, grace_s=0.5):
+                print(f"llm-kit relay: a process of resume run {job.tag} survived SIGKILL", file=sys.stderr)
 
     # -- Claude -----------------------------------------------------------------------
 
@@ -405,17 +459,16 @@ class ResumeRunner:
 
         job = active.job
         proc = subprocess.Popen(
-            self.claude_argv(job), cwd=job.cwd, env=child_env(job.lease_id),
+            self.claude_argv(job), cwd=job.cwd, env=child_env(job.tag),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", start_new_session=True,
         )
         pgid = proc.pid  # start_new_session: the child leads its own group
 
         def kill() -> None:
-            try:
-                os.killpg(pgid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass  # the group is already gone
+            # every process of the run, each by its own identity-bound handle: never the group by number,
+            # which after the leader is reaped could name a stranger's group
+            stop_processes(job.tag, active.leader, grace_s=0.0)
 
         active.stop = kill
         verdict: dict[str, Any] = {}
@@ -466,7 +519,8 @@ class ResumeRunner:
                 proc.wait()
                 return "declined", f"timeout: the resumed claude turn did not finish within {job.timeout_s:g} s"
         finally:
-            kill()  # nothing of the group outlives the run
+            if not stop_processes(job.tag, active.leader, grace_s=0.5):  # nothing of the run outlives it
+                print(f"llm-kit relay: a process of resume run {job.tag} survived SIGKILL", file=sys.stderr)
             for reader in readers:
                 reader.join(timeout=5.0)
         if "mismatch" in verdict:
@@ -509,7 +563,7 @@ class ResumeRunner:
         clock = time.time() if now is None else now
         for lease in self.mailbox.leases():
             lease_id = lease["lease_id"]
-            reason, tag = self._taken.get(lease_id, (None, lease_id))
+            reason = self._taken.get(lease_id)
             if reason is None:
                 reason = self._orphan_reason(lease, clock)
                 if reason is None:
@@ -523,9 +577,9 @@ class ResumeRunner:
                     active = self._active.get(lease_id)
                 if active is not None:
                     active.lost.set()
-                self._taken[taken] = (reason, tag)
+                self._taken[taken] = reason
                 lease_id = taken
-            if not self._stop_children(lease, tag):
+            if not self._stop_children(lease):
                 print(f"llm-kit relay: a resume child of lease {lease_id} did not stop; "
                       "its claim is kept until a later sweep", file=sys.stderr)
                 continue
@@ -559,23 +613,13 @@ class ResumeRunner:
             return REASON_EXPIRED
         return None  # ours, unexpired, its runner just ending: its own finish_claim ends the claim
 
-    def _stop_children(self, lease: Mapping[str, Any], tag: str) -> bool:
-        """Stop the lease's recorded child (identity-checked) or, while spawning, every process tagged ``tag``
-        (the lease id the child was started with, from before any :meth:`Mailbox.take_lease`)."""
-        if lease["phase"] == "running" and lease["child_pid"] is not None:
-            return stop_group(lease["child_pid"], lease["child_start"], lease["pgid"], grace_s=self._grace)
-        if lease["phase"] == "spawning":
-            return all(stop_group(pid, start, _pgid(pid), grace_s=self._grace)
-                       for pid, start in tagged_processes(tag))
-        return True
-
-
-def _pgid(pid: int) -> int:
-    """``pid``'s process group; ``pid`` itself when it is already gone (stop_group then signals nothing)."""
-    try:
-        return os.getpgid(pid)
-    except ProcessLookupError:
-        return pid
+    def _stop_children(self, lease: Mapping[str, Any]) -> bool:
+        """Stop every process of the lease's run: those carrying its persisted ``proc_tag`` (which no takeover
+        changes) and the recorded child and its group when provably still the run's (:func:`run_processes`)."""
+        leader = None
+        if lease["child_pid"] is not None and lease["child_start"] is not None and lease["pgid"] is not None:
+            leader = (lease["child_pid"], lease["child_start"], lease["pgid"])
+        return stop_processes(lease["proc_tag"], leader, grace_s=self._grace)
 
 
 __all__ = [
@@ -589,8 +633,10 @@ __all__ = [
     "ResumeRunner",
     "child_env",
     "new_lease_id",
+    "new_proc_tag",
     "new_relay_instance",
     "same_process",
-    "stop_group",
+    "run_processes",
+    "stop_processes",
     "tagged_processes",
 ]

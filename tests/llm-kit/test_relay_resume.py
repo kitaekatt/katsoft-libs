@@ -403,7 +403,7 @@ def test_a_claude_continue_is_answered_and_the_child_is_checked(world):
                             "--permission-mode", "default"]
     assert os.path.realpath(call["cwd"]) == w.cwd
     assert call["claudecode"] is False and call["claude_code_vars"] == []
-    assert call["lease"] and call["lease"].startswith("lse_")
+    assert call["lease"] and call["lease"].startswith("rpt_")  # the persisted process tag, not the fencing token
     assert call["pgid"] == call["pid"]  # its own process group
     assert call["prompt"].startswith(f"[relay message {message['id']} from direct:")  # never the body first
     assert call["prompt"].endswith("\n\n/direct send somewhere else")
@@ -475,10 +475,11 @@ def box(tmp_path) -> M.Mailbox:
     return M.Mailbox(tmp_path / "mailbox.sqlite3", machine=MACHINE)
 
 
-def claim(box: M.Mailbox, runner: R.ResumeRunner, body: str = "hi") -> tuple[str, str]:
+def claim(box: M.Mailbox, runner: R.ResumeRunner, body: str = "hi", *,
+          proc_tag: Optional[str] = None) -> tuple[str, str]:
     """A stored and claimed continue_session message of ``runner``: (message id, lease id)."""
     target = f"{MACHINE}/claude/{uuid.uuid4()}"
-    lease = M.LeaseClaim(R.new_lease_id(), runner.relay_instance, runner.lease_s)
+    lease = M.LeaseClaim(R.new_lease_id(), runner.relay_instance, runner.lease_s, proc_tag=proc_tag)
     record = box.send_message(origin="claude.ai/owner", to=target, kind="question", body=body, lease=lease)["message"]
     return record["id"], lease.lease_id
 
@@ -555,6 +556,122 @@ def test_a_reused_pid_is_never_signalled(box):
     finally:
         stranger.kill()
         stranger.wait()
+
+
+FAMILY = """
+import os, signal, subprocess, sys, time
+pidfile, leader_exits, untagged = sys.argv[1], sys.argv[2] == "exit", sys.argv[3] == "untagged"
+code = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(300)"
+env = {k: v for k, v in os.environ.items() if not (untagged and k == "LLM_KIT_RESUME_LEASE")}
+child = subprocess.Popen([sys.executable, "-c", code], env=env)  # same group, ignores SIGTERM
+open(pidfile, "w").write(str(child.pid))
+if leader_exits:
+    os._exit(0)
+time.sleep(300)
+"""
+
+
+def family(tmp_path: Path, tag: str, *, leader_exits: bool, untagged: bool) -> tuple[subprocess.Popen, int]:
+    """A tagged leader in its own group with a descendant that ignores SIGTERM (and, ``untagged``, dropped the
+    tag from its environment, so only its process group ties it to the run); (leader, descendant pid)."""
+    pidfile = tmp_path / f"desc-{uuid.uuid4().hex}.pid"
+    leader = subprocess.Popen([sys.executable, "-c", FAMILY, str(pidfile), "exit" if leader_exits else "stay",
+                               "untagged" if untagged else "tagged"], env=R.child_env(tag), start_new_session=True)
+    desc = int(wait_for(lambda: pidfile.exists() and pidfile.read_text(), 10, "the descendant to start"))
+    wanted = None if untagged else tag
+    wait_for(lambda: psutil.Process(desc).environ().get(R.LEASE_ENV, None) == wanted or None, 10,
+             "the descendant's environment")
+    if leader_exits:
+        leader.wait(10)
+    return leader, desc
+
+
+def gone(pid: int) -> bool:
+    try:
+        return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True
+
+
+@pytest.mark.parametrize("untagged", [False, True], ids=["tagged", "untagged"])
+@pytest.mark.parametrize("leader_exits", [False, True], ids=["leader_alive", "leader_already_dead"])
+def test_recovery_stops_a_descendant_that_ignores_sigterm(box, tmp_path, leader_exits, untagged):
+    dead, fresh = R.ResumeRunner(box), R.ResumeRunner(box, term_grace_s=0.3)
+    tag = f"rpt_family_{uuid.uuid4().hex[:8]}"
+    message_id, lease_id = claim(box, dead, proc_tag=tag)
+    leader, desc = family(tmp_path, tag, leader_exits=leader_exits, untagged=untagged)
+    try:
+        start = -1.0 if leader_exits else psutil.Process(leader.pid).create_time()
+        box.set_lease_phase(lease_id, "running", child_pid=leader.pid, child_start=start, pgid=leader.pid)
+        assert fresh.recover() == 1
+        assert gone(desc)  # SIGKILL reached it although the leader had exited (or exited on SIGTERM)
+        assert leader.wait(10) is not None
+        ended(box, message_id)
+    finally:
+        for pid in (desc, leader.pid):
+            try:
+                os.kill(pid, 9)
+            except ProcessLookupError:
+                pass
+
+
+def test_a_crash_between_fence_and_kill_still_finds_the_child_by_its_persisted_tag(box):
+    dead, fresh = R.ResumeRunner(box), R.ResumeRunner(box, term_grace_s=0.3)
+    message_id, lease_id = claim(box, dead, proc_tag="rpt_persisted")
+    box.set_lease_phase(lease_id, "spawning")
+    child = sleeper("rpt_persisted")
+    try:
+        wait_for(lambda: R.tagged_processes("rpt_persisted"), 10, "the tag to be readable")
+        # a recovering relay fenced the lease, then crashed before it stopped the child
+        box.take_lease(lease_id, new_lease_id=R.new_lease_id(), relay_instance="rin_crashed")
+        assert box.leases()[0]["proc_tag"] == "rpt_persisted"
+        assert fresh.recover() == 1
+        assert child.wait(10) is not None
+        ended(box, message_id)
+    finally:
+        child.kill()
+
+
+def test_a_pid_created_half_a_second_later_is_a_stranger(box):
+    dead, fresh = R.ResumeRunner(box), R.ResumeRunner(box, term_grace_s=0.3)
+    message_id, lease_id = claim(box, dead)
+    stranger = sleeper()
+    try:
+        start = psutil.Process(stranger.pid).create_time()
+        box.set_lease_phase(lease_id, "running", child_pid=stranger.pid, child_start=start - 0.5, pgid=stranger.pid)
+        assert fresh.recover() == 1
+        assert stranger.poll() is None  # never signalled: the identity must match exactly
+        assert ended(box, message_id)["reply"]["body"] == R.REASON_LOST
+    finally:
+        stranger.kill()
+        stranger.wait()
+
+
+def test_a_claude_run_never_signals_a_process_group_by_number(world, monkeypatch):
+    w = world()
+    target = w.claude_idle()
+
+    def refuse(*args):
+        raise AssertionError(f"os.killpg{args}: a group id may name a stranger's group once its leader is reaped")
+
+    monkeypatch.setattr(os, "killpg", refuse)
+    done = w.finished(w.direct(target)["message"]["id"])
+    assert done["state"] == "answered", done["reply"]["body"]
+
+
+def test_a_heartbeat_rename_onto_a_leased_address_is_refused(world):
+    w = world()
+    target = w.claude_idle()
+    message = w.direct(target, body="MODE=hang")["message"]
+    wait_for(lambda: w.claude_calls(), 10, "the claude child to start")
+    other = str(uuid.uuid4())
+    reg = w.relay.register(other)
+    leased = target.rsplit("/", 1)[1]
+    error = refused("registration_conflict", lambda: w.relay.channel(
+        leased, "heartbeat", {**w.relay.creds(reg, leased), "previous_session_id": other}))
+    assert error.details["why"] == "resume_running"
+    assert w.mailbox.get_message(message["id"])["state"] == "delivered"  # still the run's
+    assert w.relay.channel(other, "heartbeat", w.relay.creds(reg, other))["session_changed"] is False
 
 
 def test_a_running_lease_is_renewed_so_the_sweep_leaves_it_alone(box, tmp_path, monkeypatch):
