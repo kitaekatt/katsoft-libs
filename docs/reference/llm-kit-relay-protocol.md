@@ -93,6 +93,26 @@ The amendments:
   and hub bearer, which authenticate as the local principal and stay valid
   until rotated; nothing rotates them implicitly.
 
+- Amendment 3, 2026-11-13, the katsoft-llm-kit release after 1.22.0 (remote
+  resume; owner ruling on plan-codex Q2, option (a): sessions that once opted
+  in, off unless relay.yaml says so, permission mode `default`). The verb
+  `continue_session` is added (a new verb is a plain addition under the first
+  list above); it is recorded as an amendment because it widens two
+  request-side enums, `verb` and `grantable_verb` in `common.json`, and adds a
+  client verb (`continue`) and a hub tool. A relay without it refuses the verb
+  `unknown_verb` with no effect (a defined, non-retryable refusal, the shape
+  condition 2 asks for), and `status.continue_session: {"enabled": <bool>}`
+  says that a relay serves it and whether its relay.yaml turns it on
+  (condition 3). No existing request changes meaning (condition 1). The
+  mailbox (schema version 3) gains `messages.claimed_by`, the `opt_ins` table
+  and the `resume_leases` table; none of them is on the wire. What a consumer
+  that vendors the schemas must copy: `common.json` (the two enums and the
+  audit row's `verb` enum) and, if it vendors them, `status.response.json`
+  and the new `continue_session.request.json` and
+  `continue_session.response.json`. The llm-kit plugin vendors
+  `common.json` and `register.request.json`; only `common.json` changes for
+  it. Behaviour: section 20, "Remote resume".
+
 Policy revisions inside `relay-protocol/1` (no envelope, schema or field
 changed; a client of the earlier policy keeps working):
 
@@ -207,6 +227,7 @@ Each verb has a tier, the origin kinds that may call it (anything else is
 | read | `list_machines`, `list_sessions`, `read_session`, `get_replies`, `list_questions` | direct, hub, relay | direct |
 | llm | `ask_llm` | direct, hub, relay | direct |
 | write | `send_message`, `answer_question` | direct, hub, relay | direct |
+| write | `continue_session` (amendment 3) | direct, hub | direct |
 | grant | `grant_mint`, `grant_check` | direct | none |
 | control | `pause`, `resume` | operator | none |
 | control | `status` | channel, direct, hub, operator, relay | none |
@@ -223,6 +244,15 @@ Rules that follow from the table:
   because `on_behalf_of` must name a session on that machine (section 20,
   "Forwarding"). A relay origin never joins the channel, grant or control
   tiers (`status` excepted).
+- `continue_session` (amendment 3) is the one write a relay origin may not
+  call (`origin_not_allowed`) and that is never forwarded: a `/direct`
+  session asks the relay of its own machine, and a target on another machine
+  is `target_invalid` (`details.why: not_forwarded`). The hub reaches the
+  target's relay directly, with this relay's own credentials or, for a peer,
+  the peer key that relay issued (a hub origin under a peer key). A hub
+  `continue_session` needs no grant, as a hub `send_message` needs none; the
+  target machine's `resume: {enabled: true}` and the session's past opt-in are
+  the permission (section 20, "Remote resume").
 - A hub write needs no grant. For `send_message` the target session's opt-in
   is the permission (owner ruling 2026-11-11, "opt-in session = grant"): a
   session the owner launched with the channel (`clauder --relay`, which
@@ -262,6 +292,12 @@ Rules that follow from the table:
     the llm-kit hooks check is a file such a process can also write;
   - the Claude in a `/direct` session can send a message the owner did not
     write;
+  - with `resume: {enabled: true}` in a machine's relay.yaml (amendment 3),
+    each of the senders above can also resume any idle session on that
+    machine that once opted in, and run one turn in it, without the owner
+    at the keyboard and with no per-call confirmation (owner ruling on Q2);
+    a peer key holder can do so through a hub origin at every peer that
+    accepts its key and turned resume on;
   - a machine holds the peer key each peer issued to it
     (`peers/<peer>/peer.key` in its state directory, section 13), so any
     process there that can read it can do at that peer what "Principals"
@@ -481,6 +517,7 @@ of the listing and named in its ledger's `skipped` list.
 | `get_replies` | `replies` | `message_id` or `address` |
 | `list_questions` | `questions` | `machine` |
 | `answer_question` | `answer` | `id` |
+| `continue_session` | `continue` | `to` (a full address; never forwarded) |
 | `grant_mint` | | |
 | `grant_check` | | |
 | `pause` | | |
@@ -656,6 +693,16 @@ Every other move is `invalid_transition`. Every transition is an audit row.
   such a failure, a replay keeps its use because the call returned ok). It is
   refused `paused` while the relay is paused. A hub-origin call needs no
   grant (section 3) and otherwise meets the same checks and refusals.
+
+- `continue_session(to, kind, body, id?, expires_in_s?, task?)` (amendment 3)
+  -> the message record, exactly as `send_message` returns it, with the
+  message already `delivered` and claimed for the run; the run's answer
+  arrives as its reply (`get_replies`), `answered` with the final text or
+  `declined` with the reason. `to` must be a full address of a session on the
+  serving relay's machine. Off unless that machine's relay.yaml sets
+  `resume: {enabled: true}`. Refusals and the run: section 20, "Remote
+  resume". The hub routes it like `send_message`, to the one relay `to`
+  names.
 
 ### The hub endpoint and routing
 
@@ -845,7 +892,7 @@ Rows written before katsoft-llm-kit 1.21.0 have a null `on_behalf_of`.
 a persisted flag; `scope` is `relay` or `hub`. Both return the pause state
 (`relay` and `hub`, each `paused`, `paused_since`, `reason`).
 
-- Relay paused: `send_message` and `answer_question` are refused `paused`
+- Relay paused: `send_message`, `answer_question` and `continue_session` are refused `paused`
   from every origin; `poll` returns no messages with `paused: true` at once.
   Registration, heartbeats, acks, replies, reads, `ask_llm`, grants and
   `status` continue. Expiry keeps running, so a queued message can lapse
@@ -915,8 +962,9 @@ Files: `common`, `envelope.request`, `envelope.response`, the objects `error`,
   never forwarded, whatever it claims.
 - Verification of `signed` or of any `origin_proof` other than `none`:
   alternative B or the OAuth phase.
-- `continue_session`, `start_session`, `stop_session` and remote approval of
-  permission prompts: later, separately gated phases.
+- `start_session`, `stop_session` and remote approval of permission prompts:
+  later, separately gated phases. (`continue_session` joined the protocol in
+  amendment 3; it never approves a prompt: section 20, "Remote resume".)
 
 ## 20. Relay server decisions (unit S3)
 
@@ -1269,6 +1317,111 @@ Mailbox. `schema_version` 2 adds the nullable `messages.forwarded_by` and
 `audit.on_behalf_of` columns; a version-1 mailbox is migrated in place at
 open, and its rows keep null. A relay of 1.20.0 or earlier refuses a
 version-2 mailbox (`internal`, naming both versions).
+
+### Remote resume (amendment 3)
+
+`continue_session` is the one verb after which the relay starts a process
+(`llm_kit/relay/resume.py`). A Codex or Claude channel still starts nothing in
+the relay.
+
+Configuration. relay.yaml `resume: {enabled: false, timeout_s: 1800,
+claude_permission_mode: default}`, every key optional, unknown keys refused.
+`enabled` defaults to false, and the relay reads the file on every call, so
+turning it off takes effect at once (the top-level `enabled: true` is needed
+too). `timeout_s` (1..86400) bounds one run. `claude_permission_mode` accepts
+only `default` (owner ruling on Q2); no `bypass*` mode is ever accepted.
+
+Eligibility. The target must be a session address of this machine that
+registered through a channel with a non-empty `accepts` at least once (the
+durable `opt_ins` table, written at every such `register` and heartbeat), and
+that is now `idle`: no live process, no held Codex writer lock, a transcript
+to resume, and a recorded working directory that exists. Checked in this
+order, each refusal with no effect and no row:
+
+| Condition | Code | `details` |
+|---|---|---|
+| `to` names another machine | `target_invalid` | `why: not_forwarded` |
+| resume off | `not_opted_in` | `why: resume_disabled`, `key: resume.enabled`, `config` |
+| never opted in | `not_opted_in` | `why: never_opted_in` |
+| a run already holds the address | `rate_limited` (retryable) | `what: resume_running`, `message_id` |
+| session live | `invalid_transition` | `why: session_live`, `state`, `use: send_message` |
+| session ended or nothing to resume | `session_ended` | `why` |
+| no existing working directory | `target_invalid` | `why: no_cwd` |
+
+A resend with an existing `id` and the same content is a replay
+(`replayed: true`, no new run); the same id with other content, or an id used
+by a `send_message`, is `idempotency_conflict`. A `/direct` call consumes its
+grant use in the transaction that stores the message, so a refusal consumes
+nothing.
+
+Claim and lease. One IMMEDIATE mailbox transaction re-checks the target's
+liveness, stores the message, moves it `queued -> delivered` with
+`claimed_by` set to a fresh lease id, and inserts the address's
+`resume_leases` row (phase `claimed`, the relay instance id, expiry). A
+claimed message is never returned by `poll`, never acked or replied by a
+channel (`invalid_transition`, `why: resume_running`), never lapsed and never
+moved to `session-ended`. A `register` of an address that holds a lease is
+`registration_conflict` (retryable), `details.why: resume_running`, so a
+returning channel waits; the register check and the claim run under one lock
+in the relay. What stays open is the gap between that check and the spawn
+for a process the relay does not see first: the owner can open the session
+in a TUI or `claude --resume` meanwhile. A Codex run then fails with "thread
+is open in another Codex process"; a Claude run is a documented residual race.
+
+The run. The lease phase becomes `spawning`; the child starts in a new
+session (its own process group) with `LLM_KIT_RESUME_LEASE=<lease id>` in its
+environment; its pid, create time and group are recorded (phase `running`).
+Every phase write, every renewal (every 30 s, lease 90 s, until the run's
+deadline) and the final write are fenced by the lease id: a runner that lost
+its lease kills its own child's group and writes nothing.
+
+- Codex: `codex app-server --listen stdio://` with the Codex channel's
+  defaults (approval `never`, `workspace-write` rooted at the rollout's
+  recorded cwd, network off, hooks and notify off), `thread/resume` with
+  `/tmp` and `$TMPDIR` excluded and the effective policy compared
+  (`config_mismatch` declines), one `turn/start` whose text is the Codex
+  channel's two header lines then the body, judged by the turn result only.
+  An approval or user-input request is answered `cancel` where the schema
+  offers it and the turn is always interrupted; the message is declined.
+- Claude: `claude -p --resume <id> --output-format stream-json --verbose
+  --permission-mode default`, the prompt (the same two header lines, then
+  the body, so the prompt never starts with the body) on stdin, cwd = the
+  transcript's cwd, `CLAUDECODE` and `CLAUDE_CODE_*` removed from the
+  environment. Answered only when the run's `init` event names the same
+  session id, cwd and permission mode (otherwise the child is killed and the
+  message declined `config_mismatch`) and a later `result` event of that
+  session has `is_error: false` and a non-empty `result`; a non-zero exit, a
+  missing event or an empty result declines. In `-p` mode a tool that needs
+  permission is refused, never asked: no permission prompt is answered. The
+  user's Claude Code hooks run as in any `claude -p` (measured 2026-11-13:
+  SessionStart hooks fired); unlike the Codex run there is no flag here that
+  turns them off.
+- A timeout or a relay stop kills the child's group and declines.
+
+The claim ends only through one transaction that writes the reply (sender
+`relay:<machine>`, over 8192 bytes truncated with a marker pointing to
+`read_session`), the terminal state, the cleared `claimed_by` and the deleted
+lease row together.
+
+Orphan recovery, at relay start and on every maintenance sweep (5 s). A lease
+is an orphan when another relay instance holds it, when it expired (a runner
+stops renewing past its deadline), or when its recorded child is gone and no
+runner of this relay owns it. A recorded child that is alive with the same
+pid AND create time is stopped (SIGTERM to its group, a grace period,
+SIGKILL) and must be gone before the claim is cleared; a pid whose create
+time differs is never signalled. A `spawning` lease with no recorded pid is
+matched to this user's processes by the environment tag. A child is never
+adopted: its output pipe belonged to the dead relay. The message is declined
+with the reason: "relay restarted before the run started", "relay restarted
+during the run; it was stopped", "the run's result was lost; for Codex the
+turn may have run, read_session shows it", or "the run stopped renewing its
+lease past its deadline; it was stopped".
+
+What a `/direct` client (the llm-kit plugin) needs for its `continue` verb:
+the client verb `continue` (`client continue <address> --kind K --body B
+[--id ID] [--expires-in S] [--task T]`, same `--session` and `--grant` as the
+other client verbs), a grant for `continue_session` whose single target is the
+full address, and `common.json`'s widened enums vendored.
 
 ## 21. Session discovery decisions (unit D2)
 

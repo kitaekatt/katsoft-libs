@@ -272,6 +272,9 @@ class HttpRelayClient:
     def send_message(self, params, *, origin, grant=None):
         return self.call("send_message", params, origin=origin, grant=grant)
 
+    def continue_session(self, params, *, origin, grant=None):
+        return self.call("continue_session", params, origin=origin, grant=grant)
+
     def get_replies(self, params, *, origin, grant=None):
         return self.call("get_replies", params, origin=origin, grant=grant)
 

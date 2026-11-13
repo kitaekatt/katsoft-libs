@@ -150,6 +150,10 @@ IDENTITY_KINDS = ("channel", "direct", "hub", "operator", "relay")
 REQUEST_ORIGIN_KINDS = ("channel", "direct", "hub", "operator", "relay")
 #: Tiers a relay forwards to a peer for a ``/direct`` origin, and that a ``relay`` origin may call (amendment 2).
 FORWARDED_TIERS = ("read", "llm", "write")
+#: Verbs of those tiers that are never forwarded and that a ``relay`` origin may not call (amendment 3):
+#: ``continue_session`` starts a process on the target machine, so only that machine's own ``/direct``
+#: sessions and the hub may ask for it.
+NOT_FORWARDED_VERBS: frozenset[str] = frozenset({"continue_session"})
 
 # --------------------------------------------------------------------------
 # error codes: code -> (retryable, HTTP status)
@@ -875,6 +879,22 @@ class SendMessageResult(TypedDict):
     replayed: bool
 
 
+class ContinueSessionParams(TypedDict):
+    """``continue_session`` (amendment 3): ``send_message``'s params without ``hop``."""
+
+    to: str
+    kind: str
+    body: str
+    id: NotRequired[str]
+    expires_in_s: NotRequired[int]
+    task: NotRequired[str]
+
+
+class ContinueSessionResult(TypedDict):
+    message: MessageRecord
+    replayed: bool
+
+
 class GetRepliesParams(TypedDict, total=False):
     message_id: str
     address: str
@@ -971,6 +991,12 @@ class Forwarding(TypedDict):
     receive: bool
 
 
+class ContinueCapability(TypedDict):
+    """``status.continue_session`` (amendment 3): whether this relay runs ``continue_session``."""
+
+    enabled: bool
+
+
 class StatusResult(TypedDict):
     protocol: str
     machine: str
@@ -980,6 +1006,7 @@ class StatusResult(TypedDict):
     registrations: NotRequired[int]
     harnesses: NotRequired[list[str]]
     forwarding: NotRequired[Forwarding]
+    continue_session: NotRequired[ContinueCapability]
 
 
 # --------------------------------------------------------------------------
@@ -1063,6 +1090,10 @@ VERBS: Mapping[str, VerbSpec] = {
         _verb("answer_question", "write", _HUB_SIDE, ("direct",), ("id",), "answer", True,
               AnswerQuestionParams, AnswerQuestionResult,
               "Answer or reject one question, as `llm-kit jobs resolve` would."),
+        _verb("continue_session", "write", ("direct", "hub"), ("direct",), ("to",), "continue", True,
+              ContinueSessionParams, ContinueSessionResult,
+              "Resume an idle session that once opted in and run one turn with the message; off unless "
+              "the target machine's relay.yaml sets resume: {enabled: true}."),
         _verb("grant_mint", "grant", ("direct",), (), (), None, False, GrantMintParams, GrantMintResult,
               "Mint a grant for the calling /direct session."),
         _verb("grant_check", "grant", ("direct",), (), (), None, False, GrantCheckParams, GrantCheckResult,
@@ -1088,7 +1119,7 @@ GRANTABLE_VERBS: frozenset[str] = frozenset(CLIENT_VERBS.values())
 #: While the relay is paused: these verbs are refused ``paused`` from every
 #: origin, and ``poll`` returns no messages (with ``paused: true``). Expiry
 #: keeps running, so a queued message can lapse during a pause.
-RELAY_PAUSE_REFUSES: frozenset[str] = frozenset({"send_message", "answer_question"})
+RELAY_PAUSE_REFUSES: frozenset[str] = frozenset({"send_message", "answer_question", "continue_session"})
 RELAY_PAUSE_EMPTIES: frozenset[str] = frozenset({"poll"})
 #: While the hub is paused: the hub refuses every tool call, and relays refuse
 #: every request whose origin kind is listed here, with ``paused``.
@@ -1291,6 +1322,9 @@ class RelayClient(Protocol):
 
     def answer_question(self, params: AnswerQuestionParams, *, origin: str,
                         grant: Optional[str] = None) -> AnswerQuestionResult: ...
+
+    def continue_session(self, params: ContinueSessionParams, *, origin: str,
+                         grant: Optional[str] = None) -> ContinueSessionResult: ...
 
     def grant_mint(self, params: GrantMintParams, *, origin: str,
                    grant: Optional[str] = None) -> GrantMintResult: ...

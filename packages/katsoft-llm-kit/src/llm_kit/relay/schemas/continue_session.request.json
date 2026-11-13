@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/continue_session.request.json",
+  "title": "continue_session params",
+  "description": "Resume an idle session that once opted in and run one turn with the message (amendment 3). Request params (strict): send_message's params without hop. `to` must be a full address.",
+  "type": "object",
+  "properties": {
+    "to": {
+      "$ref": "#/$defs/address"
+    },
+    "kind": {
+      "$ref": "#/$defs/message_kind"
+    },
+    "body": {
+      "$ref": "#/$defs/body"
+    },
+    "id": {
+      "$ref": "#/$defs/message_id"
+    },
+    "expires_in_s": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 86400
+    },
+    "task": {
+      "$ref": "#/$defs/short_text"
+    }
+  },
+  "required": [
+    "to",
+    "kind",
+    "body"
+  ],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "to": "m5pro/codex/0192aaaa-0000-7000-8000-00000000cafe",
+      "kind": "question",
+      "body": "Where did you leave the relay tests?",
+      "id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VX"
+    },
+    {
+      "to": "m5pro/claude/7f3c2a10-5b7e-4c1d-9a8e-0d6f4b2c9e11",
+      "kind": "instruction",
+      "body": "Run the targeted tests and report.",
+      "expires_in_s": 3600,
+      "task": "plugins-kit/harness-messaging"
+    }
+  ]
+}

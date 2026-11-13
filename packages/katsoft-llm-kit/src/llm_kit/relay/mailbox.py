@@ -4,10 +4,12 @@ One database file per machine (``mailbox.sqlite3`` under the relay state
 directory, see :func:`mailbox_db_path`), opened through :mod:`llm_kit.storage`.
 Every write runs in ``BEGIN IMMEDIATE``, so concurrent relay threads or
 processes serialize on the write lock and a read-then-write sequence cannot
-interleave. ``schema_version`` is 2: version 2 (katsoft-llm-kit 1.21.0,
+interleave. ``schema_version`` is 3: version 2 (katsoft-llm-kit 1.21.0,
 amendment 2) adds the nullable ``messages.forwarded_by`` and
-``audit.on_behalf_of`` columns, and a version-1 file is migrated in place
-(old rows keep null).
+``audit.on_behalf_of`` columns; version 3 (amendment 3, remote resume) adds
+the nullable ``messages.claimed_by`` column and the ``opt_ins`` and
+``resume_leases`` tables. An older file is migrated in place (old rows keep
+null).
 
 What lives here (protocol sections 10-15 of ``llm-kit-relay-protocol.md``):
 
@@ -35,6 +37,17 @@ What lives here (protocol sections 10-15 of ``llm-kit-relay-protocol.md``):
   DELETE, so even raw SQL cannot rewrite a row. Every mailbox state change
   appends a ``transition`` row; the relay server appends ``call`` rows with
   :meth:`Mailbox.append_audit`. Rows carry the origin identity.
+- **Resume claims (amendment 3).** ``continue_session`` stores its message
+  and, in the same IMMEDIATE transaction, claims it: the row moves
+  ``queued -> delivered`` with ``claimed_by`` set to a fresh lease id, and a
+  ``resume_leases`` row (one per address) records the run's phase and child.
+  ``poll``, ``ack``, ``reply``, expiry and ``end_session`` never touch a
+  claimed row. Every lease write is fenced by its lease id (:class:`LeaseLost`
+  when another writer took the lease), and :meth:`Mailbox.finish_claim` is the
+  one way a claim ends: it writes the reply and the terminal state, clears
+  ``claimed_by`` and deletes the lease in one transaction. ``opt_ins`` records
+  every address that registered with a non-empty ``accepts``; only those may
+  be resumed.
 - **Conversations.** ``append_turn(s)`` / ``load_conversation`` keep the named
   conversations ``ask_llm`` continues, keyed by (endpoint, conversation).
 
@@ -64,14 +77,30 @@ from llm_kit.storage.connection import ConnectionPolicy, connect
 from llm_kit.storage.schema_version import read_schema_version
 from llm_kit.storage.transaction import read_transaction, write_transaction
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+_OPT_INS_DDL = (
+    "CREATE TABLE opt_ins (address TEXT PRIMARY KEY, first_at REAL NOT NULL, last_at REAL NOT NULL)"
+)
+_LEASES_DDL = (
+    "CREATE TABLE resume_leases (address TEXT PRIMARY KEY, message_id TEXT NOT NULL UNIQUE REFERENCES messages (id),"
+    " lease_id TEXT NOT NULL UNIQUE, relay_instance TEXT NOT NULL, phase TEXT NOT NULL, child_pid INTEGER,"
+    " child_start REAL, pgid INTEGER, created_at REAL NOT NULL, expires_at REAL NOT NULL)"
+)
 #: Version -> the statements that move a mailbox from the previous version to it (additive only).
 _MIGRATIONS: Mapping[int, tuple[str, ...]] = {
     2: (
         "ALTER TABLE messages ADD COLUMN forwarded_by TEXT",
         "ALTER TABLE audit ADD COLUMN on_behalf_of TEXT",
     ),
+    3: (
+        "ALTER TABLE messages ADD COLUMN claimed_by TEXT",
+        _OPT_INS_DDL,
+        _LEASES_DDL,
+    ),
 }
+#: Phases of a resume lease: claimed (nothing spawned), spawning (a child may exist, pid not yet recorded),
+#: running (child pid, create time and process group recorded).
+LEASE_PHASES = ("claimed", "spawning", "running")
 MAILBOX_FILENAME = "mailbox.sqlite3"
 _DB_MODE = 0o600
 
@@ -146,7 +175,8 @@ CREATE TABLE messages (
     attempts INTEGER NOT NULL DEFAULT 0,
     delivered_at REAL,
     content_hash TEXT NOT NULL,
-    forwarded_by TEXT
+    forwarded_by TEXT,
+    claimed_by TEXT
 );
 CREATE INDEX messages_to_state ON messages (to_addr, state);
 CREATE INDEX messages_sender_created ON messages (sender, created_at);
@@ -196,6 +226,8 @@ CREATE TABLE grants (
     command TEXT
 );
 CREATE INDEX grants_session_verb ON grants (session, verb);
+{OPT};
+{LEASE};
 CREATE TABLE conversation_turns (
     endpoint TEXT NOT NULL,
     conversation TEXT NOT NULL,
@@ -206,6 +238,24 @@ CREATE TABLE conversation_turns (
     PRIMARY KEY (endpoint, conversation, seq)
 );
 """
+
+
+_SCHEMA = _SCHEMA.replace("{OPT}", _OPT_INS_DDL).replace("{LEASE}", _LEASES_DDL)
+
+
+class LeaseLost(Exception):
+    """A resume lease write found that ``lease_id`` no longer owns the lease (another writer recovered it).
+
+    Not a wire error: the runner that gets it stops its own child and writes nothing."""
+
+
+@dataclass(frozen=True)
+class LeaseClaim:
+    """What ``send_message(lease=...)`` needs to claim the stored message for a ``continue_session`` run."""
+
+    lease_id: str
+    relay_instance: str
+    lease_s: float
 
 
 def _fingerprint(*parts: Any) -> str:
@@ -421,7 +471,7 @@ class Mailbox:
         )
 
     def _expire(self, conn: sqlite3.Connection, now: float, address: Optional[str] = None) -> int:
-        sql = "SELECT * FROM messages WHERE state IN ('queued', 'delivered') AND expires_at <= ?"
+        sql = "SELECT * FROM messages WHERE state IN ('queued', 'delivered') AND claimed_by IS NULL AND expires_at <= ?"
         args: list[Any] = [now]
         if address is not None:
             sql += " AND to_addr = ?"
@@ -457,7 +507,7 @@ class Mailbox:
         with self._write() as conn:
             rows = conn.execute(
                 "SELECT * FROM messages WHERE to_addr = ? AND state IN ('queued', 'delivered', 'acked')"
-                " ORDER BY created_at, rowid",
+                " AND claimed_by IS NULL ORDER BY created_at, rowid",
                 (address,),
             ).fetchall()
             moved = 0
@@ -488,6 +538,8 @@ class Mailbox:
         refuse: Optional[str] = None,
         ingress: str = "relay",
         forwarded_by: Optional[Union[str, P.Identity]] = None,
+        lease: Optional[LeaseClaim] = None,
+        recheck: Optional[Callable[[], None]] = None,
     ) -> P.SendMessageResult:
         """Queue one message for ``to`` (a RESOLVED address) and return ``{message, replayed}``.
 
@@ -507,6 +559,16 @@ class Mailbox:
         and returned on the record, and the transition audit row names the
         peer as its origin with ``origin`` as ``on_behalf_of``. Only the relay's
         authenticated relay-origin path passes it.
+
+        ``lease`` (amendment 3, ``continue_session``) claims the new row for a
+        resume run in the same transaction: an address that already holds a
+        lease is ``rate_limited`` (``what: resume_running``) with no row, the
+        row moves ``queued -> delivered`` with ``claimed_by`` set, and a lease
+        row with phase ``claimed`` is inserted. ``recheck`` runs inside the
+        transaction just before the insert (the relay re-checks the target's
+        liveness there); a RelayError from it leaves nothing written. A
+        ``lease`` send is fingerprinted apart from a plain send, so the same
+        id cannot be replayed across the two verbs.
         """
         sender = _identity(origin)
         if sender.kind not in ("direct", "hub"):
@@ -537,11 +599,14 @@ class Mailbox:
             raise _bad("hop must be a non-negative integer")
         if refuse is not None and refuse not in CALLER_REFUSALS:
             raise _bad(f"refuse must be one of {sorted(CALLER_REFUSALS)}")
+        if lease is not None and (forwarded_by is not None or refuse is not None):
+            raise P.RelayError("internal", "relay defect: a claimed send is never forwarded or refused by the caller")
         sender_text = str(sender)
         forwarded_text = None if forwarder is None else str(forwarder)
         # the forwarder joins the fingerprint only when set, so every stored hash of version 1 stays valid
         content = _fingerprint(to_text, kind, body, task or "", hop, sender_text,
-                               *(() if forwarded_text is None else (forwarded_text,)))
+                               *(() if forwarded_text is None else (forwarded_text,)),
+                               *(() if lease is None else ("continue_session",)))
         body_bytes = len(body.encode("utf-8"))
         refusal: Optional[P.RelayError] = None
         result: Optional[P.SendMessageResult] = None
@@ -549,7 +614,8 @@ class Mailbox:
         with self._write() as conn:
             now = self._clock()  # read once the write lock is held: waiting for it must not stale the expiry check
             if grant is not None:
-                self._check_grant_in(conn, grant.session, "send_message", to_text, grant.grant_id, now)
+                self._check_grant_in(conn, grant.session, "continue_session" if lease is not None else "send_message",
+                                     to_text, grant.grant_id, now)
             existing = conn.execute("SELECT * FROM messages WHERE id = ?", (id,)).fetchone()
             if existing is not None:
                 if existing["content_hash"] != content:
@@ -564,7 +630,16 @@ class Mailbox:
                     )
                 return {"message": self._record(conn, existing), "replayed": True}
 
+            if lease is not None:
+                held = conn.execute("SELECT message_id FROM resume_leases WHERE address = ?", (to_text,)).fetchone()
+                if held is not None:
+                    raise P.RelayError(
+                        "rate_limited", f"a continue_session run for {to_text} is already running",
+                        details={"what": "resume_running", "message_id": held["message_id"]},
+                    )
             self._check_rate(conn, sender_text, to_text, now)
+            if recheck is not None:
+                recheck()
             code = None
             if hop > P.MAX_HOP:
                 code = "hop_limit"
@@ -584,7 +659,8 @@ class Mailbox:
                  state, code, content, forwarded_text),
             )
             self._audit(
-                conn, event="transition", origin=forwarder if forwarder is not None else sender, verb="send_message",
+                conn, event="transition", origin=forwarder if forwarder is not None else sender,
+                verb="continue_session" if lease is not None else "send_message",
                 outcome="refused" if code else "ok", ingress=ingress, message_id=id, target=to_text,
                 from_state=None, to_state=state, code=code, at=now,
                 on_behalf_of=sender if forwarder is not None else None,
@@ -595,8 +671,12 @@ class Mailbox:
                 )
             else:
                 if grant is not None:
-                    self._consume_in(conn, grant.session, "send_message", to_text, grant.grant_id, now)
+                    self._consume_in(conn, grant.session, "continue_session" if lease is not None else "send_message",
+                                     to_text, grant.grant_id, now)
                 row = conn.execute("SELECT * FROM messages WHERE id = ?", (id,)).fetchone()
+                if lease is not None:
+                    self._claim_in(conn, row, lease, now)
+                    row = conn.execute("SELECT * FROM messages WHERE id = ?", (id,)).fetchone()
                 result = {"message": self._record(conn, row), "replayed": False}
         if refusal is not None:
             raise refusal
@@ -647,7 +727,8 @@ class Mailbox:
         out: list[P.DeliveredMessage] = []
         with self._read() as conn:  # an idle poll must not take the write lock
             pending = conn.execute(
-                "SELECT 1 FROM messages WHERE to_addr = ? AND ((state IN ('queued', 'delivered') AND expires_at <= ?)"
+                "SELECT 1 FROM messages WHERE to_addr = ? AND claimed_by IS NULL"
+                " AND ((state IN ('queued', 'delivered') AND expires_at <= ?)"
                 " OR state = 'queued' OR (state = 'delivered' AND delivered_at <= ?)) LIMIT 1",
                 (address, now, now - self.ack_timeout_s),
             ).fetchone()
@@ -656,7 +737,7 @@ class Mailbox:
         with self._write() as conn:
             self._expire(conn, now, address)
             rows = conn.execute(
-                "SELECT * FROM messages WHERE to_addr = ? AND (state = 'queued'"
+                "SELECT * FROM messages WHERE to_addr = ? AND claimed_by IS NULL AND (state = 'queued'"
                 " OR (state = 'delivered' AND delivered_at <= ?)) ORDER BY created_at, rowid LIMIT ?",
                 (address, now - self.ack_timeout_s, max_messages),
             ).fetchall()
@@ -747,6 +828,9 @@ class Mailbox:
         row = conn.execute("SELECT * FROM messages WHERE id = ? AND to_addr = ?", (message_id, address)).fetchone()
         if row is None:
             raise P.RelayError("message_not_found", f"no message {message_id} for {address}")
+        if row["claimed_by"] is not None:
+            raise P.RelayError("invalid_transition", f"message {message_id} is claimed by a continue_session run",
+                               details={"from_state": row["state"], "why": "resume_running"})
         return row
 
     # -- messages: reading -----------------------------------------------------
@@ -797,6 +881,165 @@ class Mailbox:
         if reply is not None:
             record["reply"] = _reply(reply)
         return record
+
+    # -- opt-ins and resume claims (amendment 3) ----------------------------------------
+
+    def record_opt_in(self, address: str) -> None:
+        """Remember that ``address`` registered with a non-empty ``accepts`` (durable; never removed)."""
+        P.parse_address(address)
+        now = self._clock()
+        with self._write() as conn:
+            conn.execute(
+                "INSERT INTO opt_ins (address, first_at, last_at) VALUES (?, ?, ?)"
+                " ON CONFLICT (address) DO UPDATE SET last_at = excluded.last_at",
+                (address, now, now),
+            )
+
+    def opted_in(self, address: str) -> bool:
+        """Whether ``address`` ever registered with a non-empty ``accepts``."""
+        with self._read() as conn:
+            return conn.execute("SELECT 1 FROM opt_ins WHERE address = ?", (address,)).fetchone() is not None
+
+    def _claim_in(self, conn: sqlite3.Connection, row: sqlite3.Row, lease: LeaseClaim, now: float) -> None:
+        self._transition(conn, row, "delivered", verb="continue_session", origin=self._relay_identity, now=now,
+                         delivered_at=now, attempts=row["attempts"] + 1, reason="claimed for a resume run")
+        conn.execute("UPDATE messages SET claimed_by = ? WHERE id = ?", (lease.lease_id, row["id"]))
+        conn.execute(
+            "INSERT INTO resume_leases (address, message_id, lease_id, relay_instance, phase, created_at, expires_at)"
+            " VALUES (?, ?, ?, ?, 'claimed', ?, ?)",
+            (row["to_addr"], row["id"], lease.lease_id, lease.relay_instance, now, now + lease.lease_s),
+        )
+
+    def claim_message(self, message_id: str, *, lease_id: str, relay_instance: str, lease_s: float) -> P.DeliveredMessage:
+        """Claim exactly the ``queued`` message ``message_id`` for a resume run, with a durable lease.
+
+        ``rate_limited`` (``what: resume_running``) when its address already holds a lease;
+        ``invalid_transition`` when the message is not ``queued``.
+        """
+        lease = LeaseClaim(lease_id, relay_instance, lease_s)
+        with self._write() as conn:
+            now = self._clock()
+            row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+            if row is None:
+                raise P.RelayError("message_not_found", f"no message {message_id}")
+            if row["state"] != "queued" or row["claimed_by"] is not None:
+                raise P.RelayError("invalid_transition", f"message {message_id} is {row['state']}, not queued",
+                                   details={"from_state": row["state"], "to_state": "delivered"})
+            if conn.execute("SELECT 1 FROM resume_leases WHERE address = ?", (row["to_addr"],)).fetchone():
+                raise P.RelayError("rate_limited", f"a continue_session run for {row['to_addr']} is already running",
+                                   details={"what": "resume_running"})
+            self._claim_in(conn, row, lease, now)
+            row = conn.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+            return {
+                "id": row["id"], "sender": row["sender"], "kind": row["kind"], "body": row["body"], "hop": row["hop"],
+                "created_at": row["created_at"], "expires_at": row["expires_at"], "attempt": row["attempts"],
+                **({"task": row["task"]} if row["task"] is not None else {}),
+            }
+
+    @staticmethod
+    def _owned_lease(conn: sqlite3.Connection, lease_id: str) -> sqlite3.Row:
+        row = conn.execute("SELECT * FROM resume_leases WHERE lease_id = ?", (lease_id,)).fetchone()
+        if row is None:
+            raise LeaseLost(f"lease {lease_id} is no longer held")
+        return row
+
+    def set_lease_phase(self, lease_id: str, phase: str, *, child_pid: Optional[int] = None,
+                        child_start: Optional[float] = None, pgid: Optional[int] = None,
+                        lease_s: Optional[float] = None) -> None:
+        """Move the lease to ``phase`` (fenced by ``lease_id``); ``running`` records the child's identity."""
+        if phase not in LEASE_PHASES:
+            raise _bad(f"unknown lease phase {phase!r}")
+        if phase == "running" and (child_pid is None or child_start is None or pgid is None):
+            raise _bad("a running lease records the child's pid, create time and process group")
+        with self._write() as conn:
+            now = self._clock()
+            row = self._owned_lease(conn, lease_id)
+            conn.execute(
+                "UPDATE resume_leases SET phase = ?, child_pid = COALESCE(?, child_pid),"
+                " child_start = COALESCE(?, child_start), pgid = COALESCE(?, pgid), expires_at = ? WHERE lease_id = ?",
+                (phase, child_pid, child_start, pgid,
+                 row["expires_at"] if lease_s is None else now + lease_s, lease_id),
+            )
+
+    def renew_lease(self, lease_id: str, lease_s: float) -> float:
+        """Push the lease's expiry to now + ``lease_s``; :class:`LeaseLost` when ``lease_id`` lost it."""
+        with self._write() as conn:
+            now = self._clock()
+            self._owned_lease(conn, lease_id)
+            conn.execute("UPDATE resume_leases SET expires_at = ? WHERE lease_id = ?", (now + lease_s, lease_id))
+            return now + lease_s
+
+    def finish_claim(self, lease_id: str, state: str, body: str) -> P.MessageRecord:
+        """End a claim in ONE transaction: reply ``answered`` or ``declined`` with ``body``, terminal state,
+        ``claimed_by`` cleared, lease deleted, transition audited. :class:`LeaseLost` (nothing written) when
+        ``lease_id`` no longer owns the lease. The only path that clears a claim."""
+        if state not in ("answered", "declined"):
+            raise _bad("state must be answered or declined")
+        if not isinstance(body, str) or not body:
+            raise _bad("body must be a non-empty string")
+        data = body.encode("utf-8")
+        if len(data) > P.MAX_BODY_BYTES:
+            body = data[:P.MAX_BODY_BYTES - 16].decode("utf-8", "ignore") + "\n[truncated]"
+        with self._write() as conn:
+            now = self._clock()
+            lease = self._owned_lease(conn, lease_id)
+            row = conn.execute("SELECT * FROM messages WHERE id = ?", (lease["message_id"],)).fetchone()
+            if row is None or row["claimed_by"] != lease_id:
+                raise P.RelayError("internal", f"relay defect: lease {lease_id} names message {lease['message_id']}"
+                                   " that it does not claim")
+            self._transition(conn, row, state, verb="continue_session", origin=self._relay_identity, now=now)
+            reply_id = "rpl_" + secrets.token_hex(12)
+            conn.execute(
+                "INSERT INTO replies (id, in_reply_to, sender, state, body, at) VALUES (?, ?, ?, ?, ?, ?)",
+                (reply_id, row["id"], self._relay_identity, state, body, now),
+            )
+            conn.execute("UPDATE messages SET claimed_by = NULL WHERE id = ?", (row["id"],))
+            conn.execute("DELETE FROM resume_leases WHERE lease_id = ?", (lease_id,))
+            return self._record(conn, conn.execute("SELECT * FROM messages WHERE id = ?", (row["id"],)).fetchone())
+
+    def take_lease(self, lease_id: str, *, new_lease_id: str, relay_instance: str) -> None:
+        """Fence an orphaned lease before recovering it: ``lease_id`` becomes ``new_lease_id`` owned by
+        ``relay_instance``, on the lease row and the message's claim together. Every later write with the old
+        id (a runner that outlived its relay) raises :class:`LeaseLost`; so does this call if the old id is gone."""
+        with self._write() as conn:
+            lease = self._owned_lease(conn, lease_id)
+            conn.execute("UPDATE resume_leases SET lease_id = ?, relay_instance = ? WHERE lease_id = ?",
+                         (new_lease_id, relay_instance, lease_id))
+            cursor = conn.execute("UPDATE messages SET claimed_by = ? WHERE id = ? AND claimed_by = ?",
+                                  (new_lease_id, lease["message_id"], lease_id))
+            if cursor.rowcount != 1:
+                raise P.RelayError("internal", f"relay defect: lease {lease_id} names message {lease['message_id']}"
+                                   " that it does not claim")
+
+    def recover_lease(self, lease_id: str, reason: str) -> P.MessageRecord:
+        """Decline an orphaned claim with ``reason`` (finish_claim's transaction shape)."""
+        return self.finish_claim(lease_id, "declined", reason)
+
+    def leases(self) -> list[dict[str, Any]]:
+        """Every resume lease row, oldest first."""
+        with self._read() as conn:
+            return [dict(r) for r in conn.execute("SELECT * FROM resume_leases ORDER BY created_at, rowid")]
+
+    def lease_for(self, address: str) -> Optional[dict[str, Any]]:
+        with self._read() as conn:
+            row = conn.execute("SELECT * FROM resume_leases WHERE address = ?", (address,)).fetchone()
+            return dict(row) if row is not None else None
+
+    def claim_problems(self) -> list[str]:
+        """Violations of the claim invariant: every claimed message has its lease row and every lease its message."""
+        problems: list[str] = []
+        with self._read() as conn:
+            for row in conn.execute(
+                "SELECT m.id, m.claimed_by FROM messages m LEFT JOIN resume_leases l ON l.lease_id = m.claimed_by"
+                " WHERE m.claimed_by IS NOT NULL AND (l.lease_id IS NULL OR l.message_id != m.id)"
+            ):
+                problems.append(f"message {row['id']} is claimed by {row['claimed_by']} with no matching lease")
+            for row in conn.execute(
+                "SELECT l.lease_id, l.message_id FROM resume_leases l LEFT JOIN messages m ON m.id = l.message_id"
+                " WHERE m.id IS NULL OR m.claimed_by IS NOT l.lease_id"
+            ):
+                problems.append(f"lease {row['lease_id']} names message {row['message_id']}, which it does not claim")
+        return problems
 
     # -- grants ------------------------------------------------------------------
 

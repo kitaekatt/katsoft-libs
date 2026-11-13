@@ -316,8 +316,10 @@ def test_the_hub_serves_every_hub_verb_with_the_verbs_schemas(hub):
     assert H.P2_TOOLS == ("send_message", "get_replies", "list_questions", "answer_question")
     assert tuple(tools) == H.SERVED_TOOLS == P.HUB_TOOLS == (
         "list_machines", "list_sessions", "read_session", "ask_llm", "send_message", "get_replies",
-        "list_questions", "answer_question")
-    assert H.WRITE_TOOLS == {"send_message", "answer_question"} == set(H.WRITE_NOTES)
+        "list_questions", "answer_question", "continue_session")
+    assert H.R1_TOOLS == ("continue_session",)
+    assert H.WRITE_TOOLS == {"send_message", "answer_question", "continue_session"} == set(H.WRITE_NOTES)
+    assert "resume: {enabled: true}" in tools["continue_session"].description
     for name, tool in tools.items():
         write = name in H.WRITE_TOOLS
         assert tool.annotations.read_only_hint is (not write and name != "ask_llm"), name
@@ -928,7 +930,7 @@ def test_a_paused_hub_refuses_every_tool_call(hub, machine_a):
             assert error["details"]["scope"] == "hub" and error["details"]["paused_since"] is not None
         assert machine_a.backend.calls == []
         assert machine_a.server.mailbox.messages_to(machine_a.address(session)) == []
-        assert len(hub.run(lambda c: c.list_tools()).tools) == 8  # listing is not a call
+        assert len(hub.run(lambda c: c.list_tools()).tools) == 9  # listing is not a call
     finally:
         store.resume("hub")
     assert hub.ok("list_machines")["machines"][0]["status"] == "up"

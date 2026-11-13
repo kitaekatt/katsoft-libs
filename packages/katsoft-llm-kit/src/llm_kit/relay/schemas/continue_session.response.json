@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "relay-protocol/1/continue_session.response.json",
+  "title": "continue_session result",
+  "description": "Resume an idle session that once opted in and run one turn with the message (amendment 3). Response result (unknown fields allowed): the stored message, claimed for the run (state delivered); the run's answer arrives as its reply (get_replies).",
+  "type": "object",
+  "properties": {
+    "message": {
+      "$ref": "#/$defs/message_record"
+    },
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "message",
+    "replayed"
+  ],
+  "additionalProperties": true,
+  "examples": [
+    {
+      "message": {
+        "id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW",
+        "to": "m5pro/codex/0192aaaa-0000-7000-8000-00000000cafe",
+        "sender": "direct:m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+        "kind": "instruction",
+        "body": "Run the targeted tests.",
+        "hop": 0,
+        "created_at": 1793664000.0,
+        "expires_at": 1793667600.0,
+        "updated_at": 1793664000.0,
+        "state": "delivered",
+        "attempts": 1
+      },
+      "replayed": false
+    },
+    {
+      "message": {
+        "id": "msg_01JBX3V9Q8K2M4N6P7R8S9T0VW",
+        "to": "m5pro/codex/0192aaaa-0000-7000-8000-00000000cafe",
+        "sender": "direct:m5pro/claude/b91e0c44-2f8a-4d3b-8c6e-71a5d0e3f2a9",
+        "kind": "instruction",
+        "body": "Run the targeted tests.",
+        "hop": 0,
+        "created_at": 1793664000.0,
+        "expires_at": 1793667600.0,
+        "updated_at": 1793664000.0,
+        "state": "delivered",
+        "attempts": 1
+      },
+      "replayed": true
+    }
+  ]
+}

@@ -1266,8 +1266,9 @@ def test_forwarded_by_only_on_authenticated_relay_send(pair):
 
 def test_mailbox_migration_forwarded_by_null_for_old_rows(tmp_path):
     path = tmp_path / "old.sqlite3"
-    v1 = M._SCHEMA.replace(",\n    forwarded_by TEXT", "").replace(",\n    on_behalf_of TEXT", "")
-    assert "forwarded_by" not in v1 and "on_behalf_of" not in v1
+    v1 = (M._SCHEMA.replace(",\n    claimed_by TEXT", "").replace(",\n    forwarded_by TEXT", "")
+          .replace(",\n    on_behalf_of TEXT", "").replace(M._OPT_INS_DDL + ";", "").replace(M._LEASES_DDL + ";", ""))
+    assert "forwarded_by" not in v1 and "on_behalf_of" not in v1 and "claimed_by" not in v1 and "opt_ins" not in v1
     with sqlite3.connect(path) as conn:
         for statement in M._split_script(v1):
             conn.execute(statement)
@@ -1278,11 +1279,11 @@ def test_mailbox_migration_forwarded_by_null_for_old_rows(tmp_path):
         conn.execute("INSERT INTO audit (at, machine, ingress, event, origin, verb, outcome) VALUES"
                      " (1.0, 'm5pro', 'relay', 'call', 'claude.ai/owner', 'status', 'ok')")
     box = M.Mailbox(path, machine=SRC)
-    assert box.schema_version() == 2
+    assert box.schema_version() == 3  # 1 -> 2 (amendment 2) -> 3 (amendment 3)
     old = box.get_message("msg_old1")
     assert "forwarded_by" not in old and old["body"] == "old"
     assert box.audit_rows()[0]["on_behalf_of"] is None
-    assert M.Mailbox(path, machine=SRC).schema_version() == 2  # reopening is a no-op
+    assert M.Mailbox(path, machine=SRC).schema_version() == 3  # reopening is a no-op
     stored = box.send_message(origin=f"direct:{DST}/claude/{DIRECT}", to="m5pro/claude/s1", kind="note", body="new",
                               forwarded_by=f"relay:{DST}")["message"]
     assert stored["forwarded_by"] == f"relay:{DST}"

@@ -137,6 +137,8 @@ CLIENT_VERBS = {
     "replies": "Messages and their replies (get_replies).",
     "questions": "Pending operator questions (list_questions).",
     "answer": "Answer or reject one question (answer_question).",
+    "continue": "Resume an idle, once-opted-in session for one turn (continue_session; off unless relay.yaml "
+                "resume.enabled).",
 }
 
 
@@ -281,6 +283,13 @@ def _parser() -> argparse.ArgumentParser:
     send.add_argument("--expires-in", type=int)
     send.add_argument("--task")
     send.add_argument("--hop", type=int)
+    cont = verbs.add_parser("continue", parents=[cc], help=CLIENT_VERBS["continue"])
+    cont.add_argument("to", help="A full session address <machine>/<claude|codex>/<session>.")
+    cont.add_argument("--kind", choices=P.MESSAGE_KINDS, required=True)
+    cont.add_argument("--body", required=True, help="Message text; '-' reads standard input.")
+    cont.add_argument("--id", help="msg_ id (the idempotency key).")
+    cont.add_argument("--expires-in", type=int)
+    cont.add_argument("--task")
     replies = verbs.add_parser("replies", parents=[cc], help=CLIENT_VERBS["replies"])
     which = replies.add_mutually_exclusive_group(required=True)
     which.add_argument("--message-id")
@@ -530,6 +539,11 @@ def _client_params(args: argparse.Namespace, machine: str) -> tuple[str, dict[st
         put("expires_in_s", args.expires_in)
         put("task", args.task)
         put("hop", args.hop)
+    elif verb == "continue":
+        params.update({"to": args.to, "kind": args.kind, "body": sys.stdin.read() if args.body == "-" else args.body})
+        put("id", args.id)
+        put("expires_in_s", args.expires_in)
+        put("task", args.task)
     elif verb == "replies":
         put("message_id", args.message_id)
         put("address", args.address)

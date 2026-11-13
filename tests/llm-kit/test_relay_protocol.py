@@ -32,6 +32,7 @@ CHANNEL_VERBS = ("register", "heartbeat", "deregister", "poll", "ack", "reply")
 SECTION_7_VERBS = (
     "list_machines", "list_sessions", "read_session", "ask_llm",
     "send_message", "get_replies", "list_questions", "answer_question",
+    "continue_session",  # amendment 3: remote resume
 )
 GRANT_VERBS = ("grant_mint", "grant_check")
 CONTROL_VERBS = ("pause", "resume", "status")
@@ -39,7 +40,7 @@ FROZEN_VERBS = CHANNEL_VERBS + SECTION_7_VERBS + GRANT_VERBS + CONTROL_VERBS
 FROZEN_CLIENT_VERBS = {
     "machines": "list_machines", "sessions": "list_sessions", "read": "read_session",
     "ask": "ask_llm", "send": "send_message", "replies": "get_replies",
-    "questions": "list_questions", "answer": "answer_question",
+    "questions": "list_questions", "answer": "answer_question", "continue": "continue_session",
 }
 FROZEN_OBJECTS = (
     "error", "signed", "origin_proof", "grant", "audit_row", "message_record",
@@ -483,12 +484,16 @@ def test_grants_are_for_direct_and_a_hub_write_rests_on_the_sessions_opt_in():
         # Hub reads are policy-only (design 9.4); a hub write's permission is the target session's
         # channel opt-in, enforced by the relay's messaging refusals (owner ruling 2026-11-11).
         assert "hub" not in spec.grant_for, name
-        if spec.tier == "write":
+        if spec.tier == "write" and name not in P.NOT_FORWARDED_VERBS:
             # amendment 2: a peer relay forwards for a /direct session; only direct needs a grant
             assert spec.origins == {"direct", "hub", "relay"} and spec.grant_for == {"direct"}, name
+        elif spec.tier == "write":
+            # amendment 3: continue_session starts a process here, so a relay (forwarded) origin never calls it
+            assert spec.origins == {"direct", "hub"} and spec.grant_for == {"direct"}, name
     for client, verb in P.CLIENT_VERBS.items():
         assert "direct" in P.VERBS[verb].grant_for, f"/direct {client} must need a grant (ruling 9)"
-    assert {v for v, s in P.VERBS.items() if s.tier == "write"} == {"send_message", "answer_question"}
+    assert {v for v, s in P.VERBS.items() if s.tier == "write"} == {"send_message", "answer_question", "continue_session"}
+    assert P.NOT_FORWARDED_VERBS == {"continue_session"}
     for verb in CHANNEL_VERBS:
         assert P.VERBS[verb].origins == {"channel"} and not P.VERBS[verb].grant_for
     for verb in GRANT_VERBS:

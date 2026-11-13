@@ -369,7 +369,7 @@ def example(verb: str) -> dict[str, Any]:
              "sender": f"channel:m5pro/claude/{SESSION_UUID}", "state": "answered", "body": "yes", "at": 1793664010.0}
     if verb in ("list_machines", "list_sessions", "list_questions"):
         result["machines"] = result["machines"][:1]  # the schema's example also lists a second, unreachable machine
-    for message in ([result["message"]] if verb == "send_message" else result.get("messages", []) if verb == "get_replies" else []):
+    for message in ([result["message"]] if verb in ("send_message", "continue_session") else result.get("messages", []) if verb == "get_replies" else []):
         message["reply"] = reply
     return result
 
@@ -390,6 +390,7 @@ ROUTED_ARGUMENTS = {
     "send_message": {"to": f"m5pro/claude/{SESSION_UUID}", "kind": "note", "body": "hi"},
     "get_replies": {"address": f"m5pro/claude/{SESSION_UUID}"},
     "answer_question": {"id": "q:m5pro/jobs-main:run-20261103-01:7", "decision": "reject"},
+    "continue_session": {"to": f"m5pro/codex/{SESSION_UUID}", "kind": "note", "body": "hi"},
 }
 FAN_OUT = ("list_machines", "list_sessions", "list_questions")
 

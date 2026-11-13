@@ -48,6 +48,17 @@ hub origin (``claude.ai/...``, the hub on ``<M>``; no hub bearer); a
 ``relay:`` origin needs ``peer:<M>``. Neither origin is ever forwarded, so a
 peer's call is answered from this machine only (one hop).
 
+Remote resume (amendment 3, protocol section 20 "Remote resume").
+``continue_session`` is the one verb after which the relay starts a process:
+off unless relay.yaml holds ``resume: {enabled: true}`` (read on every call),
+callable by this machine's ``/direct`` sessions (with a grant) and the hub
+only (never forwarded, never from a ``relay`` origin), and only for an idle
+session that once registered with a non-empty ``accepts``. The message is
+stored and claimed in one mailbox transaction; :mod:`llm_kit.relay.resume`
+runs the turn and ends the claim. ``register`` of an address that holds a
+live lease is ``registration_conflict``, and both checks run under one lock,
+so a returning channel and a claim cannot interleave.
+
 A grant use is reserved before the effect, so two concurrent calls cannot
 share one remaining use: ``send_message`` consumes in the mailbox transaction
 that inserts the message; every other granted verb reserves its use
@@ -69,6 +80,7 @@ import concurrent.futures
 import hmac
 import importlib.metadata
 import json
+import os
 import secrets
 import socket
 import sys
@@ -82,9 +94,11 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Union
 from llm_kit.relay import protocol as P
 from llm_kit.relay import routing
 from llm_kit.relay.client import ClientRelayError
-from llm_kit.relay.discovery import Discovery, EndEvent, RegistrationTable, SessionInfo
+from llm_kit.relay.config import RelayConfigError, ResumeConfig
+from llm_kit.relay.discovery import LIVE_STATES, Discovery, EndEvent, RegistrationTable, SessionInfo
 from llm_kit.relay.lifecycle import PauseStore, token_matches
-from llm_kit.relay.mailbox import STORED_REFUSALS, GrantUse, Mailbox
+from llm_kit.relay.mailbox import STORED_REFUSALS, GrantUse, LeaseClaim, Mailbox
+from llm_kit.relay.resume import ResumeJob, ResumeRunner, new_lease_id
 from llm_kit.relay.questions import QuestionService
 from llm_kit.schema import json_schema as JS
 
@@ -94,11 +108,14 @@ from llm_kit.schema import json_schema as JS
 #: table before its handler exists is listed here until the handler lands.
 NOT_SERVED: frozenset[str] = frozenset()
 
+#: Verbs whose grant use is consumed inside the mailbox transaction that stores the message.
+_CONSUMED_IN_MAILBOX = frozenset({"send_message", "continue_session"})
+
 #: Verbs whose target param names a session (a selector there is resolved).
 _SESSION_TARGET_PARAMS = frozenset({("read_session", "address"), ("send_message", "to"), ("get_replies", "address")})
 
 #: Mutating verbs that may change what a waiting poll or get_replies sees.
-_WAKES = frozenset({"send_message", "ack", "reply", "poll", "deregister", "heartbeat", "register"})
+_WAKES = frozenset({"send_message", "ack", "reply", "poll", "deregister", "heartbeat", "register", "continue_session"})
 
 #: Default and cap of get_replies.limit.
 DEFAULT_REPLIES_LIMIT = 50
@@ -332,6 +349,9 @@ class RelayService:
         accept_from: Sequence[str] = (),
         accept_keys: Optional[Mapping[str, str]] = None,
         probe_ttl_s: float = PEER_PROBE_TTL_S,
+        resume_config: Optional[Callable[[], ResumeConfig]] = None,
+        resume_options: Optional[Mapping[str, Any]] = None,
+        config_path: Optional[Path] = None,
     ) -> None:
         if not P.is_machine_label(machine):
             raise ValueError(f"{machine!r} is not a machine label")
@@ -372,6 +392,10 @@ class RelayService:
                                                            thread_name_prefix="llm-kit-relay-fan")
                      if self._peers else None)
         self._local = threading.local()
+        #: relay.yaml's ``resume`` block, read on every continue_session and status (off when not given).
+        self._resume_config = resume_config if resume_config is not None else ResumeConfig
+        self._config_path = config_path
+        self._resume_gate = threading.Lock()  # register vs continue_session claim (module docstring)
         self._wake = threading.Condition()
         self._generation = 0
         self._closing = threading.Event()
@@ -390,6 +414,7 @@ class RelayService:
             "get_replies": self._get_replies,
             "list_questions": self._list_questions,
             "answer_question": self._answer_question,
+            "continue_session": self._continue_session,
             "grant_mint": self._grant_mint,
             "grant_check": self._grant_check,
             "pause": self._pause_verb,
@@ -400,6 +425,8 @@ class RelayService:
         if missing:
             raise AssertionError(f"relay verbs without a handler: {sorted(missing)}")
         table.add_end_listener(self._on_end)
+        self._runner = ResumeRunner(mailbox, on_finish=self._notify, **dict(resume_options or {}))
+        self._runner.recover()  # a lease a dead relay left behind is recovered before any call is served
 
     # -- lifecycle ------------------------------------------------------------
 
@@ -407,6 +434,7 @@ class RelayService:
         """Wake every waiting poll so it returns at once (the server is stopping)."""
         self._closing.set()
         self._notify()
+        self._runner.close()
         if self._fan is not None:
             self._fan.shutdown(wait=False, cancel_futures=True)
 
@@ -420,6 +448,7 @@ class RelayService:
         self._table.expire_lapsed()
         if self._mailbox.expire():
             self._notify()
+        self._runner.recover()
         self._write_auth_summaries(self._auth_audit.due(self._clock()), "relay")
 
     def _notify(self) -> None:
@@ -510,7 +539,7 @@ class RelayService:
                     result = self._forward(call, spec, params, granted, plan, ingress)
                 else:
                     reserved: Optional[str] = None
-                    if granted.use is not None and spec.name != "send_message":
+                    if granted.use is not None and spec.name not in _CONSUMED_IN_MAILBOX:
                         # Reserve the use before the effect: of two concurrent calls on the last use, one is refused here.
                         reserved = self._reserve(spec, granted)
                     try:
@@ -788,6 +817,8 @@ class RelayService:
         """
         if identity.kind != "direct" or spec.tier not in P.FORWARDED_TIERS or not self._peers:
             return None
+        if spec.name in P.NOT_FORWARDED_VERBS:
+            return None  # served here, where a target on another machine is refused (amendment 3)
         verb = spec.name
         if verb in FAN_OUT_VERBS:
             machine = params.get("machine")
@@ -1042,12 +1073,23 @@ class RelayService:
         return registration
 
     def _register(self, call: _Call, params: Mapping[str, Any], granted: _Granted, ingress: str) -> dict[str, Any]:
-        outcome = self._table.register(
-            session_id=params["session_id"], pid=params["pid"], cwd=params["cwd"], version=params["version"],
-            accepts=params["accepts"], channel_nonce=params["channel_nonce"], harness=params["harness"],
-            title=params.get("title"), task=params.get("task"), transcript_path=params.get("transcript_path"),
-        )
+        address = self._table.address(params["session_id"], params["harness"])
+        with self._resume_gate:
+            lease = self._mailbox.lease_for(address)
+            if lease is not None:
+                raise P.RelayError(
+                    "registration_conflict",
+                    f"a continue_session run holds {address}; register again once it finished",
+                    details={"why": "resume_running", "message_id": lease["message_id"]},
+                )
+            outcome = self._table.register(
+                session_id=params["session_id"], pid=params["pid"], cwd=params["cwd"], version=params["version"],
+                accepts=params["accepts"], channel_nonce=params["channel_nonce"], harness=params["harness"],
+                title=params.get("title"), task=params.get("task"), transcript_path=params.get("transcript_path"),
+            )
         registration = outcome.registration
+        if registration.accepts:
+            self._mailbox.record_opt_in(address)  # the durable opt-in continue_session needs (amendment 3)
         return {
             "registration_id": registration.registration_id,
             "address": self._table.address(registration.session_id, registration.harness),
@@ -1069,6 +1111,8 @@ class RelayService:
             harness=self._harness(call),
         )
         registration = outcome.registration
+        if registration.accepts and (outcome.session_changed or params.get("accepts")):
+            self._mailbox.record_opt_in(self._table.address(registration.session_id, registration.harness))
         ended = call.ended.get(outcome.old_address, 0) if outcome.old_address else 0
         return {
             "registration_id": registration.registration_id,
@@ -1219,6 +1263,86 @@ class RelayService:
             if [(m["id"], m["state"], m["updated_at"]) for m in records] != signature:
                 return {"messages": records}
 
+    # -- remote resume (amendment 3) -----------------------------------------------------
+
+    def _resume_settings(self) -> ResumeConfig:
+        try:
+            return self._resume_config()
+        except RelayConfigError as exc:
+            raise P.RelayError("internal", f"relay.yaml cannot be read for resume: {exc}") from exc
+
+    def _resumable(self, address: P.Address) -> SessionInfo:
+        """The idle session ``address`` names; the refusal of protocol section 20 "Remote resume" otherwise."""
+        text = str(address)
+        try:
+            info = self._discovery.resolve(text)
+        except P.RelayError as exc:
+            if exc.code != "target_not_found":
+                raise
+            raise P.RelayError("session_ended", f"{text} has no transcript left to resume",
+                               details={"why": "no_transcript"}) from exc
+        if info.state in LIVE_STATES:
+            raise P.RelayError(
+                "invalid_transition", f"{text} is {info.state}; a live session takes send_message",
+                details={"why": "session_live", "state": info.state, "use": "send_message"},
+            )
+        if info.state != "idle" or info.transcript is None:
+            raise P.RelayError("session_ended", f"{text} is {info.state}; only an idle session is resumed",
+                               details={"why": "not_idle", "state": info.state})
+        if not info.cwd or not os.path.isabs(info.cwd) or not os.path.isdir(info.cwd):
+            raise P.RelayError("target_invalid", f"{text} records no existing working directory ({info.cwd!r})",
+                               details={"why": "no_cwd"})
+        return info
+
+    def _continue_session(self, call: _Call, params: Mapping[str, Any], granted: _Granted,
+                          ingress: str) -> dict[str, Any]:
+        address = P.parse_address(granted.target if granted.target is not None else params["to"])
+        text = str(address)
+        if address.harness not in P.SESSION_HARNESSES:
+            raise P.RelayError("target_invalid", f"{text} is not a session address")
+        if address.machine != self.machine:
+            raise P.RelayError(
+                "target_invalid",
+                f"continue_session runs only on the target's own relay; {address.machine!r} is not {self.machine!r}",
+                details={"why": "not_forwarded"},
+            )
+        settings = self._resume_settings()
+        if not settings.enabled:
+            raise P.RelayError(
+                "not_opted_in", f"remote resume is off on {self.machine}; relay.yaml must set resume: {{enabled: true}}",
+                details={"why": "resume_disabled", "key": "resume.enabled",
+                         **({"config": str(self._config_path)} if self._config_path is not None else {})},
+            )
+        if not self._mailbox.opted_in(text):
+            raise P.RelayError("not_opted_in", f"{text} never registered through a channel that accepted messages",
+                               details={"why": "never_opted_in"})
+        lease = LeaseClaim(new_lease_id(), self._runner.relay_instance, self._runner.lease_s)
+        common = dict(origin=call.origin, to=text, kind=params["kind"], body=params["body"], id=params.get("id"),
+                      expires_in_s=params.get("expires_in_s"), task=params.get("task"), hop=0, grant=granted.use,
+                      ingress=ingress, lease=lease)
+        if "id" in params and self._mailbox.find_message(params["id"]) is not None:
+            return dict(self._mailbox.send_message(**common))  # a replay (or idempotency_conflict): no new run
+        with self._resume_gate:
+            held = self._mailbox.lease_for(text)
+            if held is not None:
+                raise P.RelayError("rate_limited", f"a continue_session run for {text} is already running",
+                                   details={"what": "resume_running", "message_id": held["message_id"]})
+            info = self._resumable(address)
+            result = dict(self._mailbox.send_message(**common, recheck=lambda: self._resumable(address)))
+        if result["replayed"]:
+            return result
+        message = result["message"]
+        from llm_kit.relay.codex_channel import turn_text
+
+        self._runner.start(ResumeJob(
+            lease_id=lease.lease_id, message_id=message["id"], address=text, harness=address.harness,
+            session_id=address.session, cwd=str(info.cwd),
+            prompt=turn_text({"id": message["id"], "sender": message["sender"], "kind": message["kind"],
+                              "body": message["body"]}),
+            timeout_s=float(settings.timeout_s), claude_permission_mode=settings.claude_permission_mode,
+        ))
+        return result
+
     # -- questions ----------------------------------------------------------------------
 
     def _list_questions(self, call: _Call, params: Mapping[str, Any], granted: _Granted, ingress: str) -> dict[str, Any]:
@@ -1264,6 +1388,14 @@ class RelayService:
         self._notify()
         return {"pause": state}
 
+    def _resume_enabled_for_status(self) -> bool:
+        """``status.continue_session.enabled``; a relay.yaml that cannot be read reports false (and says why)."""
+        try:
+            return bool(self._resume_config().enabled)
+        except RelayConfigError as exc:
+            print(f"llm-kit relay: status reports continue_session disabled: {exc}", file=sys.stderr)
+            return False
+
     def _status(self, call: _Call, params: Mapping[str, Any], granted: _Granted, ingress: str) -> dict[str, Any]:
         result: dict[str, Any] = {
             "protocol": P.PROTOCOL,
@@ -1273,6 +1405,7 @@ class RelayService:
             "registrations": len(self._table.active()),
             "harnesses": list(P.CHANNEL_HARNESSES),
             "forwarding": {"receive": True},
+            "continue_session": {"enabled": self._resume_enabled_for_status()},
         }
         if self._version is not None:
             result["library_version"] = self._version

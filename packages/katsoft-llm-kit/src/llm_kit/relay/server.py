@@ -26,8 +26,11 @@ reads anything, then the content type and the declared body size; it takes one
 of a bounded number of in-flight slots, reads the body under a deadline,
 reads the other two auth headers, and hands the body to the service on a
 worker thread (a long poll waits up to 25 seconds there). A maintenance thread ends lapsed
-registrations and lapses expired messages every few seconds; if it fails, the
-server stops and the failure is raised.
+registrations, lapses expired messages and recovers orphaned remote-resume
+leases (amendment 3) every few seconds; if it fails, the server stops and the
+failure is raised. Remote resume (``continue_session``) is the one path on
+which the relay starts a process; it is off unless relay.yaml holds
+``resume: {enabled: true}``, read on every call.
 
 Security posture (alternative A): loopback only, and the relay token is a
 guardrail, not a boundary against a same-user process.
@@ -54,6 +57,7 @@ from llm_kit.relay.config import (
     RelayConfigError,
     is_loopback_host,
     load_loopback_registry,
+    read_resume_config,
     require_enabled,
 )
 from llm_kit.relay.discovery import Discovery, DiscoveryRoots, ProcessProbe, PsutilProbe, RegistrationTable
@@ -258,7 +262,8 @@ class RelayServer:
     harness homes, read only, and psutil). ``backend_factory`` and
     ``policy_loader`` pass through to :class:`llm_kit.relay.llm.LlmService`.
     ``peer_clients`` replaces the forwarding clients built from ``relay.peers``
-    (``{machine: client or None}``; tests inject fakes there).
+    (``{machine: client or None}``; tests inject fakes there). ``resume_options`` pass through to
+    :class:`llm_kit.relay.resume.ResumeRunner` (lease timing and the launchers; tests point them at stubs).
 
     Use :meth:`serve_forever` in the foreground (SIGINT or SIGTERM stops it) or
     :meth:`start` / :meth:`stop` (or ``with``) to serve on a background thread.
@@ -282,8 +287,10 @@ class RelayServer:
         max_in_flight: int = DEFAULT_MAX_IN_FLIGHT,
         peer_clients: Optional[Mapping[str, Any]] = None,
         peer_timeout_s: float = 30.0,
+        resume_options: Optional[Mapping[str, Any]] = None,
     ) -> None:
         require_enabled(ROLE, config.config_path)
+        self._resume_options = dict(resume_options or {})
         self.config = config
         host, configured_port = config.bind(ROLE)
         self._host = host
@@ -393,6 +400,8 @@ class RelayServer:
                 ledgers=self.config.ledgers, clock=self._clock, poll_interval_s=self._poll_interval_s,
                 peers=self._peer_clients, accept_from=self.config.accept_from,
                 accept_keys=accept_peer_keys(self.config.paths),
+                resume_config=lambda: read_resume_config(self.config.config_path),
+                resume_options=self._resume_options, config_path=self.config.config_path,
             )
             self.mailbox, self.table = mailbox, table
             self._sock = bind_loopback(self._host, self._port)

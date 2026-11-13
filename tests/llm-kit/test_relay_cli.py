@@ -153,13 +153,13 @@ def test_the_group_needs_a_verb_and_lists_them(paths, capsys):
         assert verb in out.out
 
 
-def test_the_client_offers_the_eight_client_verbs_and_no_mint(paths, capsys):
+def test_the_client_offers_the_nine_client_verbs_and_no_mint(paths, capsys):
     out = cli(["client", "--help"], capsys)
     assert out.code == 0
     from llm_kit.cli import relay as relay_cli
 
     listed = list(relay_cli.CLIENT_VERBS)
-    assert listed == ["machines", "sessions", "read", "ask", "send", "replies", "questions", "answer"]
+    assert listed == ["machines", "sessions", "read", "ask", "send", "replies", "questions", "answer", "continue"]
     assert sorted(P.CLIENT_VERBS) == sorted(listed)
     for verb in listed:
         assert f"    {verb} " in out.out, verb
@@ -178,7 +178,7 @@ def test_status_pause_and_resume_through_the_relay(relay, paths, capsys):
     assert scrub(json.loads(out.out), paths.tmp) == {
         "protocol": P.PROTOCOL, "machine": LABEL, "now": "<t>", "registrations": 0,
         "pause": {"relay": PAUSE_CLEAR, "hub": PAUSE_CLEAR}, "harnesses": ["claude", "codex"],
-        "forwarding": {"receive": True},
+        "forwarding": {"receive": True}, "continue_session": {"enabled": False},
     }
     out = cli(["pause", "--reason", "owner away", *paths.args], capsys)
     assert out.code == 0 and scrub(json.loads(out.out), paths.tmp) == {"pause": {

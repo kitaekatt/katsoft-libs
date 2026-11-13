@@ -72,11 +72,11 @@ def code_of(call) -> str:
 # schema, file mode
 # --------------------------------------------------------------------------
 
-def test_schema_version_2_and_private_file(box):
-    assert box.schema_version() == 2
+def test_schema_version_3_and_private_file(box):
+    assert box.schema_version() == 3
     assert (box.db_path.stat().st_mode & 0o777) == 0o600
     again = M.Mailbox(box.db_path, machine=MACHINE)  # reopening is a no-op
-    assert again.schema_version() == 2
+    assert again.schema_version() == 3
 
 
 def test_newer_schema_version_is_refused(tmp_path):

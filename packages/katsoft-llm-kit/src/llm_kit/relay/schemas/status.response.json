@@ -49,6 +49,20 @@
       ],
       "additionalProperties": true,
       "description": "Amendment 2 (katsoft-llm-kit 1.21.0): relay-to-relay forwarding. A relay that omits the field accepts no forwarded call; a forwarding relay checks it before it sends one."
+    },
+    "continue_session": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "true: relay.yaml sets resume: {enabled: true}, so continue_session runs here."
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "additionalProperties": true,
+      "description": "Amendment 3: remote resume. A relay that omits the field does not serve continue_session (unknown_verb)."
     }
   },
   "required": [
@@ -83,6 +97,9 @@
       ],
       "forwarding": {
         "receive": true
+      },
+      "continue_session": {
+        "enabled": false
       }
     }
   ]

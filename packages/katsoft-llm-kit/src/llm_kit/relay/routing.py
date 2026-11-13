@@ -54,6 +54,8 @@ LABELED_FIELDS: Mapping[str, tuple[tuple[str, str], ...]] = {
     "get_replies": (("messages[].to", "address"), ("messages[].sender", "sender"),
                     ("messages[].forwarded_by", "forwarded_by"), ("messages[].reply.sender", "identity")),
     "answer_question": (("id", "question_id"),),
+    "continue_session": (("message.to", "address"), ("message.sender", "sender"),
+                         ("message.forwarded_by", "forwarded_by"), ("message.reply.sender", "identity")),
 }
 
 

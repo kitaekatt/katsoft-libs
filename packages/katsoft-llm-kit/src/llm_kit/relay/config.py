@@ -63,6 +63,17 @@ also forwards its ``/direct`` sessions' calls to that peer (amendment 2).
 imported; they are never read again, and a peer directory holding only them
 is refused with a re-export instruction.
 
+Remote resume (amendment 3). ``resume: {enabled: true}`` turns on
+``continue_session``: a ``/direct`` session of this machine or the hub may
+then resume an IDLE session of this machine that once opted in (registered
+through a channel with a non-empty ``accepts``) and run one turn with a
+message. A missing block or ``enabled: false`` (the default) refuses every
+``continue_session`` ``not_opted_in``. ``timeout_s`` (default 1800, at most
+86400) bounds one run. ``claude_permission_mode`` is the permission mode of a
+resumed Claude turn; the only accepted value is ``default`` (tools that need
+permission are refused in ``claude -p``; owner ruling on Q2, 2026-11-13), and
+a ``bypass*`` mode is never accepted.
+
 Loopback model registry. ``ask_llm`` may reach only endpoints on this
 machine. The relay therefore owns a registry file of its own (served to the
 registry reader through ``MODEL_ENDPOINTS_REGISTRY``), never the user's
@@ -617,6 +628,21 @@ def require_loopback_endpoint(registry, name: Optional[str]):
 # the configuration
 # --------------------------------------------------------------------------
 
+#: Permission modes a resumed Claude turn may run in (owner ruling on Q2: ``default`` only). Never ``bypass*``.
+RESUME_PERMISSION_MODES = ("default",)
+DEFAULT_RESUME_TIMEOUT_S = 1800
+MAX_RESUME_TIMEOUT_S = 86400
+
+
+@dataclass(frozen=True)
+class ResumeConfig:
+    """``resume`` in relay.yaml (amendment 3): remote resume of idle, once-opted-in sessions. Off by default."""
+
+    enabled: bool = False
+    timeout_s: int = DEFAULT_RESUME_TIMEOUT_S
+    claude_permission_mode: str = "default"
+
+
 @dataclass(frozen=True)
 class RelayConfig:
     """Everything a relay or hub process needs to know before it starts."""
@@ -636,6 +662,8 @@ class RelayConfig:
     peers: tuple[PeerConfig, ...] = ()
     #: Machines whose relays may forward ``/direct`` calls to this relay (``relay.accept_from``, amendment 2).
     accept_from: tuple[str, ...] = ()
+    #: ``resume`` (amendment 3): whether ``continue_session`` runs here, and how.
+    resume: ResumeConfig = field(default_factory=ResumeConfig)
 
     def bind(self, role: str) -> tuple[str, int]:
         """The ``(host, port)`` ``role`` listens on."""
@@ -646,7 +674,8 @@ class RelayConfig:
         return self.machine.label
 
 
-_CONFIG_KEYS = frozenset({"enabled", "relay", "hub", "ledgers", "llm_endpoints"})
+_CONFIG_KEYS = frozenset({"enabled", "relay", "hub", "ledgers", "llm_endpoints", "resume"})
+_RESUME_KEYS = frozenset({"enabled", "timeout_s", "claude_permission_mode"})
 _LISTENER_KEYS = frozenset({"host", "port"})
 _HUB_KEYS = _LISTENER_KEYS | {"enabled", "public_url"}
 _RELAY_KEYS = _LISTENER_KEYS | {"peers", "accept_from"}
@@ -747,6 +776,39 @@ def require_enabled(role: str, config_path: Path) -> None:
         raise RelayNotEnabled(f"the hub is not enabled on this machine; to run it, put {missing} in {state.path}")
 
 
+def _resume(data: Mapping[str, Any], path: Path) -> ResumeConfig:
+    """Validate the ``resume`` block; a missing block is off."""
+    block = _block(data, "resume", path)
+    unknown = sorted(set(block) - _RESUME_KEYS)
+    if unknown:
+        raise RelayConfigError(f"relay config {path}: 'resume' has unknown keys: {', '.join(map(str, unknown))}")
+    enabled = _flag(block.get("enabled", False), "resume.enabled", path)
+    timeout = block.get("timeout_s", DEFAULT_RESUME_TIMEOUT_S)
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= MAX_RESUME_TIMEOUT_S:
+        raise RelayConfigError(f"relay config {path}: 'resume.timeout_s' must be an integer 1..{MAX_RESUME_TIMEOUT_S}")
+    mode = block.get("claude_permission_mode", "default")
+    if mode not in RESUME_PERMISSION_MODES:
+        raise RelayConfigError(
+            f"relay config {path}: 'resume.claude_permission_mode' must be one of {list(RESUME_PERMISSION_MODES)}, "
+            f"not {mode!r} (a resumed turn never bypasses permissions)")
+    return ResumeConfig(enabled=enabled, timeout_s=timeout, claude_permission_mode=mode)
+
+
+def read_resume_config(config_path: Path) -> ResumeConfig:
+    """The ``resume`` block as relay.yaml holds it NOW (the relay reads it on every ``continue_session``).
+
+    Off unless the file holds both ``enabled: true`` and ``resume: {enabled: true}``, so turning either off
+    takes effect on the next call without a relay restart. A file that cannot be read is an error.
+    """
+    path = Path(config_path)
+    data = _read_config_file(path)
+    resume = _resume(data, path)
+    if not _flag(data.get("enabled", False), "enabled", path):
+        return ResumeConfig(enabled=False, timeout_s=resume.timeout_s,
+                            claude_permission_mode=resume.claude_permission_mode)
+    return resume
+
+
 def _ledgers(raw: object, path: Path) -> tuple[Path, ...]:
     if raw is None:
         return ()
@@ -818,6 +880,7 @@ def load_config(
 
     peers = _peers(_block(data, "relay", cfg_path).get("peers"), cfg_path, env_json, machine.label)
     accept_from = _accept_from(_block(data, "relay", cfg_path).get("accept_from"), cfg_path, env_json, machine.label)
+    resume = _resume(data, cfg_path)
 
     root = Path(state_root) if state_root is not None else state_dir(env)
     return RelayConfig(
@@ -833,6 +896,7 @@ def load_config(
         hub_public_url=public,
         peers=peers,
         accept_from=accept_from,
+        resume=resume,
     )
 
 
@@ -854,6 +918,8 @@ __all__ = [
     "RelayConfig",
     "RelayConfigError",
     "RelayNotEnabled",
+    "RESUME_PERMISSION_MODES",
+    "ResumeConfig",
     "StatePaths",
     "config_file",
     "default_env_json_path",
@@ -866,6 +932,7 @@ __all__ = [
     "load_loopback_registry",
     "parse_peer_url",
     "parse_public_url",
+    "read_resume_config",
     "relay_enabled",
     "render_registry_yaml",
     "require_enabled",
