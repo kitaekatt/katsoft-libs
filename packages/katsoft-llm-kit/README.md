@@ -223,6 +223,16 @@ another handle holds open accepts identical bytes already in place (different by
 reads and run-record replaces wait a bounded time (about 2 seconds) for a sharing violation to clear.
 POSIX behavior is unchanged.
 
+## Shared file formats in 1.25
+
+The project model file, its personal layer and the prompt file each have a format id and a JSON
+Schema in `llm_kit.schema.formats` (`load_schema`). `project_models.validate_portable_document` checks a
+project model file without the machine's endpoint registry. `graph.prompt.read_prompt_file` returns
+a prompt file's header, body, slots and body SHA-256. Every reader removes one leading byte order
+mark and reads CRLF and CR as LF. The contract is `docs/reference/llm-kit-formats.md` in the source
+repository, and so is the example `packages/katsoft-llm-kit/examples/validate_and_render.py`.
+Changes are in `CHANGELOG.md` beside this README.
+
 ## Source
 
 The source lives in the katsoft-libs repository (`packages/katsoft-llm-kit/src/llm_kit`).
