@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -42,6 +43,22 @@ SESSION = "c1c1c1c1-0000-4000-8000-000000000001"
 LIB = REPO / "packages" / "katsoft-llm-kit" / "src"
 CONTRACTS = REPO / "packages" / "katsoft-contracts" / "src"
 
+CODEX_POSIX_ONLY = pytest.mark.skipif(os.name != "posix", reason="the codex channel is POSIX only (see test_relay_windows.py)")
+#: A foreground child on Windows gets its own process group, the only target ``CTRL_BREAK_EVENT`` can address.
+GROUP_KW: dict[str, Any] = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {}
+
+
+def stop_foreground(child: subprocess.Popen) -> None:
+    """Ask a foreground ``relay serve`` or ``relay hub`` to stop gracefully (SIGTERM; CTRL_BREAK on Windows)."""
+    child.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGTERM)
+
+
+def own_pids(child: subprocess.Popen) -> set[int]:
+    """The child's pid plus its descendants'; a Windows venv ``python.exe`` is a launcher whose child runs the code."""
+    import psutil
+
+    return {child.pid, *(proc.pid for proc in psutil.Process(child.pid).children(recursive=True))}
+
 
 class Backend:
     name = "fake"
@@ -68,6 +85,8 @@ def scrub(value: Any, tmp: Path, port: int = 0) -> Any:
         return [scrub(v, tmp, port) for v in value]
     if isinstance(value, str):
         text = value.replace(str(tmp), "<T>")
+        if os.name == "nt":  # the scrubbed text is compared as POSIX
+            text = re.sub(r"<T>[^\s'\"]*", lambda m: m.group().replace(chr(92), "/"), text)
         return text.replace(f":{port}", ":<port>") if port else text
     return value
 
@@ -348,18 +367,19 @@ def test_serve_runs_in_the_foreground_until_sigterm(paths):
     env.update({"HOME": str(paths.tmp / "home"), "PYTHONPATH": os.pathsep.join([str(LIB), str(CONTRACTS)]),
                 "_BOOTSTRAP_GUARD_SKIP_REEXEC": "1"})
     child = subprocess.Popen([sys.executable, "-m", "llm_kit.cli", "relay", "serve", "--port", str(port), *paths.args],
-                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **GROUP_KW)
     try:
         line = child.stdout.readline()
         assert line, child.stderr.read()
         ready = scrub(json.loads(line), paths.tmp, port)
         assert ready == {"serving": "http://127.0.0.1:<port>", "machine": LABEL, "protocol": P.PROTOCOL,
-                         "pid": child.pid, "state_dir": "<T>/state"}
+                         "pid": ready["pid"], "state_dir": "<T>/state"}
+        assert ready["pid"] in own_pids(child)
         token = (paths.state / "relay.token").read_text(encoding="ascii").strip()
         status = HttpRelayClient(f"http://127.0.0.1:{port}", machine=LABEL, relay_token=token).status(
             {}, origin=f"operator:{LABEL}")
         assert status["machine"] == LABEL
-        child.send_signal(signal.SIGTERM)
+        stop_foreground(child)
         assert child.wait(timeout=30) == 0
     finally:
         if child.poll() is None:
@@ -420,7 +440,7 @@ def test_hub_runs_in_the_foreground_until_sigterm(paths):
     env.update({"HOME": str(paths.tmp / "home"), "PYTHONPATH": os.pathsep.join([str(LIB), str(CONTRACTS)]),
                 "_BOOTSTRAP_GUARD_SKIP_REEXEC": "1"})
     child = subprocess.Popen([sys.executable, "-m", "llm_kit.cli", "relay", "hub", "--port", str(port), *paths.args],
-                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **GROUP_KW)
     try:
         line = child.stdout.readline()
         assert line, child.stderr.read()
@@ -433,7 +453,7 @@ def test_hub_runs_in_the_foreground_until_sigterm(paths):
 
         refused = httpx.post(f"http://127.0.0.1:{port}/mcp", json={}, trust_env=False)
         assert refused.status_code == 401 and refused.json()["error"]["code"] == "unauthenticated"
-        child.send_signal(signal.SIGTERM)
+        stop_foreground(child)
         assert child.wait(timeout=30) == 0
     finally:
         if child.poll() is None:
@@ -450,7 +470,7 @@ def test_hub_with_a_public_url_serves_the_oauth_sign_in(paths):
                 "_BOOTSTRAP_GUARD_SKIP_REEXEC": "1"})
     child = subprocess.Popen([sys.executable, "-m", "llm_kit.cli", "relay", "hub", "--port", str(port),
                               "--public-url", "https://Hub.Example.test/", *paths.args],
-                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                             env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **GROUP_KW)
     try:
         line = child.stdout.readline()
         assert line, child.stderr.read()
@@ -466,7 +486,7 @@ def test_hub_with_a_public_url_serves_the_oauth_sign_in(paths):
         assert refused.status_code == 401
         assert refused.headers["www-authenticate"] == (
             'Bearer resource_metadata="https://hub.example.test/.well-known/oauth-protected-resource/mcp"')
-        child.send_signal(signal.SIGTERM)
+        stop_foreground(child)
         assert child.wait(timeout=30) == 0
     finally:
         if child.poll() is None:
@@ -578,6 +598,7 @@ def test_codex_exits_2_for_a_missing_directory_and_for_bad_flags(paths, capsys, 
     assert codex_launcher.launches() == 0
 
 
+@CODEX_POSIX_ONLY
 def test_codex_exits_1_when_no_relay_has_run_and_spawns_nothing(paths, capsys, codex_launcher):
     out = cli(["codex", "--cd", str(paths.tmp / "work"), *paths.args], capsys)  # enabled, but no token and no relay
     assert out.code == 1 and out.out == ""
@@ -585,6 +606,7 @@ def test_codex_exits_1_when_no_relay_has_run_and_spawns_nothing(paths, capsys, c
     assert codex_launcher.launches() == 0
 
 
+@CODEX_POSIX_ONLY
 def test_codex_exits_1_when_the_running_relay_lists_no_codex_harness_and_spawns_nothing(old_relay, paths, capsys, codex_launcher):
     status = old_relay.client.status({}, origin=f"operator:{LABEL}")
     assert "harnesses" not in status
@@ -596,6 +618,7 @@ def test_codex_exits_1_when_the_running_relay_lists_no_codex_harness_and_spawns_
     assert old_relay.client.status({}, origin=f"operator:{LABEL}")["registrations"] == 0
 
 
+@CODEX_POSIX_ONLY
 def test_codex_exits_1_with_the_relays_refusal_of_the_registration(relay, paths, capsys, codex_launcher, monkeypatch):
     real = HttpRelayClient.call
 
@@ -611,6 +634,7 @@ def test_codex_exits_1_with_the_relays_refusal_of_the_registration(relay, paths,
     assert error["code"] == "bad_request" and "stubbed" in error["message"]
 
 
+@CODEX_POSIX_ONLY
 def test_codex_exits_2_when_the_thread_to_resume_never_ran_and_1_when_it_is_busy(relay, paths, capsys, codex_launcher, monkeypatch):
     work = str(paths.tmp / "work")
     thread = "0192aaaa-0000-7000-8000-00000000cafe"
@@ -659,6 +683,7 @@ def test_the_listener_probe_does_see_a_listening_process_tree(tmp_path):
         child.stdout.close()
 
 
+@CODEX_POSIX_ONLY
 def test_codex_runs_as_a_child_answers_a_granted_send_binds_nothing_and_stops_on_sigterm(relay, paths, codex_launcher):
     work = paths.tmp / "work"
     child = subprocess.Popen([sys.executable, "-m", "llm_kit.cli", "relay", "codex", "--cd", str(work), *paths.args],
@@ -696,6 +721,7 @@ def test_codex_runs_as_a_child_answers_a_granted_send_binds_nothing_and_stops_on
         child.stderr.close()
 
 
+@CODEX_POSIX_ONLY
 def test_a_second_sigterm_during_deregistration_neither_skips_it_nor_leaves_the_app_server(relay, paths, codex_launcher, monkeypatch):
     import threading
 
@@ -756,6 +782,7 @@ sys.exit(channel.run())
 """
 
 
+@CODEX_POSIX_ONLY
 def test_a_stalled_terminal_does_not_keep_the_app_server_alive_after_sigterm(relay, paths, codex_launcher):
     import psutil
 
@@ -816,6 +843,7 @@ sys.exit(channel.run())
 """
 
 
+@CODEX_POSIX_ONLY
 def test_a_blocked_final_log_write_still_ends_in_the_cleanup_deadline(relay, paths, codex_launcher):
     import psutil
 

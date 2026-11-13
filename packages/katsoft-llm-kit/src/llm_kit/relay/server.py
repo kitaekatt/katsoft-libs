@@ -82,7 +82,9 @@ DEFAULT_BODY_DEADLINE_S = 10.0
 DEFAULT_MAX_IN_FLIGHT = 2 * DEFAULT_WORKERS
 _STARTUP_TIMEOUT_S = 15.0
 _JSON_TYPES = ("application/json",)
-_STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+#: SIGBREAK is how another Windows process asks a console process group to stop gracefully (CTRL_BREAK_EVENT);
+#: Windows has no SIGTERM delivery, so without it only Ctrl+C reaches the handler.
+_STOP_SIGNALS = tuple(getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGBREAK") if hasattr(signal, name))
 
 
 def require_loopback(host: object, *, what: str = "relay") -> str:
@@ -468,9 +470,9 @@ class RelayServer:
     # -- serving -------------------------------------------------------------------
 
     def serve_forever(self, on_ready: Optional[Callable[["RelayServer"], None]] = None) -> None:
-        """Serve until SIGINT or SIGTERM, then stop gracefully; call ``on_ready(self)`` once serving.
+        """Serve until SIGINT, SIGTERM (or SIGBREAK on Windows), then stop gracefully; call ``on_ready(self)`` once serving.
 
-        Must run on the main thread (it installs the two signal handlers and
+        Must run on the main thread (it installs the stop signal handlers and
         restores the previous ones on return). The HTTP server runs on a
         background thread, exactly as :meth:`start` runs it. A server that
         stops without a signal is an error.
