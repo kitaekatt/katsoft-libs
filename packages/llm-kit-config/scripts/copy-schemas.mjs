@@ -1,7 +1,8 @@
 // Copy the llm-kit format schemas from the Python package into schemas/ for the npm tarball.
 // `npm pack` and `npm publish` run it through `prepack`. The copies are not committed:
-// the Python package's schema/formats directory is the one source.
-import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+// the Python package's schema/formats directory is the one source. Only the listed formats ship;
+// the source folder may hold others (the run formats), which the npm package does not read.
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,13 +15,18 @@ export const SCHEMA_FILES = [
 ];
 
 export function copySchemas(target = join(PACKAGE, "schemas")) {
-  const shipped = readdirSync(SCHEMA_SOURCE).filter((name) => name.endsWith(".schema.json")).sort();
-  if (JSON.stringify(shipped) !== JSON.stringify([...SCHEMA_FILES].sort())) {
-    throw new Error(`the schema files in ${SCHEMA_SOURCE} are ${shipped.join(", ")}; update SCHEMA_FILES and SCHEMA_IDS`);
+  const missing = SCHEMA_FILES.filter((name) => !existsSync(join(SCHEMA_SOURCE, name)));
+  if (missing.length) {
+    throw new Error(`the shipped schemas ${missing.join(", ")} are missing from ${SCHEMA_SOURCE}; update SCHEMA_FILES`);
   }
   rmSync(target, { recursive: true, force: true });
   mkdirSync(target, { recursive: true });
-  for (const name of SCHEMA_FILES) copyFileSync(join(SCHEMA_SOURCE, name), join(target, name));
+  for (const name of SCHEMA_FILES) {
+    copyFileSync(join(SCHEMA_SOURCE, name), join(target, name));
+    if (!readFileSync(join(target, name)).equals(readFileSync(join(SCHEMA_SOURCE, name)))) {
+      throw new Error(`${name} differs from its source after the copy`);
+    }
+  }
   return target;
 }
 
