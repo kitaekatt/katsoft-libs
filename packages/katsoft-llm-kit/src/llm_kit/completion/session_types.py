@@ -1192,15 +1192,19 @@ class WorkspaceFinalizeStatus(str, Enum):
 
     - ``clean``: nothing was left to commit.
     - ``committed``: remaining changes were committed to the unit branch.
-    - ``dirty_held``: the commit failed, the shutdown was not confirmed, or
-      detached survivors remain; the worktree is held (for a human, or until
-      the survivors are re-checked gone).
+    - ``dirty_held``: the commit was attempted and did not leave the branch
+      clean (HEAD off the unit branch, the commit failed, changes remain, or
+      the budget ran out); the worktree is held for a human.
+    - ``writer_held``: nothing was committed because a writer may still be
+      running (the shutdown was not confirmed, or detached survivors remain);
+      the worktree is held until those identities are re-checked gone.
     - ``not_applicable``: the workspace is not a branch-mode unit.
     """
 
     CLEAN = "clean"
     COMMITTED = "committed"
     DIRTY_HELD = "dirty_held"
+    WRITER_HELD = "writer_held"
     NOT_APPLICABLE = "not_applicable"
 
 
@@ -1243,21 +1247,22 @@ class SessionWorkspaceHook(Protocol):
     - ``writers_stopped``: workspace writer quiescence over the job's
       attempts: every shutdown was confirmed AND no detached survivor remains
       (:attr:`SessionOutcome.workspace_quiescent`). When false the hook must
-      not commit; it returns ``dirty_held``.
+      not commit; it returns ``writer_held``.
     - ``detached_survivors``: the detached tagged processes still alive at the
       end of any attempt's shutdown, never signalled (also in that attempt's
       ``cleanup.json``). While any is alive, finalization, reuse, merge and
       reaping of the workspace are BLOCKED: the hook resolves them only by
-      re-checking each identity later and finding it gone (item 2's branch
-      mode does that deferred finalization). Empty when none survived; a
-      non-empty list implies ``writers_stopped`` false.
+      re-checking each identity later and finding it gone (branch mode does
+      that deferred finalization). Empty when none survived; a non-empty
+      list implies ``writers_stopped`` false.
     - ``final_state``: the job's ``JobState`` value when the run ended, or
       ``None`` when the job is not terminal.
     - ``stop_kind``: the last attempt's :class:`StopKind`, ``None`` for a
       completion-mode or never-started attempt.
 
-    Crash-path finalization from ``jobs cancel`` and supervisor settlement is
-    item 2's and is not part of this signature.
+    Crash-path finalization (``jobs cancel`` and supervisor recovery) is not
+    part of this signature; it reports through
+    ``llm_kit.jobs.workspace.recover_run_units``.
     """
 
     def finalize_run(

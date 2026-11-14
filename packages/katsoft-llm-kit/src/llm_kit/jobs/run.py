@@ -93,7 +93,14 @@ import llm_kit.dispatch.usage_budget as _usage_budget
 import llm_kit.registry.models as _models
 from .store import DuplicateJobError, JobStore, StoreError, UnknownRunError
 from . import _supervisor_process
-from .workspace import WorkspaceError, WorkspaceManager, WorkspaceResolution
+from .workspace import (
+    WORKSPACE_STATUS_UNIT,
+    BranchWorkspaceHook,
+    WorkspaceError,
+    WorkspaceManager,
+    WorkspaceResolution,
+    recover_run_units,
+)
 
 
 DEFAULT_TIMEOUT_S = 900.0
@@ -1035,6 +1042,10 @@ def _session_options(job: Job) -> SessionOptions:
     return SessionOptions.from_job_options(job.options)
 
 
+def _branch_mode(job: Job) -> bool:
+    return job.workspace is not None and job.workspace.branch_mode
+
+
 def _agent_jobs(jobs: Sequence[Job]) -> list[Job]:
     return [job for job in jobs if _session_options(job).mode is SessionMode.AGENT]
 
@@ -1059,9 +1070,9 @@ def check_agent_session_run(
     must cover :func:`~llm_kit.completion.session_types
     .required_supervisor_budget_s` over every job: per attempt the attempt
     timeout, the agent shutdown allowance (B_res + B_eof + B_int), the
-    backpressure cap of ``backpressure`` (default: from the environment), and
-    no finalization or overhead until branch-mode workspaces exist; per job
-    ``max_attempts`` attempts; ``max_parallel`` workers.
+    backpressure cap of ``backpressure`` (default: from the environment), the
+    end-of-run commit budget (``session_finalize_s``) for a branch-mode job, and
+    no overhead; per job ``max_attempts`` attempts; ``max_parallel`` workers.
 
     Returns the required budget in seconds. Raises
     :class:`AgentSessionConfigError` for a missing root or budget, and
@@ -1091,7 +1102,7 @@ def check_agent_session_run(
     for job in jobs:
         options = _session_options(job)
         attempt = AttemptBudget.for_session(
-            timeout_s, options.mode, options.bounds, finalizes=False,
+            timeout_s, options.mode, options.bounds, finalizes=_branch_mode(job),
             backpressure_cap_s=policy.cap_s,
         )
         budgets.append(JobBudget(attempt=attempt, max_attempts=job.max_attempts))
@@ -1101,11 +1112,12 @@ def check_agent_session_run(
 class NoWorkspaceHook:
     """The default :class:`~llm_kit.completion.session_types.SessionWorkspaceHook`.
 
-    No workspace makes an end-of-run commit until branch-mode workspaces exist,
-    so :meth:`finalize_run` always returns ``not_applicable`` and commits,
-    holds, reuses or reaps nothing. Detached survivors are recorded in the
-    result's ``detail`` (their durable record is each attempt's
-    ``cleanup.json``); nothing else is done about them.
+    Used for every job that is not branch mode (a branch-mode job always gets
+    :class:`~llm_kit.jobs.workspace.BranchWorkspaceHook`). Such a workspace
+    makes no end-of-run commit, so :meth:`finalize_run` always returns
+    ``not_applicable`` and commits, holds, reuses or reaps nothing. Detached
+    survivors are recorded in the result's ``detail`` (their durable record is
+    each attempt's ``cleanup.json``); nothing else is done about them.
     """
 
     def finalize_run(
@@ -1136,12 +1148,16 @@ class _JobTrack:
     ``shutdowns_confirmed`` is the AND over the attempts; ``detached_survivors``
     accumulates every attempt's survivors, since a survivor of an earlier
     attempt still blocks finalization after a later quiescent one.
+    ``unaccounted`` names each attempt whose session launched a process and
+    then raised before its shutdown reported the survivors: its detached
+    processes are unknown, so no retry may reuse its directory.
     """
 
     working_directory: Optional[Path] = None
     shutdowns_confirmed: bool = True
     detached_survivors: list[DetachedSurvivor] = field(default_factory=list)
     stop_kind: Optional[StopKind] = None
+    unaccounted: list[str] = field(default_factory=list)
 
     @property
     def writers_stopped(self) -> bool:
@@ -1155,6 +1171,21 @@ class _JobTrack:
             if item not in self.detached_survivors:
                 self.detached_survivors.append(item)
         self.stop_kind = outcome.stop_kind
+
+    def raised(self, attempt_no: int, exc: BaseException, paths: SessionPaths) -> None:
+        """Fold in an attempt whose session raised instead of returning an outcome.
+
+        Its shutdown is unconfirmed. When the session had launched a process
+        (``cleanup.json`` exists once the leader is identified), the attempt
+        is also recorded as unaccounted.
+        """
+        self.shutdowns_confirmed = False
+        if paths.cleanup.exists():
+            self.unaccounted.append(
+                f"attempt {attempt_no}'s session raised {exc.__class__.__name__} "
+                f"({str(exc) or 'no message'}) after it launched, so its detached processes "
+                f"are not accounted for (see {paths.cleanup})"
+            )
 
 
 #: The job-level error code of a retry refused beside a live detached survivor.
@@ -1170,14 +1201,16 @@ def _refuse_reuse_beside_survivors(
 ) -> None:
     """Fail the job instead of retrying in the same directory beside a live detached survivor.
 
-    Applies only when an earlier attempt left detached survivors and the next
-    attempt would run in the SAME working directory (a non-isolated
-    workspace); a fresh per-attempt worktree is not blocked. Each survivor's
-    identity is re-checked now: when every one is gone the retry proceeds,
-    otherwise the job ends ``failed`` with ``workspace_not_quiescent`` naming
-    the live ones, before anything is reserved.
+    Applies only when an earlier attempt left detached survivors, or is
+    unaccounted (its session raised after launching, so its survivors are
+    unknown), and the next attempt would run in the SAME working directory (a
+    non-isolated workspace); a fresh per-attempt worktree is not blocked.
+    Each survivor's identity is re-checked now: when every one is gone and no
+    attempt is unaccounted the retry proceeds, otherwise the job ends
+    ``failed`` with ``workspace_not_quiescent`` naming the live survivors and
+    the unaccounted attempts, before anything is reserved.
     """
-    if not track.detached_survivors or track.working_directory is None:
+    if not (track.detached_survivors or track.unaccounted) or track.working_directory is None:
         return
     planned_root = Path(planned_path if planned_path is not None else job.declared_directory)
     if planned_root.expanduser().resolve() != Path(track.working_directory).expanduser().resolve():
@@ -1188,14 +1221,16 @@ def _refuse_reuse_beside_survivors(
             _supervisor_process.ProcessIdentity(item.identity.pid, item.identity.create_time)
         ) is not None
     ]
-    if not alive:
+    if not alive and not track.unaccounted:
         return
-    listed = ", ".join(f"pid {item.identity.pid} (created {item.identity.create_time}, cwd {item.cwd})"
-                       for item in alive)
-    reason = (
-        f"{_WORKSPACE_NOT_QUIESCENT}: job {job.id!r} was not retried because detached processes of an "
-        f"earlier attempt are still alive and may write {planned_root}: {listed}"
-    )
+    causes = []
+    if alive:
+        listed = ", ".join(f"pid {item.identity.pid} (created {item.identity.create_time}, cwd {item.cwd})"
+                           for item in alive)
+        causes.append(f"detached processes of an earlier attempt are still alive and may write "
+                      f"{planned_root}: {listed}")
+    causes.extend(track.unaccounted)
+    reason = f"{_WORKSPACE_NOT_QUIESCENT}: job {job.id!r} was not retried because " + "; ".join(causes)
     store.mark_failed(run_id, job.id, reason)
     raise _WorkspaceNotQuiescentError(reason)
 
@@ -1205,17 +1240,6 @@ def _next_attempt_no(store: JobStore, run_id: str, job_id: str) -> int:
     numbers = [a.attempt_no for a in store.list_attempts(run_id, job_id)]
     numbers += [r.attempt_no for r in store.list_reservations(run_id, job_id)]
     return max(numbers, default=0) + 1
-
-
-def _planned_working_directory(
-    manager: WorkspaceManager, job: Job, workspace_path: Optional[Path]
-) -> Path:
-    """The execution cwd an attempt at ``workspace_path`` will have (the repository subdirectory included)."""
-    if workspace_path is None:
-        return Path(job.declared_directory).expanduser().resolve()
-    plan = manager._plans.get(job.id)  # noqa: SLF001 -- no public accessor yet (item 2)
-    relative = plan.relative_directory if plan is not None else Path()
-    return (Path(workspace_path).expanduser().resolve() / relative).resolve()
 
 
 def _new_process_tag() -> str:
@@ -1554,7 +1578,14 @@ def _run_job_attempt(
         except StoreError as exc:
             store.mark_failed(run_id, job.id, str(exc))
             raise
-        manager = WorkspaceManager(root, (job,), base_refs=base_refs)
+        if _branch_mode(job):
+            reason = (
+                f"job {job.id!r} is branch mode: run it through run_jobs, run_job_file or "
+                "resume_run (or pass a workspace_manager), whose end-of-run hook finalizes the unit"
+            )
+            store.mark_failed(run_id, job.id, reason)
+            raise WorkspaceError(reason)
+        manager = WorkspaceManager(root, (job,), base_refs=base_refs, run_id=run_id)
     else:
         try:
             store.ensure_workspace_root(run_id, manager.workspace_root)
@@ -1574,7 +1605,7 @@ def _run_job_attempt(
             raise
         if track is not None:
             _refuse_reuse_beside_survivors(store, run_id, job, track, planned_path)
-        session_cwd = _planned_working_directory(manager, job, planned_path)
+        session_cwd = manager.working_directory(job, planned_path)
         session_id = session.resume_session or str(uuid.uuid4())
         session_paths = SessionPaths.for_attempt(
             Path(session_root).expanduser(), job.id, predicted_no  # type: ignore[arg-type]
@@ -1604,6 +1635,11 @@ def _run_job_attempt(
             job.id,
             attempt_no,
             workspace_path=workspace_path,
+            workspace_status=(
+                WORKSPACE_STATUS_UNIT
+                if workspace_path is not None and manager.is_unit_job(job.id)
+                else None
+            ),
         )
         workspace = manager.create(job, workspace_path=workspace_path)
     except WorkspaceError as exc:
@@ -1733,7 +1769,7 @@ def _run_job_attempt(
             outcome = agent_backend.run(request)  # type: ignore[union-attr]
         except Exception as exc:
             if track is not None:
-                track.shutdowns_confirmed = False
+                track.raised(attempt_no, exc, session_paths)
             attempt, terminal_state = _exception_attempt(
                 run_id=run_id,
                 job=job,
@@ -1756,7 +1792,7 @@ def _run_job_attempt(
             return recorded, None, None
         except (KeyboardInterrupt, SystemExit) as exc:
             if track is not None:
-                track.shutdowns_confirmed = False
+                track.raised(attempt_no, exc, session_paths)
             attempt, terminal_state = _exception_attempt(
                 run_id=run_id,
                 job=job,
@@ -2356,11 +2392,13 @@ def _drive_job(
     job that starts waiting during this drive, or an answer that arrives
     during it, is continued by the next pass.
 
-    However the drive ends, ``workspace_hook.finalize_run`` is called once for
-    the job (default :class:`NoWorkspaceHook`), from a ``finally``, with the
-    last attempt's stop kind, whether the workspace's writers are quiescent
-    (every shutdown confirmed and no detached survivor), and the detached
-    survivors of every attempt.
+    However the drive ends, the job's workspace hook is called once, from a
+    ``finally``, with the last attempt's stop kind, whether the workspace's
+    writers are quiescent (every shutdown confirmed and no detached survivor),
+    and the detached survivors of every attempt. A branch-mode job's hook is
+    :class:`~llm_kit.jobs.workspace.BranchWorkspaceHook` (the end-of-run commit
+    to the unit branch); any other job's is ``workspace_hook`` (default
+    :class:`NoWorkspaceHook`).
     """
     track = _JobTrack()
     try:
@@ -2372,7 +2410,11 @@ def _drive_job(
         )
     finally:
         current = store.get_job(run_id, job.id)
-        hook = workspace_hook if workspace_hook is not None else NoWorkspaceHook()
+        hook: SessionWorkspaceHook
+        if workspace_manager.is_unit_job(job.id):
+            hook = BranchWorkspaceHook(workspace_manager, store)
+        else:
+            hook = workspace_hook if workspace_hook is not None else NoWorkspaceHook()
         hook.finalize_run(
             run_id=run_id,
             job_id=job.id,
@@ -2412,6 +2454,14 @@ def _drive_job_attempts(
             if not starting or not _answered_and_waiting(store, run_id, job.id):
                 return
             starting = False
+            # A continuation runs the contract in the recorded worktree: a
+            # branch-mode job owns its unit for it, like for an attempt, and
+            # fails like an attempt when it cannot.
+            try:
+                workspace_manager.hold(job)
+            except WorkspaceError as exc:
+                store.mark_failed(run_id, job.id, str(exc))
+                return
             continue_job(store, run_id, job, timeout_s=timeout_s)
             continue
         starting = False
@@ -2481,6 +2531,10 @@ def _run_pending(
     """
     bound = validate_max_parallel(max_parallel)
     store.recover_reservations(run_id)
+    # Units a crashed or hard-cancelled earlier pass of this run still owns are
+    # finalized before anything is dispatched (design 6.2, crash finalization).
+    if any(_branch_mode(record.job) for record in store.list_jobs(run_id)):
+        recover_run_units(store, run_id)
     # Record every lapsed interrupt BEFORE the read that builds the dispatch
     # list, so a job that has just expired is never submitted to a worker.
     store.expire_interrupts(run_id, time.time())
@@ -2500,6 +2554,7 @@ def _run_pending(
             root,
             tuple(record.job for record in records if not record.terminal),
             base_refs=base_refs,
+            run_id=run_id,
         )
     halts = _HaltedEndpoints(store, run_id)
     pending = [record.job for record in records if not record.terminal]
@@ -2604,7 +2659,7 @@ def run_jobs(
         else default_workspace_root(identifier)
     )
     run_floor = _validate_disallowed_tools(disallowed_tools)
-    workspace_manager = WorkspaceManager(root, job_values)
+    workspace_manager = WorkspaceManager(root, job_values, run_id=identifier)
     store_object.create_run(
         identifier,
         job_values,

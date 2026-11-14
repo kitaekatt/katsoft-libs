@@ -392,6 +392,35 @@ def test_a_detached_tagged_process_is_never_signalled_and_is_recorded_as_a_survi
             _kill_quietly(int(daemon_file.read_text()))
 
 
+def test_an_unreadable_environment_does_not_break_the_shutdown_or_free_a_seen_survivor(tmp_path, monkeypatch):
+    # psutil 7.2 on macOS raises SystemError from Process.environ() under load. It is
+    # an unreadable environment: the shutdown completes, and the daemon, seen as a
+    # descendant before it detached, is still a detached survivor without its tag.
+    import psutil
+
+    real_environ = psutil.Process.environ
+
+    def environ(self):
+        if self.pid != os.getpid():
+            raise SystemError("<built-in function proc_environ> returned a result with an exception set")
+        return real_environ(self)
+
+    h = Harness(tmp_path, monkeypatch, "daemon")
+    monkeypatch.setattr(psutil.Process, "environ", environ)
+    bounds = SessionBounds(quiescence_s=0.5, result_wait_s=1.0, eof_wait_s=1.0, sigint_wait_s=0.5)
+    daemon_file = Path(str(h.log) + ".daemon")
+    try:
+        outcome = h.run(h.request(bounds=bounds))
+        daemon = int(daemon_file.read_text())
+        assert _alive(daemon) and not Path(str(h.log) + ".daemon_signal").exists()
+        assert outcome.response is not None and outcome.response.text == "echo: hello"
+        assert not outcome.workspace_quiescent
+        assert daemon in {item.identity.pid for item in outcome.detached_survivors}
+    finally:
+        if daemon_file.exists():
+            _kill_quietly(int(daemon_file.read_text()))
+
+
 def test_a_detached_process_that_exits_within_the_wait_is_not_a_survivor(tmp_path, monkeypatch):
     h = Harness(tmp_path, monkeypatch, "daemon")
     monkeypatch.setenv("FAKE_DAEMON_S", "1.5")

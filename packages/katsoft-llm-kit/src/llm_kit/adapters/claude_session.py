@@ -637,6 +637,11 @@ class _SessionRun:
           different process group alone is not detachment.
         - UNCONFIRMED (never signalled; blocks shutdown confirmation): a
           tagged process none of the rules above decides.
+
+        An unreadable environment (``AccessDenied``, or the ``SystemError``
+        psutil 7.2 raises on macOS under load) counts as untagged. Only a
+        process with no other tie depends on the tag: one inside the leader's
+        session, recorded, or seen as a descendant is classified without it.
         """
         psutil = self.psutil
         me = os.getpid()
@@ -665,7 +670,9 @@ class _SessionRun:
                 if in_session or _same_user(proc):
                     try:
                         tagged = proc.environ().get(SESSION_TAG_ENV) == self.request.process_tag
-                    except (psutil.AccessDenied, psutil.ZombieProcess):
+                    except (psutil.AccessDenied, psutil.ZombieProcess, SystemError):
+                        # SystemError: psutil 7.2 on macOS, proc_environ under load
+                        # (KERN_PROCARGS2 failing with errno 0); unreadable, as AccessDenied.
                         tagged = False
                 created = proc.create_time()
                 seen_outside = (proc.pid, created) in self.outside

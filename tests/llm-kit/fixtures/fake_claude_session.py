@@ -10,6 +10,8 @@ busy turn with ``result:error_during_execution``.
 ``FAKE_SESSION_LOG`` names a file prefix. ``<prefix>.argv.json`` gets the argv, cwd, pid, process group, the
 session tag and whether CLAUDECODE was set; ``<prefix>.stdin.jsonl`` gets every stdin line as received;
 ``<prefix>.stdout`` gets every byte written to stdout; ``<prefix>.sigint`` gets one line per SIGINT received.
+``FAKE_SESSION_WRITE``, when set, names a file the fake writes (relative to its cwd) on every user message,
+before its result, with the message text: an agent that leaves an uncommitted change in its worktree.
 ``FAKE_SESSION_SCENARIO`` picks the behaviour:
 
   basic        each user message: init, an assistant event, result success "echo: <text>"
@@ -249,6 +251,9 @@ def main():
             init()
         emit({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
               "session_id": session})
+        if os.environ.get("FAKE_SESSION_WRITE"):
+            with open(os.environ["FAKE_SESSION_WRITE"], "w", encoding="utf-8") as handle:
+                handle.write(text + "\n")
         if scenario in ("busy", "racing"):
             busy_turn(scenario == "racing")
         elif scenario == "slow_turn":

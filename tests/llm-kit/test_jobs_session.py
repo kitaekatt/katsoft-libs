@@ -75,7 +75,8 @@ def cleanup_record(**changes) -> st.CleanupRecord:
 
 def test_every_named_schema_file_ships_and_is_in_the_validator_subset():
     shipped = sorted(entry.name for entry in SCHEMA_DIR.iterdir() if entry.name.endswith(".json"))
-    assert shipped == sorted(st.SESSION_SCHEMA_FILES)
+    # unit_record.json is the unit registry's (test_jobs_units.py); every other file is a session format.
+    assert shipped == sorted((*st.SESSION_SCHEMA_FILES, "unit_record.json"))
     for name in st.SESSION_SCHEMA_FILES:
         text = (SCHEMA_DIR / name).read_text(encoding="utf-8")
         assert text.isascii()

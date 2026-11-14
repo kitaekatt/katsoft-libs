@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit-units/1/unit_record.json",
+  "title": "unit_record",
+  "description": "One branch-mode unit as llm_kit.jobs.units.UnitRecord.to_mapping returns it (a row of <worktree root>/units.sqlite3). The unit is identified by repository (the resolved Git common directory) and unit. owner is set exactly while state is active. held_processes are the process identities a held unit waits on. merged_tip_sha, merge_target_sha and merged_at record the last successful merge of the unit branch.",
+  "type": "object",
+  "required": ["schema", "repository", "unit", "branch", "worktree", "state", "run_count", "created_at", "updated_at", "base_sha", "owner_run_id", "owner_job_id", "owner", "held_reason", "held_processes", "last_run_ended_at", "last_commit_sha", "merged_tip_sha", "merge_target_sha", "merged_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": 1 },
+    "repository": { "type": "string", "minLength": 1 },
+    "unit": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "branch": { "type": "string", "minLength": 1 },
+    "worktree": { "type": "string", "minLength": 1 },
+    "state": { "enum": ["active", "parked", "dirty_held", "writer_held", "removed"] },
+    "run_count": { "type": "integer", "minimum": 0 },
+    "created_at": { "type": "number" },
+    "updated_at": { "type": "number" },
+    "base_sha": { "type": ["string", "null"], "minLength": 1 },
+    "owner_run_id": { "type": ["string", "null"], "minLength": 1 },
+    "owner_job_id": { "type": ["string", "null"], "minLength": 1 },
+    "owner": {
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["nonce", "pid", "create_time"],
+          "additionalProperties": false,
+          "properties": {
+            "nonce": { "type": "string", "minLength": 1 },
+            "pid": { "type": "integer", "minimum": 1 },
+            "create_time": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        }
+      ]
+    },
+    "held_reason": { "type": ["string", "null"] },
+    "held_processes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["pid", "create_time", "cwd"],
+        "additionalProperties": false,
+        "properties": {
+          "pid": { "type": "integer", "minimum": 1 },
+          "create_time": { "type": "number", "exclusiveMinimum": 0 },
+          "cwd": { "type": ["string", "null"], "minLength": 1 }
+        }
+      }
+    },
+    "last_run_ended_at": { "type": ["number", "null"] },
+    "last_commit_sha": { "type": ["string", "null"], "minLength": 1 },
+    "merged_tip_sha": { "type": ["string", "null"], "minLength": 1 },
+    "merge_target_sha": { "type": ["string", "null"], "minLength": 1 },
+    "merged_at": { "type": ["number", "null"] }
+  },
+  "examples": [
+    { "schema": 1, "repository": "/home/user/project/.git", "unit": "project-task-item", "branch": "agent/project-task-item", "worktree": "/home/user/worktrees/project-0123456789ab/project-task-item", "state": "parked", "run_count": 2, "created_at": 1794000000.5, "updated_at": 1794000100.5, "base_sha": "0123456789abcdef0123456789abcdef01234567", "owner_run_id": "run-2", "owner_job_id": "job-1", "owner": null, "held_reason": null, "held_processes": [], "last_run_ended_at": 1794000100.5, "last_commit_sha": "89abcdef0123456789abcdef0123456789abcdef", "merged_tip_sha": null, "merge_target_sha": null, "merged_at": null }
+  ]
+}

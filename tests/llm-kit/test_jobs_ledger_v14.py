@@ -37,6 +37,7 @@ from llm_kit.jobs.model import (
 )
 from llm_kit.jobs.store import (
     CANCEL_SCHEMA,
+    LEDGER_SCHEMA,
     SESSION_SCHEMA,
     JobStore,
     LedgerReader,
@@ -140,7 +141,7 @@ def _agent_attempt(reservation: AttemptReservation, **overrides: object) -> Atte
 def test_the_schema_constants_agree() -> None:
     assert CANCEL_SCHEMA == 13
     assert SESSION_SCHEMA == SESSION_LEDGER_SCHEMA == 14
-    assert len(store_module._MIGRATIONS) == SESSION_SCHEMA
+    assert len(store_module._MIGRATIONS) == LEDGER_SCHEMA > SESSION_SCHEMA
 
 
 def test_a_fresh_ledger_has_exactly_the_session_columns_on_both_tables(
@@ -202,7 +203,7 @@ def test_a_schema_13_ledger_migrates_in_place_and_keeps_every_row(
     old = LedgerReader(path).snapshot("run")
 
     upgraded = JobStore(path, create=False)
-    assert LedgerReader(path).schema_version() == 14
+    assert LedgerReader(path).schema_version() == LEDGER_SCHEMA
     new = upgraded.snapshot("run")
     # Same rows, each now carrying the pre-14 session values the reader supplied.
     assert new.attempts == old.attempts
@@ -220,7 +221,7 @@ def test_a_schema_13_ledger_migrates_in_place_and_keeps_every_row(
         connection.close()
     # Opening it again migrates nothing further.
     reopened = JobStore(path, create=False).snapshot("run")
-    assert LedgerReader(path).schema_version() == 14
+    assert LedgerReader(path).schema_version() == LEDGER_SCHEMA
     assert reopened.attempts == new.attempts and reopened.reservations == new.reservations
 
 
@@ -236,7 +237,7 @@ def test_a_migrated_ledger_accepts_agent_rows_beside_the_old_ones(
         _agent_attempt(reservation), terminal_state=JobState.ACCEPTED, at=2001.0
     )
     reader = LedgerReader(path)
-    assert reader.schema_version() == 14
+    assert reader.schema_version() == LEDGER_SCHEMA
     snapshot = reader.snapshot("agent-run")
     attempt = snapshot.attempts[0]
     assert (attempt.session_mode, attempt.session_id) == (SessionMode.AGENT, SESSION_ID)
@@ -249,9 +250,11 @@ def test_a_reader_built_for_schema_13_refuses_a_schema_14_ledger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = _v13_ledger(tmp_path)
-    JobStore(path, create=False)
+    full = list(store_module._MIGRATIONS)
+    monkeypatch.setattr(store_module, "_MIGRATIONS", full[:SESSION_SCHEMA])
+    JobStore(path, create=False)  # migrated to exactly 14
     before = path.read_bytes()
-    monkeypatch.setattr(store_module, "_MIGRATIONS", list(store_module._MIGRATIONS)[:13])
+    monkeypatch.setattr(store_module, "_MIGRATIONS", full[:13])
     with pytest.raises(StoreError, match=r"schema version 14 is newer .*max 13"):
         JobStore(path)
     with pytest.raises(StoreError, match=r"schema version 14 is newer .*max 13"):

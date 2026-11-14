@@ -427,12 +427,18 @@ def _cancel(args: argparse.Namespace) -> int:
     """Handle the cancel subcommand.
 
     The ledger must exist (``create=False``); an unknown run or job and a
-    missing store reach the runner-failure exit through ``run``.
+    missing store reach the runner-failure exit through ``run``. After the
+    ledger cancellation, the units the run's branch-mode jobs still own are
+    finalized (``recover_run_units``), terminal jobs included, and reported
+    under ``units``.
     """
+    from llm_kit.jobs.workspace import recover_run_units
+
     if not args.reason.strip():
         raise ValueError("--reason must not be empty")
     store = JobStore(_store_path(args.store), create=False)
     outcomes = store.cancel_jobs(args.run, args.reason, job_id=args.job)
+    units = recover_run_units(store, args.run, job_id=args.job)
     print(
         json.dumps(
             {
@@ -445,6 +451,7 @@ def _cancel(args: argparse.Namespace) -> int:
                     }
                     for item in outcomes
                 ],
+                "units": [entry.to_mapping() for entry in units],
             },
             sort_keys=True,
         )

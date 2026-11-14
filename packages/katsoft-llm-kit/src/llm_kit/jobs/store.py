@@ -191,6 +191,13 @@ CANCEL_SCHEMA = 13
 #: ``SESSION_LEDGER_SCHEMA`` when this module is imported.
 SESSION_SCHEMA = 14
 
+#: The first ledger schema whose attempts and reservations may record the
+#: workspace status ``unit`` (a branch-mode unit worktree, which workspace GC
+#: skips: the unit registry decides its lifecycle). The step adds no column:
+#: it exists so a reader built before it, which cannot read ``unit``, refuses
+#: such a ledger through the future-schema check instead of failing on a row.
+UNIT_SCHEMA = 15
+
 _MIGRATIONS: list[list[str]] = [
     [
         """
@@ -464,13 +471,19 @@ _MIGRATIONS: list[list[str]] = [
         for table in SESSION_LEDGER_TABLES
         for column in SESSION_LEDGER_COLUMNS
     ],
+    # Branch-mode unit worktrees (UNIT_SCHEMA): workspace_status may be 'unit'.
+    # workspace_status has no CHECK constraint, so no statement is needed.
+    [],
 ]
 
-if not (SESSION_SCHEMA == SESSION_LEDGER_SCHEMA == len(_MIGRATIONS)):  # pragma: no cover
+#: The current ledger schema: the number of migration steps.
+LEDGER_SCHEMA = len(_MIGRATIONS)
+
+if not (SESSION_SCHEMA == SESSION_LEDGER_SCHEMA and UNIT_SCHEMA == LEDGER_SCHEMA):  # pragma: no cover
     raise RuntimeError(
-        "ledger migration list is out of step with SESSION_LEDGER_SCHEMA "
+        "ledger migration list is out of step with SESSION_LEDGER_SCHEMA or UNIT_SCHEMA "
         f"({len(_MIGRATIONS)} steps, SESSION_SCHEMA {SESSION_SCHEMA}, "
-        f"SESSION_LEDGER_SCHEMA {SESSION_LEDGER_SCHEMA})"
+        f"SESSION_LEDGER_SCHEMA {SESSION_LEDGER_SCHEMA}, UNIT_SCHEMA {UNIT_SCHEMA})"
     )
 
 
@@ -1677,9 +1690,20 @@ class JobStore:
         *,
         workspace_path: Optional[str | Path],
         workspace_reason: Optional[str] = None,
+        workspace_status: Optional[str] = None,
     ) -> AttemptReservation:
-        """Persist a workspace path before Git is asked to create it."""
+        """Persist a workspace path before Git is asked to create it.
+
+        ``workspace_status`` defaults to ``isolated`` for a path and ``none``
+        without one; a branch-mode unit worktree passes ``unit``. ``ValueError``
+        for a status that does not fit the path.
+        """
         path = Path(workspace_path).expanduser().resolve() if workspace_path is not None else None
+        status = workspace_status or ("isolated" if path is not None else "none")
+        if (path is None) != (status == "none") or status not in {"isolated", "unit", "none"}:
+            raise ValueError(
+                f"reservation workspace_status {status!r} does not fit workspace_path {path}"
+            )
         with self._writer() as conn:
             row = conn.execute(
                 "SELECT * FROM reservations WHERE run_id = ? AND job_id = ? "
@@ -1695,7 +1719,7 @@ class JobStore:
                 "workspace_reason = ? WHERE run_id = ? AND job_id = ? AND attempt_no = ?",
                 (
                     str(path) if path is not None else None,
-                    "isolated" if path is not None else "none",
+                    status,
                     workspace_reason,
                     run_id,
                     job_id,
@@ -3259,6 +3283,8 @@ __all__ = [
     "INTERRUPT_SCHEMA",
     "READER_MIN_SCHEMA",
     "SESSION_SCHEMA",
+    "UNIT_SCHEMA",
+    "LEDGER_SCHEMA",
     "StoreError",
     "StoreNotFoundError",
     "UnknownRunError",

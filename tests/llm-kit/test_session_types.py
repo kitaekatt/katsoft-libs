@@ -83,7 +83,7 @@ def test_bounds_from_options_reads_the_option_keys_and_validates():
         (st.StopMode, {"interrupt", "finish_turn"}),
         (st.MailboxRecordKind, {"message", "stop"}),
         (st.MessageDelivery, {"pending", "forwarded", "undelivered"}),
-        (st.WorkspaceFinalizeStatus, {"clean", "committed", "dirty_held", "not_applicable"}),
+        (st.WorkspaceFinalizeStatus, {"clean", "committed", "dirty_held", "writer_held", "not_applicable"}),
     ],
 )
 def test_enum_values_are_pinned(enum, values):

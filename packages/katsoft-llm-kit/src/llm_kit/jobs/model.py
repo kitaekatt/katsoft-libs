@@ -53,6 +53,14 @@ The optional ``workspace`` mapping accepts ``directory``, ``base_ref`` and
 start. Isolation defaults to false; set ``isolate: true`` when a job should
 run each attempt in a detached worktree instead of its declared directory.
 
+Branch mode (``mode: branch``, exclusive with ``isolate``) runs every attempt
+of the job in the worktree of one UNIT of work, on the unit's own branch, at
+the fixed path ``<root>/<repo>/<unit>`` (``llm_kit.jobs.units``). It takes
+``unit`` (the unit id), ``root`` (the worktree root), ``base_ref`` (required:
+the REMOTE merge target the branch is created from, such as ``origin/dev``,
+or a full commit id; never the local checkout HEAD) and ``branch`` (default
+``agent/<unit>``).
+
 The optional job ``options`` mapping accepts ``allowed_tools``,
 ``disallowed_tools``, ``effort``, ``system_prompt_mode``, ``max_tokens``,
 ``temperature`` and ``extras``. ``max_tokens`` is unset by default (an
@@ -91,6 +99,8 @@ from llm_kit.completion.session_types import (
     check_session_id,
 )
 from llm_kit.execution.values import InterruptResolution, interrupt_lapsed
+
+from .units import check_unit_id
 
 
 PathLike = str | Path
@@ -321,7 +331,13 @@ TERMINAL_STATES = frozenset(
 )
 
 
-WORKSPACE_STATUSES = frozenset({"isolated", "none", "removing", "removed"})
+#: Recorded workspace states of attempts and reservations. ``unit`` (ledger
+#: schema 15) marks a branch-mode worktree: the unit registry, not the run
+#: ledger, decides its lifecycle, so workspace GC never removes it.
+WORKSPACE_STATUSES = frozenset({"isolated", "none", "removing", "removed", "unit"})
+
+#: The one ``workspace.mode`` value: branch-mode unit worktrees.
+WORKSPACE_MODE_BRANCH = "branch"
 
 
 COMPLETED = "completed"
@@ -445,11 +461,24 @@ class ContractContext:
 
 @dataclass(frozen=True)
 class WorkspaceSpec:
-    """Declared workspace inputs used by the runner's isolation policy."""
+    """Declared workspace inputs used by the runner's isolation policy.
+
+    ``directory``, ``base_ref`` and ``isolate`` as the module docstring says.
+    ``mode`` is ``None`` or ``"branch"`` (:data:`WORKSPACE_MODE_BRANCH`); branch
+    mode requires ``unit`` (a unit id, ``llm_kit.jobs.units.check_unit_id``),
+    ``root`` (the worktree root) and ``base_ref``, takes an optional ``branch``
+    (default ``agent/<unit>``, :attr:`unit_branch`) and refuses ``isolate``.
+    ``unit``, ``root`` and ``branch`` are refused without branch mode. Raises
+    ``ValueError`` for any violation.
+    """
 
     directory: Optional[Path] = None
     base_ref: Optional[str] = None
     isolate: bool = False
+    mode: Optional[str] = None
+    unit: Optional[str] = None
+    root: Optional[Path] = None
+    branch: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.directory is not None:
@@ -461,6 +490,41 @@ class WorkspaceSpec:
             object.__setattr__(self, "base_ref", base_ref)
         if not isinstance(self.isolate, bool):
             raise ValueError("workspace isolate must be a boolean")
+        if self.mode is None:
+            given = [name for name in ("unit", "root", "branch") if getattr(self, name) is not None]
+            if given:
+                raise ValueError(f"workspace {', '.join(given)}: only with mode: branch")
+            return
+        if self.mode != WORKSPACE_MODE_BRANCH:
+            raise ValueError(f"workspace mode must be {WORKSPACE_MODE_BRANCH!r}, got {self.mode!r}")
+        if self.isolate:
+            raise ValueError("workspace mode: branch and isolate: true are exclusive")
+        check_unit_id(self.unit)
+        if self.root is None:
+            raise ValueError("workspace mode: branch requires root (the worktree root)")
+        object.__setattr__(self, "root", Path(self.root).expanduser().resolve())
+        if self.base_ref is None:
+            raise ValueError(
+                "workspace mode: branch requires base_ref: the remote merge target the unit "
+                "branch is created from (for example origin/dev), never the checkout HEAD"
+            )
+        if self.branch is not None:
+            branch = str(self.branch).strip()
+            if not branch:
+                raise ValueError("workspace branch must not be empty")
+            object.__setattr__(self, "branch", branch)
+
+    @property
+    def branch_mode(self) -> bool:
+        """Whether this is a branch-mode (unit worktree) workspace."""
+        return self.mode == WORKSPACE_MODE_BRANCH
+
+    @property
+    def unit_branch(self) -> str:
+        """The unit branch: ``branch`` when given, else ``agent/<unit>``; branch mode only."""
+        if not self.branch_mode:
+            raise ValueError("only a branch-mode workspace has a unit branch")
+        return self.branch if self.branch is not None else f"agent/{self.unit}"
 
     @classmethod
     def from_value(
@@ -482,7 +546,18 @@ class WorkspaceSpec:
             isolate = value.get("isolate", False)
             if not isinstance(isolate, bool):
                 raise ValueError("workspace isolate must be a boolean")
-            return cls(directory=directory, base_ref=base_ref, isolate=isolate)
+            mode = value.get("mode")
+            unit = value.get("unit")
+            branch = value.get("branch")
+            return cls(
+                directory=directory,
+                base_ref=base_ref,
+                isolate=isolate,
+                mode=str(mode) if mode is not None else None,
+                unit=str(unit) if unit is not None else None,
+                root=_resolve_directory(value.get("root"), base_dir),
+                branch=str(branch) if branch is not None else None,
+            )
         return cls(directory=_resolve_directory(value, base_dir))
 
     def to_mapping(self) -> dict[str, object]:
@@ -493,6 +568,12 @@ class WorkspaceSpec:
         if self.base_ref is not None:
             result["base_ref"] = self.base_ref
         result["isolate"] = self.isolate
+        if self.branch_mode:
+            result["mode"] = self.mode
+            result["unit"] = self.unit
+            result["root"] = str(self.root)
+            if self.branch is not None:
+                result["branch"] = self.branch
         return result
 
 
@@ -1180,7 +1261,7 @@ class Attempt:
         status = str(self.workspace_status)
         if status not in WORKSPACE_STATUSES:
             raise ValueError(
-                "workspace_status must be one of: isolated, none, removing, removed"
+                "workspace_status must be one of: " + ", ".join(sorted(WORKSPACE_STATUSES))
             )
         object.__setattr__(self, "workspace_status", status)
         if self.base_ref is not None:
@@ -1309,10 +1390,10 @@ class AttemptReservation:
             object.__setattr__(
                 self, "workspace_path", Path(self.workspace_path).expanduser().resolve()
             )
-        if self.workspace_status not in {"isolated", "none", "removing", "removed"}:
+        if self.workspace_status not in WORKSPACE_STATUSES:
             raise ValueError(
                 "reservation workspace_status must be one of: "
-                "isolated, none, removing, removed"
+                + ", ".join(sorted(WORKSPACE_STATUSES))
             )
         if self.workspace_path is None and self.workspace_status != "none":
             raise ValueError("a reservation without a workspace must have status none")
@@ -1636,6 +1717,7 @@ __all__ = [
     "JobState",
     "TERMINAL_STATES",
     "WORKSPACE_STATUSES",
+    "WORKSPACE_MODE_BRANCH",
     "COMPLETED",
     "TIMEOUT",
     "ERROR",

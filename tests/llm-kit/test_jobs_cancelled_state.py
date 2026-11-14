@@ -41,6 +41,7 @@ from llm_kit.jobs.store import (
     JobStore,
     LedgerReader,
     ResolutionConflictError,
+    LEDGER_SCHEMA,
     SESSION_SCHEMA,
     StoreError,
     UnknownJobError,
@@ -179,7 +180,7 @@ def test_cancelled_is_a_terminal_state() -> None:
     assert JobState.CANCELLED.value == "cancelled"
     assert JobState.CANCELLED in TERMINAL_STATES
     assert CANCEL_SCHEMA == 13 and INTERRUPT_SCHEMA == 12
-    assert CANCEL_SCHEMA < SESSION_SCHEMA == len(store_module._MIGRATIONS)
+    assert CANCEL_SCHEMA < SESSION_SCHEMA < LEDGER_SCHEMA == len(store_module._MIGRATIONS)
 
 
 # --------------------------------------------------------------------------
@@ -377,7 +378,7 @@ def test_the_ledger_reader_reads_a_cancelled_run(tmp_path: Path) -> None:
     _wait(store)
     store.mark_cancelled("run", "job", REASON)
     reader = LedgerReader(store.db_path)
-    assert reader.schema_version() == SESSION_SCHEMA
+    assert reader.schema_version() == LEDGER_SCHEMA
     snapshot = reader.snapshot("run")
     assert snapshot.jobs[0].state is JobState.CANCELLED
     assert snapshot.effective_state("job") is JobState.CANCELLED
@@ -440,7 +441,7 @@ def _wait_at_schema_12(store: JobStore, job_id: str = "job") -> Any:
 
 def test_schema_13_changes_only_the_resolution_check(tmp_path: Path) -> None:
     fresh = JobStore(tmp_path / "fresh.sqlite3")
-    assert _schema_version(fresh) == SESSION_SCHEMA
+    assert _schema_version(fresh) == LEDGER_SCHEMA
     sql = {
         row["name"]: row["sql"]
         for row in _rows_master(fresh)
@@ -476,7 +477,7 @@ def test_a_schema_12_ledger_upgrades_in_place_and_keeps_every_row(
     assert [row[1] for row in before] == ["answered", "rejected"]
 
     upgraded = JobStore(path, create=False)
-    assert _schema_version(upgraded) == SESSION_SCHEMA
+    assert _schema_version(upgraded) == LEDGER_SCHEMA
     assert [tuple(row) for row in _rows(upgraded, "interrupt_resolutions")] == before
     assert upgraded.open_interrupt("run", "open") is not None
     # The recreated triggers still enforce what schema 12 enforced.

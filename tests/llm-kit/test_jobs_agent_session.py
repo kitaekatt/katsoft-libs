@@ -542,6 +542,38 @@ def test_a_retry_in_the_same_directory_beside_a_live_survivor_is_refused(tmp_pat
 
 
 @pytest.mark.usefixtures("isolated")
+def test_a_session_that_raised_after_launching_is_never_retried_in_the_same_directory(tmp_path, monkeypatch):
+    # An error the session's classifier does not handle (here injected from
+    # Process.environ(); psutil 7.2 on macOS once raised SystemError there)
+    # makes the session raise with its detached daemon never reported. Before
+    # the fix the retry ran beside it and the job ended REJECTED.
+    import psutil
+
+    real_environ = psutil.Process.environ
+
+    def environ(self):
+        if self.pid != os.getpid():
+            raise RuntimeError("injected: environ unreadable in an unhandled way")
+        return real_environ(self)
+
+    monkeypatch.setattr(psutil.Process, "environ", environ)
+    world = World(tmp_path, monkeypatch, "daemon")
+    daemon_file = Path(str(world.log) + ".daemon")
+    try:
+        snapshot = world.run([_rejecting_job(world, world.work, kill_daemon=False)])
+        (record,) = snapshot.jobs
+        (attempt,) = snapshot.attempts
+        assert attempt.status == "error" and "injected" in (attempt.error_message or "")
+        assert record.state is JobState.FAILED
+        assert record.error.startswith("workspace_not_quiescent:")
+        assert "attempt 1's session raised RuntimeError" in record.error
+        assert not world.attempt_dir("agent-job", 2).exists()
+    finally:
+        if daemon_file.exists():
+            _kill_all([int(daemon_file.read_text())])
+
+
+@pytest.mark.usefixtures("isolated")
 def test_a_retry_in_the_same_directory_proceeds_once_every_survivor_is_gone(tmp_path, monkeypatch):
     world = World(tmp_path, monkeypatch, "daemon")
     try:

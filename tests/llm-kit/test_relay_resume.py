@@ -718,6 +718,28 @@ def test_a_claude_run_stops_an_untagged_group_survivor_before_reaping_its_leader
     assert gone(orphan)
 
 
+def test_an_unreadable_environment_is_skipped_like_an_access_denied_one(monkeypatch):
+    # psutil 7.2 on macOS raises SystemError from Process.environ() under load.
+    tag = "lse_unreadable_" + uuid.uuid4().hex
+    env = dict(os.environ, **{R.LEASE_ENV: tag})
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], env=env)
+    real_environ = psutil.Process.environ
+
+    def environ(self):
+        if self.pid != child.pid:
+            raise SystemError("<built-in function proc_environ> returned a result with an exception set")
+        return real_environ(self)
+
+    try:
+        wait_for(lambda: real_environ(psutil.Process(child.pid)).get(R.LEASE_ENV) == tag or None, 10,
+                 "the child's environment")
+        monkeypatch.setattr(psutil.Process, "environ", environ)
+        assert R.tagged_processes(tag) == [(child.pid, float(psutil.Process(child.pid).create_time()))]
+    finally:
+        child.kill()
+        child.wait()
+
+
 def test_a_signal_that_raises_during_cleanup_keeps_the_claim_and_the_sweep_retries(box, tmp_path, monkeypatch):
     log = tmp_path / "claude.log.jsonl"
     monkeypatch.setenv("FAKE_CLAUDE_LOG", str(log))

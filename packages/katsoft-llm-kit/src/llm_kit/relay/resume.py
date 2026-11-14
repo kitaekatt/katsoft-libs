@@ -168,6 +168,10 @@ def _tagged(tag: str) -> list[tuple[Any, float]]:
                 found.append((proc, float(proc.create_time())))
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
+        except SystemError:
+            # psutil 7.2 on macOS raises SystemError from proc_environ under load
+            # (KERN_PROCARGS2 failing with errno 0): unreadable, as AccessDenied.
+            continue
     return found
 
 
