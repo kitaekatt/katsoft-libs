@@ -16,6 +16,7 @@ from llm_kit.completion import session_types as st
 from llm_kit.completion.types import BackendOptions, LLMResponse
 
 SID = "0b9f3c3e-8a51-4a0e-9a4f-3d2f7c1e5b10"
+TAG = "lst_0123456789abcdef"
 ROOT = Path("/runs/r1/sessions").resolve()
 
 
@@ -29,7 +30,7 @@ class _Channel:
     def close(self, reason, at):
         return st.MailboxState()
 
-    def record_started(self, pid, at):
+    def record_cleanup(self, record):
         return None
 
     def record_first_init(self, at):
@@ -41,13 +42,12 @@ class _Channel:
 
 def test_bound_defaults_are_the_ruled_values():
     bounds = st.SessionBounds()
-    assert (bounds.quiescence_s, bounds.result_wait_s, bounds.eof_wait_s, bounds.sigint_wait_s) == (
-        5.0, 30.0, 30.0, 10.0,
-    )
+    assert (bounds.quiescence_s, bounds.result_wait_s, bounds.eof_wait_s, bounds.sigint_wait_s,
+            bounds.finalize_s) == (5.0, 30.0, 30.0, 10.0, 120.0)
     assert bounds.shutdown_allowance_s == 70.0
 
 
-@pytest.mark.parametrize("field", ["quiescence_s", "result_wait_s", "eof_wait_s", "sigint_wait_s"])
+@pytest.mark.parametrize("field", ["quiescence_s", "result_wait_s", "eof_wait_s", "sigint_wait_s", "finalize_s"])
 @pytest.mark.parametrize("value", [0, -1, -0.5, math.inf, -math.inf, math.nan, True, False, "5", None])
 def test_every_bound_rejects_a_non_positive_non_finite_or_non_number(field, value):
     with pytest.raises(ValueError, match=field):
@@ -65,6 +65,7 @@ def test_bounds_from_options_reads_the_option_keys_and_validates():
     assert bounds.quiescence_s == 2.0 and bounds.result_wait_s == 30.0
     with pytest.raises(ValueError, match="sigint_wait_s"):
         st.SessionBounds.from_options({st.OPTION_SIGINT_WAIT_S: 0})
+    assert st.SessionBounds.from_options({st.OPTION_FINALIZE_S: 30}).finalize_s == 30.0
 
 
 # -- enums ------------------------------------------------------------------
@@ -126,10 +127,10 @@ def test_session_options_reject(options, match):
         st.SessionOptions.from_job_options(options)
 
 
-def test_session_option_keys_are_the_six_job_level_keys():
+def test_session_option_keys_are_the_seven_job_level_keys():
     assert st.SESSION_OPTION_KEYS == {
         "session", "resume_session", "session_quiescence_s", "session_result_wait_s",
-        "session_eof_wait_s", "session_sigint_wait_s",
+        "session_eof_wait_s", "session_sigint_wait_s", "session_finalize_s",
     }
 
 
@@ -141,8 +142,8 @@ def test_session_paths_layout():
     component = st.encode_job_id("fix/the thing")
     assert paths.attempt_dir == ROOT / component / "attempt-3"
     assert component.startswith("fix_the_thing-") and len(component.split("-")[-1]) == 12
-    assert [p.name for p in (paths.events, paths.mailbox, paths.mailbox_state, paths.mailbox_lock, paths.session_record)] == [
-        "events.jsonl", "mailbox.jsonl", "mailbox-state.json", "mailbox.lock", "session.json",
+    assert [p.name for p in (paths.events, paths.mailbox, paths.mailbox_state, paths.mailbox_lock, paths.session_record, paths.cleanup)] == [
+        "events.jsonl", "mailbox.jsonl", "mailbox-state.json", "mailbox.lock", "session.json", "cleanup.json",
     ]
     assert st.encode_job_id("a/b") != st.encode_job_id("a_b")
     assert st.encode_job_id("...").startswith("job-")
@@ -164,6 +165,7 @@ def test_session_paths_reject_relative_roots_and_empty_ids():
 def test_schema_file_names():
     assert st.SESSION_SCHEMA_FILES == (
         "mailbox_record.json", "mailbox_state.json", "session_record.json", "event_line.json",
+        "cleanup_record.json",
     )
 
 
@@ -215,19 +217,21 @@ def test_mailbox_state_rejects_inconsistent_closure(kwargs):
 
 def test_session_record_end_fields_are_set_together():
     base = dict(run_id="r", job_id="j", attempt_no=1, session_id=SID, resumed=False,
-                cwd=ROOT, created_at="t")
+                cwd=ROOT, process_tag=TAG, created_at="t")
     st.SessionRecord(**base)
     st.SessionRecord(**base, ended_at="t", stop_kind="timeout", shutdown_confirmed=True)
     with pytest.raises(ValueError, match="set together"):
         st.SessionRecord(**base, ended_at="t")
     with pytest.raises(ValueError, match="UUID"):
         st.SessionRecord(**{**base, "session_id": "nope"})
+    with pytest.raises(ValueError, match="process tag"):
+        st.SessionRecord(**{**base, "process_tag": "short"})
 
 
 def _request(**overrides):
     values = dict(
         system="", user="do it", model="opus", options=BackendOptions(), cwd=ROOT,
-        session_id=str(uuid.uuid4()), resume=False,
+        session_id=str(uuid.uuid4()), resume=False, process_tag=TAG,
         paths=st.SessionPaths.for_attempt(ROOT, "j", 1), bounds=st.SessionBounds(), channel=_Channel(),
     )
     values.update(overrides)
@@ -244,18 +248,135 @@ def test_session_request_validation():
         _request(channel=object())
     with pytest.raises(ValueError, match="user prompt"):
         _request(user="")
+    with pytest.raises(ValueError, match="process tag"):
+        _request(process_tag="has space in it")
+
+
+def _failure(kind, **extra):
+    return st.SessionFailure(kind, "detail", **extra)
 
 
 def test_session_outcome_invariants():
     response = LLMResponse(text="done", model="opus")
     st.SessionOutcome(response, SID, ROOT, "quiescent", "success", True)
-    st.SessionOutcome(None, SID, ROOT, "process_exit", None, False)
+    st.SessionOutcome(None, SID, ROOT, "process_exit", None, False, _failure("nonzero_exit", exit_code=1))
+    st.SessionOutcome(None, SID, ROOT, "operator_stop", None, True)  # an operator stop needs no failure
+    st.SessionOutcome(None, SID, ROOT, "init_mismatch", None, True,
+                      _failure("init_mismatch", observed_session_id="", observed_cwd="relative"))
     with pytest.raises(ValueError, match="exactly when"):
         st.SessionOutcome(response, SID, ROOT, "quiescent", None, True)
     with pytest.raises(ValueError, match="quiescent"):
         st.SessionOutcome(None, SID, ROOT, "quiescent", None, True)
-    with pytest.raises(ValueError, match="init_mismatch"):
-        st.SessionOutcome(response, SID, ROOT, "init_mismatch", "success", True)
+    with pytest.raises(ValueError, match="carries no response"):
+        st.SessionOutcome(response, SID, ROOT, "init_mismatch", "success", True, _failure("init_mismatch"))
+    with pytest.raises(ValueError, match="go together"):
+        st.SessionOutcome(None, SID, ROOT, "init_mismatch", None, True, _failure("no_init"))
+    with pytest.raises(ValueError, match="go together"):
+        st.SessionOutcome(None, SID, ROOT, "process_exit", None, True, _failure("init_mismatch"))
+    with pytest.raises(ValueError, match="timeout failure"):
+        st.SessionOutcome(response, SID, ROOT, "timeout", "success", True)
+    with pytest.raises(ValueError, match="requires a failure"):
+        st.SessionOutcome(None, SID, ROOT, "process_exit", None, True)
+    with pytest.raises(ValueError, match="UUID"):
+        st.SessionOutcome(None, "", ROOT, "operator_stop", None, True)
+
+
+def test_session_failure_validation():
+    auth = _failure("result_error", halt_kind="auth")
+    assert auth.kind is st.SessionFailureKind.RESULT_ERROR and auth.halt_kind == "auth"
+    _failure("nonzero_exit", exit_code=-9)
+    _failure("no_result", halt_kind="backpressure", retry_after_s=0)
+    with pytest.raises(ValueError, match="halt_kind"):
+        _failure("no_result", halt_kind="unreachable")
+    with pytest.raises(ValueError, match="nonzero exit_code"):
+        _failure("nonzero_exit", exit_code=0)
+    with pytest.raises(ValueError, match="nonzero exit_code"):
+        _failure("nonzero_exit")
+    with pytest.raises(ValueError, match="exit_code"):
+        _failure("no_result", exit_code=True)
+    with pytest.raises(ValueError, match="backpressure"):
+        _failure("no_result", retry_after_s=5)
+    with pytest.raises(ValueError, match="non-negative"):
+        _failure("no_result", halt_kind="backpressure", retry_after_s=-1)
+    with pytest.raises(ValueError, match="message"):
+        st.SessionFailure("no_init", "")
+    with pytest.raises(ValueError, match="observed_cwd"):
+        _failure("init_mismatch", observed_cwd=3)
+    assert st.FAILURE_PRECEDENCE[0] is st.SessionFailureKind.TIMEOUT
+    assert set(st.FAILURE_PRECEDENCE) == set(st.SessionFailureKind)
+
+
+# -- cleanup record ----------------------------------------------------------
+
+
+def test_cleanup_record_validation():
+    leader = st.ProcessIdentity(100, 1.7e9)
+    child = st.ProcessIdentity(101, 1.7e9 + 1)
+    record = st.CleanupRecord(TAG, leader, "t0", "t1", members=[child], process_group=100)
+    assert record.members == (child,)
+    with pytest.raises(ValueError, match="repeat"):
+        st.CleanupRecord(TAG, leader, "t0", "t1", members=(child, child))
+    with pytest.raises(ValueError, match="leader is not a member"):
+        st.CleanupRecord(TAG, leader, "t0", "t1", members=(leader,))
+    with pytest.raises(ValueError, match="process tag"):
+        st.CleanupRecord("x", leader, "t0", "t1")
+    with pytest.raises(ValueError, match="process_group"):
+        st.CleanupRecord(TAG, leader, "t0", "t1", process_group=0)
+
+
+@pytest.mark.parametrize("pid, created", [(0, 1.0), (True, 1.0), (5, 0), (5, math.nan), (5, "1")])
+def test_process_identity_rejects_bad_values(pid, created):
+    with pytest.raises(ValueError):
+        st.ProcessIdentity(pid, created)
+
+
+# -- budgets -----------------------------------------------------------------
+
+
+def test_attempt_budget_adds_shutdown_and_finalization_on_top():
+    bounds = st.SessionBounds()
+    agent = st.AttemptBudget.for_session(900, "agent", bounds, finalizes=True, backpressure_cap_s=600)
+    assert agent.worst_case_s == 900 + 70 + 120 + 600
+    completion = st.AttemptBudget.for_session(900, "completion", bounds, finalizes=False)
+    assert completion.worst_case_s == 900
+    assert st.JobBudget(agent, max_attempts=3).worst_case_s == 3 * agent.worst_case_s
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"timeout_s": 0}, "timeout_s"),
+        ({"timeout_s": math.inf}, "timeout_s"),
+        ({"timeout_s": 1, "finalize_s": -1}, "finalize_s"),
+        ({"timeout_s": 1, "overhead_s": math.nan}, "overhead_s"),
+        ({"timeout_s": 1, "shutdown_allowance_s": True}, "shutdown_allowance_s"),
+    ],
+)
+def test_attempt_budget_rejects(kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        st.AttemptBudget(**kwargs)
+
+
+def test_required_supervisor_budget_covers_all_jobs_attempts_and_parallelism():
+    jobs = [st.JobBudget(st.AttemptBudget(100), 2), st.JobBudget(st.AttemptBudget(50)),
+            st.JobBudget(st.AttemptBudget(10))]
+    assert st.required_supervisor_budget_s(jobs, 1) == 260
+    # m = 2: 260 / 2 + (1 - 1/2) * 200
+    assert st.required_supervisor_budget_s(jobs, 2) == 230
+    assert st.required_supervisor_budget_s(jobs, 8, run_overhead_s=5) == 5 + 260 / 3 + (2 / 3) * 200
+    assert st.required_supervisor_budget_s([], 4, run_overhead_s=7) == 7
+    with pytest.raises(ValueError, match="max_parallel"):
+        st.required_supervisor_budget_s(jobs, 0)
+
+
+def test_check_supervisor_budget_fails_loudly_when_too_small():
+    jobs = [st.JobBudget(st.AttemptBudget(100), 2)]
+    assert st.check_supervisor_budget(200, jobs, 1) == 200
+    with pytest.raises(st.SupervisorBudgetError) as caught:
+        st.check_supervisor_budget(199, jobs, 1)
+    assert caught.value.required_s == 200 and caught.value.budget_s == 199
+    with pytest.raises(ValueError, match="budget_s"):
+        st.check_supervisor_budget(math.inf, jobs, 1)
 
 
 def test_workspace_finalize_result_sha_rule():
