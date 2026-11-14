@@ -2,6 +2,20 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
+## 1.0.1
+
+No code change. This is the first release that GitHub Actions publishes through npm trusted publishing, with provenance. The code, the types and the schemas are the same as in 1.0.0.
+
+Quality bar:
+
+1. Public API documented: pass. No change from 1.0.0; `test/surface.test.mjs` passes.
+2. Semver release with a changelog: pass. Version 1.0.1 in `package.json` and `package-lock.json`; this entry.
+3. Tests for each public function: pass. No change from 1.0.0; `npm test` passes.
+4. No client names, prompts or data: pass. No change from 1.0.0.
+5. Examples run without a client app: pass. `npm run check-pack` installs the packed tarball in a new empty directory and runs both examples with plain `node`.
+6. JSON Schema for each file format: pass. The schemas are the same as in 1.0.0; `test/pack.test.mjs` passes.
+7. Gate before adoption: recorded in this entry.
+
 ## 1.0.0
 
 First release. Readers for `llm-kit.project-models/v1`, `llm-kit.project-models-local/v1` (used as overlays) and `llm-kit.prompt-file/v1`, with the rules of the Python reader in katsoft-llm-kit 1.25.0.
