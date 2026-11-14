@@ -1,6 +1,6 @@
 {
   "name": "@katsoft/llm-kit-config",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Readers for the llm-kit shared file formats: the project model file, its overlays, and prompt files.",
   "license": "MIT",
   "repository": {
