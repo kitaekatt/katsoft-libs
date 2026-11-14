@@ -233,6 +233,18 @@ mark and reads CRLF and CR as LF. The contract is `docs/reference/llm-kit-format
 repository, and so is the example `packages/katsoft-llm-kit/examples/validate_and_render.py`.
 Changes are in `CHANGELOG.md` beside this README.
 
+## Run records and run stores in 1.26
+
+`llm_kit.runs` keeps model runs in one format (`llm-kit.run-record/v1`: one attempt of one case on
+one model selection; a comparison is the records that share a group id) and one store: write-once
+started and result events, content-addressed blobs, a content-class policy (`synthetic`, `internal`,
+`sensitive`) and a derived metadata index that is never committed. The store checks a whole batch
+(validity, policy, blob completeness) before it writes anything. Writers in other languages write a
+`llm-kit.run-import/v1` JSON Lines file and run `llm-kit runs import`. The CLI is
+`llm-kit runs init|import|list|show|reindex`; the store is `--store DIR` or `LLM_KIT_RUN_STORE`.
+The contract is `docs/reference/llm-kit-runs.md` and `docs/reference/llm-kit-formats.md` in the
+source repository; the example is `packages/katsoft-llm-kit/examples/record_runs.py`.
+
 ## Source
 
 The source lives in the katsoft-libs repository (`packages/katsoft-llm-kit/src/llm_kit`).

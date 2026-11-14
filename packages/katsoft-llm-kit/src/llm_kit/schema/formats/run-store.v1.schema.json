@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.run-store/v1",
+  "title": "llm-kit run store descriptor, version 1 (store.json)",
+  "description": "The policy file at the root of a run store. accepts lists the content classes the store takes; each class appears once (reader rule). Written in llm-scripting-kit.json-schema-subset/v1. Contract: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "format": {
+      "const": "llm-kit.run-store/v1"
+    },
+    "accepts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "enum": [
+          "synthetic",
+          "internal",
+          "sensitive"
+        ]
+      }
+    }
+  },
+  "required": [
+    "format",
+    "accepts"
+  ],
+  "additionalProperties": false
+}

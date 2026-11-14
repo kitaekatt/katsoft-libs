@@ -36,6 +36,32 @@ Quality bar for the pieces above:
 6. JSON Schema for each file format: pass. The five session-directory files have schemas in `llm_kit/jobs/schemas/`; `test_jobs_session.py` validates every reader and writer against them; `events.jsonl` has the permissive event-line schema.
 7. Gate before adoption: recorded in this entry; lines 2 and 5 are pending, so no client adopts agent sessions before the release.
 
+Run records and run stores (`llm_kit.runs`, Phase 2 unit 1). One format for model runs and comparisons, a store with a content-class policy, a derived index and the `llm-kit runs` CLI. The contract is `docs/reference/llm-kit-runs.md`; the formats are in `docs/reference/llm-kit-formats.md`.
+
+Added:
+
+- `llm_kit.runs.record`: the format `llm-kit.run-record/v1` with status-specific fields (`started`, `ok`, `invalid`, `failed`, `refused`), `validate_record`, `start_record`, `finish_record`, `blob_ref`, `blob_refs`, `reuse_key` (key contract `llm-kit.run-key/v1`, `REUSE_KEY_VERSION`), `RunRecordError`, `CONTENT_CLASSES` (`synthetic`, `internal`, `sensitive`), `RECORD_STATUSES`, `RESULT_STATUSES`.
+- `llm_kit.runs.store`: `RunRecordStore` (`init`, `open`, `put`, `put_many`, `check_many`, `get`, `events`, `ids`, `records`, `has_blob`, `get_blob`, `export_line`, `index`, `check_ignored`), `PutResult`, `RunStoreError`, `read_import_file`, `import_file`, `resolve_store_path`, `STORE_ENV` (`LLM_KIT_RUN_STORE`), `INDEX_FILE`. Events are write-once (a started event and a result event per attempt; the result repeats every started field). A batch is checked whole (validity, blob hashes, policy, blob completeness, unreferenced blobs, conflicts) before any file is written.
+- `llm_kit.runs.index`: `RunIndex` (`sync`, `rebuild`, `query`), `INDEX_COLUMNS`, `INDEX_VERSION`: a metadata-only SQLite cache at `.index.sqlite`, refused unless the store's `.gitignore` ignores it.
+- `llm_kit.runs`: the names above, re-exported.
+- `llm_kit.cli.runs` and the `runs` group of `llm-kit`: `init`, `import` (`--check`), `list`, `show` (`--with-blobs`), `reindex`.
+- `llm_kit.schema.formats`: `RUN_RECORD_V1`, `RUN_STORE_V1`, `RUN_IMPORT_V1` and their schema files; shared cases in `tests/formats/run-record/cases.json`.
+- `examples/record_runs.py`.
+
+Changed:
+
+- `llm_kit.graph.records.resolve_record_path` uses the new module helper `check_record_text` for its syntax check; its behavior is unchanged.
+
+Quality bar for the pieces above (`llm_kit.runs`, `llm_kit.cli.runs`, the three formats):
+
+1. Public API documented: pass. Each listed name has a docstring; `public-surface.json` covers `llm_kit.runs`, `llm_kit.runs.record`, `llm_kit.runs.store`, `llm_kit.runs.index` and `llm_kit.cli.runs` whole, and `tests/llm-kit/test_runs_record.py` compares each with the module's `__all__`.
+2. Semver release with a changelog: pending. This entry; the version stays 1.25.0 until the 1.26.0 release.
+3. Tests for each public function: pass. `test_runs_record.py`, `test_runs_store.py` and `test_runs_cli.py` call each listed function.
+4. No client names, prompts or data: pass. The cases and tests use generic flows, models and text.
+5. Examples run without a client app: pass. `examples/record_runs.py` needs no extra and no network.
+6. JSON Schema for each file format: pass. `run-record.v1`, `run-import.v1` and `run-store.v1` schemas; the record, import and store tests validate their data against them. The index is a local SQLite cache, not an interchange format.
+7. Gate before adoption: recorded in this entry; line 2 is pending, so no client adopts `llm_kit.runs` before the release.
+
 ## 1.25.0
 
 Shared file formats. Three llm-kit file formats get a format id, a JSON Schema and shared cases that readers in other languages also run. The contract is `docs/reference/llm-kit-formats.md`.

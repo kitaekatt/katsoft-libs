@@ -72,14 +72,23 @@ def record_path(root: Path | str, path: Path | str) -> str:
     return PurePosixPath(*relative.parts).as_posix()
 
 
-def resolve_record_path(root: Path | str, text: str) -> Path:
-    """A record's project-relative path as a path under ``root``; refuse an absolute or escaping one."""
+def check_record_text(text: Any) -> PurePosixPath:
+    """``text`` as a project-relative POSIX path; refuse an absolute, escaping or Windows one.
+
+    The syntax check of :func:`resolve_record_path` without a project root, for
+    readers that only validate a record (such as :mod:`llm_kit.runs`).
+    """
     if not isinstance(text, str) or not text:
         raise GraphError(f"record path {text!r} is not a non-empty string")
     pure = PurePosixPath(text)
     if pure.is_absolute() or "\\" in text or ".." in pure.parts or (pure.parts and ":" in pure.parts[0]):
         raise GraphError(f"record path {text!r} is not a project-relative POSIX path")
-    return Path(root).resolve().joinpath(*pure.parts)
+    return pure
+
+
+def resolve_record_path(root: Path | str, text: str) -> Path:
+    """A record's project-relative path as a path under ``root``; refuse an absolute or escaping one."""
+    return Path(root).resolve().joinpath(*check_record_text(text).parts)
 
 
 def utc_now() -> str:

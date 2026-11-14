@@ -67,10 +67,10 @@ class TestVerbMap:
 
 
 
-    def test_the_groups_are_the_ten_in_the_design(self, final_mods):
+    def test_the_groups_are_the_eleven_in_the_design(self, final_mods):
         assert list(final_mods.cli.GROUPS) == [
             "account", "completion", "models", "jobs", "pipeline", "frontdoor", "local", "consent", "graph",
-            "relay",
+            "relay", "runs",
         ]
 
 
