@@ -422,8 +422,9 @@ def test_a_cached_python_temp_dir_is_not_an_allowed_root(make_rig, tmp_path, mon
     """Rule: under --allow-tmp only /tmp and the CHILD's $TMPDIR are extra roots; tempfile's choice is not."""
     import tempfile
 
-    home = tmp_path / "home"
-    home.mkdir()
+    # Outside the workspace and outside /tmp. pytest's tmp_path lies under /tmp on Linux, which would make the
+    # root an allowed one for a reason unrelated to tempfile; the path is only compared, never created.
+    home = Path(tmp_path.anchor) / "cached-python-tempdir"
     monkeypatch.delenv("TMPDIR", raising=False)
     monkeypatch.setattr(tempfile, "tempdir", str(home))  # what tempfile.gettempdir() would return
     rig = make_rig({"thread_overrides": {"sandbox": {"writableRoots": [str(home)], "excludeSlashTmp": False,

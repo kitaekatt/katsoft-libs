@@ -36,6 +36,12 @@ SRC = str(Path(__file__).resolve().parents[2] / "packages" / "katsoft-llm-kit" /
 EVERYONE = "*S-1-1-0"
 USERS = "*S-1-5-32-545"
 AUTHENTICATED_USERS = "*S-1-5-11"
+ADMINISTRATORS_SID = "S-1-5-32-544"
+# A file made by hand (no descriptor of ours) is refused; WHICH check fires first depends on the token. A normal
+# token owns it, so the DACL check names it "unprotected". An elevated Administrator token (the GitHub Actions
+# runner's) makes BUILTIN\Administrators the default owner, so the owner check refuses it first. Either message
+# is the refusal; the portable test_relay_windows.py cases pin the "unprotected" branch of check_descriptor itself.
+HAND_MADE_REFUSED = rf"unprotected|not owned by the current user \(owner {ADMINISTRATORS_SID}"
 
 
 def child_env() -> dict[str, str]:
@@ -259,7 +265,10 @@ def test_native_acl_provisioned(state, monkeypatch):
     me = winacl.current_user_sid()
     winacl.validate(state.root)  # the directory made by ensure_state_dir
     sddl = winacl.read_sddl(state.root)
-    assert sddl.startswith(f"O:{me}") and "D:P" in sddl and "SY" in sddl and "(A;OICI;FA;;;" in sddl
+    # SDDL text abbreviates some SIDs (the built-in Administrator, RID 500, prints as "LA"), so the owner is read
+    # from the binary descriptor rather than matched as text.
+    assert winacl.read_descriptor(state.root).owner == me
+    assert sddl.startswith("O:") and "D:P" in sddl and "SY" in sddl and "(A;OICI;FA;;;" in sddl
 
     token = L.ensure_token(state.relay_token)
     tmp_checks = [size for name, size in seen if name.startswith(".relay.token.")]
@@ -295,9 +304,9 @@ def test_native_acl_refuses_broad(state):
 
     token = state.root / "tok"
     token.write_text("x\n", encoding="ascii")  # created by hand: inherits the directory's ACEs, nothing protected
-    with pytest.raises(C.RelayConfigError, match="unprotected DACL"):
+    with pytest.raises(C.RelayConfigError, match=HAND_MADE_REFUSED):
         winacl.validate(token)
-    with pytest.raises(C.RelayConfigError, match="unprotected DACL"):
+    with pytest.raises(C.RelayConfigError, match=HAND_MADE_REFUSED):
         L.read_token(token)  # a pre-existing inherited-only file is refused, not repaired
     assert "P" not in winacl.read_sddl(token).split("D:", 1)[1].split("(", 1)[0]
 
@@ -342,7 +351,7 @@ def test_native_objects_are_private_from_their_first_instant(tmp_path):
     with pytest.raises(FileExistsError):
         winacl.create_private_file(file)
     # a file made by hand in it inherits the directory's inheritable ACEs only: unprotected, so refused
-    with pytest.raises(C.RelayConfigError, match="unprotected"):
+    with pytest.raises(C.RelayConfigError, match=HAND_MADE_REFUSED):
         (directory / "by-hand.txt").write_text("y")
         winacl.validate(directory / "by-hand.txt")
 
@@ -418,7 +427,12 @@ def test_native_files_are_provisioned_and_judged_through_their_handle(state):
     path = state.root / "handle.tmp"
     fd = winacl.create_private_file(path)
     try:
-        winacl.validate_fd(fd, path)
+        # Born private: protected, owner and SYSTEM only. create_private_file sets no owner, so the owner is the
+        # token's default: the user, or BUILTIN\Administrators for an elevated Administrator token. Production
+        # callers provision_fd before validating (lifecycle.write_private_file), which pins the owner to the user.
+        born = winacl.read_descriptor_fd(fd)
+        assert born.protected and {a.sid for a in born.aces} == {me, "S-1-5-18"}
+        assert born.owner in (me, ADMINISTRATORS_SID)
         # widen the DACL behind the handle's back, then restore it through the handle alone
         winacl._apply_sddl(path, f"O:{me}D:P(A;;FA;;;{me})(A;;FA;;;SY)(A;;FR;;;WD)")
         with pytest.raises(C.RelayConfigError, match="grants access to S-1-1-0"):
@@ -471,7 +485,7 @@ def test_native_pause_file_is_validated_before_it_is_read(state):
     state.pause_file.unlink()
     state.pause_file.write_text(json.dumps({"relay": {"paused": False, "paused_since": None, "reason": None},
                                             "hub": {"paused": False, "paused_since": None, "reason": None}}))
-    with pytest.raises(C.RelayConfigError, match="unprotected"):
+    with pytest.raises(C.RelayConfigError, match=HAND_MADE_REFUSED):
         store.is_paused("relay")
 
 
