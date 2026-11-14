@@ -1,0 +1,1019 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.run-record/v1",
+  "title": "llm-kit run record, version 1",
+  "description": "One attempt of one case on one model selection. The fields a record must hold depend on status (started, ok, invalid, failed, refused); each status is one branch in $defs. Reader rules the subset cannot state: the id, time, hex and blob reference grammars; ended_at is not before started_at; case.input equals blob:<case.input_sha256>; prompt.file and the keys of provenance.files are project-relative POSIX paths. Written in llm-scripting-kit.json-schema-subset/v1. Contract and shared cases: docs/reference/llm-kit-formats.md.",
+  "$defs": {
+    "text": {
+      "description": "Non-empty text.",
+      "type": "string",
+      "minLength": 1
+    },
+    "text_or_null": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "hex64": {
+      "description": "A lowercase SHA-256 hex digest (reader rule: [0-9a-f] only).",
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64
+    },
+    "blob": {
+      "description": "A blob reference blob:<64 lowercase hex>: the SHA-256 of the stored bytes (reader rule).",
+      "type": "string",
+      "minLength": 69,
+      "maxLength": 69
+    },
+    "time": {
+      "description": "A UTC time YYYY-MM-DDTHH:MM:SS[.fraction of 1 to 9 digits]Z (reader rule).",
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 30
+    },
+    "count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "group": {
+      "description": "The set of attempts this record belongs to. A comparison is the records that share one group id.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/text"
+        },
+        "kind": {
+          "enum": [
+            "compare",
+            "eval",
+            "single"
+          ]
+        },
+        "label": {
+          "$ref": "#/$defs/text_or_null"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "case": {
+      "description": "The input this attempt answered. input_sha256 is the SHA-256 of the case input bytes; input is the blob of those bytes, or null when the input is not stored. When input is a blob, its hash equals input_sha256 (reader rule).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/text"
+        },
+        "input_sha256": {
+          "$ref": "#/$defs/hex64"
+        },
+        "input": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/blob"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "input_sha256",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "prompt": {
+      "description": "The prompt file or template, or null for a flow with no single prompt. file is a project-relative POSIX path (reader rule). sha256 is the hash of the prompt body; slots_sha256 the hash of the slot values as sent, or null.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/text_or_null"
+        },
+        "file": {
+          "$ref": "#/$defs/text_or_null"
+        },
+        "sha256": {
+          "$ref": "#/$defs/hex64"
+        },
+        "slots_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/hex64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "file",
+        "sha256",
+        "slots_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "selection": {
+      "description": "What the caller asked for: a selection name (null when the caller named a model directly), a model id and an effort.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/text_or_null"
+        },
+        "model": {
+          "$ref": "#/$defs/text"
+        },
+        "effort": {
+          "$ref": "#/$defs/text_or_null"
+        }
+      },
+      "required": [
+        "name",
+        "model",
+        "effort"
+      ],
+      "additionalProperties": false
+    },
+    "resolved": {
+      "description": "What the call used after resolution through a model registry, or null when nothing was resolved.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "row": {
+          "$ref": "#/$defs/text_or_null"
+        },
+        "endpoint": {
+          "$ref": "#/$defs/text_or_null"
+        },
+        "model": {
+          "$ref": "#/$defs/text"
+        },
+        "effort": {
+          "$ref": "#/$defs/text_or_null"
+        },
+        "registry_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/hex64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "row",
+        "endpoint",
+        "model",
+        "effort",
+        "registry_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "request": {
+      "description": "Request settings that can change the answer. extras holds every other request parameter as JSON. sent_sha256 is the SHA-256 of the exact request sent, or null when unknown.",
+      "type": "object",
+      "properties": {
+        "max_output_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "extras": {
+          "type": "object"
+        },
+        "sent_sha256": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/hex64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "max_output_tokens",
+        "extras",
+        "sent_sha256"
+      ],
+      "additionalProperties": false
+    },
+    "inputs": {
+      "description": "Name -> SHA-256 of every other input that can change the answer (a rules file, a system text, the code that builds the request).",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/hex64"
+      }
+    },
+    "provenance": {
+      "description": "Where the record came from. files maps a project-relative POSIX path (reader rule) to its SHA-256. scorer names the program that wrote the scores, or null.",
+      "type": "object",
+      "properties": {
+        "git_sha": {
+          "$ref": "#/$defs/text_or_null"
+        },
+        "git_dirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "tool": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/text"
+            },
+            "version": {
+              "$ref": "#/$defs/text_or_null"
+            }
+          },
+          "required": [
+            "name",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        "files": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/hex64"
+          }
+        },
+        "scorer": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "name": {
+              "$ref": "#/$defs/text"
+            },
+            "version": {
+              "$ref": "#/$defs/text_or_null"
+            },
+            "sha256": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/hex64"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "name",
+            "version",
+            "sha256"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "git_sha",
+        "git_dirty",
+        "tool",
+        "files",
+        "scorer"
+      ],
+      "additionalProperties": false
+    },
+    "content": {
+      "description": "The content class of the whole record and every blob it references: synthetic (made for testing; no real person's data), internal (the owner's own material with no personal data) or sensitive (may hold personal data, user content or anything private). A writer that is not sure declares sensitive.",
+      "enum": [
+        "synthetic",
+        "internal",
+        "sensitive"
+      ]
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "output": {
+      "description": "The answer: text is the blob of the answer text (UTF-8); parsed is the parsed value, or null.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "$ref": "#/$defs/blob"
+        },
+        "parsed": {}
+      },
+      "required": [
+        "text",
+        "parsed"
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "description": "Why the attempt did not give an accepted answer: a code and a message (or null).",
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/text"
+        },
+        "message": {
+          "$ref": "#/$defs/text_or_null"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "score": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/text"
+        },
+        "value": {
+          "type": [
+            "number",
+            "string",
+            "boolean",
+            "null"
+          ]
+        },
+        "scale": {
+          "$ref": "#/$defs/text_or_null"
+        },
+        "by": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "rule",
+                "model",
+                "human"
+              ]
+            },
+            "name": {
+              "$ref": "#/$defs/text_or_null"
+            },
+            "selection": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/selection"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "name",
+            "selection"
+          ],
+          "additionalProperties": false
+        },
+        "note": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/blob"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "value",
+        "scale",
+        "by",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "usage": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "input_tokens": {
+          "$ref": "#/$defs/count"
+        },
+        "output_tokens": {
+          "$ref": "#/$defs/count"
+        },
+        "cached_tokens": {
+          "$ref": "#/$defs/count"
+        },
+        "reasoning_tokens": {
+          "$ref": "#/$defs/count"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cached_tokens",
+        "reasoning_tokens"
+      ],
+      "additionalProperties": false
+    },
+    "cost": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "source": {
+          "enum": [
+            "reported",
+            "estimated",
+            "subscription",
+            "local",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "usd",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "timings": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "first_output_ms": {
+          "$ref": "#/$defs/ms"
+        },
+        "total_ms": {
+          "$ref": "#/$defs/ms"
+        }
+      },
+      "required": [
+        "first_output_ms",
+        "total_ms"
+      ],
+      "additionalProperties": false
+    },
+    "started": {
+      "description": "An attempt that began and has no result yet (the started event).",
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "llm-kit.run-record/v1"
+        },
+        "id": {
+          "description": "YYYYMMDDTHHMMSSffffffZ-<4 to 32 lowercase hex> (reader rule).",
+          "type": "string",
+          "minLength": 27,
+          "maxLength": 55
+        },
+        "started_at": {
+          "$ref": "#/$defs/time"
+        },
+        "flow": {
+          "$ref": "#/$defs/text"
+        },
+        "group": {
+          "$ref": "#/$defs/group"
+        },
+        "case": {
+          "$ref": "#/$defs/case"
+        },
+        "prompt": {
+          "$ref": "#/$defs/prompt"
+        },
+        "selection": {
+          "$ref": "#/$defs/selection"
+        },
+        "resolved": {
+          "$ref": "#/$defs/resolved"
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "inputs": {
+          "$ref": "#/$defs/inputs"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "content": {
+          "$ref": "#/$defs/content"
+        },
+        "labels": {
+          "$ref": "#/$defs/labels"
+        },
+        "status": {
+          "const": "started"
+        }
+      },
+      "required": [
+        "case",
+        "content",
+        "flow",
+        "format",
+        "group",
+        "id",
+        "inputs",
+        "labels",
+        "prompt",
+        "provenance",
+        "request",
+        "resolved",
+        "selection",
+        "started_at",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "ok": {
+      "description": "An accepted answer: output is required, error is null.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "llm-kit.run-record/v1"
+        },
+        "id": {
+          "description": "YYYYMMDDTHHMMSSffffffZ-<4 to 32 lowercase hex> (reader rule).",
+          "type": "string",
+          "minLength": 27,
+          "maxLength": 55
+        },
+        "started_at": {
+          "$ref": "#/$defs/time"
+        },
+        "flow": {
+          "$ref": "#/$defs/text"
+        },
+        "group": {
+          "$ref": "#/$defs/group"
+        },
+        "case": {
+          "$ref": "#/$defs/case"
+        },
+        "prompt": {
+          "$ref": "#/$defs/prompt"
+        },
+        "selection": {
+          "$ref": "#/$defs/selection"
+        },
+        "resolved": {
+          "$ref": "#/$defs/resolved"
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "inputs": {
+          "$ref": "#/$defs/inputs"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "content": {
+          "$ref": "#/$defs/content"
+        },
+        "labels": {
+          "$ref": "#/$defs/labels"
+        },
+        "status": {
+          "const": "ok"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/time"
+        },
+        "scores": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/score"
+          }
+        },
+        "usage": {
+          "$ref": "#/$defs/usage"
+        },
+        "cost": {
+          "$ref": "#/$defs/cost"
+        },
+        "timings": {
+          "$ref": "#/$defs/timings"
+        },
+        "output": {
+          "$ref": "#/$defs/output"
+        },
+        "error": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "case",
+        "content",
+        "cost",
+        "ended_at",
+        "error",
+        "flow",
+        "format",
+        "group",
+        "id",
+        "inputs",
+        "labels",
+        "output",
+        "prompt",
+        "provenance",
+        "request",
+        "resolved",
+        "scores",
+        "selection",
+        "started_at",
+        "status",
+        "timings",
+        "usage"
+      ],
+      "additionalProperties": false
+    },
+    "invalid": {
+      "description": "An answer arrived but failed the caller's parse or contract: output and error are required.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "llm-kit.run-record/v1"
+        },
+        "id": {
+          "description": "YYYYMMDDTHHMMSSffffffZ-<4 to 32 lowercase hex> (reader rule).",
+          "type": "string",
+          "minLength": 27,
+          "maxLength": 55
+        },
+        "started_at": {
+          "$ref": "#/$defs/time"
+        },
+        "flow": {
+          "$ref": "#/$defs/text"
+        },
+        "group": {
+          "$ref": "#/$defs/group"
+        },
+        "case": {
+          "$ref": "#/$defs/case"
+        },
+        "prompt": {
+          "$ref": "#/$defs/prompt"
+        },
+        "selection": {
+          "$ref": "#/$defs/selection"
+        },
+        "resolved": {
+          "$ref": "#/$defs/resolved"
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "inputs": {
+          "$ref": "#/$defs/inputs"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "content": {
+          "$ref": "#/$defs/content"
+        },
+        "labels": {
+          "$ref": "#/$defs/labels"
+        },
+        "status": {
+          "const": "invalid"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/time"
+        },
+        "scores": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/score"
+          }
+        },
+        "usage": {
+          "$ref": "#/$defs/usage"
+        },
+        "cost": {
+          "$ref": "#/$defs/cost"
+        },
+        "timings": {
+          "$ref": "#/$defs/timings"
+        },
+        "output": {
+          "$ref": "#/$defs/output"
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        }
+      },
+      "required": [
+        "case",
+        "content",
+        "cost",
+        "ended_at",
+        "error",
+        "flow",
+        "format",
+        "group",
+        "id",
+        "inputs",
+        "labels",
+        "output",
+        "prompt",
+        "provenance",
+        "request",
+        "resolved",
+        "scores",
+        "selection",
+        "started_at",
+        "status",
+        "timings",
+        "usage"
+      ],
+      "additionalProperties": false
+    },
+    "failed": {
+      "description": "No usable answer (transport, provider or runner error): error is required; output is the partial answer or null.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "llm-kit.run-record/v1"
+        },
+        "id": {
+          "description": "YYYYMMDDTHHMMSSffffffZ-<4 to 32 lowercase hex> (reader rule).",
+          "type": "string",
+          "minLength": 27,
+          "maxLength": 55
+        },
+        "started_at": {
+          "$ref": "#/$defs/time"
+        },
+        "flow": {
+          "$ref": "#/$defs/text"
+        },
+        "group": {
+          "$ref": "#/$defs/group"
+        },
+        "case": {
+          "$ref": "#/$defs/case"
+        },
+        "prompt": {
+          "$ref": "#/$defs/prompt"
+        },
+        "selection": {
+          "$ref": "#/$defs/selection"
+        },
+        "resolved": {
+          "$ref": "#/$defs/resolved"
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "inputs": {
+          "$ref": "#/$defs/inputs"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "content": {
+          "$ref": "#/$defs/content"
+        },
+        "labels": {
+          "$ref": "#/$defs/labels"
+        },
+        "status": {
+          "const": "failed"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/time"
+        },
+        "scores": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/score"
+          }
+        },
+        "usage": {
+          "$ref": "#/$defs/usage"
+        },
+        "cost": {
+          "$ref": "#/$defs/cost"
+        },
+        "timings": {
+          "$ref": "#/$defs/timings"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/output"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        }
+      },
+      "required": [
+        "case",
+        "content",
+        "cost",
+        "ended_at",
+        "error",
+        "flow",
+        "format",
+        "group",
+        "id",
+        "inputs",
+        "labels",
+        "output",
+        "prompt",
+        "provenance",
+        "request",
+        "resolved",
+        "scores",
+        "selection",
+        "started_at",
+        "status",
+        "timings",
+        "usage"
+      ],
+      "additionalProperties": false
+    },
+    "refused": {
+      "description": "The model or provider declined: error is required; output is the refusal text or null.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "llm-kit.run-record/v1"
+        },
+        "id": {
+          "description": "YYYYMMDDTHHMMSSffffffZ-<4 to 32 lowercase hex> (reader rule).",
+          "type": "string",
+          "minLength": 27,
+          "maxLength": 55
+        },
+        "started_at": {
+          "$ref": "#/$defs/time"
+        },
+        "flow": {
+          "$ref": "#/$defs/text"
+        },
+        "group": {
+          "$ref": "#/$defs/group"
+        },
+        "case": {
+          "$ref": "#/$defs/case"
+        },
+        "prompt": {
+          "$ref": "#/$defs/prompt"
+        },
+        "selection": {
+          "$ref": "#/$defs/selection"
+        },
+        "resolved": {
+          "$ref": "#/$defs/resolved"
+        },
+        "request": {
+          "$ref": "#/$defs/request"
+        },
+        "inputs": {
+          "$ref": "#/$defs/inputs"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "content": {
+          "$ref": "#/$defs/content"
+        },
+        "labels": {
+          "$ref": "#/$defs/labels"
+        },
+        "status": {
+          "const": "refused"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/time"
+        },
+        "scores": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/score"
+          }
+        },
+        "usage": {
+          "$ref": "#/$defs/usage"
+        },
+        "cost": {
+          "$ref": "#/$defs/cost"
+        },
+        "timings": {
+          "$ref": "#/$defs/timings"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/output"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        }
+      },
+      "required": [
+        "case",
+        "content",
+        "cost",
+        "ended_at",
+        "error",
+        "flow",
+        "format",
+        "group",
+        "id",
+        "inputs",
+        "labels",
+        "output",
+        "prompt",
+        "provenance",
+        "request",
+        "resolved",
+        "scores",
+        "selection",
+        "started_at",
+        "status",
+        "timings",
+        "usage"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/started"
+    },
+    {
+      "$ref": "#/$defs/ok"
+    },
+    {
+      "$ref": "#/$defs/invalid"
+    },
+    {
+      "$ref": "#/$defs/failed"
+    },
+    {
+      "$ref": "#/$defs/refused"
+    }
+  ]
+}

@@ -1,0 +1,2944 @@
+{
+  "format": "llm-kit.run-record/v1",
+  "description": "Shared cases for every reader of llm-kit run records, run import lines and run store descriptors. 'records': validate 'record' as llm-kit.run-record/v1; 'expect' is {valid: true, reuse_key} (the llm-kit.run-key/v1 key) or {error: {code: 'invalid', path}} where path is the JSON Pointer of the only problem. 'import_lines': join 'lines' with LF and add one final LF; read the bytes as llm-kit.run-import/v1; 'expect' is {records: n} or {error: code, line: n}. 'stores': read 'document' as llm-kit.run-store/v1 store.json; 'expect' is {accepts: sorted classes} or {error: 'invalid'}. The contract is docs/reference/llm-kit-formats.md.",
+  "schemas": {
+    "record": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/run-record.v1.schema.json",
+    "import": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/run-import.v1.schema.json",
+    "store": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/run-store.v1.schema.json"
+  },
+  "records": [
+    {
+      "name": "ok-minimal",
+      "note": "An accepted answer with no prompt file and no registry resolution.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "1513cd0e0fa70c5104180684d7bf9ea97e365165438f56f6d038328c62452569"
+      }
+    },
+    {
+      "name": "ok-full",
+      "note": "Every optional part filled.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": {
+          "id": "answer",
+          "file": "prompts/answer.prompt.md",
+          "sha256": "c0335cedbab6917393d9ab742bc01762985fa6e4ff63b984e1428115ef9167c4",
+          "slots_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "selection": {
+          "name": "answer.write",
+          "model": "model-a",
+          "effort": "low"
+        },
+        "resolved": {
+          "row": "model-a",
+          "endpoint": "example-endpoint",
+          "model": "example/model-a",
+          "effort": "low",
+          "registry_sha256": "872491a30d60d598962de6e7b834ab76b2aa65fbab102c6ebaaae6acdc238822"
+        },
+        "request": {
+          "max_output_tokens": 400,
+          "extras": {
+            "temperature": 0.5
+          },
+          "sent_sha256": "7afbb3347fb7252e533d58d99d72d9106fc6fdb3f30df23fa70b764c15ac42c5"
+        },
+        "inputs": {
+          "rules": "a011fa4ff72dc4e5078e6f992a240b21e18091534223f55148564c3e3d742f75"
+        },
+        "provenance": {
+          "git_sha": "0123456789abcdef0123456789abcdef01234567",
+          "git_dirty": false,
+          "tool": {
+            "name": "example-runner",
+            "version": "1.0.0"
+          },
+          "files": {
+            "prompts/answer.prompt.md": "6ae31889fb335d7ae9da70b80498d3dcf58298bcc3c9169b95c6487953b784d3"
+          },
+          "scorer": {
+            "name": "exact-match",
+            "version": "1",
+            "sha256": "c528cab03ad47ed5fceb01fd4f4557f12d8f2bcb2aa9f6e78087380aab8fde5f"
+          }
+        },
+        "content": "synthetic",
+        "labels": {
+          "purpose": "example"
+        },
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [
+          {
+            "name": "correct",
+            "value": 1,
+            "scale": "0-1",
+            "by": {
+              "kind": "rule",
+              "name": "exact-match",
+              "selection": null
+            },
+            "note": "blob:c4a4bb47321715b3cf382cb6d7f05ce94f2892bcc34e2b62d53ad4bde2171d1c"
+          }
+        ],
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 2,
+          "cached_tokens": 0,
+          "reasoning_tokens": null
+        },
+        "cost": {
+          "usd": 0.0001,
+          "source": "reported"
+        },
+        "timings": {
+          "first_output_ms": 300,
+          "total_ms": 2377
+        }
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "51eca3bbe4fb2186b4ea75e86fb3a2d5cb23197accb8ee0a1b394c56178ea2e9"
+      }
+    },
+    {
+      "name": "started",
+      "note": "The started event: no result fields.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "started",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {}
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "1513cd0e0fa70c5104180684d7bf9ea97e365165438f56f6d038328c62452569"
+      }
+    },
+    {
+      "name": "invalid-with-output-and-error",
+      "note": "An answer that failed the caller's parse.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "invalid",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": {
+          "code": "parse",
+          "message": "not JSON"
+        },
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "1513cd0e0fa70c5104180684d7bf9ea97e365165438f56f6d038328c62452569"
+      }
+    },
+    {
+      "name": "failed-without-output",
+      "note": "A transport failure keeps no output.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "failed",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": null,
+        "error": {
+          "code": "timeout",
+          "message": null
+        },
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "1513cd0e0fa70c5104180684d7bf9ea97e365165438f56f6d038328c62452569"
+      }
+    },
+    {
+      "name": "refused-with-output",
+      "note": "A refusal may keep the refusal text.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "refused",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": {
+          "code": "declined",
+          "message": null
+        },
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "1513cd0e0fa70c5104180684d7bf9ea97e365165438f56f6d038328c62452569"
+      }
+    },
+    {
+      "name": "time-in-milliseconds",
+      "note": "A time with 3 fraction digits (the JavaScript toISOString form).",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:01.000Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "1513cd0e0fa70c5104180684d7bf9ea97e365165438f56f6d038328c62452569"
+      }
+    },
+    {
+      "name": "time-without-fraction",
+      "note": "A time with no fraction.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:00Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "1513cd0e0fa70c5104180684d7bf9ea97e365165438f56f6d038328c62452569"
+      }
+    },
+    {
+      "name": "id-with-long-suffix",
+      "note": "The random suffix may have up to 32 hex digits.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "1513cd0e0fa70c5104180684d7bf9ea97e365165438f56f6d038328c62452569"
+      }
+    },
+    {
+      "name": "case-input-not-stored",
+      "note": "case.input is null: the input is not in the store; its hash still is.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": null
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "1513cd0e0fa70c5104180684d7bf9ea97e365165438f56f6d038328c62452569"
+      }
+    },
+    {
+      "name": "parsed-value",
+      "note": "output.parsed holds any JSON value.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": {
+            "answer": 4
+          }
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "1513cd0e0fa70c5104180684d7bf9ea97e365165438f56f6d038328c62452569"
+      }
+    },
+    {
+      "name": "same-question-other-group",
+      "note": "Group, labels and provenance are not in the reuse key: this key equals ok-minimal's.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261115T000000000000Z-0000",
+        "status": "ok",
+        "started_at": "2026-11-15T00:00:00Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "other",
+          "kind": "eval",
+          "label": "x"
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {
+          "a": "b"
+        },
+        "ended_at": "2026-11-15T00:00:01Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "valid": true,
+        "reuse_key": "1513cd0e0fa70c5104180684d7bf9ea97e365165438f56f6d038328c62452569"
+      }
+    },
+    {
+      "name": "ok-without-output",
+      "note": "status ok needs output.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": null,
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/output"
+        }
+      }
+    },
+    {
+      "name": "ok-with-error",
+      "note": "status ok has a null error.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": {
+          "code": "x",
+          "message": null
+        },
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/error"
+        }
+      }
+    },
+    {
+      "name": "failed-without-error",
+      "note": "status failed needs an error.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "failed",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": null,
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/error"
+        }
+      }
+    },
+    {
+      "name": "started-with-ended-at",
+      "note": "A started event has no result fields.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "started",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:16:00Z"
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/ended_at"
+        }
+      }
+    },
+    {
+      "name": "started-with-output",
+      "note": "A started event has no output field, not even null.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "started",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "output": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/output"
+        }
+      }
+    },
+    {
+      "name": "unknown-status",
+      "note": "done is not a status (the format uses ok).",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "done",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/status"
+        }
+      }
+    },
+    {
+      "name": "missing-content-class",
+      "note": "Every record declares its content class.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/content"
+        }
+      }
+    },
+    {
+      "name": "unknown-content-class",
+      "note": "Only synthetic, internal and sensitive.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "private",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/content"
+        }
+      }
+    },
+    {
+      "name": "malformed-id",
+      "note": "The id grammar is a reader rule.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "run-1",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/id"
+        }
+      }
+    },
+    {
+      "name": "id-with-upper-hex",
+      "note": "The suffix is lowercase hex.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3F9A",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/id"
+        }
+      }
+    },
+    {
+      "name": "time-without-zone",
+      "note": "Times are UTC with Z.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123+0000",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/started_at"
+        }
+      }
+    },
+    {
+      "name": "impossible-date",
+      "note": "A time must be a real date.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-02-30T10:15:00Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/started_at"
+        }
+      }
+    },
+    {
+      "name": "ended-before-started",
+      "note": "ended_at is not before started_at.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:14:59Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/ended_at"
+        }
+      }
+    },
+    {
+      "name": "fraction-order",
+      "note": "Fractions compare as numbers: .5 is after .123456.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:00.12Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/ended_at"
+        }
+      }
+    },
+    {
+      "name": "upper-case-hash",
+      "note": "Hashes are lowercase hex.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "c",
+          "input_sha256": "8B48D9AD1FC4E783ACE09990074769B0F41C0C72F8C5F79278C272828BCF59C7",
+          "input": null
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/case/input_sha256"
+        }
+      }
+    },
+    {
+      "name": "case-input-other-hash",
+      "note": "case.input is blob:<case.input_sha256>.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "c",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:d9298a10d1b0735837dc4bd85dac641b0f3cef27a47e5d53a54f2f3f5b2fcffa"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/case/input"
+        }
+      }
+    },
+    {
+      "name": "malformed-blob-ref",
+      "note": "A blob reference is blob:<64 lowercase hex>.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "BLOB:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/output/text"
+        }
+      }
+    },
+    {
+      "name": "absolute-prompt-file",
+      "note": "Paths are project-relative.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": {
+          "id": null,
+          "file": "/home/someone/p.md",
+          "sha256": "148de9c5a7a44d19e56cd9ae1a554bf67847afb0c58f6e12fa29ac7ddfca9940",
+          "slots_sha256": null
+        },
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/prompt/file"
+        }
+      }
+    },
+    {
+      "name": "escaping-provenance-path",
+      "note": "A provenance path may not leave the project.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": {
+          "id": "answer",
+          "file": "prompts/answer.prompt.md",
+          "sha256": "c0335cedbab6917393d9ab742bc01762985fa6e4ff63b984e1428115ef9167c4",
+          "slots_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "selection": {
+          "name": "answer.write",
+          "model": "model-a",
+          "effort": "low"
+        },
+        "resolved": {
+          "row": "model-a",
+          "endpoint": "example-endpoint",
+          "model": "example/model-a",
+          "effort": "low",
+          "registry_sha256": "872491a30d60d598962de6e7b834ab76b2aa65fbab102c6ebaaae6acdc238822"
+        },
+        "request": {
+          "max_output_tokens": 400,
+          "extras": {
+            "temperature": 0.5
+          },
+          "sent_sha256": "7afbb3347fb7252e533d58d99d72d9106fc6fdb3f30df23fa70b764c15ac42c5"
+        },
+        "inputs": {
+          "rules": "a011fa4ff72dc4e5078e6f992a240b21e18091534223f55148564c3e3d742f75"
+        },
+        "provenance": {
+          "git_sha": "0123456789abcdef0123456789abcdef01234567",
+          "git_dirty": false,
+          "tool": {
+            "name": "example-runner",
+            "version": "1.0.0"
+          },
+          "files": {
+            "../outside.txt": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+          },
+          "scorer": {
+            "name": "exact-match",
+            "version": "1",
+            "sha256": "c528cab03ad47ed5fceb01fd4f4557f12d8f2bcb2aa9f6e78087380aab8fde5f"
+          }
+        },
+        "content": "synthetic",
+        "labels": {
+          "purpose": "example"
+        },
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [
+          {
+            "name": "correct",
+            "value": 1,
+            "scale": "0-1",
+            "by": {
+              "kind": "rule",
+              "name": "exact-match",
+              "selection": null
+            },
+            "note": "blob:c4a4bb47321715b3cf382cb6d7f05ce94f2892bcc34e2b62d53ad4bde2171d1c"
+          }
+        ],
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 2,
+          "cached_tokens": 0,
+          "reasoning_tokens": null
+        },
+        "cost": {
+          "usd": 0.0001,
+          "source": "reported"
+        },
+        "timings": {
+          "first_output_ms": 300,
+          "total_ms": 2377
+        }
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/provenance/files/..~1outside.txt"
+        }
+      }
+    },
+    {
+      "name": "windows-provenance-path",
+      "note": "A drive path is not project-relative.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": {
+          "id": "answer",
+          "file": "prompts/answer.prompt.md",
+          "sha256": "c0335cedbab6917393d9ab742bc01762985fa6e4ff63b984e1428115ef9167c4",
+          "slots_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "selection": {
+          "name": "answer.write",
+          "model": "model-a",
+          "effort": "low"
+        },
+        "resolved": {
+          "row": "model-a",
+          "endpoint": "example-endpoint",
+          "model": "example/model-a",
+          "effort": "low",
+          "registry_sha256": "872491a30d60d598962de6e7b834ab76b2aa65fbab102c6ebaaae6acdc238822"
+        },
+        "request": {
+          "max_output_tokens": 400,
+          "extras": {
+            "temperature": 0.5
+          },
+          "sent_sha256": "7afbb3347fb7252e533d58d99d72d9106fc6fdb3f30df23fa70b764c15ac42c5"
+        },
+        "inputs": {
+          "rules": "a011fa4ff72dc4e5078e6f992a240b21e18091534223f55148564c3e3d742f75"
+        },
+        "provenance": {
+          "git_sha": "0123456789abcdef0123456789abcdef01234567",
+          "git_dirty": false,
+          "tool": {
+            "name": "example-runner",
+            "version": "1.0.0"
+          },
+          "files": {
+            "C:/work/x.txt": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+          },
+          "scorer": {
+            "name": "exact-match",
+            "version": "1",
+            "sha256": "c528cab03ad47ed5fceb01fd4f4557f12d8f2bcb2aa9f6e78087380aab8fde5f"
+          }
+        },
+        "content": "synthetic",
+        "labels": {
+          "purpose": "example"
+        },
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [
+          {
+            "name": "correct",
+            "value": 1,
+            "scale": "0-1",
+            "by": {
+              "kind": "rule",
+              "name": "exact-match",
+              "selection": null
+            },
+            "note": "blob:c4a4bb47321715b3cf382cb6d7f05ce94f2892bcc34e2b62d53ad4bde2171d1c"
+          }
+        ],
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 2,
+          "cached_tokens": 0,
+          "reasoning_tokens": null
+        },
+        "cost": {
+          "usd": 0.0001,
+          "source": "reported"
+        },
+        "timings": {
+          "first_output_ms": 300,
+          "total_ms": 2377
+        }
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/provenance/files/C:~1work~1x.txt"
+        }
+      }
+    },
+    {
+      "name": "input-hash-not-hex",
+      "note": "inputs values are SHA-256 hex.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {
+          "rules": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        },
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/inputs/rules"
+        }
+      }
+    },
+    {
+      "name": "negative-token-count",
+      "note": "Token counts are 0 or more.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": {
+          "input_tokens": -1,
+          "output_tokens": 0,
+          "cached_tokens": 0,
+          "reasoning_tokens": 0
+        },
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/usage/input_tokens"
+        }
+      }
+    },
+    {
+      "name": "token-count-above-exact-range",
+      "note": "Integers stay inside the exact JSON range.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": {
+          "input_tokens": 1,
+          "output_tokens": 9007199254740992,
+          "cached_tokens": 0,
+          "reasoning_tokens": 0
+        },
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/usage/output_tokens"
+        }
+      }
+    },
+    {
+      "name": "zero-max-output-tokens",
+      "note": "max_output_tokens is 1 or more, or null.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": 0,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/request/max_output_tokens"
+        }
+      }
+    },
+    {
+      "name": "unknown-top-level-key",
+      "note": "No other keys.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null,
+        "extra": 1
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/extra"
+        }
+      }
+    },
+    {
+      "name": "unknown-group-kind",
+      "note": "Group kinds are compare, eval and single.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "g",
+          "kind": "batch",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": null,
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/group/kind"
+        }
+      }
+    },
+    {
+      "name": "malformed-score-note",
+      "note": "A score note is a blob reference or null.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": {
+          "id": "answer",
+          "file": "prompts/answer.prompt.md",
+          "sha256": "c0335cedbab6917393d9ab742bc01762985fa6e4ff63b984e1428115ef9167c4",
+          "slots_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "selection": {
+          "name": "answer.write",
+          "model": "model-a",
+          "effort": "low"
+        },
+        "resolved": {
+          "row": "model-a",
+          "endpoint": "example-endpoint",
+          "model": "example/model-a",
+          "effort": "low",
+          "registry_sha256": "872491a30d60d598962de6e7b834ab76b2aa65fbab102c6ebaaae6acdc238822"
+        },
+        "request": {
+          "max_output_tokens": 400,
+          "extras": {
+            "temperature": 0.5
+          },
+          "sent_sha256": "7afbb3347fb7252e533d58d99d72d9106fc6fdb3f30df23fa70b764c15ac42c5"
+        },
+        "inputs": {
+          "rules": "a011fa4ff72dc4e5078e6f992a240b21e18091534223f55148564c3e3d742f75"
+        },
+        "provenance": {
+          "git_sha": "0123456789abcdef0123456789abcdef01234567",
+          "git_dirty": false,
+          "tool": {
+            "name": "example-runner",
+            "version": "1.0.0"
+          },
+          "files": {
+            "prompts/answer.prompt.md": "6ae31889fb335d7ae9da70b80498d3dcf58298bcc3c9169b95c6487953b784d3"
+          },
+          "scorer": {
+            "name": "exact-match",
+            "version": "1",
+            "sha256": "c528cab03ad47ed5fceb01fd4f4557f12d8f2bcb2aa9f6e78087380aab8fde5f"
+          }
+        },
+        "content": "synthetic",
+        "labels": {
+          "purpose": "example"
+        },
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [
+          {
+            "name": "correct",
+            "value": 1,
+            "scale": "0-1",
+            "by": {
+              "kind": "rule",
+              "name": "exact-match",
+              "selection": null
+            },
+            "note": "blob:xyz"
+          }
+        ],
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 2,
+          "cached_tokens": 0,
+          "reasoning_tokens": null
+        },
+        "cost": {
+          "usd": 0.0001,
+          "source": "reported"
+        },
+        "timings": {
+          "first_output_ms": 300,
+          "total_ms": 2377
+        }
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/scores/0/note"
+        }
+      }
+    },
+    {
+      "name": "scorer-hash-upper-case",
+      "note": "The scorer hash is lowercase hex.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": {
+          "id": "answer",
+          "file": "prompts/answer.prompt.md",
+          "sha256": "c0335cedbab6917393d9ab742bc01762985fa6e4ff63b984e1428115ef9167c4",
+          "slots_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "selection": {
+          "name": "answer.write",
+          "model": "model-a",
+          "effort": "low"
+        },
+        "resolved": {
+          "row": "model-a",
+          "endpoint": "example-endpoint",
+          "model": "example/model-a",
+          "effort": "low",
+          "registry_sha256": "872491a30d60d598962de6e7b834ab76b2aa65fbab102c6ebaaae6acdc238822"
+        },
+        "request": {
+          "max_output_tokens": 400,
+          "extras": {
+            "temperature": 0.5
+          },
+          "sent_sha256": "7afbb3347fb7252e533d58d99d72d9106fc6fdb3f30df23fa70b764c15ac42c5"
+        },
+        "inputs": {
+          "rules": "a011fa4ff72dc4e5078e6f992a240b21e18091534223f55148564c3e3d742f75"
+        },
+        "provenance": {
+          "git_sha": "0123456789abcdef0123456789abcdef01234567",
+          "git_dirty": false,
+          "tool": {
+            "name": "example-runner",
+            "version": "1.0.0"
+          },
+          "files": {
+            "prompts/answer.prompt.md": "6ae31889fb335d7ae9da70b80498d3dcf58298bcc3c9169b95c6487953b784d3"
+          },
+          "scorer": {
+            "name": "exact-match",
+            "version": "1",
+            "sha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+          }
+        },
+        "content": "synthetic",
+        "labels": {
+          "purpose": "example"
+        },
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [
+          {
+            "name": "correct",
+            "value": 1,
+            "scale": "0-1",
+            "by": {
+              "kind": "rule",
+              "name": "exact-match",
+              "selection": null
+            },
+            "note": "blob:c4a4bb47321715b3cf382cb6d7f05ce94f2892bcc34e2b62d53ad4bde2171d1c"
+          }
+        ],
+        "usage": {
+          "input_tokens": 12,
+          "output_tokens": 2,
+          "cached_tokens": 0,
+          "reasoning_tokens": null
+        },
+        "cost": {
+          "usd": 0.0001,
+          "source": "reported"
+        },
+        "timings": {
+          "first_output_ms": 300,
+          "total_ms": 2377
+        }
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/provenance/scorer/sha256"
+        }
+      }
+    },
+    {
+      "name": "negative-cost",
+      "note": "Cost is 0 or more.",
+      "record": {
+        "format": "llm-kit.run-record/v1",
+        "id": "20261114T101500123456Z-3f9a",
+        "status": "ok",
+        "started_at": "2026-11-14T10:15:00.123456Z",
+        "flow": "arithmetic.answer",
+        "group": {
+          "id": "arith-2026-11-14",
+          "kind": "compare",
+          "label": null
+        },
+        "case": {
+          "id": "two-plus-two",
+          "input_sha256": "8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7",
+          "input": "blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7"
+        },
+        "prompt": null,
+        "selection": {
+          "name": null,
+          "model": "example/model-a",
+          "effort": null
+        },
+        "resolved": null,
+        "request": {
+          "max_output_tokens": null,
+          "extras": {},
+          "sent_sha256": null
+        },
+        "inputs": {},
+        "provenance": {
+          "git_sha": null,
+          "git_dirty": null,
+          "tool": {
+            "name": "example-runner",
+            "version": null
+          },
+          "files": {},
+          "scorer": null
+        },
+        "content": "synthetic",
+        "labels": {},
+        "ended_at": "2026-11-14T10:15:02.5Z",
+        "output": {
+          "text": "blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833",
+          "parsed": null
+        },
+        "error": null,
+        "scores": [],
+        "usage": null,
+        "cost": {
+          "usd": -0.5,
+          "source": "reported"
+        },
+        "timings": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "/cost/usd"
+        }
+      }
+    }
+  ],
+  "import_lines": [
+    {
+      "name": "text-blobs",
+      "note": "Blobs given as UTF-8 text.",
+      "lines": [
+        "{\"blobs\": {\"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\": {\"text\": \"Four.\"}, \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\": {\"text\": \"{\\\"question\\\": \\\"What is two plus two?\\\"}\"}}, \"format\": \"llm-kit.run-import/v1\", \"record\": {\"case\": {\"id\": \"two-plus-two\", \"input\": \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\", \"input_sha256\": \"8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\"}, \"content\": \"synthetic\", \"cost\": null, \"ended_at\": \"2026-11-14T10:15:02.5Z\", \"error\": null, \"flow\": \"arithmetic.answer\", \"format\": \"llm-kit.run-record/v1\", \"group\": {\"id\": \"arith-2026-11-14\", \"kind\": \"compare\", \"label\": null}, \"id\": \"20261114T101500123456Z-3f9a\", \"inputs\": {}, \"labels\": {}, \"output\": {\"parsed\": null, \"text\": \"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\"}, \"prompt\": null, \"provenance\": {\"files\": {}, \"git_dirty\": null, \"git_sha\": null, \"scorer\": null, \"tool\": {\"name\": \"example-runner\", \"version\": null}}, \"request\": {\"extras\": {}, \"max_output_tokens\": null, \"sent_sha256\": null}, \"resolved\": null, \"scores\": [], \"selection\": {\"effort\": null, \"model\": \"example/model-a\", \"name\": null}, \"started_at\": \"2026-11-14T10:15:00.123456Z\", \"status\": \"ok\", \"timings\": null, \"usage\": null}}"
+      ],
+      "expect": {
+        "records": 1
+      }
+    },
+    {
+      "name": "base64-blob",
+      "note": "A blob given as base64.",
+      "lines": [
+        "{\"blobs\": {\"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\": {\"text\": \"Four.\"}, \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\": {\"base64\": \"eyJxdWVzdGlvbiI6ICJXaGF0IGlzIHR3byBwbHVzIHR3bz8ifQ==\"}}, \"format\": \"llm-kit.run-import/v1\", \"record\": {\"case\": {\"id\": \"two-plus-two\", \"input\": \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\", \"input_sha256\": \"8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\"}, \"content\": \"synthetic\", \"cost\": null, \"ended_at\": \"2026-11-14T10:15:02.5Z\", \"error\": null, \"flow\": \"arithmetic.answer\", \"format\": \"llm-kit.run-record/v1\", \"group\": {\"id\": \"arith-2026-11-14\", \"kind\": \"compare\", \"label\": null}, \"id\": \"20261114T101500123456Z-3f9a\", \"inputs\": {}, \"labels\": {}, \"output\": {\"parsed\": null, \"text\": \"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\"}, \"prompt\": null, \"provenance\": {\"files\": {}, \"git_dirty\": null, \"git_sha\": null, \"scorer\": null, \"tool\": {\"name\": \"example-runner\", \"version\": null}}, \"request\": {\"extras\": {}, \"max_output_tokens\": null, \"sent_sha256\": null}, \"resolved\": null, \"scores\": [], \"selection\": {\"effort\": null, \"model\": \"example/model-a\", \"name\": null}, \"started_at\": \"2026-11-14T10:15:00.123456Z\", \"status\": \"ok\", \"timings\": null, \"usage\": null}}"
+      ],
+      "expect": {
+        "records": 1
+      }
+    },
+    {
+      "name": "started-and-result",
+      "note": "Two events of one attempt.",
+      "lines": [
+        "{\"blobs\": {\"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\": {\"text\": \"{\\\"question\\\": \\\"What is two plus two?\\\"}\"}}, \"format\": \"llm-kit.run-import/v1\", \"record\": {\"case\": {\"id\": \"two-plus-two\", \"input\": \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\", \"input_sha256\": \"8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\"}, \"content\": \"synthetic\", \"flow\": \"arithmetic.answer\", \"format\": \"llm-kit.run-record/v1\", \"group\": {\"id\": \"arith-2026-11-14\", \"kind\": \"compare\", \"label\": null}, \"id\": \"20261114T101500123456Z-3f9a\", \"inputs\": {}, \"labels\": {}, \"prompt\": null, \"provenance\": {\"files\": {}, \"git_dirty\": null, \"git_sha\": null, \"scorer\": null, \"tool\": {\"name\": \"example-runner\", \"version\": null}}, \"request\": {\"extras\": {}, \"max_output_tokens\": null, \"sent_sha256\": null}, \"resolved\": null, \"selection\": {\"effort\": null, \"model\": \"example/model-a\", \"name\": null}, \"started_at\": \"2026-11-14T10:15:00.123456Z\", \"status\": \"started\"}}",
+        "{\"blobs\": {\"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\": {\"text\": \"Four.\"}}, \"format\": \"llm-kit.run-import/v1\", \"record\": {\"case\": {\"id\": \"two-plus-two\", \"input\": \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\", \"input_sha256\": \"8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\"}, \"content\": \"synthetic\", \"cost\": null, \"ended_at\": \"2026-11-14T10:15:02.5Z\", \"error\": null, \"flow\": \"arithmetic.answer\", \"format\": \"llm-kit.run-record/v1\", \"group\": {\"id\": \"arith-2026-11-14\", \"kind\": \"compare\", \"label\": null}, \"id\": \"20261114T101500123456Z-3f9a\", \"inputs\": {}, \"labels\": {}, \"output\": {\"parsed\": null, \"text\": \"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\"}, \"prompt\": null, \"provenance\": {\"files\": {}, \"git_dirty\": null, \"git_sha\": null, \"scorer\": null, \"tool\": {\"name\": \"example-runner\", \"version\": null}}, \"request\": {\"extras\": {}, \"max_output_tokens\": null, \"sent_sha256\": null}, \"resolved\": null, \"scores\": [], \"selection\": {\"effort\": null, \"model\": \"example/model-a\", \"name\": null}, \"started_at\": \"2026-11-14T10:15:00.123456Z\", \"status\": \"ok\", \"timings\": null, \"usage\": null}}"
+      ],
+      "expect": {
+        "records": 2
+      }
+    },
+    {
+      "name": "blob-hash-mismatch",
+      "note": "The bytes must hash to their reference.",
+      "lines": [
+        "{\"blobs\": {\"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\": {\"text\": \"Four.\"}, \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\": {\"text\": \"{\\\"question\\\": \\\"What is two plus two?\\\"} \"}}, \"format\": \"llm-kit.run-import/v1\", \"record\": {\"case\": {\"id\": \"two-plus-two\", \"input\": \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\", \"input_sha256\": \"8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\"}, \"content\": \"synthetic\", \"cost\": null, \"ended_at\": \"2026-11-14T10:15:02.5Z\", \"error\": null, \"flow\": \"arithmetic.answer\", \"format\": \"llm-kit.run-record/v1\", \"group\": {\"id\": \"arith-2026-11-14\", \"kind\": \"compare\", \"label\": null}, \"id\": \"20261114T101500123456Z-3f9a\", \"inputs\": {}, \"labels\": {}, \"output\": {\"parsed\": null, \"text\": \"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\"}, \"prompt\": null, \"provenance\": {\"files\": {}, \"git_dirty\": null, \"git_sha\": null, \"scorer\": null, \"tool\": {\"name\": \"example-runner\", \"version\": null}}, \"request\": {\"extras\": {}, \"max_output_tokens\": null, \"sent_sha256\": null}, \"resolved\": null, \"scores\": [], \"selection\": {\"effort\": null, \"model\": \"example/model-a\", \"name\": null}, \"started_at\": \"2026-11-14T10:15:00.123456Z\", \"status\": \"ok\", \"timings\": null, \"usage\": null}}"
+      ],
+      "expect": {
+        "error": "blob-hash",
+        "line": 1
+      }
+    },
+    {
+      "name": "bad-base64",
+      "note": "base64 is decoded strictly.",
+      "lines": [
+        "{\"blobs\": {\"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\": {\"base64\": \"not base64!\"}}, \"format\": \"llm-kit.run-import/v1\", \"record\": {\"case\": {\"id\": \"two-plus-two\", \"input\": \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\", \"input_sha256\": \"8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\"}, \"content\": \"synthetic\", \"cost\": null, \"ended_at\": \"2026-11-14T10:15:02.5Z\", \"error\": null, \"flow\": \"arithmetic.answer\", \"format\": \"llm-kit.run-record/v1\", \"group\": {\"id\": \"arith-2026-11-14\", \"kind\": \"compare\", \"label\": null}, \"id\": \"20261114T101500123456Z-3f9a\", \"inputs\": {}, \"labels\": {}, \"output\": {\"parsed\": null, \"text\": \"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\"}, \"prompt\": null, \"provenance\": {\"files\": {}, \"git_dirty\": null, \"git_sha\": null, \"scorer\": null, \"tool\": {\"name\": \"example-runner\", \"version\": null}}, \"request\": {\"extras\": {}, \"max_output_tokens\": null, \"sent_sha256\": null}, \"resolved\": null, \"scores\": [], \"selection\": {\"effort\": null, \"model\": \"example/model-a\", \"name\": null}, \"started_at\": \"2026-11-14T10:15:00.123456Z\", \"status\": \"ok\", \"timings\": null, \"usage\": null}}"
+      ],
+      "expect": {
+        "error": "invalid",
+        "line": 1
+      }
+    },
+    {
+      "name": "missing-format",
+      "note": "Every line names its format.",
+      "lines": [
+        "{\"record\": {\"format\": \"llm-kit.run-record/v1\", \"id\": \"20261114T101500123456Z-3f9a\", \"status\": \"ok\", \"started_at\": \"2026-11-14T10:15:00.123456Z\", \"flow\": \"arithmetic.answer\", \"group\": {\"id\": \"arith-2026-11-14\", \"kind\": \"compare\", \"label\": null}, \"case\": {\"id\": \"two-plus-two\", \"input_sha256\": \"8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\", \"input\": \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\"}, \"prompt\": null, \"selection\": {\"name\": null, \"model\": \"example/model-a\", \"effort\": null}, \"resolved\": null, \"request\": {\"max_output_tokens\": null, \"extras\": {}, \"sent_sha256\": null}, \"inputs\": {}, \"provenance\": {\"git_sha\": null, \"git_dirty\": null, \"tool\": {\"name\": \"example-runner\", \"version\": null}, \"files\": {}, \"scorer\": null}, \"content\": \"synthetic\", \"labels\": {}, \"ended_at\": \"2026-11-14T10:15:02.5Z\", \"output\": {\"text\": \"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\", \"parsed\": null}, \"error\": null, \"scores\": [], \"usage\": null, \"cost\": null, \"timings\": null}, \"blobs\": {}}"
+      ],
+      "expect": {
+        "error": "invalid",
+        "line": 1
+      }
+    },
+    {
+      "name": "invalid-record",
+      "note": "The record is validated as llm-kit.run-record/v1.",
+      "lines": [
+        "{\"blobs\": {\"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\": {\"text\": \"Four.\"}, \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\": {\"text\": \"{\\\"question\\\": \\\"What is two plus two?\\\"}\"}}, \"format\": \"llm-kit.run-import/v1\", \"record\": {\"case\": {\"id\": \"two-plus-two\", \"input\": \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\", \"input_sha256\": \"8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\"}, \"content\": \"synthetic\", \"cost\": null, \"ended_at\": \"2026-11-14T10:15:02.5Z\", \"error\": null, \"flow\": \"arithmetic.answer\", \"format\": \"llm-kit.run-record/v1\", \"group\": {\"id\": \"arith-2026-11-14\", \"kind\": \"compare\", \"label\": null}, \"id\": \"20261114T101500123456Z-3f9a\", \"inputs\": {}, \"labels\": {}, \"output\": {\"parsed\": null, \"text\": \"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\"}, \"prompt\": null, \"provenance\": {\"files\": {}, \"git_dirty\": null, \"git_sha\": null, \"scorer\": null, \"tool\": {\"name\": \"example-runner\", \"version\": null}}, \"request\": {\"extras\": {}, \"max_output_tokens\": null, \"sent_sha256\": null}, \"resolved\": null, \"scores\": [], \"selection\": {\"effort\": null, \"model\": \"example/model-a\", \"name\": null}, \"started_at\": \"2026-11-14T10:15:00.123456Z\", \"status\": \"ok\", \"timings\": null, \"usage\": null}}",
+        "{\"blobs\": {}, \"format\": \"llm-kit.run-import/v1\", \"record\": {\"case\": {\"id\": \"two-plus-two\", \"input\": \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\", \"input_sha256\": \"8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\"}, \"content\": \"synthetic\", \"cost\": null, \"ended_at\": \"2026-11-14T10:15:02.5Z\", \"error\": null, \"flow\": \"arithmetic.answer\", \"format\": \"llm-kit.run-record/v1\", \"group\": {\"id\": \"arith-2026-11-14\", \"kind\": \"compare\", \"label\": null}, \"id\": \"20261114T101500123456Z-0001\", \"inputs\": {}, \"labels\": {}, \"output\": null, \"prompt\": null, \"provenance\": {\"files\": {}, \"git_dirty\": null, \"git_sha\": null, \"scorer\": null, \"tool\": {\"name\": \"example-runner\", \"version\": null}}, \"request\": {\"extras\": {}, \"max_output_tokens\": null, \"sent_sha256\": null}, \"resolved\": null, \"scores\": [], \"selection\": {\"effort\": null, \"model\": \"example/model-a\", \"name\": null}, \"started_at\": \"2026-11-14T10:15:00.123456Z\", \"status\": \"ok\", \"timings\": null, \"usage\": null}}"
+      ],
+      "expect": {
+        "error": "invalid",
+        "line": 2
+      }
+    },
+    {
+      "name": "empty-line",
+      "note": "Only a final newline is allowed.",
+      "lines": [
+        "{\"blobs\": {\"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\": {\"text\": \"Four.\"}, \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\": {\"text\": \"{\\\"question\\\": \\\"What is two plus two?\\\"}\"}}, \"format\": \"llm-kit.run-import/v1\", \"record\": {\"case\": {\"id\": \"two-plus-two\", \"input\": \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\", \"input_sha256\": \"8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\"}, \"content\": \"synthetic\", \"cost\": null, \"ended_at\": \"2026-11-14T10:15:02.5Z\", \"error\": null, \"flow\": \"arithmetic.answer\", \"format\": \"llm-kit.run-record/v1\", \"group\": {\"id\": \"arith-2026-11-14\", \"kind\": \"compare\", \"label\": null}, \"id\": \"20261114T101500123456Z-3f9a\", \"inputs\": {}, \"labels\": {}, \"output\": {\"parsed\": null, \"text\": \"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\"}, \"prompt\": null, \"provenance\": {\"files\": {}, \"git_dirty\": null, \"git_sha\": null, \"scorer\": null, \"tool\": {\"name\": \"example-runner\", \"version\": null}}, \"request\": {\"extras\": {}, \"max_output_tokens\": null, \"sent_sha256\": null}, \"resolved\": null, \"scores\": [], \"selection\": {\"effort\": null, \"model\": \"example/model-a\", \"name\": null}, \"started_at\": \"2026-11-14T10:15:00.123456Z\", \"status\": \"ok\", \"timings\": null, \"usage\": null}}",
+        "",
+        "{\"blobs\": {\"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\": {\"text\": \"Four.\"}, \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\": {\"text\": \"{\\\"question\\\": \\\"What is two plus two?\\\"}\"}}, \"format\": \"llm-kit.run-import/v1\", \"record\": {\"case\": {\"id\": \"two-plus-two\", \"input\": \"blob:8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\", \"input_sha256\": \"8b48d9ad1fc4e783ace09990074769b0f41c0c72f8c5f79278c272828bcf59c7\"}, \"content\": \"synthetic\", \"cost\": null, \"ended_at\": \"2026-11-14T10:15:02.5Z\", \"error\": null, \"flow\": \"arithmetic.answer\", \"format\": \"llm-kit.run-record/v1\", \"group\": {\"id\": \"arith-2026-11-14\", \"kind\": \"compare\", \"label\": null}, \"id\": \"20261114T101500123456Z-3f9a\", \"inputs\": {}, \"labels\": {}, \"output\": {\"parsed\": null, \"text\": \"blob:2f7820a5325de01510971fb541180d3730df116b28942068bb1e5a7040528833\"}, \"prompt\": null, \"provenance\": {\"files\": {}, \"git_dirty\": null, \"git_sha\": null, \"scorer\": null, \"tool\": {\"name\": \"example-runner\", \"version\": null}}, \"request\": {\"extras\": {}, \"max_output_tokens\": null, \"sent_sha256\": null}, \"resolved\": null, \"scores\": [], \"selection\": {\"effort\": null, \"model\": \"example/model-a\", \"name\": null}, \"started_at\": \"2026-11-14T10:15:00.123456Z\", \"status\": \"ok\", \"timings\": null, \"usage\": null}}"
+      ],
+      "expect": {
+        "error": "invalid",
+        "line": 2
+      }
+    },
+    {
+      "name": "not-json",
+      "note": "Each line is JSON.",
+      "lines": [
+        "{"
+      ],
+      "expect": {
+        "error": "invalid",
+        "line": 1
+      }
+    }
+  ],
+  "stores": [
+    {
+      "name": "two-classes",
+      "document": {
+        "format": "llm-kit.run-store/v1",
+        "accepts": [
+          "synthetic",
+          "internal"
+        ]
+      },
+      "expect": {
+        "accepts": [
+          "internal",
+          "synthetic"
+        ]
+      }
+    },
+    {
+      "name": "every-class",
+      "document": {
+        "format": "llm-kit.run-store/v1",
+        "accepts": [
+          "sensitive",
+          "internal",
+          "synthetic"
+        ]
+      },
+      "expect": {
+        "accepts": [
+          "internal",
+          "sensitive",
+          "synthetic"
+        ]
+      }
+    },
+    {
+      "name": "class-twice",
+      "document": {
+        "format": "llm-kit.run-store/v1",
+        "accepts": [
+          "internal",
+          "internal"
+        ]
+      },
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "no-class",
+      "document": {
+        "format": "llm-kit.run-store/v1",
+        "accepts": []
+      },
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "unknown-class",
+      "document": {
+        "format": "llm-kit.run-store/v1",
+        "accepts": [
+          "private"
+        ]
+      },
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "name": "other-key",
+      "document": {
+        "format": "llm-kit.run-store/v1",
+        "accepts": [
+          "internal"
+        ],
+        "prune": true
+      },
+      "expect": {
+        "error": "invalid"
+      }
+    }
+  ]
+}

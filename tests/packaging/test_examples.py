@@ -51,3 +51,15 @@ def test_a_broken_example_is_detected(closure_venv, tmp_path, monkeypatch):
     monkeypatch.setitem(globals(), "EXAMPLES", broken)
     problems = example_problems(closure_venv, tmp_path / "run")
     assert problems and "broken on purpose" in problems[0]
+
+
+def test_the_run_store_example_needs_no_extra(base_venv, tmp_path):
+    """llm_kit.runs is standard library only: its example runs with no extra installed."""
+    script = tmp_path / "record_runs.py"
+    shutil.copy(EXAMPLES / "record_runs.py", script)
+    home = tmp_path / "home"
+    home.mkdir()
+    proc = subprocess.run([str(support.venv_python(base_venv)), "-I", str(script)], capture_output=True,
+                          text=True, env=support.child_env(base_venv, home), cwd=tmp_path, timeout=120)
+    assert proc.returncode == 0, proc.stderr[-400:]
+    assert "refused as expected (policy)" in proc.stdout

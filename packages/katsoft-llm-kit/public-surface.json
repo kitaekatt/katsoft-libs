@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0. The agent-session pieces (llm_kit.completion.session_types, llm_kit.adapters.claude_stream, llm_kit.adapters.claude_session, llm_kit.jobs.session, llm_kit.storage.file_lock), the jobs runner (llm_kit.jobs.run), and the branch-mode unit registry and workspaces (llm_kit.jobs.units, llm_kit.jobs.workspace) are listed whole from 1.26.0.",
+  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0. The agent-session pieces (llm_kit.completion.session_types, llm_kit.adapters.claude_stream, llm_kit.adapters.claude_session, llm_kit.jobs.session, llm_kit.storage.file_lock) and the jobs runner (llm_kit.jobs.run) are listed whole from 1.26.0. The run records, run store, derived index and runs CLI (llm_kit.runs, llm_kit.runs.record, llm_kit.runs.store, llm_kit.runs.index, llm_kit.cli.runs) are listed whole from 1.26.0. The branch-mode unit registry and workspaces (llm_kit.jobs.units, llm_kit.jobs.workspace) are listed whole and are not yet released.",
   "package": "llm_kit",
   "current_version_file": ".claude-plugin/plugin.json",
   "covers": [
@@ -18,7 +18,12 @@
     "llm_kit.storage.file_lock",
     "llm_kit.jobs.run",
     "llm_kit.jobs.units",
-    "llm_kit.jobs.workspace"
+    "llm_kit.jobs.workspace",
+    "llm_kit.runs",
+    "llm_kit.runs.record",
+    "llm_kit.runs.store",
+    "llm_kit.runs.index",
+    "llm_kit.cli.runs"
   ],
   "entries": [
     {
@@ -2692,6 +2697,18 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.schema.formats.RUN_RECORD_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.RUN_STORE_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.RUN_IMPORT_V1",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.schema.formats.SCHEMA_FILES",
       "status": "public"
     },
@@ -3573,6 +3590,214 @@
     },
     {
       "name": "llm_kit.jobs.workspace.gc_workspaces",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.CONTENT_CLASSES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.INDEX_COLUMNS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.INDEX_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.INDEX_VERSION",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.PutResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.RECORD_STATUSES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.RESULT_STATUSES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.REUSE_KEY_VERSION",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.RUN_IMPORT_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.RUN_RECORD_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.RUN_STORE_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.RunIndex",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.RunRecordError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.RunRecordStore",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.RunStoreError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.STORE_ENV",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.blob_ref",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.blob_refs",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.finish_record",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.import_file",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.read_import_file",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.resolve_store_path",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.reuse_key",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.start_record",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.validate_record",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.CONTENT_CLASSES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.RECORD_STATUSES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.RESULT_STATUSES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.REUSE_KEY_VERSION",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.RUN_RECORD_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.RunRecordError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.blob_ref",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.blob_refs",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.finish_record",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.reuse_key",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.start_record",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.record.validate_record",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.store.INDEX_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.store.PutResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.store.RUN_IMPORT_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.store.RUN_STORE_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.store.RunRecordStore",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.store.RunStoreError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.store.STORE_ENV",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.store.import_file",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.store.read_import_file",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.store.resolve_store_path",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.index.INDEX_COLUMNS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.index.INDEX_VERSION",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.index.RunIndex",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.cli.runs.VERBS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.cli.runs.run",
       "status": "public"
     }
   ]

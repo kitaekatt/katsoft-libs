@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.run-import/v1",
+  "title": "llm-kit run import line, version 1",
+  "description": "One line of a run import file (JSON Lines, UTF-8): one record event and the blobs it brings. Each key of blobs is a blob reference blob:<64 lowercase hex>, and its value is the bytes as text (UTF-8) or base64; the SHA-256 of those bytes equals the reference (reader rule). The record is validated as llm-kit.run-record/v1. Written in llm-scripting-kit.json-schema-subset/v1. Contract: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "format": {
+      "const": "llm-kit.run-import/v1"
+    },
+    "record": {
+      "type": "object"
+    },
+    "blobs": {
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "base64": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "base64"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "format",
+    "record",
+    "blobs"
+  ],
+  "additionalProperties": false
+}
