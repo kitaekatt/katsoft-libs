@@ -432,7 +432,7 @@ def test_an_agent_record_needs_its_identity_and_a_completion_record_has_none(
 # --------------------------------------------------------------------------
 
 
-def test_only_the_explicit_completion_default_is_accepted_as_a_session_option(
+def test_the_explicit_completion_default_is_accepted_as_a_session_option(
     tmp_path: Path,
 ) -> None:
     job = _job(tmp_path, "j", options={"session": "completion"})
@@ -453,12 +453,13 @@ def test_only_the_explicit_completion_default_is_accepted_as_a_session_option(
         {"session": "agent", "session_finalize_s": 7},
     ],
 )
-def test_jobs_run_refuses_agent_session_options_until_it_acts_on_them(
+def test_agent_session_options_are_accepted_and_round_trip(
     tmp_path: Path, options: dict[str, object]
 ) -> None:
-    """Remove ``_refuse_agent_sessions`` and an agent job would run as a completion."""
-    with pytest.raises(ValueError, match="`jobs run` does not support yet"):
-        _job(tmp_path, "j", options=options)
+    """``jobs run`` acts on agent-session options (L1d), so the model accepts them."""
+    job = _job(tmp_path, "j", options=options)
+    assert dict(job.options) == options
+    assert Job.from_mapping(job.to_mapping(), base_dir=tmp_path).options == job.options
 
 
 @pytest.mark.parametrize("key", sorted(SESSION_OPTION_KEYS))

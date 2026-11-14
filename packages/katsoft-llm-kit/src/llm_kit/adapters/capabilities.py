@@ -516,6 +516,102 @@ CLAUDE_CAPABILITIES = Capabilities(
     ),
 )
 
+# -- claude-cli agent session ----------------------------------------------
+#
+# ClaudeAgentSession (adapters/claude_session.py) runs the same CLI as a
+# stream-json agent session: ``claude -p --input-format stream-json
+# --output-format stream-json --verbose --model <m> <system flag> <system>
+# --permission-mode bypassPermissions [--allowedTools <a>] [--disallowedTools
+# <d>] [--effort <e>] [--json-schema <s>] (--session-id <id> | --resume <id>)``.
+# It keeps the session (no --no-session-persistence), has no text-only mode,
+# emits --allowedTools only when the caller names tools, and defaults
+# system_prompt_mode to append. Same adapter name as the completion record: it
+# is the same CLI, selected per job by the ``session: agent`` job option, and
+# jobs selection matches an agent job against THIS record instead.
+
+_CLAUDE_AGENT_PARAMS = {
+    key: value for key, value in _CLAUDE_PARAMS.items() if key != TEXT_ONLY_PARAMETER
+}
+_CLAUDE_AGENT_PARAMS["timeout_s"] = ParamCapability(
+    type="number",
+    emits="session activity deadline",
+    note=(
+        "the attempt timeout: session activity and every quiescence window run "
+        "inside it; the bounded shutdown runs after it"
+    ),
+)
+_CLAUDE_AGENT_PARAMS["allowed_tools"] = ParamCapability(
+    type="string",
+    emits="--allowedTools",
+    note="emitted ONLY when not None; an agent session with no allow-list keeps every tool",
+)
+_CLAUDE_AGENT_PARAMS["system_prompt_mode"] = ParamCapability(
+    type="string",
+    default="append",
+    values=tuple(sorted(_CLAUDE_SYSTEM_PROMPT_FLAGS)),
+    emits="--system-prompt | --append-system-prompt",
+    note="append is the agent-session default; the session keeps Claude Code's own prompt",
+)
+
+CLAUDE_AGENT_CAPABILITIES = Capabilities(
+    adapter=ADAPTER_CLAUDE_CLI,
+    params=_CLAUDE_AGENT_PARAMS,
+    dropped_params=_dropped(_CLAUDE_AGENT_PARAMS),
+    execution_controls=(
+        ExecutionControl(
+            id="allowed-tools",
+            emits="--allowedTools",
+            effect=ALLOW,
+            source=REQUEST,
+            parameter="allowed_tools",
+            note="emitted only when the caller sets the param",
+        ),
+        ExecutionControl(
+            id="disallowed-tools",
+            emits="--disallowedTools",
+            effect=DENY,
+            subjects=(FILESYSTEM_WRITE, SHELL_EXEC, SUBAGENT_SPAWN),
+            source=REQUEST,
+            parameter="disallowed_tools",
+            note=(
+                "emitted only when the caller sets the param; the record claims "
+                "the emission, not that the CLI honors the deny"
+            ),
+        ),
+        ExecutionControl(
+            id="permission-bypass",
+            emits="--permission-mode bypassPermissions",
+            effect=BYPASS,
+            source=FIXED,
+            note="every agent session; its init event must report it",
+        ),
+    ),
+    structured_output=StructuredOutputCapability(
+        mode=NONE,
+        result=TEXT_RESULT,
+        note=(
+            "--output-format stream-json is the event transport; the last "
+            "result event carries the answer"
+        ),
+        policies=(POLICY_NATIVE_REQUIRED, POLICY_VALIDATED_RESULT, POLICY_TEXT_ONLY),
+        contract_delivery=DELIVERY_NATIVE,
+        contract_emits=_CLAUDE_CONTRACT_EMITS,
+        contract_schema_class=SCHEMA_CLASS_SUBSET,
+    ),
+    system_prompt=SystemPromptCapability(
+        mode=APPEND,
+        emits="--append-system-prompt",
+        modes=(REPLACE, APPEND),
+        parameter="system_prompt_mode",
+        emits_by_mode={
+            REPLACE: "--system-prompt",
+            APPEND: "--append-system-prompt",
+        },
+        note="APPEND is the agent-session default",
+    ),
+    call_modes=(MODE_COMPLETION, MODE_WORKSPACE),
+)
+
 # -- codex-cli -------------------------------------------------------------
 #
 # CodexCliBackend delegates argv construction to codex_command, a SEPARATE
@@ -986,6 +1082,7 @@ __all__ = [
     "adapter_capabilities",
     "OPENAI_COMPAT_CAPABILITIES",
     "CLAUDE_CAPABILITIES",
+    "CLAUDE_AGENT_CAPABILITIES",
     "CODEX_CAPABILITIES",
     "OPENCODE_CAPABILITIES",
     "_CLAUDE_SYSTEM_PROMPT_FLAGS",

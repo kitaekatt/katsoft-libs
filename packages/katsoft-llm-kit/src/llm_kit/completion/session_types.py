@@ -33,7 +33,7 @@ import hashlib
 import math
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Mapping, Optional, Protocol, Sequence, runtime_checkable
@@ -691,24 +691,74 @@ class ProcessIdentity:
 
 
 @dataclass(frozen=True)
+class DetachedSurvivor:
+    """A detached tagged process still alive when its session's shutdown ended.
+
+    DETACHED (design 5.5, as ruled for L1d): the process carries the session's
+    :data:`SESSION_TAG_ENV` tag, was created after the leader, was never
+    recorded as an attached member, and is outside the leader's original
+    POSIX session (``getsid`` differs). A different process group alone is
+    not detachment. A detached process is never signalled: it is typically a
+    hook daemon that left the session on purpose. It may still write the
+    workspace or the repository, so while it lives the workspace is not
+    quiescent and finalization, reuse, merge and reaping are blocked
+    (:class:`SessionWorkspaceHook`).
+
+    JSON shape (an entry of ``cleanup.json``'s ``detached_survivors``):
+    ``{"pid", "create_time", "cwd": str|null}``.
+
+    - ``identity``: ``(pid, create_time)``; a later re-check by identity is the
+      only way to resolve the survivor.
+    - ``cwd``: its working directory when it could be read, else ``None``. It
+      is evidence only: a cwd outside the worktree grants nothing, since a
+      process can write by absolute path, through an open descriptor, or after
+      a later ``chdir``.
+
+    Invariant: ``cwd``, when set, is an absolute path string.
+    """
+
+    identity: ProcessIdentity
+    cwd: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.identity, ProcessIdentity):
+            raise ValueError("identity must be a ProcessIdentity")
+        if self.cwd is not None:
+            _nonempty_str("cwd", self.cwd)
+            if not Path(self.cwd).is_absolute():
+                raise ValueError(f"cwd must be absolute, got {self.cwd!r}")
+
+
+@dataclass(frozen=True)
 class CleanupRecord:
     """``cleanup.json``: what a later sweep needs to stop this session's processes.
 
     JSON shape: ``{"schema": 1, "tag": str, "leader": {"pid", "create_time"},
     "process_group": int|null, "members": [{"pid", "create_time"}, ...],
-    "started_at": str, "updated_at": str, "confirmed_stopped_at": str|null}``.
+    "started_at": str, "updated_at": str, "confirmed_stopped_at": str|null,
+    "detached_survivors": [{"pid", "create_time", "cwd"}, ...]}``.
 
     - ``tag``: the value of :data:`SESSION_TAG_ENV` in the child; equal to
       ``SessionRecord.process_tag``, which is written BEFORE the spawn, so a
       crash between spawn and the first cleanup record still leaves the tag.
     - ``leader``: the Claude process. ``process_group``: its POSIX process
       group (``start_new_session=True``), ``None`` on Windows.
-    - ``members``: every descendant identity observed so far, leader excluded.
-    - ``confirmed_stopped_at``: set once the leader and every member were
-      confirmed gone by identity. ``SessionOutcome.shutdown_confirmed`` reports
-      the conclusion; this record is the evidence a later sweep re-checks.
+    - ``members``: every ATTACHED identity observed so far, leader excluded: a
+      descendant seen inside the leader's original session, or a process in
+      that session. A member stays attached (and is signalled at shutdown)
+      even if it later calls ``setsid()``.
+    - ``confirmed_stopped_at``: set once the leader and every attached member
+      were confirmed gone by identity and stdout was drained.
+      ``SessionOutcome.shutdown_confirmed`` reports the conclusion; this
+      record is the evidence a later sweep re-checks.
+    - ``detached_survivors``: :class:`DetachedSurvivor` entries for detached
+      tagged processes still alive after the shutdown waited B_int for them;
+      written once at the end of the shutdown. They were never signalled. A
+      non-empty list blocks workspace finalization, reuse, merge and reaping
+      until each identity is re-checked gone.
 
-    Invariants: no duplicate member; the leader is not a member; successive
+    Invariants: no duplicate member or survivor; the leader is neither; no
+    survivor is a member (attached and detached are disjoint); successive
     writes for one attempt keep ``tag``, ``leader``, ``process_group`` and
     ``started_at``, and ``members`` only grows (the writer refuses otherwise).
     The session backend writes the first record immediately after spawn and a
@@ -722,6 +772,7 @@ class CleanupRecord:
     members: tuple[ProcessIdentity, ...] = ()
     process_group: Optional[int] = None
     confirmed_stopped_at: Optional[str] = None
+    detached_survivors: tuple[DetachedSurvivor, ...] = ()
 
     def __post_init__(self) -> None:
         check_process_tag(self.tag)
@@ -741,6 +792,17 @@ class CleanupRecord:
             _positive_int("process_group", self.process_group)
         if self.confirmed_stopped_at is not None:
             _nonempty_str("confirmed_stopped_at", self.confirmed_stopped_at)
+        survivors = tuple(self.detached_survivors)
+        if not all(isinstance(item, DetachedSurvivor) for item in survivors):
+            raise ValueError("detached_survivors must be DetachedSurvivor values")
+        identities = [item.identity for item in survivors]
+        if len(set(identities)) != len(identities):
+            raise ValueError("detached_survivors must not repeat")
+        if self.leader in identities:
+            raise ValueError("the leader is not a detached survivor")
+        if set(identities) & set(members):
+            raise ValueError("an attached member is never a detached survivor")
+        object.__setattr__(self, "detached_survivors", survivors)
 
 
 @runtime_checkable
@@ -1027,10 +1089,16 @@ class SessionOutcome:
     - ``stop_kind``: why the process was shut down.
     - ``result_subtype``: the chosen result's ``subtype``
       (``success``, ``error_during_execution``, ...).
-    - ``shutdown_confirmed``: the process and every owned writer were
-      confirmed stopped (leader exit alone is not enough, design 5.5). The
-      evidence is ``cleanup.json``, not this flag.
+    - ``shutdown_confirmed``: SESSION SHUTDOWN: stdout was drained and the
+      leader and every ATTACHED member are confirmed gone by identity (leader
+      exit alone is not enough, design 5.5). It says nothing about detached
+      processes. The evidence is ``cleanup.json``, not this flag.
     - ``failure``: :class:`SessionFailure`, or ``None`` for a clean success.
+    - ``detached_survivors``: detached tagged processes still alive at the end
+      of the shutdown (:class:`DetachedSurvivor`), never signalled; a required
+      keyword, so a backend states it. Empty when none survived.
+    - :attr:`workspace_quiescent` (derived): WORKSPACE WRITER QUIESCENCE, the
+      shutdown is confirmed and no detached survivor remains.
 
     Invariants: ``result_subtype`` is set exactly when ``response`` is;
     ``quiescent`` implies a response; ``init_mismatch`` stop implies no
@@ -1039,7 +1107,10 @@ class SessionOutcome:
     outcome without a response has a failure unless an operator stopped it.
     A caller must not run the contract, accept, or commit the worktree for an
     outcome with ``shutdown_confirmed`` false; it keeps unit ownership
-    instead.
+    instead. An outcome with the shutdown confirmed but not
+    ``workspace_quiescent`` is NOT a failure: its result and contract proceed
+    normally, while workspace finalization, reuse, merge and reaping stay
+    blocked until the survivors are gone (:class:`SessionWorkspaceHook`).
     """
 
     response: Optional[LLMResponse]
@@ -1049,6 +1120,12 @@ class SessionOutcome:
     result_subtype: Optional[str]
     shutdown_confirmed: bool
     failure: Optional[SessionFailure] = None
+    detached_survivors: tuple[DetachedSurvivor, ...] = field(kw_only=True)
+
+    @property
+    def workspace_quiescent(self) -> bool:
+        """The shutdown is confirmed and no detached survivor remains."""
+        return self.shutdown_confirmed and not self.detached_survivors
 
     def __post_init__(self) -> None:
         if self.response is not None and not isinstance(self.response, LLMResponse):
@@ -1066,6 +1143,12 @@ class SessionOutcome:
             _nonempty_str("result_subtype", self.result_subtype)
         if not isinstance(self.shutdown_confirmed, bool):
             raise ValueError("shutdown_confirmed must be a boolean")
+        survivors = tuple(self.detached_survivors)
+        if not all(isinstance(item, DetachedSurvivor) for item in survivors):
+            raise ValueError("detached_survivors must be DetachedSurvivor values")
+        if len({item.identity for item in survivors}) != len(survivors):
+            raise ValueError("detached_survivors must not repeat")
+        object.__setattr__(self, "detached_survivors", survivors)
         failure = self.failure
         if failure is not None and not isinstance(failure, SessionFailure):
             raise ValueError("failure must be a SessionFailure or None")
@@ -1109,8 +1192,9 @@ class WorkspaceFinalizeStatus(str, Enum):
 
     - ``clean``: nothing was left to commit.
     - ``committed``: remaining changes were committed to the unit branch.
-    - ``dirty_held``: the commit failed or writers were not confirmed
-      stopped; the worktree is held for a human.
+    - ``dirty_held``: the commit failed, the shutdown was not confirmed, or
+      detached survivors remain; the worktree is held (for a human, or until
+      the survivors are re-checked gone).
     - ``not_applicable``: the workspace is not a branch-mode unit.
     """
 
@@ -1156,8 +1240,17 @@ class SessionWorkspaceHook(Protocol):
     - ``run_id`` / ``job_id``: the ledger identity.
     - ``working_directory``: the worktree root of the unit (not the
       repository subdirectory).
-    - ``writers_stopped``: every owned writer was confirmed stopped. When
-      false the hook must not commit; it returns ``dirty_held``.
+    - ``writers_stopped``: workspace writer quiescence over the job's
+      attempts: every shutdown was confirmed AND no detached survivor remains
+      (:attr:`SessionOutcome.workspace_quiescent`). When false the hook must
+      not commit; it returns ``dirty_held``.
+    - ``detached_survivors``: the detached tagged processes still alive at the
+      end of any attempt's shutdown, never signalled (also in that attempt's
+      ``cleanup.json``). While any is alive, finalization, reuse, merge and
+      reaping of the workspace are BLOCKED: the hook resolves them only by
+      re-checking each identity later and finding it gone (item 2's branch
+      mode does that deferred finalization). Empty when none survived; a
+      non-empty list implies ``writers_stopped`` false.
     - ``final_state``: the job's ``JobState`` value when the run ended, or
       ``None`` when the job is not terminal.
     - ``stop_kind``: the last attempt's :class:`StopKind`, ``None`` for a
@@ -1174,6 +1267,7 @@ class SessionWorkspaceHook(Protocol):
         job_id: str,
         working_directory: Path,
         writers_stopped: bool,
+        detached_survivors: Sequence[DetachedSurvivor],
         final_state: Optional[str],
         stop_kind: Optional[StopKind],
     ) -> WorkspaceFinalizeResult:
@@ -1432,6 +1526,7 @@ __all__ = [
     "DEFAULT_RESULT_WAIT_S",
     "DEFAULT_SIGINT_WAIT_S",
     "DEFAULT_SYSTEM_PROMPT_MODE",
+    "DetachedSurvivor",
     "encode_job_id",
     "EVENT_LINE_SCHEMA_FILE",
     "EVENTS_FILE",

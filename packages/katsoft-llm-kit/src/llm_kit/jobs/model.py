@@ -122,26 +122,6 @@ def _split_command(value: str) -> tuple[str, ...]:
     return tuple(shlex.split(value, posix=os.name != "nt"))
 
 
-def _refuse_agent_sessions(options: Mapping[str, object]) -> None:
-    """Refuse every session option except the explicit default ``session: completion``.
-
-    ``jobs run`` does not yet start agent sessions: nothing on the run path
-    reads these options, so accepting them would run an agent-session job
-    silently as a completion. The wiring that makes ``jobs run`` act on them
-    removes this function and its call in :func:`_normalize_job_options`.
-    """
-    given = sorted(
-        key
-        for key in SESSION_OPTION_KEYS
-        if key in options and not (key == "session" and options[key] == "completion")
-    )
-    if given:
-        raise ValueError(
-            f"job options {given} need agent sessions, which `jobs run` does not "
-            "support yet; only session: completion is accepted"
-        )
-
-
 def _normalize_job_options(value: object) -> dict[str, object]:
     """Validate and copy a job's completion options mapping."""
     if value is None:
@@ -195,7 +175,6 @@ def _normalize_job_options(value: object) -> dict[str, object]:
     # Validates the session keys (mode, resume id, bounds) and refuses a bound
     # or resume id given outside agent mode; other keys are ignored.
     SessionOptions.from_job_options(options)
-    _refuse_agent_sessions(options)
     return options
 
 

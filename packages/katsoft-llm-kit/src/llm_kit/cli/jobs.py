@@ -85,6 +85,7 @@ def _parser() -> argparse.ArgumentParser:
         type=_run_id_argument,
         help="preassign the run id (letters, digits, . _ -) so a caller can resume it later",
     )
+    _add_session_arguments(run)
 
     status = subcommands.add_parser("status", help="show a durable run")
     status.add_argument("run")
@@ -99,6 +100,7 @@ def _parser() -> argparse.ArgumentParser:
         type=_max_parallel_argument,
         help="pool width for this pass only; the ledger's recorded value is not rewritten",
     )
+    _add_session_arguments(resume)
 
     resolve = subcommands.add_parser(
         "resolve",
@@ -174,6 +176,42 @@ def _parser() -> argparse.ArgumentParser:
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
+def _add_session_arguments(parser: argparse.ArgumentParser) -> None:
+    """The two inputs a run with a ``session: agent`` job requires."""
+    parser.add_argument(
+        "--session-root",
+        type=Path,
+        help=(
+            "directory for agent-session attempts (events.jsonl, mailbox, session "
+            "records); required when any job declares session: agent"
+        ),
+    )
+    parser.add_argument(
+        "--supervisor-budget",
+        type=_seconds_argument,
+        help=(
+            "the supervisor's run-wide deadline in seconds (its timeout_s); required "
+            "when any job declares session: agent, and checked against the run's worst case"
+        ),
+    )
+
+
+def _seconds_argument(value: str) -> float:
+    """Validate a positive, finite number of seconds."""
+    try:
+        seconds = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not a number of seconds: {value!r}") from exc
+    if not seconds > 0 or seconds == float("inf"):
+        raise argparse.ArgumentTypeError("seconds must be positive and finite")
+    return seconds
+
+
+def _session_root(value: Optional[Path]) -> Optional[Path]:
+    """An explicit session root as an absolute path."""
+    return value.expanduser().resolve() if value is not None else None
+
+
 def _run_id_argument(value: str) -> str:
     """Validate a caller-preassigned run id."""
     if not _RUN_ID_PATTERN.match(value):
@@ -233,6 +271,8 @@ def _run(args: argparse.Namespace) -> int:
         run_id=args.run_id,
         max_parallel=args.max_parallel,
         backend_factory=configured_factory(),
+        session_root=_session_root(args.session_root),
+        supervisor_budget_s=args.supervisor_budget,
     )
     store_path = (
         args.store.expanduser().resolve()
@@ -280,6 +320,8 @@ def _resume(args: argparse.Namespace) -> int:
         timeout_s=args.timeout,
         max_parallel=args.max_parallel,
         backend_factory=configured_factory(),
+        session_root=_session_root(args.session_root),
+        supervisor_budget_s=args.supervisor_budget,
     )
     _emit(snapshot, store_path)
     return _exit_for_snapshot(snapshot)

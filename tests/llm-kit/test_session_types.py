@@ -256,29 +256,60 @@ def _failure(kind, **extra):
     return st.SessionFailure(kind, "detail", **extra)
 
 
+def _outcome(*args, survivors=()):
+    return st.SessionOutcome(*args, detached_survivors=survivors)
+
+
 def test_session_outcome_invariants():
     response = LLMResponse(text="done", model="opus")
-    st.SessionOutcome(response, SID, ROOT, "quiescent", "success", True)
-    st.SessionOutcome(None, SID, ROOT, "process_exit", None, False, _failure("nonzero_exit", exit_code=1))
-    st.SessionOutcome(None, SID, ROOT, "operator_stop", None, True)  # an operator stop needs no failure
-    st.SessionOutcome(None, SID, ROOT, "init_mismatch", None, True,
+    _outcome(response, SID, ROOT, "quiescent", "success", True)
+    _outcome(None, SID, ROOT, "process_exit", None, False, _failure("nonzero_exit", exit_code=1))
+    _outcome(None, SID, ROOT, "operator_stop", None, True)  # an operator stop needs no failure
+    _outcome(None, SID, ROOT, "init_mismatch", None, True,
                       _failure("init_mismatch", observed_session_id="", observed_cwd="relative"))
     with pytest.raises(ValueError, match="exactly when"):
-        st.SessionOutcome(response, SID, ROOT, "quiescent", None, True)
+        _outcome(response, SID, ROOT, "quiescent", None, True)
     with pytest.raises(ValueError, match="quiescent"):
-        st.SessionOutcome(None, SID, ROOT, "quiescent", None, True)
+        _outcome(None, SID, ROOT, "quiescent", None, True)
     with pytest.raises(ValueError, match="carries no response"):
-        st.SessionOutcome(response, SID, ROOT, "init_mismatch", "success", True, _failure("init_mismatch"))
+        _outcome(response, SID, ROOT, "init_mismatch", "success", True, _failure("init_mismatch"))
     with pytest.raises(ValueError, match="go together"):
-        st.SessionOutcome(None, SID, ROOT, "init_mismatch", None, True, _failure("no_init"))
+        _outcome(None, SID, ROOT, "init_mismatch", None, True, _failure("no_init"))
     with pytest.raises(ValueError, match="go together"):
-        st.SessionOutcome(None, SID, ROOT, "process_exit", None, True, _failure("init_mismatch"))
+        _outcome(None, SID, ROOT, "process_exit", None, True, _failure("init_mismatch"))
     with pytest.raises(ValueError, match="timeout failure"):
-        st.SessionOutcome(response, SID, ROOT, "timeout", "success", True)
+        _outcome(response, SID, ROOT, "timeout", "success", True)
     with pytest.raises(ValueError, match="requires a failure"):
-        st.SessionOutcome(None, SID, ROOT, "process_exit", None, True)
+        _outcome(None, SID, ROOT, "process_exit", None, True)
     with pytest.raises(ValueError, match="UUID"):
-        st.SessionOutcome(None, "", ROOT, "operator_stop", None, True)
+        _outcome(None, "", ROOT, "operator_stop", None, True)
+
+
+def test_session_outcome_requires_detached_survivors_and_derives_quiescence():
+    response = LLMResponse(text="done", model="opus")
+    with pytest.raises(TypeError, match="detached_survivors"):
+        st.SessionOutcome(response, SID, ROOT, "quiescent", "success", True)  # a backend must state it
+    survivor = st.DetachedSurvivor(st.ProcessIdentity(200, 1.7e9 + 5), "/work/tree")
+    clean = _outcome(response, SID, ROOT, "quiescent", "success", True)
+    assert clean.workspace_quiescent is True
+    detached = _outcome(response, SID, ROOT, "quiescent", "success", True, survivors=[survivor])
+    assert detached.detached_survivors == (survivor,)
+    assert detached.shutdown_confirmed is True and detached.workspace_quiescent is False
+    assert _outcome(response, SID, ROOT, "quiescent", "success", False).workspace_quiescent is False
+    with pytest.raises(ValueError, match="repeat"):
+        _outcome(response, SID, ROOT, "quiescent", "success", True, survivors=(survivor, survivor))
+    with pytest.raises(ValueError, match="DetachedSurvivor"):
+        _outcome(response, SID, ROOT, "quiescent", "success", True, survivors=(survivor.identity,))
+
+
+def test_detached_survivor_validation():
+    identity = st.ProcessIdentity(200, 1.7e9 + 5)
+    assert st.DetachedSurvivor(identity).cwd is None
+    with pytest.raises(ValueError, match="absolute"):
+        st.DetachedSurvivor(identity, "relative/dir")
+    with pytest.raises(ValueError, match="identity"):
+        st.DetachedSurvivor((200, 1.7e9), "/x")
+
 
 
 def test_session_failure_validation():
@@ -322,6 +353,15 @@ def test_cleanup_record_validation():
         st.CleanupRecord("x", leader, "t0", "t1")
     with pytest.raises(ValueError, match="process_group"):
         st.CleanupRecord(TAG, leader, "t0", "t1", process_group=0)
+    survivor = st.DetachedSurvivor(st.ProcessIdentity(102, 1.7e9 + 2), None)
+    record = st.CleanupRecord(TAG, leader, "t0", "t1", members=[child], detached_survivors=[survivor])
+    assert record.detached_survivors == (survivor,)
+    with pytest.raises(ValueError, match="never a detached survivor"):
+        st.CleanupRecord(TAG, leader, "t0", "t1", members=[child], detached_survivors=[st.DetachedSurvivor(child)])
+    with pytest.raises(ValueError, match="leader is not a detached survivor"):
+        st.CleanupRecord(TAG, leader, "t0", "t1", detached_survivors=[st.DetachedSurvivor(leader)])
+    with pytest.raises(ValueError, match="repeat"):
+        st.CleanupRecord(TAG, leader, "t0", "t1", detached_survivors=[survivor, survivor])
 
 
 @pytest.mark.parametrize("pid, created", [(0, 1.0), (True, 1.0), (5, 0), (5, math.nan), (5, "1")])

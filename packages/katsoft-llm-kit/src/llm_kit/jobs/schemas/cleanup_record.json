@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "llm-kit-session/1/cleanup_record.json",
   "title": "cleanup_record",
-  "description": "cleanup.json in an agent-session attempt directory (llm_kit.completion.session_types.CleanupRecord): the identity evidence for stopping the session's processes after a crash. Successive writes keep tag, leader, process_group and started_at, and members only grow.",
+  "description": "cleanup.json in an agent-session attempt directory (llm_kit.completion.session_types.CleanupRecord): the identity evidence for stopping the session's processes after a crash. Successive writes keep tag, leader, process_group and started_at, and members only grow. members are attached processes (signalled at shutdown); detached_survivors are detached tagged processes still alive when the shutdown ended, never signalled and disjoint from members; while any is alive the workspace is not quiescent.",
   "type": "object",
-  "required": ["schema", "tag", "leader", "process_group", "members", "started_at", "updated_at", "confirmed_stopped_at"],
+  "required": ["schema", "tag", "leader", "process_group", "members", "started_at", "updated_at", "confirmed_stopped_at", "detached_survivors"],
   "additionalProperties": false,
   "properties": {
     "schema": { "const": 1 },
@@ -14,7 +14,8 @@
     "members": { "type": "array", "items": { "$ref": "#/$defs/process_identity" } },
     "started_at": { "type": "string", "minLength": 1 },
     "updated_at": { "type": "string", "minLength": 1 },
-    "confirmed_stopped_at": { "type": ["string", "null"] }
+    "confirmed_stopped_at": { "type": ["string", "null"] },
+    "detached_survivors": { "type": "array", "items": { "$ref": "#/$defs/detached_survivor" } }
   },
   "$defs": {
     "process_identity": {
@@ -25,9 +26,19 @@
         "pid": { "type": "integer", "minimum": 1 },
         "create_time": { "type": "number", "exclusiveMinimum": 0 }
       }
+    },
+    "detached_survivor": {
+      "type": "object",
+      "required": ["pid", "create_time", "cwd"],
+      "additionalProperties": false,
+      "properties": {
+        "pid": { "type": "integer", "minimum": 1 },
+        "create_time": { "type": "number", "exclusiveMinimum": 0 },
+        "cwd": { "type": ["string", "null"], "minLength": 1 }
+      }
     }
   },
   "examples": [
-    { "schema": 1, "tag": "lst_0123456789abcdef", "leader": { "pid": 4242, "create_time": 1794000000.5 }, "process_group": 4242, "members": [{ "pid": 4300, "create_time": 1794000001.25 }], "started_at": "2026-11-14T10:00:01.000000+00:00", "updated_at": "2026-11-14T10:00:02.000000+00:00", "confirmed_stopped_at": null }
+    { "schema": 1, "tag": "lst_0123456789abcdef", "leader": { "pid": 4242, "create_time": 1794000000.5 }, "process_group": 4242, "members": [{ "pid": 4300, "create_time": 1794000001.25 }], "started_at": "2026-11-14T10:00:01.000000+00:00", "updated_at": "2026-11-14T10:00:02.000000+00:00", "confirmed_stopped_at": null, "detached_survivors": [{ "pid": 4410, "create_time": 1794000003.75, "cwd": "/home/user/project" }] }
   ]
 }

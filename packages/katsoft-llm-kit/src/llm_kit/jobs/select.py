@@ -16,7 +16,13 @@ from llm_kit.dispatch.declaration import (
     describe as _describe,
 )
 from llm_kit.dispatch.endpoint_resolver import EndpointResolver
-from llm_kit.dispatch.factory import BackendSelection
+from llm_kit.completion.session_types import AgentSessionBackend
+from llm_kit.dispatch.factory import (
+    AgentSessionUnsupportedError,
+    BackendSelection,
+    agent_session_capabilities,
+    create_agent_session,
+)
 from llm_kit.dispatch.pipeline_backends import ConfiguredBackendFactory
 
 from .model import Job
@@ -367,6 +373,62 @@ def select_endpoint(
     return selection
 
 
+def session_capabilities() -> dict[str, Capabilities]:
+    """The capability table an agent-session job is selected and armed against.
+
+    Exactly one record: the agent session's (adapter ``claude-cli``,
+    :func:`llm_kit.dispatch.factory.agent_session_capabilities`). Every other
+    adapter is absent, so a non-Claude entry fails selection's "an
+    advertisement exists" requirement and is skipped, and a requirement only a
+    completion can meet (``no-session-persistence``, text-only mode) is not
+    matched.
+    """
+    record = agent_session_capabilities()
+    return {record.adapter: record}
+
+
+def select_session_endpoint_with_readings(
+    job: Job,
+    *,
+    halted_endpoints: Collection[str] = (),
+    capabilities: Optional[Mapping[str, Capabilities]] = None,
+    capabilities_provider: Optional[CapabilitiesProvider] = None,
+    backend_factory: Optional[JobBackendFactory] = None,
+    project_root: Optional[str | Path] = None,
+    reachability_cache: Optional[dict] = None,
+) -> tuple[BackendSelection, AgentSessionBackend, tuple[PaceReading, ...]]:
+    """Session admission: select a Claude entry an agent session can run on.
+
+    Called before any reservation for a job with ``session: agent``.
+    Selection is :func:`select_endpoint_with_readings` over ``capabilities``
+    (default :func:`session_capabilities`); the chosen entry's backend is then
+    turned into the session backend by
+    :func:`llm_kit.dispatch.factory.create_agent_session`. An entry it refuses
+    (not the Claude CLI) is excluded and selection runs again, so the result is
+    the first usable COMPATIBLE entry in pace order; the job never runs as a
+    completion. Returns ``(selection, session backend, pace readings)``.
+    Raises :class:`NoCompatibleEndpointError` when no compatible entry remains.
+    """
+    table = dict(capabilities) if capabilities is not None else session_capabilities()
+    excluded = set(halted_endpoints)
+    while True:
+        selection, readings = select_endpoint_with_readings(
+            job,
+            halted_endpoints=frozenset(excluded),
+            capabilities=table,
+            capabilities_provider=capabilities_provider,
+            backend_factory=backend_factory,
+            project_root=project_root,
+            reachability_cache=reachability_cache,
+        )
+        try:
+            return selection, create_agent_session(selection), readings
+        except AgentSessionUnsupportedError:
+            if selection.endpoint in excluded:  # pragma: no cover - describe honors exclude
+                raise
+            excluded.add(selection.endpoint)
+
+
 def choose_endpoint(
     job: Job,
     *,
@@ -395,5 +457,7 @@ __all__ = [
     "requirements_match",
     "select_endpoint",
     "select_endpoint_with_readings",
+    "select_session_endpoint_with_readings",
+    "session_capabilities",
     "choose_endpoint",
 ]

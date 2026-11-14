@@ -760,48 +760,15 @@ class ClaudeCliBackend:
         # accepted for protocol compatibility and ignored. Tests stub this
         # backend via ``runner=`` (and optionally ``executable=``).
         opts = options or BackendOptions()
-        # Before argv is built or the runner invoked: a contract this record
-        # does not list is refused here, with nothing spawned.
-        contract_plan = prepare_contract(self.capabilities, opts)
-        # Skill context is refused here, before argv or the runner: this
-        # record carries no skill_context block (the harness loads skills
-        # itself), so prepare_skill_context raises for any skill context.
-        if prepare_skill_context(self.capabilities, opts) is not None:
-            raise SkillContextUnsatisfiable(
-                f"{self.name} has no skill-context delivery path; nothing was dispatched"
-            )
-        if contract_plan is not None and contract_plan.instruction is not None:
-            # Prompt delivery: the exact render_schema_instruction text is
-            # appended to the system prompt sent through the system-prompt
-            # flag. The answer is judged at the seam by finalize_contract.
-            system = system + contract_plan.instruction
-        # The effort is held to the exact model's measured menu here, before argv
-        # or the runner -- the validator both Codex paths use. A model with no
-        # measured profile (a CLI alias such as ``opus``) keeps the harness-wide
-        # menu, which is what ``claude --effort`` lists.
-        check_effort(
-            opts.effort,
-            route=CLAUDE_HARNESS,
-            model=model or None,
-            fallback=CLAUDE_EFFORT_ORDER,
-            subject=self.name,
+        contract_plan, system = _claude_prepare(
+            self.capabilities, opts, system, model, subject=self.name
         )
         timeout_s = (
             opts.timeout_s if opts.timeout_s is not None else self.default_timeout_s
         )
         cwd = opts.cwd if opts.cwd is not None else Path.cwd()
         executable = self.executable or _resolve_claude_executable()
-
-        # Validated, not merely forwarded -- which is what earns the advertised
-        # `values` menu on this param. An unknown mode would otherwise emit
-        # nothing and silently give the caller REPLACE semantics while they
-        # believed they had asked for an append.
-        if opts.system_prompt_mode not in _CLAUDE_SYSTEM_PROMPT_FLAGS:
-            raise ValueError(
-                f"unknown system_prompt_mode {opts.system_prompt_mode!r}; "
-                f"expected one of "
-                f"{', '.join(sorted(_CLAUDE_SYSTEM_PROMPT_FLAGS))}"
-            )
+        _check_system_prompt_mode(opts)
 
         if self.text_only and opts.allowed_tools:
             raise ValueError(
@@ -831,20 +798,7 @@ class ClaudeCliBackend:
                 "--allowedTools",
                 opts.allowed_tools if opts.allowed_tools is not None else "",
             ])
-        # Emitted only when the caller named tools to deny. The empty-string
-        # treatment `--allowedTools` gets above would be wrong here: an empty
-        # ALLOW-list is a meaningful restriction (allow nothing), while an empty
-        # DENY-list restricts nothing at all, so emitting it would advertise a
-        # control the request does not actually carry.
-        if opts.disallowed_tools is not None:
-            cmd.extend(["--disallowedTools", opts.disallowed_tools])
-        if opts.effort is not None:
-            cmd.extend(["--effort", opts.effort])
-        # Native contract delivery: the canonical schema document goes to the
-        # CLI's own structured-output channel, inline. The answer is still
-        # judged at the seam by finalize_contract.
-        if contract_plan is not None and contract_plan.schema_json is not None:
-            cmd.extend(["--json-schema", contract_plan.schema_json])
+        cmd.extend(_claude_option_args(opts, contract_plan))
 
         started_at = utc_now_iso()
         start = time.monotonic()
@@ -944,39 +898,16 @@ class ClaudeCliBackend:
                 "caller policy (retry_max_attempts)"
             )
 
-        usage = data.get("usage") or {}
-        wall_ms = int((time.monotonic() - start) * 1000)
-        estimate = valid_reported_cost(data.get("total_cost_usd"))
-        text = data["result"]
-        if contract_plan is not None and contract_plan.schema_json is not None:
-            # With --json-schema the CLI puts the schema-shaped answer in the
-            # envelope's ``structured_output`` (observed 2026-10-21 on Claude
-            # Code 2.1.306; ``result`` held the same JSON text there but is not
-            # the contract channel). Hand the seam that value as compact JSON;
-            # when the field is absent the model never produced a structured
-            # answer, and ``result`` goes to finalize_contract to be judged.
-            structured_output = data.get("structured_output")
-            if structured_output is not None:
-                text = json.dumps(
-                    structured_output, separators=(",", ":"), ensure_ascii=False
-                )
-        response = LLMResponse(
-            text=text,
+        response = _claude_envelope_response(
+            data,
             model=model,
-            input_tokens=int(usage.get("input_tokens", 0) or 0),
-            output_tokens=int(usage.get("output_tokens", 0) or 0),
-            cache_hit_tokens=int(usage.get("cache_read_input_tokens", 0) or 0),
-            wall_ms=wall_ms,
+            capabilities=self.capabilities,
+            options=opts,
+            contract_plan=contract_plan,
+            controls=self._applied_controls(opts),
+            wall_ms=int((time.monotonic() - start) * 1000),
             attempts=attempts_made,
-            from_cache=False,
-            reported_model=_claude_reported_model(data),
-            estimated_cost_usd=estimate,
-            estimated_cost_source=ESTIMATE_SOURCE_CLAUDE_CLI if estimate is not None else None,
-            dropped_params=derive_dropped_params(self.capabilities, opts),
-            forwarded_params=derive_forwarded_params(self.capabilities, opts),
-            execution_controls_applied=self._applied_controls(opts),
             started_at=started_at,
-            ended_at=utc_now_iso(),
         )
         # No contract: returned unchanged. Otherwise the answer is judged
         # against the contract, and a violation raises with this response.
@@ -1045,6 +976,155 @@ class ClaudeCliBackend:
             sys.stderr.write(
                 f"[claude-cli] diagnostic dump failed ({dump_exc}); continuing.\n"
             )
+
+
+# ---------------------------------------------------------------------------
+# Helpers shared by the completion backend and the agent session
+# (``adapters/claude_session.py``): request preparation, the option flags,
+# and the response built from a result envelope.
+# ---------------------------------------------------------------------------
+
+
+def _claude_prepare(
+    capabilities: Capabilities,
+    opts: BackendOptions,
+    system: str,
+    model: str,
+    *,
+    subject: str,
+) -> "tuple[Any, str]":
+    """Refuse what the Claude CLI cannot carry, before anything is spawned.
+
+    Returns ``(contract_plan, system)``: the output-contract delivery plan
+    (``None`` without a contract) and the system prompt with a prompt-delivered
+    contract instruction appended. Raises for a contract ``capabilities`` does
+    not list, for any skill context (the harness loads skills itself), and for
+    an effort outside the model's measured menu.
+    """
+    # Before argv is built or the runner invoked: a contract this record
+    # does not list is refused here, with nothing spawned.
+    contract_plan = prepare_contract(capabilities, opts)
+    # Skill context is refused here, before argv or the runner: this
+    # record carries no skill_context block (the harness loads skills
+    # itself), so prepare_skill_context raises for any skill context.
+    if prepare_skill_context(capabilities, opts) is not None:
+        raise SkillContextUnsatisfiable(
+            f"{subject} has no skill-context delivery path; nothing was dispatched"
+        )
+    if contract_plan is not None and contract_plan.instruction is not None:
+        # Prompt delivery: the exact render_schema_instruction text is
+        # appended to the system prompt sent through the system-prompt
+        # flag. The answer is judged at the seam by finalize_contract.
+        system = system + contract_plan.instruction
+    # The effort is held to the exact model's measured menu here, before argv
+    # or the runner -- the validator both Codex paths use. A model with no
+    # measured profile (a CLI alias such as ``opus``) keeps the harness-wide
+    # menu, which is what ``claude --effort`` lists.
+    check_effort(
+        opts.effort,
+        route=CLAUDE_HARNESS,
+        model=model or None,
+        fallback=CLAUDE_EFFORT_ORDER,
+        subject=subject,
+    )
+    return contract_plan, system
+
+
+def _check_system_prompt_mode(opts: BackendOptions) -> None:
+    """Refuse a ``system_prompt_mode`` the Claude CLI has no flag for.
+
+    Validated, not merely forwarded -- which is what earns the advertised
+    `values` menu on this param. An unknown mode would otherwise emit
+    nothing and silently give the caller REPLACE semantics while they
+    believed they had asked for an append.
+    """
+    if opts.system_prompt_mode not in _CLAUDE_SYSTEM_PROMPT_FLAGS:
+        raise ValueError(
+            f"unknown system_prompt_mode {opts.system_prompt_mode!r}; "
+            f"expected one of "
+            f"{', '.join(sorted(_CLAUDE_SYSTEM_PROMPT_FLAGS))}"
+        )
+
+
+def _claude_option_args(opts: BackendOptions, contract_plan: Any) -> list:
+    """The conditional flags both Claude argv builders emit, in order.
+
+    ``--disallowedTools`` only when the caller named tools to deny,
+    ``--effort`` only when an effort is set, and ``--json-schema`` for a
+    natively delivered output contract.
+    """
+    args: list = []
+    # Emitted only when the caller named tools to deny. The empty-string
+    # treatment `--allowedTools` gets in completion mode would be wrong here:
+    # an empty ALLOW-list is a meaningful restriction (allow nothing), while
+    # an empty DENY-list restricts nothing at all, so emitting it would
+    # advertise a control the request does not actually carry.
+    if opts.disallowed_tools is not None:
+        args.extend(["--disallowedTools", opts.disallowed_tools])
+    if opts.effort is not None:
+        args.extend(["--effort", opts.effort])
+    # Native contract delivery: the canonical schema document goes to the
+    # CLI's own structured-output channel, inline. The answer is still
+    # judged at the seam by finalize_contract.
+    if contract_plan is not None and contract_plan.schema_json is not None:
+        args.extend(["--json-schema", contract_plan.schema_json])
+    return args
+
+
+def _claude_envelope_response(
+    data: Dict[str, Any],
+    *,
+    model: str,
+    capabilities: Capabilities,
+    options: BackendOptions,
+    contract_plan: Any,
+    controls: "tuple[str, ...]",
+    wall_ms: int,
+    attempts: int,
+    started_at: str,
+) -> LLMResponse:
+    """The :class:`LLMResponse` of one Claude result envelope, before the contract is judged.
+
+    ``data`` is the ``--output-format json`` envelope or a stream-json
+    ``result`` event (the same fields). The text is ``data["result"]`` (``""``
+    when it is not a string), or the ``structured_output`` value as compact
+    JSON when the contract was delivered natively and the field is present.
+    """
+    usage = data.get("usage") or {}
+    estimate = valid_reported_cost(data.get("total_cost_usd"))
+    text = data.get("result")
+    if not isinstance(text, str):
+        text = ""
+    if contract_plan is not None and contract_plan.schema_json is not None:
+        # With --json-schema the CLI puts the schema-shaped answer in the
+        # envelope's ``structured_output`` (observed 2026-10-21 on Claude
+        # Code 2.1.306; ``result`` held the same JSON text there but is not
+        # the contract channel). Hand the seam that value as compact JSON;
+        # when the field is absent the model never produced a structured
+        # answer, and ``result`` goes to finalize_contract to be judged.
+        structured_output = data.get("structured_output")
+        if structured_output is not None:
+            text = json.dumps(
+                structured_output, separators=(",", ":"), ensure_ascii=False
+            )
+    return LLMResponse(
+        text=text,
+        model=model,
+        input_tokens=int(usage.get("input_tokens", 0) or 0),
+        output_tokens=int(usage.get("output_tokens", 0) or 0),
+        cache_hit_tokens=int(usage.get("cache_read_input_tokens", 0) or 0),
+        wall_ms=wall_ms,
+        attempts=attempts,
+        from_cache=False,
+        reported_model=_claude_reported_model(data),
+        estimated_cost_usd=estimate,
+        estimated_cost_source=ESTIMATE_SOURCE_CLAUDE_CLI if estimate is not None else None,
+        dropped_params=derive_dropped_params(capabilities, options),
+        forwarded_params=derive_forwarded_params(capabilities, options),
+        execution_controls_applied=controls,
+        started_at=started_at,
+        ended_at=utc_now_iso(),
+    )
 
 
 def __getattr__(name: str) -> Any:

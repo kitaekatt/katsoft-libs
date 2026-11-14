@@ -43,6 +43,7 @@ import uuid
 from llm_kit.completion.session_types import (
     SESSION_FILES_SCHEMA_VERSION,
     CleanupRecord,
+    DetachedSurvivor,
     MailboxRecord,
     MailboxRecordKind,
     MailboxState,
@@ -144,7 +145,10 @@ _SESSION_KEYS = (
     "run_id", "job_id", "attempt_no", "session_id", "resumed", "cwd", "process_tag", "created_at",
     "first_init_at", "ended_at", "stop_kind", "result_subtype", "shutdown_confirmed",
 )
-_CLEANUP_KEYS = ("tag", "leader", "process_group", "members", "started_at", "updated_at", "confirmed_stopped_at")
+_CLEANUP_KEYS = (
+    "tag", "leader", "process_group", "members", "started_at", "updated_at", "confirmed_stopped_at",
+    "detached_survivors",
+)
 
 
 def _record_document(record: MailboxRecord) -> dict[str, Any]:
@@ -249,6 +253,17 @@ def _identity_from_document(value: object, label: str) -> ProcessIdentity:
     return ProcessIdentity(pid=value["pid"], create_time=value["create_time"])
 
 
+def _survivor_document(survivor: DetachedSurvivor) -> dict[str, Any]:
+    return {**_identity_document(survivor.identity), "cwd": survivor.cwd}
+
+
+def _survivor_from_document(value: object, label: str) -> DetachedSurvivor:
+    if not isinstance(value, dict) or set(value) != {"pid", "create_time", "cwd"}:
+        raise ValueError(f"{label}: a detached survivor must be an object with pid, create_time and cwd")
+    identity = ProcessIdentity(pid=value["pid"], create_time=value["create_time"])
+    return DetachedSurvivor(identity=identity, cwd=value["cwd"])
+
+
 def _cleanup_document(record: CleanupRecord) -> dict[str, Any]:
     return {
         "schema": SESSION_FILES_SCHEMA_VERSION,
@@ -259,6 +274,7 @@ def _cleanup_document(record: CleanupRecord) -> dict[str, Any]:
         "started_at": record.started_at,
         "updated_at": record.updated_at,
         "confirmed_stopped_at": record.confirmed_stopped_at,
+        "detached_survivors": [_survivor_document(item) for item in record.detached_survivors],
     }
 
 
@@ -267,6 +283,9 @@ def _cleanup_from_document(document: Mapping[str, Any], label: str) -> CleanupRe
     members = document["members"]
     if not isinstance(members, list):
         raise ValueError(f"{label}: members must be a list")
+    survivors = document["detached_survivors"]
+    if not isinstance(survivors, list):
+        raise ValueError(f"{label}: detached_survivors must be a list")
     return CleanupRecord(
         tag=document["tag"],
         leader=_identity_from_document(document["leader"], label),
@@ -275,6 +294,7 @@ def _cleanup_from_document(document: Mapping[str, Any], label: str) -> CleanupRe
         members=tuple(_identity_from_document(member, label) for member in members),
         process_group=document["process_group"],
         confirmed_stopped_at=document["confirmed_stopped_at"],
+        detached_survivors=tuple(_survivor_from_document(item, label) for item in survivors),
     )
 
 

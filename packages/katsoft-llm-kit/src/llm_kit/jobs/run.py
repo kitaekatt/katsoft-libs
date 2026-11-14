@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import random
+import secrets
 import shutil
 import signal
 import subprocess
@@ -13,7 +14,7 @@ import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Collection, Iterator, Mapping, Optional, Sequence
 
@@ -32,6 +33,24 @@ from llm_kit.completion.results import (
     derive_dropped_params,
     derive_forwarded_params,
     utc_now_iso,
+)
+from llm_kit.completion.session_types import (
+    AgentSessionBackend,
+    AttemptBudget,
+    DetachedSurvivor,
+    JobBudget,
+    SessionFailureKind,
+    SessionMode,
+    SessionOptions,
+    SessionOutcome,
+    SessionPaths,
+    SessionRecord,
+    SessionRequest,
+    SessionWorkspaceHook,
+    StopKind,
+    WorkspaceFinalizeResult,
+    WorkspaceFinalizeStatus,
+    check_supervisor_budget,
 )
 from llm_kit.completion.types import COMPLETED, ERROR, TIMEOUT, BackendOptions
 from llm_kit.dispatch.factory import BackendSelection
@@ -60,11 +79,20 @@ from .select import (
     adapter_capabilities,
     advertised_capabilities,
     select_endpoint_with_readings,
+    select_session_endpoint_with_readings,
     selection_callable,
+    session_capabilities,
+)
+from .session import (
+    FileSessionChannel,
+    create_attempt_dir,
+    read_session_record,
+    write_session_record,
 )
 import llm_kit.dispatch.usage_budget as _usage_budget
 import llm_kit.registry.models as _models
 from .store import DuplicateJobError, JobStore, StoreError, UnknownRunError
+from . import _supervisor_process
 from .workspace import WorkspaceError, WorkspaceManager, WorkspaceResolution
 
 
@@ -791,13 +819,19 @@ def _backend_options(
     timeout_s: float,
     run_floor: Optional[str],
     entry_effort: Optional[str] = None,
+    default_system_prompt_mode: str = "replace",
 ) -> BackendOptions:
-    """Build seam options for one selected entry, then apply the run floor."""
+    """Build seam options for one selected entry, then apply the run floor.
+
+    ``default_system_prompt_mode`` applies when the job sets none: ``replace``
+    for a completion, ``append`` for an agent session
+    (:attr:`~llm_kit.completion.session_types.SessionOptions.default_system_prompt_mode`).
+    """
     effective = job.effective_options(selection.endpoint)
     allowed_tools = _string_option(effective, "allowed_tools", None)
     job_disallowed = _string_option(effective, "disallowed_tools", None)
     system_prompt_mode = _string_option(
-        effective, "system_prompt_mode", "replace"
+        effective, "system_prompt_mode", default_system_prompt_mode
     )
     extras_value = effective.get("extras", {})
     if extras_value is None:
@@ -828,7 +862,7 @@ def _backend_options(
         allowed_tools=allowed_tools,
         disallowed_tools=_merge_disallowed_tools(run_floor, job_disallowed),
         system_prompt_mode=(
-            system_prompt_mode if system_prompt_mode is not None else "replace"
+            system_prompt_mode if system_prompt_mode is not None else default_system_prompt_mode
         ),
         client_id=f"job-kit:{run_id}:{job.id}",
         log_prefix=f"[job:{job.id}]",
@@ -982,6 +1016,396 @@ def _response_attempt(
     return attempt, None
 
 
+# ---------------------------------------------------------------------------
+# Agent sessions (design 5, 11.1-11.3)
+# ---------------------------------------------------------------------------
+
+
+class AgentSessionConfigError(ValueError):
+    """A run that contains an agent-session job lacks what such a job needs.
+
+    Raised by :func:`check_agent_session_run` before any ledger write or
+    reservation: no session root (``jobs run --session-root``), no explicit
+    supervisor budget (``--supervisor-budget``), or a session root that is not
+    an absolute path.
+    """
+
+
+def _session_options(job: Job) -> SessionOptions:
+    return SessionOptions.from_job_options(job.options)
+
+
+def _agent_jobs(jobs: Sequence[Job]) -> list[Job]:
+    return [job for job in jobs if _session_options(job).mode is SessionMode.AGENT]
+
+
+def check_agent_session_run(
+    jobs: Sequence[Job],
+    *,
+    session_root: Optional[str | Path],
+    supervisor_budget_s: Optional[float],
+    timeout_s: float,
+    max_parallel: int,
+    backpressure: Optional["BackpressurePolicy"] = None,
+) -> Optional[float]:
+    """Check a whole run's agent-session prerequisites before anything is reserved.
+
+    ``jobs`` are the run's jobs that may still run (every job of a new run, the
+    non-terminal jobs of a resumed one). When none declares ``session: agent``
+    nothing is checked and ``None`` is returned: a run without agent jobs keeps
+    its behaviour. Otherwise the run needs ``session_root`` (an absolute
+    directory; it is created on first use) and ``supervisor_budget_s``, the
+    run-wide deadline the supervisor enforces (its ``timeout_s``). The budget
+    must cover :func:`~llm_kit.completion.session_types
+    .required_supervisor_budget_s` over every job: per attempt the attempt
+    timeout, the agent shutdown allowance (B_res + B_eof + B_int), the
+    backpressure cap of ``backpressure`` (default: from the environment), and
+    no finalization or overhead until branch-mode workspaces exist; per job
+    ``max_attempts`` attempts; ``max_parallel`` workers.
+
+    Returns the required budget in seconds. Raises
+    :class:`AgentSessionConfigError` for a missing root or budget, and
+    :class:`~llm_kit.completion.session_types.SupervisorBudgetError` when the
+    budget is too small.
+    """
+    agents = _agent_jobs(jobs)
+    if not agents:
+        return None
+    names = ", ".join(repr(job.id) for job in agents)
+    if session_root is None:
+        raise AgentSessionConfigError(
+            f"job(s) {names} declare session: agent, which needs a session directory: "
+            "pass --session-root <dir> (session_root=) for the events, mailbox and "
+            "session records of each attempt; nothing was reserved"
+        )
+    if not Path(session_root).expanduser().is_absolute():
+        raise AgentSessionConfigError(f"session_root must be an absolute path, got {session_root}")
+    if supervisor_budget_s is None:
+        raise AgentSessionConfigError(
+            f"job(s) {names} declare session: agent, which needs the supervisor's run-wide "
+            "deadline: pass --supervisor-budget <seconds> (supervisor_budget_s=), equal to the "
+            "supervisor's timeout_s; nothing was reserved"
+        )
+    policy = backpressure or BackpressurePolicy.from_environment()
+    budgets = []
+    for job in jobs:
+        options = _session_options(job)
+        attempt = AttemptBudget.for_session(
+            timeout_s, options.mode, options.bounds, finalizes=False,
+            backpressure_cap_s=policy.cap_s,
+        )
+        budgets.append(JobBudget(attempt=attempt, max_attempts=job.max_attempts))
+    return check_supervisor_budget(supervisor_budget_s, budgets, max_parallel)
+
+
+class NoWorkspaceHook:
+    """The default :class:`~llm_kit.completion.session_types.SessionWorkspaceHook`.
+
+    No workspace makes an end-of-run commit until branch-mode workspaces exist,
+    so :meth:`finalize_run` always returns ``not_applicable`` and commits,
+    holds, reuses or reaps nothing. Detached survivors are recorded in the
+    result's ``detail`` (their durable record is each attempt's
+    ``cleanup.json``); nothing else is done about them.
+    """
+
+    def finalize_run(
+        self,
+        *,
+        run_id: str,
+        job_id: str,
+        working_directory: Path,
+        writers_stopped: bool,
+        detached_survivors: Sequence[DetachedSurvivor],
+        final_state: Optional[str],
+        stop_kind: Optional[StopKind],
+    ) -> WorkspaceFinalizeResult:
+        """Return ``not_applicable``, naming any detached survivors in ``detail``."""
+        detail = None
+        if detached_survivors:
+            detail = "detached survivors (finalization blocked until they are gone): " + ", ".join(
+                f"pid {item.identity.pid} created {item.identity.create_time} cwd {item.cwd}"
+                for item in detached_survivors
+            )
+        return WorkspaceFinalizeResult(status=WorkspaceFinalizeStatus.NOT_APPLICABLE, detail=detail)
+
+
+@dataclass
+class _JobTrack:
+    """What the end-of-run workspace hook needs about one job's attempts.
+
+    ``shutdowns_confirmed`` is the AND over the attempts; ``detached_survivors``
+    accumulates every attempt's survivors, since a survivor of an earlier
+    attempt still blocks finalization after a later quiescent one.
+    """
+
+    working_directory: Optional[Path] = None
+    shutdowns_confirmed: bool = True
+    detached_survivors: list[DetachedSurvivor] = field(default_factory=list)
+    stop_kind: Optional[StopKind] = None
+
+    @property
+    def writers_stopped(self) -> bool:
+        """Workspace writer quiescence: every shutdown confirmed and no detached survivor."""
+        return self.shutdowns_confirmed and not self.detached_survivors
+
+    def observe(self, outcome: SessionOutcome) -> None:
+        """Fold one attempt's outcome in."""
+        self.shutdowns_confirmed = self.shutdowns_confirmed and outcome.shutdown_confirmed
+        for item in outcome.detached_survivors:
+            if item not in self.detached_survivors:
+                self.detached_survivors.append(item)
+        self.stop_kind = outcome.stop_kind
+
+
+#: The job-level error code of a retry refused beside a live detached survivor.
+_WORKSPACE_NOT_QUIESCENT = "workspace_not_quiescent"
+
+
+class _WorkspaceNotQuiescentError(WorkspaceError):
+    """A retry would reuse a working directory a detached survivor may still write."""
+
+
+def _refuse_reuse_beside_survivors(
+    store: JobStore, run_id: str, job: Job, track: _JobTrack, planned_path: Optional[Path]
+) -> None:
+    """Fail the job instead of retrying in the same directory beside a live detached survivor.
+
+    Applies only when an earlier attempt left detached survivors and the next
+    attempt would run in the SAME working directory (a non-isolated
+    workspace); a fresh per-attempt worktree is not blocked. Each survivor's
+    identity is re-checked now: when every one is gone the retry proceeds,
+    otherwise the job ends ``failed`` with ``workspace_not_quiescent`` naming
+    the live ones, before anything is reserved.
+    """
+    if not track.detached_survivors or track.working_directory is None:
+        return
+    planned_root = Path(planned_path if planned_path is not None else job.declared_directory)
+    if planned_root.expanduser().resolve() != Path(track.working_directory).expanduser().resolve():
+        return
+    alive = [
+        item for item in track.detached_survivors
+        if _supervisor_process.live(
+            _supervisor_process.ProcessIdentity(item.identity.pid, item.identity.create_time)
+        ) is not None
+    ]
+    if not alive:
+        return
+    listed = ", ".join(f"pid {item.identity.pid} (created {item.identity.create_time}, cwd {item.cwd})"
+                       for item in alive)
+    reason = (
+        f"{_WORKSPACE_NOT_QUIESCENT}: job {job.id!r} was not retried because detached processes of an "
+        f"earlier attempt are still alive and may write {planned_root}: {listed}"
+    )
+    store.mark_failed(run_id, job.id, reason)
+    raise _WorkspaceNotQuiescentError(reason)
+
+
+def _next_attempt_no(store: JobStore, run_id: str, job_id: str) -> int:
+    """The number ``reserve_attempt`` will allocate next (attempts of one job are sequential)."""
+    numbers = [a.attempt_no for a in store.list_attempts(run_id, job_id)]
+    numbers += [r.attempt_no for r in store.list_reservations(run_id, job_id)]
+    return max(numbers, default=0) + 1
+
+
+def _planned_working_directory(
+    manager: WorkspaceManager, job: Job, workspace_path: Optional[Path]
+) -> Path:
+    """The execution cwd an attempt at ``workspace_path`` will have (the repository subdirectory included)."""
+    if workspace_path is None:
+        return Path(job.declared_directory).expanduser().resolve()
+    plan = manager._plans.get(job.id)  # noqa: SLF001 -- no public accessor yet (item 2)
+    relative = plan.relative_directory if plan is not None else Path()
+    return (Path(workspace_path).expanduser().resolve() / relative).resolve()
+
+
+def _new_process_tag() -> str:
+    return "lks_" + secrets.token_hex(12)
+
+
+def _session_fields(
+    outcome_or_none: Optional[SessionOutcome], *, session_id: str, cwd: Path, paths: SessionPaths
+) -> dict[str, object]:
+    fields: dict[str, object] = dict(
+        session_mode=SessionMode.AGENT,
+        session_id=session_id,
+        session_cwd=cwd,
+        session_dir=paths.attempt_dir,
+        stop_kind=None,
+    )
+    if outcome_or_none is not None:
+        fields["session_cwd"] = outcome_or_none.cwd
+        fields["stop_kind"] = outcome_or_none.stop_kind
+    return fields
+
+
+def _bare_session_attempt(
+    *,
+    run_id: str,
+    job: Job,
+    selection: BackendSelection,
+    options: BackendOptions,
+    capabilities: Optional[Capabilities],
+    attempt_no: int,
+    started_at: str,
+    workspace: WorkspaceResolution,
+    pace_readings: Optional[tuple[Mapping[str, object], ...]],
+    status: str,
+    error: AttemptError,
+    halt_kind: Optional[str],
+    response: object,
+    fields: Mapping[str, object],
+) -> Attempt:
+    """The attempt row of a session that ended without a usable result.
+
+    With a response (an error result, a result racing a stop) its usage and
+    truthfulness fields are kept; the status and error are the session's.
+    """
+    if response is not None:
+        attempt, _ = _response_attempt(
+            run_id=run_id, job=job, selection=selection, attempt_no=attempt_no,
+            budget_no=1, response=response, workspace=workspace, pace_readings=pace_readings,
+        )
+        return replace(
+            attempt, status=status, error=error, halt_kind=halt_kind,
+            started_at=started_at, ended_at=utc_now_iso(), **fields,
+        )
+    return Attempt(
+        run_id=run_id,
+        job_id=job.id,
+        attempt_no=attempt_no,
+        endpoint=selection.endpoint,
+        backend=selection.backend.name,
+        model=selection.model,
+        status=status,
+        started_at=started_at,
+        ended_at=utc_now_iso(),
+        error=error,
+        halt_kind=halt_kind,
+        dropped_params=(
+            derive_dropped_params(capabilities, options) if capabilities is not None else None
+        ),
+        forwarded_params=(
+            derive_forwarded_params(capabilities, options) if capabilities is not None else None
+        ),
+        execution_controls_applied=None,
+        usage=None,
+        response_text="",
+        workspace=workspace.path,
+        base_ref=workspace.base_ref,
+        workspace_status=workspace.status,
+        workspace_reason=workspace.reason,
+        acceptance=None,
+        pace_readings=pace_readings,
+        **fields,  # type: ignore[arg-type]
+    )
+
+
+def _record_session_end(paths: SessionPaths, outcome: SessionOutcome) -> None:
+    """Write the end fields of ``session.json`` (the one write after the outcome)."""
+    record = read_session_record(paths)
+    write_session_record(
+        paths,
+        replace(
+            record,
+            ended_at=utc_now_iso(),
+            stop_kind=outcome.stop_kind,
+            result_subtype=outcome.result_subtype,
+            shutdown_confirmed=outcome.shutdown_confirmed,
+        ),
+    )
+
+
+def _session_outcome_attempt(
+    store: JobStore,
+    *,
+    run_id: str,
+    job: Job,
+    selection: BackendSelection,
+    options: BackendOptions,
+    capabilities: Optional[Capabilities],
+    attempt_no: int,
+    budget_no: int,
+    started_at: str,
+    workspace: WorkspaceResolution,
+    pace_readings: Optional[tuple[Mapping[str, object], ...]],
+    outcome: SessionOutcome,
+    fields: Mapping[str, object],
+    waits: _WaitBudget,
+) -> Optional[tuple[Attempt, Optional[float], Optional[float]]]:
+    """Record an outcome that does not go on to the contract; None when it does.
+
+    - operator stop or pause: error code ``operator_stop`` / ``operator_pause``,
+      job CANCELLED, never retried, whatever the backend reported (design 5.5).
+      ``_terminal_state_after_attempt`` is bypassed: it refuses CANCELLED.
+    - shutdown not confirmed: error ``shutdown_unconfirmed``, job FAILED at once;
+      the contract is not run and no further attempt starts beside a process
+      that may still run.
+    - shutdown confirmed but detached survivors remain (not
+      ``workspace_quiescent``): NOT a failure; this returns None and the result
+      goes on to the contract. The survivors reach the end-of-run workspace
+      hook, which keeps finalization, reuse, merge and reaping blocked.
+    - a failure: ``timeout`` keeps TIMEOUT status; a halt kind feeds the halt
+      recording, backpressure waits and quota write-back; otherwise ERROR with
+      the failure kind as the error code; the attempt budget decides.
+    """
+    common = dict(
+        run_id=run_id, job=job, selection=selection, options=options,
+        capabilities=capabilities, attempt_no=attempt_no, started_at=started_at,
+        workspace=workspace, pace_readings=pace_readings, response=outcome.response,
+        fields=fields,
+    )
+    kind = outcome.stop_kind
+    if kind.is_operator:
+        code = kind.operator_error_code or kind.value
+        note = "" if outcome.shutdown_confirmed else "; its shutdown was NOT confirmed (see cleanup.json)"
+        attempt = _bare_session_attempt(
+            status=ERROR, error=AttemptError(code=code, message=f"the session was ended by {code}{note}"),
+            halt_kind=None, **common,  # type: ignore[arg-type]
+        )
+        recorded = store.append_attempt(
+            attempt, terminal_state=JobState.CANCELLED, reason=f"job {job.id!r}: {code}{note}"
+        )
+        return recorded, None, None
+    if not outcome.shutdown_confirmed:
+        message = (
+            "the agent session's processes were not all confirmed stopped; the contract was not "
+            "run and no further attempt is started (see cleanup.json in the session directory)"
+        )
+        attempt = _bare_session_attempt(
+            status=ERROR, error=AttemptError(code="shutdown_unconfirmed", message=message),
+            halt_kind=None, **common,  # type: ignore[arg-type]
+        )
+        recorded = store.append_attempt(
+            attempt, terminal_state=JobState.FAILED, reason=f"job {job.id!r}: {message}"
+        )
+        return recorded, None, None
+    failure = outcome.failure
+    if failure is None:
+        return None
+    halt_kind = _known_halt_kind(failure.halt_kind)
+    status = TIMEOUT if failure.kind is SessionFailureKind.TIMEOUT else ERROR
+    attempt = _bare_session_attempt(
+        status=status,
+        error=AttemptError(code=halt_kind or failure.kind.value, message=failure.message),
+        halt_kind=halt_kind,
+        **common,  # type: ignore[arg-type]
+    )
+    terminal_state = _terminal_state_after_attempt(
+        job, budget_no, JobState.HALTED if halt_kind is not None else JobState.FAILED
+    )
+    wait_s = None
+    if failure.halt_kind in _TRANSIENT_KINDS and halt_kind is not None:
+        wait_s = waits.plan(failure.retry_after_s)
+    if wait_s is not None:
+        terminal_state = None
+    recorded = store.append_attempt(
+        attempt, terminal_state=terminal_state, reason=_attempt_limit_reason(job, terminal_state)
+    )
+    if recorded.halt_kind in _QUOTA_HALT_KINDS:
+        _record_quota_halt(job, recorded.endpoint, failure)  # type: ignore[arg-type]
+    return recorded, wait_s, failure.retry_after_s
+
+
 def run_job(
     store: JobStore,
     run_id: str,
@@ -1024,6 +1448,8 @@ def _run_job_attempt(
     workspace_root: Optional[str | Path] = None,
     workspace_manager: Optional[WorkspaceManager] = None,
     reachability_cache: Optional[dict] = None,
+    session_root: Optional[str | Path] = None,
+    track: Optional[_JobTrack] = None,
 ) -> tuple[Attempt, Optional[float], Optional[float]]:
     """Execute one seam invocation as one attempt.
 
@@ -1037,6 +1463,17 @@ def _run_job_attempt(
     writes the entry's pinned verdict back as OUT-OF-QUOTA when the entry
     declares ``conserve_usage``. When no usable entry remains the typed floor,
     :class:`~.select.NoCompatibleEndpointError`, propagates.
+
+    A job with ``session: agent`` is admitted to a Claude entry
+    (:func:`~.select.select_session_endpoint_with_readings`) before the
+    reservation, which carries its session id (a new UUID, or the job's
+    ``resume_session``), execution cwd and session directory
+    (``<session_root>/<job>/attempt-<n>``) before any attempt row exists. The
+    attempt runs one :class:`~llm_kit.completion.session_types.SessionRequest`
+    through the agent-session backend; its outcome becomes the attempt row
+    (:func:`_session_outcome_attempt`), and a clean result goes on to the
+    contract like a completion, with the attempt timeout minus the session's
+    counted time (``response.wall_ms``).
     """
     if timeout_s <= 0:
         raise ValueError("timeout_s must be positive")
@@ -1062,15 +1499,37 @@ def _run_job_attempt(
         for attempt in store.list_attempts(run_id, job.id)
         if attempt.halt_kind is not None and attempt.attempt_no not in waited_out
     }
-    selection, pace_readings = select_endpoint_with_readings(
-        selection_job,
-        halted_endpoints=frozenset(halted_endpoints) | same_job_halts,
-        capabilities=advertised,
-        capabilities_provider=capabilities_provider,
-        backend_factory=backend_factory,
-        project_root=str(job.declared_directory),
-        reachability_cache=reachability_cache if reachability_cache is not None else {},
-    )
+    session = _session_options(job)
+    agent = session.mode is SessionMode.AGENT
+    agent_backend: Optional[AgentSessionBackend] = None
+    if agent:
+        if session_root is None:
+            raise AgentSessionConfigError(
+                f"job {job.id!r} declares session: agent but the run has no session_root"
+            )
+        session_table: dict[str, Capabilities] = session_capabilities()
+        if run_floor is not None and _floor_policy(run_floor)[1]:
+            session_table = _literal_floor_admission(session_table)
+        selection, agent_backend, pace_readings = select_session_endpoint_with_readings(
+            selection_job,
+            halted_endpoints=frozenset(halted_endpoints) | same_job_halts,
+            capabilities=session_table,
+            capabilities_provider=capabilities_provider,
+            backend_factory=backend_factory,
+            project_root=str(job.declared_directory),
+            reachability_cache=reachability_cache if reachability_cache is not None else {},
+        )
+        advertised = session_table
+    else:
+        selection, pace_readings = select_endpoint_with_readings(
+            selection_job,
+            halted_endpoints=frozenset(halted_endpoints) | same_job_halts,
+            capabilities=advertised,
+            capabilities_provider=capabilities_provider,
+            backend_factory=backend_factory,
+            project_root=str(job.declared_directory),
+            reachability_cache=reachability_cache if reachability_cache is not None else {},
+        )
     # Before any reservation: an undeliverable per-entry effort terminalizes
     # the job as unroutable, so no attempt row claims it ran.
     entry_effort = _entry_effort(job, selection, advertised)
@@ -1102,6 +1561,30 @@ def _run_job_attempt(
         except StoreError as exc:
             store.mark_failed(run_id, job.id, str(exc))
             raise
+    session_kwargs: dict[str, object] = {}
+    if agent:
+        # The reservation carries the session identity, the execution cwd and
+        # the session directory before any attempt row exists (design 5.1), so
+        # both are computed for the number reserve_attempt will allocate.
+        predicted_no = _next_attempt_no(store, run_id, job.id)
+        try:
+            planned_path = manager.allocate_path(job, predicted_no)
+        except WorkspaceError as exc:
+            store.mark_failed(run_id, job.id, str(exc))
+            raise
+        if track is not None:
+            _refuse_reuse_beside_survivors(store, run_id, job, track, planned_path)
+        session_cwd = _planned_working_directory(manager, job, planned_path)
+        session_id = session.resume_session or str(uuid.uuid4())
+        session_paths = SessionPaths.for_attempt(
+            Path(session_root).expanduser(), job.id, predicted_no  # type: ignore[arg-type]
+        )
+        session_kwargs = dict(
+            session_mode=SessionMode.AGENT.value,
+            session_id=session_id,
+            session_cwd=session_cwd,
+            session_dir=session_paths.attempt_dir,
+        )
     reservation = store.reserve_attempt(
         run_id,
         job.id,
@@ -1109,10 +1592,13 @@ def _run_job_attempt(
         backend=selection.backend.name,
         model=selection.model,
         reserved_at=utc_now_iso(),
+        **session_kwargs,  # type: ignore[arg-type]
     )
     attempt_no = reservation.attempt_no
     try:
-        workspace_path = manager.allocate_path(job, attempt_no)
+        # An agent attempt uses the path allocated before its reservation: the
+        # allocation is not deterministic, and the reserved cwd is derived from it.
+        workspace_path = planned_path if agent else manager.allocate_path(job, attempt_no)
         reservation = store.record_reservation_workspace(
             run_id,
             job.id,
@@ -1140,7 +1626,37 @@ def _run_job_attempt(
         if workspace.path is not None
         else job.declared_directory
     )
+    if track is not None:
+        track.working_directory = workspace.path or job.declared_directory
+    if agent and (
+        attempt_no != predicted_no
+        or Path(working_directory).expanduser().resolve() != session_cwd
+    ):
+        reason = (
+            f"agent session reservation drift: reserved attempt {attempt_no} at "
+            f"{working_directory}, planned attempt {predicted_no} at {session_cwd}"
+        )
+        store.resolve_reservation_before_invoke(
+            run_id, job.id, attempt_no, reason=reason, at=utc_now_iso()
+        )
+        raise StoreError(reason)
     try:
+        if agent:
+            create_attempt_dir(session_paths)
+            process_tag = _new_process_tag()
+            write_session_record(
+                session_paths,
+                SessionRecord(
+                    run_id=run_id,
+                    job_id=job.id,
+                    attempt_no=attempt_no,
+                    session_id=session_id,
+                    resumed=session.resume_session is not None,
+                    cwd=session_cwd,
+                    process_tag=process_tag,
+                    created_at=utc_now_iso(),
+                ),
+            )
         options = _backend_options(
             run_id,
             job,
@@ -1149,6 +1665,7 @@ def _run_job_attempt(
             timeout_s,
             run_floor,
             entry_effort,
+            session.default_system_prompt_mode,
         )
         capabilities = _capabilities_for(selection, advertised)
         # Arm every request-sourced control the admitting guarantees rely on,
@@ -1162,6 +1679,11 @@ def _run_job_attempt(
         )
         options = armed_call.options
         if armed_call.backend is not selection.backend:
+            if agent:
+                raise ValueError(
+                    f"job {job.id!r}: entry {selection.endpoint!r} would have to run text-only to "
+                    "meet the job's requirements; an agent session cannot run without tools"
+                )
             selection = replace(selection, backend=armed_call.backend)
     except Exception as exc:
         store.resolve_reservation_before_invoke(
@@ -1191,16 +1713,76 @@ def _run_job_attempt(
     if started_at is None:  # pragma: no cover - arm_reservation guarantees this
         raise StoreError("armed reservation has no invoke_armed_at")
     completion_started = time.monotonic()
-    try:
-        response = selection.backend.complete(
-            job.prompt.system,
-            job.prompt.user,
+    session_fields: dict[str, object] = {}
+    if agent:
+        request = SessionRequest(
+            system=job.prompt.system,
+            user=job.prompt.user,
             model=selection.model,
             options=options,
+            cwd=session_cwd,
+            session_id=session_id,
+            resume=session.resume_session is not None,
+            process_tag=process_tag,
+            paths=session_paths,
+            bounds=session.bounds,
+            channel=FileSessionChannel(session_paths),
         )
-        completion_elapsed_s = time.monotonic() - completion_started
-    except Exception as exc:
-        attempt, terminal_state = _exception_attempt(
+        unstarted = _session_fields(None, session_id=session_id, cwd=session_cwd, paths=session_paths)
+        try:
+            outcome = agent_backend.run(request)  # type: ignore[union-attr]
+        except Exception as exc:
+            if track is not None:
+                track.shutdowns_confirmed = False
+            attempt, terminal_state = _exception_attempt(
+                run_id=run_id,
+                job=job,
+                selection=selection,
+                options=options,
+                capabilities=capabilities,
+                attempt_no=attempt_no,
+                budget_no=reservation.budget_no,
+                started_at=started_at,
+                ended_at=utc_now_iso(),
+                exc=exc,
+                workspace=workspace,
+                pace_readings=pace_readings,
+            )
+            recorded = store.append_attempt(
+                replace(attempt, **unstarted),  # type: ignore[arg-type]
+                terminal_state=terminal_state,
+                reason=_attempt_limit_reason(job, terminal_state),
+            )
+            return recorded, None, None
+        except (KeyboardInterrupt, SystemExit) as exc:
+            if track is not None:
+                track.shutdowns_confirmed = False
+            attempt, terminal_state = _exception_attempt(
+                run_id=run_id,
+                job=job,
+                selection=selection,
+                options=options,
+                capabilities=capabilities,
+                attempt_no=attempt_no,
+                budget_no=reservation.budget_no,
+                started_at=started_at,
+                ended_at=utc_now_iso(),
+                exc=exc,
+                workspace=workspace,
+                pace_readings=pace_readings,
+            )
+            store.append_attempt(
+                replace(attempt, **unstarted), terminal_state=terminal_state  # type: ignore[arg-type]
+            )
+            raise
+        _record_session_end(session_paths, outcome)
+        if track is not None:
+            track.observe(outcome)
+        session_fields = _session_fields(
+            outcome, session_id=session_id, cwd=session_cwd, paths=session_paths
+        )
+        early = _session_outcome_attempt(
+            store,
             run_id=run_id,
             job=job,
             selection=selection,
@@ -1209,42 +1791,72 @@ def _run_job_attempt(
             attempt_no=attempt_no,
             budget_no=reservation.budget_no,
             started_at=started_at,
-            ended_at=utc_now_iso(),
-            exc=exc,
             workspace=workspace,
             pace_readings=pace_readings,
+            outcome=outcome,
+            fields=session_fields,
+            waits=waits,
         )
-        wait_s = None
-        limited, retry_after = _backpressure_signal(selection.backend, exc)
-        if limited and attempt.halt_kind is not None:
-            wait_s = waits.plan(retry_after)
-        if wait_s is not None:
-            terminal_state = None
-        recorded = store.append_attempt(
-            attempt,
-            terminal_state=terminal_state,
-            reason=_attempt_limit_reason(job, terminal_state),
-        )
-        if recorded.halt_kind in _QUOTA_HALT_KINDS:
-            _record_quota_halt(job, recorded.endpoint, exc)
-        return recorded, wait_s, retry_after
-    except (KeyboardInterrupt, SystemExit) as exc:
-        attempt, terminal_state = _exception_attempt(
-            run_id=run_id,
-            job=job,
-            selection=selection,
-            options=options,
-            capabilities=capabilities,
-            attempt_no=attempt_no,
-            budget_no=reservation.budget_no,
-            started_at=started_at,
-            ended_at=utc_now_iso(),
-            exc=exc,
-            workspace=workspace,
-            pace_readings=pace_readings,
-        )
-        store.append_attempt(attempt, terminal_state=terminal_state)
-        raise
+        if early is not None:
+            return early
+        response = outcome.response
+        # The session's counted time: spawn to the start of shutdown (design 11.3).
+        completion_elapsed_s = response.wall_ms / 1000.0  # type: ignore[union-attr]
+    else:
+        try:
+            response = selection.backend.complete(
+                job.prompt.system,
+                job.prompt.user,
+                model=selection.model,
+                options=options,
+            )
+            completion_elapsed_s = time.monotonic() - completion_started
+        except Exception as exc:
+            attempt, terminal_state = _exception_attempt(
+                run_id=run_id,
+                job=job,
+                selection=selection,
+                options=options,
+                capabilities=capabilities,
+                attempt_no=attempt_no,
+                budget_no=reservation.budget_no,
+                started_at=started_at,
+                ended_at=utc_now_iso(),
+                exc=exc,
+                workspace=workspace,
+                pace_readings=pace_readings,
+            )
+            wait_s = None
+            limited, retry_after = _backpressure_signal(selection.backend, exc)
+            if limited and attempt.halt_kind is not None:
+                wait_s = waits.plan(retry_after)
+            if wait_s is not None:
+                terminal_state = None
+            recorded = store.append_attempt(
+                attempt,
+                terminal_state=terminal_state,
+                reason=_attempt_limit_reason(job, terminal_state),
+            )
+            if recorded.halt_kind in _QUOTA_HALT_KINDS:
+                _record_quota_halt(job, recorded.endpoint, exc)
+            return recorded, wait_s, retry_after
+        except (KeyboardInterrupt, SystemExit) as exc:
+            attempt, terminal_state = _exception_attempt(
+                run_id=run_id,
+                job=job,
+                selection=selection,
+                options=options,
+                capabilities=capabilities,
+                attempt_no=attempt_no,
+                budget_no=reservation.budget_no,
+                started_at=started_at,
+                ended_at=utc_now_iso(),
+                exc=exc,
+                workspace=workspace,
+                pace_readings=pace_readings,
+            )
+            store.append_attempt(attempt, terminal_state=terminal_state)
+            raise
 
     try:
         attempt, terminal_state = _response_attempt(
@@ -1257,7 +1869,7 @@ def _run_job_attempt(
             workspace=workspace,
             pace_readings=pace_readings,
         )
-        attempt = replace(attempt, started_at=started_at)
+        attempt = replace(attempt, started_at=started_at, **session_fields)  # type: ignore[arg-type]
     except (KeyboardInterrupt, SystemExit) as exc:
         interrupted_attempt, _ = _exception_attempt(
             run_id=run_id,
@@ -1279,6 +1891,7 @@ def _run_job_attempt(
                 code="response_interrupted",
                 message=str(exc) or exc.__class__.__name__,
             ),
+            **session_fields,  # type: ignore[arg-type]
         )
         store.append_attempt(
             interrupted_attempt,
@@ -1728,6 +2341,8 @@ def _drive_job(
     workspace_root: Path,
     workspace_manager: WorkspaceManager,
     reachability_cache: Optional[dict] = None,
+    session_root: Optional[Path] = None,
+    workspace_hook: Optional[SessionWorkspaceHook] = None,
 ) -> None:
     """Drive one job to a terminal state or to its attempt budget.
 
@@ -1740,7 +2355,54 @@ def _drive_job(
     interrupt when the drive starts, whose contract is continued first. A
     job that starts waiting during this drive, or an answer that arrives
     during it, is continued by the next pass.
+
+    However the drive ends, ``workspace_hook.finalize_run`` is called once for
+    the job (default :class:`NoWorkspaceHook`), from a ``finally``, with the
+    last attempt's stop kind, whether the workspace's writers are quiescent
+    (every shutdown confirmed and no detached survivor), and the detached
+    survivors of every attempt.
     """
+    track = _JobTrack()
+    try:
+        _drive_job_attempts(
+            store, run_id, job, halts=halts, timeout_s=timeout_s, run_floor=run_floor,
+            capabilities_provider=capabilities_provider, backend_factory=backend_factory,
+            workspace_root=workspace_root, workspace_manager=workspace_manager,
+            reachability_cache=reachability_cache, session_root=session_root, track=track,
+        )
+    finally:
+        current = store.get_job(run_id, job.id)
+        hook = workspace_hook if workspace_hook is not None else NoWorkspaceHook()
+        hook.finalize_run(
+            run_id=run_id,
+            job_id=job.id,
+            working_directory=track.working_directory or job.declared_directory,
+            writers_stopped=track.writers_stopped,
+            detached_survivors=tuple(track.detached_survivors),
+            final_state=(
+                current.state.value if current is not None and current.terminal else None
+            ),
+            stop_kind=track.stop_kind,
+        )
+
+
+def _drive_job_attempts(
+    store: JobStore,
+    run_id: str,
+    job: Job,
+    *,
+    halts: _HaltedEndpoints,
+    timeout_s: float,
+    run_floor: Optional[str],
+    capabilities_provider: Optional[CapabilitiesProvider],
+    backend_factory: Optional[JobBackendFactory],
+    workspace_root: Path,
+    workspace_manager: WorkspaceManager,
+    reachability_cache: Optional[dict],
+    session_root: Optional[Path],
+    track: _JobTrack,
+) -> None:
+    """The attempt loop of :func:`_drive_job`."""
     starting = True
     while True:
         current = store.get_job(run_id, job.id)
@@ -1767,6 +2429,8 @@ def _drive_job(
                 workspace_root=workspace_root,
                 workspace_manager=workspace_manager,
                 reachability_cache=reachability_cache,
+                session_root=session_root,
+                track=track,
             )
         except EffortUndeliverableError as exc:
             # Named in full whatever came before: the effort, not a halt, is
@@ -1807,6 +2471,8 @@ def _run_pending(
     backend_factory: Optional[JobBackendFactory],
     workspace_manager: Optional[WorkspaceManager] = None,
     max_parallel: int = 1,
+    session_root: Optional[str | Path] = None,
+    workspace_hook: Optional[SessionWorkspaceHook] = None,
 ) -> RunSnapshot:
     """Process pending and interrupted jobs through a bounded worker pool.
 
@@ -1847,6 +2513,10 @@ def _run_pending(
         backend_factory=backend_factory,
         workspace_root=root,
         workspace_manager=manager,
+        session_root=(
+            Path(session_root).expanduser() if session_root is not None else None
+        ),
+        workspace_hook=workspace_hook,
     )
     if bound == 1 or len(pending) < 2:
         for job in pending:
@@ -1902,11 +2572,30 @@ def run_jobs(
     disallowed_tools: Optional[str] = None,
     capabilities_provider: Optional[CapabilitiesProvider] = None,
     backend_factory: Optional[JobBackendFactory] = None,
+    session_root: Optional[str | Path] = None,
+    supervisor_budget_s: Optional[float] = None,
+    workspace_hook: Optional[SessionWorkspaceHook] = None,
 ) -> RunSnapshot:
-    """Create and execute a flat run of jobs through a bounded pool."""
+    """Create and execute a flat run of jobs through a bounded pool.
+
+    A run with a ``session: agent`` job needs ``session_root`` and
+    ``supervisor_budget_s``; :func:`check_agent_session_run` checks the whole
+    run before the ledger is written. ``workspace_hook`` is called once per job
+    when its drive ends (default :class:`NoWorkspaceHook`).
+    """
     # Probe the interrupt validator before the ledger is opened, migrated or
     # written: a run that could not validate a request must not start.
     _interrupts._schema_validator()
+    job_values = tuple(jobs)
+    bound = validate_max_parallel(max_parallel)
+    # The whole run, before the ledger is opened or written.
+    check_agent_session_run(
+        job_values,
+        session_root=session_root,
+        supervisor_budget_s=supervisor_budget_s,
+        timeout_s=timeout_s,
+        max_parallel=bound,
+    )
     store_object = _store_object(store)
     identifier = run_id or uuid.uuid4().hex
     root = (
@@ -1914,8 +2603,6 @@ def run_jobs(
         if workspace_root is not None
         else default_workspace_root(identifier)
     )
-    job_values = tuple(jobs)
-    bound = validate_max_parallel(max_parallel)
     run_floor = _validate_disallowed_tools(disallowed_tools)
     workspace_manager = WorkspaceManager(root, job_values)
     store_object.create_run(
@@ -1936,6 +2623,8 @@ def run_jobs(
         backend_factory=backend_factory,
         workspace_manager=workspace_manager,
         max_parallel=bound,
+        session_root=session_root,
+        workspace_hook=workspace_hook,
     )
 
 
@@ -1948,16 +2637,33 @@ def run_job_file(
     max_parallel: Optional[int] = None,
     capabilities_provider: Optional[CapabilitiesProvider] = None,
     backend_factory: Optional[JobBackendFactory] = None,
+    session_root: Optional[str | Path] = None,
+    supervisor_budget_s: Optional[float] = None,
+    workspace_hook: Optional[SessionWorkspaceHook] = None,
 ) -> RunSnapshot:
     """Load a jobs YAML file, create its ledger, and execute it.
 
     ``run_id`` preassigns the ledger's run id so the caller knows it before
     the run starts and can resume it after an interruption. ``max_parallel``
     overrides the file's own bound, and the override is what the ledger
-    records, so a later resume of this run inherits it."""
+    records, so a later resume of this run inherits it. ``session_root``,
+    ``supervisor_budget_s`` and ``workspace_hook`` are those of
+    :func:`run_jobs`; the agent-session check covers the whole file before
+    the ledger is created."""
     _interrupts._schema_validator()
     path = Path(jobs_path).expanduser().resolve()
     job_file = load_job_file(path)
+    check_agent_session_run(
+        job_file.jobs,
+        session_root=session_root,
+        supervisor_budget_s=supervisor_budget_s,
+        timeout_s=timeout_s,
+        max_parallel=(
+            job_file.max_parallel
+            if max_parallel is None
+            else validate_max_parallel(max_parallel)
+        ),
+    )
     store = JobStore(store_path or default_store_path())
     return run_jobs(
         job_file.jobs,
@@ -1974,6 +2680,9 @@ def run_job_file(
         run_id=run_id,
         capabilities_provider=capabilities_provider,
         backend_factory=backend_factory,
+        session_root=session_root,
+        supervisor_budget_s=supervisor_budget_s,
+        workspace_hook=workspace_hook,
     )
 
 
@@ -1985,12 +2694,18 @@ def resume_run(
     max_parallel: Optional[int] = None,
     capabilities_provider: Optional[CapabilitiesProvider] = None,
     backend_factory: Optional[JobBackendFactory] = None,
+    session_root: Optional[str | Path] = None,
+    supervisor_budget_s: Optional[float] = None,
+    workspace_hook: Optional[SessionWorkspaceHook] = None,
 ) -> RunSnapshot:
     """Reopen a ledger and execute its non-terminal jobs.
 
     The pool width comes from the ledger's recorded ``max_parallel``. An
     explicit ``max_parallel`` applies to this pass only and is never written
-    back: the ledger records what the run was created with.
+    back: the ledger records what the run was created with. ``session_root``,
+    ``supervisor_budget_s`` and ``workspace_hook`` are those of
+    :func:`run_jobs`; the agent-session check covers the non-terminal jobs
+    before anything is recovered or reserved.
     """
     # Before recovery, expiry or the migrating open of the ledger.
     _interrupts._schema_validator()
@@ -2004,6 +2719,13 @@ def resume_run(
         if max_parallel is None
         else validate_max_parallel(max_parallel)
     )
+    check_agent_session_run(
+        [record.job for record in store_object.list_jobs(run_id) if not record.terminal],
+        session_root=session_root,
+        supervisor_budget_s=supervisor_budget_s,
+        timeout_s=timeout_s,
+        max_parallel=bound,
+    )
     return _run_pending(
         store_object,
         run_id,
@@ -2012,10 +2734,15 @@ def resume_run(
         capabilities_provider=capabilities_provider,
         backend_factory=backend_factory,
         max_parallel=bound,
+        session_root=session_root,
+        workspace_hook=workspace_hook,
     )
 
 
 __all__ = [
+    "AgentSessionConfigError",
+    "NoWorkspaceHook",
+    "check_agent_session_run",
     "DEFAULT_TIMEOUT_S",
     "CONTRACT_OUTPUT_LIMIT",
     "HALT_UNREACHABLE",

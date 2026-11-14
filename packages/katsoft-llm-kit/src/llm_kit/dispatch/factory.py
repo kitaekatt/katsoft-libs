@@ -11,11 +11,13 @@ from pathlib import Path
 from typing import Optional
 
 from llm_kit.adapters.backends import ClaudeCliBackend, OpenAICompatBackend
-from llm_kit.adapters.capabilities import OPENAI_COMPAT_CAPABILITIES
+from llm_kit.adapters.capabilities import CLAUDE_AGENT_CAPABILITIES, OPENAI_COMPAT_CAPABILITIES
+from llm_kit.adapters.claude_session import ClaudeAgentSession
 from llm_kit.adapters.codex_backend import CodexCliBackend
 from llm_kit.adapters.endpoint_profile import endpoint_capabilities, profile_from_resolved
 from llm_kit.adapters.opencode_backend import OpencodeCliBackend
 from llm_kit.completion.capabilities import Capabilities
+from llm_kit.completion.session_types import AgentSessionBackend
 from llm_kit.completion.types import LLMBackend
 from llm_kit.registry.model_endpoints import HARNESS_KIND, EndpointEntry
 from llm_kit.registry.models import (
@@ -164,4 +166,54 @@ def create_transport_backend(
         raise EndpointResolveError(str(exc)) from exc
 
 
-__all__ = ["BackendSelection", "create_backend", "create_transport_backend"]
+class AgentSessionUnsupportedError(ValueError):
+    """A selected backend cannot run as an agent session.
+
+    Raised by :func:`create_agent_session` for a selection whose backend is not
+    the Claude CLI completion backend, or is that backend in text-only mode
+    (an agent session always has tools).
+    """
+
+
+def agent_session_capabilities() -> Capabilities:
+    """The advertisement an agent-session job is selected and armed against.
+
+    The record of :class:`~llm_kit.adapters.claude_session.ClaudeAgentSession`
+    (adapter ``claude-cli``): no ``no-session-persistence``, no text-only mode,
+    ``permission-bypass`` fixed. ``llm_kit.jobs`` reaches the adapter tables
+    only through ``dispatch``, so it asks here.
+    """
+    return CLAUDE_AGENT_CAPABILITIES
+
+
+def create_agent_session(selection: BackendSelection) -> AgentSessionBackend:
+    """The agent-session backend for a selected Claude CLI entry.
+
+    ``selection.backend`` must be a :class:`ClaudeCliBackend` that is not in
+    text-only mode; its ``executable`` carries over, so a test or caller that
+    names a Claude build for the completion backend gets the same build for the
+    session. Returns a :class:`~llm_kit.adapters.claude_session
+    .ClaudeAgentSession`. Raises :class:`AgentSessionUnsupportedError`
+    otherwise; nothing is started.
+    """
+    backend = selection.backend
+    if not isinstance(backend, ClaudeCliBackend):
+        raise AgentSessionUnsupportedError(
+            f"entry {selection.endpoint!r} ({getattr(backend, 'name', type(backend).__name__)}) "
+            "is not the Claude CLI; only a Claude harness entry can run an agent session"
+        )
+    if backend.text_only:
+        raise AgentSessionUnsupportedError(
+            f"entry {selection.endpoint!r} was armed text-only; an agent session cannot run without tools"
+        )
+    return ClaudeAgentSession(executable=backend.executable)
+
+
+__all__ = [
+    "AgentSessionUnsupportedError",
+    "BackendSelection",
+    "agent_session_capabilities",
+    "create_agent_session",
+    "create_backend",
+    "create_transport_backend",
+]

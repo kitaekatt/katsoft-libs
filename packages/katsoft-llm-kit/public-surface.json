@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0.",
+  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0. The agent-session pieces (llm_kit.completion.session_types, llm_kit.adapters.claude_stream, llm_kit.adapters.claude_session, llm_kit.jobs.session, llm_kit.storage.file_lock) and the jobs runner (llm_kit.jobs.run) are listed whole from 1.26.0.",
   "package": "llm_kit",
   "current_version_file": ".claude-plugin/plugin.json",
   "covers": [
@@ -10,7 +10,13 @@
     "llm_kit.jobs.supervisor",
     "llm_kit.graph",
     "llm_kit.registry.project_models",
-    "llm_kit.schema.formats"
+    "llm_kit.schema.formats",
+    "llm_kit.completion.session_types",
+    "llm_kit.adapters.claude_stream",
+    "llm_kit.adapters.claude_session",
+    "llm_kit.jobs.session",
+    "llm_kit.storage.file_lock",
+    "llm_kit.jobs.run"
   ],
   "entries": [
     {
@@ -2937,6 +2943,430 @@
     },
     {
       "name": "llm_kit.pipeline.analysis.mining.families.family_stats",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.AGENT_PERMISSION_MODE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.ATTEMPT_DIR_PREFIX",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.AgentSessionBackend",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.AttemptBudget",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.BOUND_OPTION_KEYS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.CLEANUP_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.CLEANUP_RECORD_SCHEMA_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.CleanupRecord",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.DEFAULT_EOF_WAIT_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.DEFAULT_FINALIZE_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.DEFAULT_QUIESCENCE_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.DEFAULT_RESULT_WAIT_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.DEFAULT_SIGINT_WAIT_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.DEFAULT_SYSTEM_PROMPT_MODE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.DetachedSurvivor",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.EVENTS_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.EVENT_LINE_SCHEMA_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.FAILURE_PRECEDENCE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.JobBudget",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.LedgerColumn",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.MAILBOX_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.MAILBOX_LOCK_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.MAILBOX_RECORD_SCHEMA_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.MAILBOX_STATE_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.MAILBOX_STATE_SCHEMA_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.MailboxRecord",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.MailboxRecordKind",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.MailboxState",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.MessageDelivery",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.OPTION_EOF_WAIT_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.OPTION_FINALIZE_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.OPTION_QUIESCENCE_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.OPTION_RESULT_WAIT_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.OPTION_RESUME_SESSION",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.OPTION_SESSION",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.OPTION_SIGINT_WAIT_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.ProcessIdentity",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SCHEMA_DIRECTORY",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SCHEMA_PACKAGE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SESSION_FILES_SCHEMA_VERSION",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SESSION_HALT_KINDS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SESSION_LEDGER_COLUMNS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SESSION_LEDGER_SCHEMA",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SESSION_LEDGER_TABLES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SESSION_OPTION_KEYS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SESSION_RECORD_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SESSION_RECORD_SCHEMA_FILE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SESSION_SCHEMA_FILES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SESSION_TAG_ENV",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SessionBounds",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SessionChannel",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SessionFailure",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SessionFailureKind",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SessionMode",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SessionOptions",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SessionOutcome",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SessionPaths",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SessionRecord",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SessionRequest",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SessionWorkspaceHook",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.StopKind",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.StopMode",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.StopRequest",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.StopRequestKind",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.SupervisorBudgetError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.WorkspaceFinalizeResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.WorkspaceFinalizeStatus",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.check_process_tag",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.check_session_id",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.check_supervisor_budget",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.encode_job_id",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.required_supervisor_budget_s",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.adapters.claude_stream.StreamVerdict",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.adapters.claude_stream.init_problem",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.adapters.claude_stream.parse_stream_line",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.adapters.claude_session.ClaudeAgentSession",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.adapters.claude_session.interrupt_request_line",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.adapters.claude_session.user_message_line",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.session.FileSessionChannel",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.session.append_message",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.session.create_attempt_dir",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.session.read_cleanup_record",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.session.read_records",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.session.read_session_record",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.session.read_state",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.session.request_stop",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.session.write_session_record",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.storage.file_lock.POLL_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.storage.file_lock.file_lock",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.AgentSessionConfigError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.CONTRACT_OUTPUT_LIMIT",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.DEFAULT_TIMEOUT_S",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.HALT_UNREACHABLE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.INTERRUPT_IO_DIRNAME",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.InterruptIO",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.NoWorkspaceHook",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.check_agent_session_run",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.continue_job",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.default_store_path",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.default_workspace_root",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.replace_attempt_acceptance",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.resume_run",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.run_contract",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.run_job",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.run_job_file",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.run.run_jobs",
       "status": "public"
     }
   ]
