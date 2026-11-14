@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit-session/1/mailbox_record.json",
+  "title": "mailbox_record",
+  "description": "One line of mailbox.jsonl in an agent-session attempt directory (llm_kit.completion.session_types.MailboxRecord). A message carries text and no stop request; a stop carries a stop request and no text.",
+  "type": "object",
+  "required": ["schema", "seq", "id", "at", "kind", "text", "stop"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": 1 },
+    "seq": { "type": "integer", "minimum": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "at": { "type": "string", "minLength": 1 },
+    "kind": { "enum": ["message", "stop"] },
+    "text": { "type": ["string", "null"] },
+    "stop": { "type": ["object", "null"] }
+  },
+  "anyOf": [
+    {
+      "properties": {
+        "kind": { "const": "message" },
+        "text": { "type": "string", "minLength": 1 },
+        "stop": { "type": "null" }
+      }
+    },
+    {
+      "properties": {
+        "kind": { "const": "stop" },
+        "text": { "type": "null" },
+        "stop": { "$ref": "#/$defs/stop_request" }
+      }
+    }
+  ],
+  "$defs": {
+    "stop_request": {
+      "type": "object",
+      "required": ["kind", "mode"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["stop", "pause"] },
+        "mode": { "enum": ["interrupt", "finish_turn"] }
+      }
+    }
+  },
+  "examples": [
+    { "schema": 1, "seq": 1, "id": "0f8e2c1a9b7d4c3e8a6b5d4c3b2a1908", "at": "2026-11-14T10:00:00.000000+00:00", "kind": "message", "text": "Please also update the changelog.", "stop": null },
+    { "schema": 1, "seq": 2, "id": "5d4c3b2a19080f8e2c1a9b7d4c3e8a6b", "at": "2026-11-14T10:05:00.000000+00:00", "kind": "stop", "text": null, "stop": { "kind": "pause", "mode": "finish_turn" } }
+  ]
+}

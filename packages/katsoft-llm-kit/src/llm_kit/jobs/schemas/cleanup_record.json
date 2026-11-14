@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit-session/1/cleanup_record.json",
+  "title": "cleanup_record",
+  "description": "cleanup.json in an agent-session attempt directory (llm_kit.completion.session_types.CleanupRecord): the identity evidence for stopping the session's processes after a crash. Successive writes keep tag, leader, process_group and started_at, and members only grow.",
+  "type": "object",
+  "required": ["schema", "tag", "leader", "process_group", "members", "started_at", "updated_at", "confirmed_stopped_at"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": 1 },
+    "tag": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "leader": { "$ref": "#/$defs/process_identity" },
+    "process_group": { "type": ["integer", "null"], "minimum": 1 },
+    "members": { "type": "array", "items": { "$ref": "#/$defs/process_identity" } },
+    "started_at": { "type": "string", "minLength": 1 },
+    "updated_at": { "type": "string", "minLength": 1 },
+    "confirmed_stopped_at": { "type": ["string", "null"] }
+  },
+  "$defs": {
+    "process_identity": {
+      "type": "object",
+      "required": ["pid", "create_time"],
+      "additionalProperties": false,
+      "properties": {
+        "pid": { "type": "integer", "minimum": 1 },
+        "create_time": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    }
+  },
+  "examples": [
+    { "schema": 1, "tag": "lst_0123456789abcdef", "leader": { "pid": 4242, "create_time": 1794000000.5 }, "process_group": 4242, "members": [{ "pid": 4300, "create_time": 1794000001.25 }], "started_at": "2026-11-14T10:00:01.000000+00:00", "updated_at": "2026-11-14T10:00:02.000000+00:00", "confirmed_stopped_at": null }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit-session/1/mailbox_state.json",
+  "title": "mailbox_state",
+  "description": "mailbox-state.json in an agent-session attempt directory (llm_kit.completion.session_types.MailboxState): the forwarding high-water mark and the closure of the mailbox. The closure fields are set exactly when closed is true.",
+  "type": "object",
+  "required": ["schema", "forwarded_through_seq", "closed", "closed_at", "closed_through_seq", "close_reason"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": 1 },
+    "forwarded_through_seq": { "type": "integer", "minimum": 0 },
+    "closed": { "type": "boolean" },
+    "closed_at": { "type": ["string", "null"] },
+    "closed_through_seq": { "type": ["integer", "null"] },
+    "close_reason": { "type": ["string", "null"] }
+  },
+  "anyOf": [
+    {
+      "properties": {
+        "closed": { "const": false },
+        "closed_at": { "type": "null" },
+        "closed_through_seq": { "type": "null" },
+        "close_reason": { "type": "null" }
+      }
+    },
+    {
+      "properties": {
+        "closed": { "const": true },
+        "closed_at": { "type": "string", "minLength": 1 },
+        "closed_through_seq": { "type": "integer", "minimum": 0 },
+        "close_reason": { "enum": ["quiescent", "operator_stop", "operator_pause", "timeout", "process_exit", "init_mismatch"] }
+      }
+    }
+  ],
+  "examples": [
+    { "schema": 1, "forwarded_through_seq": 0, "closed": false, "closed_at": null, "closed_through_seq": null, "close_reason": null },
+    { "schema": 1, "forwarded_through_seq": 2, "closed": true, "closed_at": "2026-11-14T10:30:00.000000+00:00", "closed_through_seq": 3, "close_reason": "quiescent" }
+  ]
+}

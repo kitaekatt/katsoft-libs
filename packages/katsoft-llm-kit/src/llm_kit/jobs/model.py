@@ -83,6 +83,13 @@ from pathlib import Path
 from typing import Mapping, Optional, Sequence
 
 from llm_kit import _runtime
+from llm_kit.completion.session_types import (
+    SESSION_OPTION_KEYS,
+    SessionMode,
+    SessionOptions,
+    StopKind,
+    check_session_id,
+)
 from llm_kit.execution.values import InterruptResolution, interrupt_lapsed
 
 
@@ -98,6 +105,9 @@ _JOB_OPTION_KEYS = frozenset(
         "extras",
         "max_tokens",
         "temperature",
+        # Session options are job-level only: they are absent from
+        # _MODEL_OPTION_KEYS below, so a model_options entry refuses them.
+        *SESSION_OPTION_KEYS,
     }
 )
 
@@ -110,6 +120,26 @@ _JOB_LEVEL_ONLY_OPTION_KEYS = _JOB_OPTION_KEYS - _MODEL_OPTION_KEYS
 def _split_command(value: str) -> tuple[str, ...]:
     """Split a scalar command using the host platform's quoting rules."""
     return tuple(shlex.split(value, posix=os.name != "nt"))
+
+
+def _refuse_agent_sessions(options: Mapping[str, object]) -> None:
+    """Refuse every session option except the explicit default ``session: completion``.
+
+    ``jobs run`` does not yet start agent sessions: nothing on the run path
+    reads these options, so accepting them would run an agent-session job
+    silently as a completion. The wiring that makes ``jobs run`` act on them
+    removes this function and its call in :func:`_normalize_job_options`.
+    """
+    given = sorted(
+        key
+        for key in SESSION_OPTION_KEYS
+        if key in options and not (key == "session" and options[key] == "completion")
+    )
+    if given:
+        raise ValueError(
+            f"job options {given} need agent sessions, which `jobs run` does not "
+            "support yet; only session: completion is accepted"
+        )
 
 
 def _normalize_job_options(value: object) -> dict[str, object]:
@@ -162,6 +192,10 @@ def _normalize_job_options(value: object) -> dict[str, object]:
         raise ValueError("job option extras must be a mapping")
     if extras is not None:
         options["extras"] = dict(extras)
+    # Validates the session keys (mode, resume id, bounds) and refuses a bound
+    # or resume id given outside agent mode; other keys are ignored.
+    SessionOptions.from_job_options(options)
+    _refuse_agent_sessions(options)
     return options
 
 
@@ -1015,6 +1049,75 @@ class Acceptance:
         }
 
 
+def _check_session_fields(
+    owner: str,
+    session_mode: object,
+    session_id: object,
+    session_cwd: object,
+    session_dir: object,
+    stop_kind: object,
+) -> tuple[SessionMode, Optional[str], Optional[Path], Optional[Path], Optional[StopKind]]:
+    """Normalize and check the ledger schema 14 session fields of one record.
+
+    ``owner`` names the record kind in errors. An agent record needs
+    ``session_id`` (a canonical UUID), ``session_cwd`` and ``session_dir``
+    (absolute); ``stop_kind`` is optional because a live, lost or hard-cancelled
+    record has none. A completion record carries none of the four. Raises
+    ``ValueError`` otherwise. Returns the coerced values in argument order.
+    """
+    try:
+        mode = SessionMode(session_mode)
+    except ValueError:
+        allowed = ", ".join(m.value for m in SessionMode)
+        raise ValueError(
+            f"{owner} session_mode must be one of: {allowed}; got {session_mode!r}"
+        ) from None
+    kind: Optional[StopKind]
+    if stop_kind is None:
+        kind = None
+    else:
+        try:
+            kind = StopKind(stop_kind)
+        except ValueError:
+            allowed = ", ".join(k.value for k in StopKind)
+            raise ValueError(
+                f"{owner} stop_kind must be one of: {allowed}; got {stop_kind!r}"
+            ) from None
+    cwd = Path(session_cwd) if session_cwd is not None else None  # type: ignore[arg-type]
+    directory = Path(session_dir) if session_dir is not None else None  # type: ignore[arg-type]
+    if mode is SessionMode.AGENT:
+        missing = [
+            name
+            for name, value in (
+                ("session_id", session_id),
+                ("session_cwd", cwd),
+                ("session_dir", directory),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ValueError(f"an agent {owner} requires {', '.join(missing)}")
+        check_session_id(session_id, name=f"{owner} session_id")
+        if not directory.is_absolute():  # type: ignore[union-attr]
+            raise ValueError(f"{owner} session_dir must be absolute, got {directory}")
+    else:
+        extra = [
+            name
+            for name, value in (
+                ("session_id", session_id),
+                ("session_cwd", cwd),
+                ("session_dir", directory),
+                ("stop_kind", kind),
+            )
+            if value is not None
+        ]
+        if extra:
+            raise ValueError(
+                f"a completion {owner} must not set {', '.join(extra)}"
+            )
+    return mode, session_id, cwd, directory, kind  # type: ignore[return-value]
+
+
 @dataclass(frozen=True)
 class Attempt:
     """One append-only row: exactly one seam invocation and its check."""
@@ -1050,8 +1153,36 @@ class Attempt:
     # declared ``models`` list this is what makes an unattended choice
     # explainable afterwards. ``None`` on rows written before it was logged.
     pace_readings: Optional[tuple[Mapping[str, object], ...]] = None
+    # Ledger schema 14 (see SESSION_LEDGER_COLUMNS). ``completion`` rows leave
+    # the other four None; an ``agent`` row carries the Claude session id, the
+    # cwd its init event reported, its session directory and why the process
+    # was stopped (``stop_kind`` is None after a hard cancel).
+    session_mode: SessionMode = SessionMode.COMPLETION
+    session_id: Optional[str] = None
+    session_cwd: Optional[Path] = None
+    session_dir: Optional[Path] = None
+    stop_kind: Optional[StopKind] = None
 
     def __post_init__(self) -> None:
+        (
+            session_mode,
+            session_id,
+            session_cwd,
+            session_dir,
+            stop_kind,
+        ) = _check_session_fields(
+            "attempt",
+            self.session_mode,
+            self.session_id,
+            self.session_cwd,
+            self.session_dir,
+            self.stop_kind,
+        )
+        object.__setattr__(self, "session_mode", session_mode)
+        object.__setattr__(self, "session_id", session_id)
+        object.__setattr__(self, "session_cwd", session_cwd)
+        object.__setattr__(self, "session_dir", session_dir)
+        object.__setattr__(self, "stop_kind", stop_kind)
         if self.pace_readings is not None:
             object.__setattr__(
                 self,
@@ -1131,6 +1262,11 @@ class Attempt:
                 if self.pace_readings is not None
                 else None
             ),
+            "session_mode": self.session_mode.value,
+            "session_id": self.session_id,
+            "session_cwd": str(self.session_cwd) if self.session_cwd is not None else None,
+            "session_dir": str(self.session_dir) if self.session_dir is not None else None,
+            "stop_kind": self.stop_kind.value if self.stop_kind is not None else None,
         }
         if self.id is not None:
             result["id"] = self.id
@@ -1160,8 +1296,36 @@ class AttemptReservation:
     workspace_removed_at: Optional[float] = None
     workspace_removal_forced: bool = False
     id: Optional[int] = None
+    # Ledger schema 14 (see SESSION_LEDGER_COLUMNS). An agent reservation
+    # carries its session id, requested cwd and session directory before any
+    # attempt row exists; ``stop_kind`` is copied onto it when the attempt row
+    # is appended.
+    session_mode: SessionMode = SessionMode.COMPLETION
+    session_id: Optional[str] = None
+    session_cwd: Optional[Path] = None
+    session_dir: Optional[Path] = None
+    stop_kind: Optional[StopKind] = None
 
     def __post_init__(self) -> None:
+        (
+            session_mode,
+            session_id,
+            session_cwd,
+            session_dir,
+            stop_kind,
+        ) = _check_session_fields(
+            "reservation",
+            self.session_mode,
+            self.session_id,
+            self.session_cwd,
+            self.session_dir,
+            self.stop_kind,
+        )
+        object.__setattr__(self, "session_mode", session_mode)
+        object.__setattr__(self, "session_id", session_id)
+        object.__setattr__(self, "session_cwd", session_cwd)
+        object.__setattr__(self, "session_dir", session_dir)
+        object.__setattr__(self, "stop_kind", stop_kind)
         if self.workspace_path is not None:
             object.__setattr__(
                 self, "workspace_path", Path(self.workspace_path).expanduser().resolve()
@@ -1207,6 +1371,11 @@ class AttemptReservation:
             "workspace_reason": self.workspace_reason,
             "workspace_removed_at": self.workspace_removed_at,
             "workspace_removal_forced": self.workspace_removal_forced,
+            "session_mode": self.session_mode.value,
+            "session_id": self.session_id,
+            "session_cwd": str(self.session_cwd) if self.session_cwd is not None else None,
+            "session_dir": str(self.session_dir) if self.session_dir is not None else None,
+            "stop_kind": self.stop_kind.value if self.stop_kind is not None else None,
         }
 
 

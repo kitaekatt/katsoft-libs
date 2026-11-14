@@ -30,6 +30,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterator, Mapping, Optional, Sequence
 
+from llm_kit.completion.session_types import (
+    SESSION_LEDGER_COLUMNS,
+    SESSION_LEDGER_SCHEMA,
+    SESSION_LEDGER_TABLES,
+    SessionMode,
+    StopKind,
+)
 from llm_kit.registry.adapter_names import canonical_adapter_name
 from llm_kit.storage import connection as _connection
 from llm_kit.storage import schema_version as _schema_version
@@ -54,6 +61,7 @@ from .model import (
     RunState,
     TERMINAL_STATES,
     Usage,
+    _check_session_fields,
     interrupt_lapsed,
     validate_max_parallel,
 )
@@ -175,6 +183,13 @@ INTERRUPT_SCHEMA = 12
 #: interrupt resolution. A reader built before it refuses such a ledger
 #: through the future-schema check; that refusal is deliberate.
 CANCEL_SCHEMA = 13
+
+#: The first ledger schema that has the session columns on ``attempts`` and
+#: ``reservations`` (``SESSION_LEDGER_COLUMNS``). A reader built before it
+#: refuses such a ledger through the future-schema check; that refusal is
+#: deliberate. The migration list below is checked against
+#: ``SESSION_LEDGER_SCHEMA`` when this module is imported.
+SESSION_SCHEMA = 14
 
 _MIGRATIONS: list[list[str]] = [
     [
@@ -441,7 +456,22 @@ _MIGRATIONS: list[list[str]] = [
             BEGIN SELECT RAISE(ABORT, 'interrupt resolutions are immutable'); END
         """,
     ],
+    # Agent sessions. Every column of SESSION_LEDGER_COLUMNS is added to both
+    # tables with its exact type clause; existing rows read back as
+    # ``session_mode = 'completion'`` and NULL for the rest.
+    [
+        f"ALTER TABLE {table} ADD COLUMN {column.name} {column.sql}"
+        for table in SESSION_LEDGER_TABLES
+        for column in SESSION_LEDGER_COLUMNS
+    ],
 ]
+
+if not (SESSION_SCHEMA == SESSION_LEDGER_SCHEMA == len(_MIGRATIONS)):  # pragma: no cover
+    raise RuntimeError(
+        "ledger migration list is out of step with SESSION_LEDGER_SCHEMA "
+        f"({len(_MIGRATIONS)} steps, SESSION_SCHEMA {SESSION_SCHEMA}, "
+        f"SESSION_LEDGER_SCHEMA {SESSION_LEDGER_SCHEMA})"
+    )
 
 
 def _json_or_none(value: object) -> Optional[str]:
@@ -520,8 +550,33 @@ def _row_to_job(row: sqlite3.Row) -> JobRecord:
     )
 
 
-def _row_to_attempt(row: sqlite3.Row) -> Attempt:
-    """Convert an attempts row into its public record."""
+def _session_fields(row: sqlite3.Row, version: int) -> dict[str, object]:
+    """Read the schema 14 session columns of an attempts or reservations row.
+
+    A ledger older than :data:`SESSION_SCHEMA` has no such columns (a
+    :class:`LedgerReader` never migrates), so each column takes its
+    ``pre_v14`` value. From schema 14 on a missing column is a corrupt
+    ledger and raises ``IndexError``.
+    """
+    raw = {
+        column.name: column.pre_v14 if version < SESSION_SCHEMA else row[column.name]
+        for column in SESSION_LEDGER_COLUMNS
+    }
+    return {
+        "session_mode": SessionMode(raw["session_mode"]),
+        "session_id": raw["session_id"],
+        "session_cwd": Path(raw["session_cwd"]) if raw["session_cwd"] is not None else None,
+        "session_dir": Path(raw["session_dir"]) if raw["session_dir"] is not None else None,
+        "stop_kind": StopKind(raw["stop_kind"]) if raw["stop_kind"] is not None else None,
+    }
+
+
+def _row_to_attempt(row: sqlite3.Row, version: int = SESSION_SCHEMA) -> Attempt:
+    """Convert an attempts row into its public record.
+
+    ``version`` is the schema the row was read at; it defaults to the current
+    one, which every :class:`JobStore` read uses because the store migrates.
+    """
     error = None
     if row["error_code"] is not None:
         error = AttemptError(
@@ -589,11 +644,14 @@ def _row_to_attempt(row: sqlite3.Row) -> Attempt:
         workspace_removal_forced=bool(row["workspace_removal_forced"]),
         acceptance=_acceptance_from_json(row["acceptance_json"]),
         pace_readings=_pace_readings_from_json(row["pace_readings_json"]),
+        **_session_fields(row, version),  # type: ignore[arg-type]
     )
 
 
-def _row_to_reservation(row: sqlite3.Row) -> AttemptReservation:
-    """Convert a reservations row into its public record."""
+def _row_to_reservation(
+    row: sqlite3.Row, version: int = SESSION_SCHEMA
+) -> AttemptReservation:
+    """Convert a reservations row into its public record (see ``_row_to_attempt``)."""
     workspace_path = row["workspace_path"]
     return AttemptReservation(
         id=int(row["id"]),
@@ -633,6 +691,7 @@ def _row_to_reservation(row: sqlite3.Row) -> AttemptReservation:
             else None
         ),
         workspace_removal_forced=bool(row["workspace_removal_forced"]),
+        **_session_fields(row, version),  # type: ignore[arg-type]
     )
 
 
@@ -794,8 +853,10 @@ def _read_snapshot(
     return RunSnapshot(
         run=JobStore._run_record(run_row, job_rows),
         jobs=tuple(_row_to_job(row) for row in job_rows),
-        attempts=tuple(_row_to_attempt(row) for row in attempt_rows),
-        reservations=tuple(_row_to_reservation(row) for row in reservation_rows),
+        attempts=tuple(_row_to_attempt(row, version) for row in attempt_rows),
+        reservations=tuple(
+            _row_to_reservation(row, version) for row in reservation_rows
+        ),
         interrupts=interrupts,
         continuations=continuations,
         read_at=now,
@@ -1497,9 +1558,23 @@ class JobStore:
         model: str,
         reserved_at: str,
         workspace_path: Optional[str | Path] = None,
+        session_mode: SessionMode | str = SessionMode.COMPLETION,
+        session_id: Optional[str] = None,
+        session_cwd: Optional[str | Path] = None,
+        session_dir: Optional[str | Path] = None,
     ) -> AttemptReservation:
-        """Reserve one seam invocation and mark its job running atomically."""
+        """Reserve one seam invocation and mark its job running atomically.
+
+        The ``session_*`` keywords are the ledger schema 14 session columns.
+        An agent reservation (``session_mode="agent"``) must give
+        ``session_id``, ``session_cwd`` and ``session_dir``: the reservation
+        carries them before any attempt row exists. A completion reservation
+        gives none. ``ValueError`` otherwise, before anything is written.
+        """
         path = Path(workspace_path).expanduser().resolve() if workspace_path is not None else None
+        mode, session_id, cwd, directory, _ = _check_session_fields(
+            "reservation", session_mode, session_id, session_cwd, session_dir, None
+        )
         with self._writer() as conn:
             self._require_run(conn, run_id)
             job_row = self._require_job(conn, run_id, job_id)
@@ -1516,8 +1591,9 @@ class JobStore:
                 """
                 INSERT INTO reservations(
                     run_id, job_id, attempt_no, budget_no, endpoint, backend, model,
-                    workspace_path, reserved_at, workspace_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    workspace_path, reserved_at, workspace_status,
+                    session_mode, session_id, session_cwd, session_dir
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -1530,6 +1606,10 @@ class JobStore:
                     str(path) if path is not None else None,
                     str(reserved_at),
                     "isolated" if path is not None else "none",
+                    mode.value,
+                    session_id,
+                    str(cwd) if cwd is not None else None,
+                    str(directory) if directory is not None else None,
                 ),
             )
             conn.execute(
@@ -2003,6 +2083,21 @@ class JobStore:
             if reservation is not None and reservation["disposition"] is None:
                 if reservation["invoke_armed_at"] is None:
                     raise StoreError("cannot append an unarmed reservation")
+                if (
+                    reservation["session_mode"] != attempt.session_mode.value
+                    or reservation["session_id"] != attempt.session_id
+                    or reservation["session_dir"]
+                    != (
+                        str(attempt.session_dir)
+                        if attempt.session_dir is not None
+                        else None
+                    )
+                ):
+                    raise StoreError(
+                        "the attempt's session mode, id or directory differs from "
+                        f"its reservation ({attempt.run_id!r}/{attempt.job_id!r} "
+                        f"attempt {attempt.attempt_no})"
+                    )
                 attempt = replace(
                     attempt, started_at=str(reservation["invoke_armed_at"])
                 )
@@ -2038,10 +2133,12 @@ class JobStore:
                     response_text, reasoning, finish_reason, workspace, base_ref,
                     workspace_status,
                     workspace_reason, workspace_removed_at, workspace_removal_forced,
-                    acceptance_json, pace_readings_json
+                    acceptance_json, pace_readings_json,
+                    session_mode, session_id, session_cwd, session_dir, stop_kind
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -2095,14 +2192,24 @@ class JobStore:
                         if attempt.pace_readings is not None
                         else None
                     ),
+                    attempt.session_mode.value,
+                    attempt.session_id,
+                    str(attempt.session_cwd) if attempt.session_cwd is not None else None,
+                    str(attempt.session_dir) if attempt.session_dir is not None else None,
+                    attempt.stop_kind.value if attempt.stop_kind is not None else None,
                 ),
             )
             attempt_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
             if reservation is not None and reservation["disposition"] is None:
                 conn.execute(
-                    "UPDATE reservations SET disposition = ?, resolved_at = ? "
-                    "WHERE id = ?",
-                    ("completed", str(when), int(reservation["id"])),
+                    "UPDATE reservations SET disposition = ?, resolved_at = ?, "
+                    "stop_kind = ? WHERE id = ?",
+                    (
+                        "completed",
+                        str(when),
+                        attempt.stop_kind.value if attempt.stop_kind is not None else None,
+                        int(reservation["id"]),
+                    ),
                 )
             job_reason = (
                 str(reason)[:ERROR_LIMIT]
@@ -3151,6 +3258,7 @@ __all__ = [
     "CANCEL_SCHEMA",
     "INTERRUPT_SCHEMA",
     "READER_MIN_SCHEMA",
+    "SESSION_SCHEMA",
     "StoreError",
     "StoreNotFoundError",
     "UnknownRunError",

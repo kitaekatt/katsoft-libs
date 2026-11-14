@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit-session/1/session_record.json",
+  "title": "session_record",
+  "description": "session.json in an agent-session attempt directory (llm_kit.completion.session_types.SessionRecord): the identity and end of one attempt's session. The end fields (ended_at, stop_kind, shutdown_confirmed) are all set or all null.",
+  "type": "object",
+  "required": [
+    "schema", "run_id", "job_id", "attempt_no", "session_id", "resumed", "cwd", "process_tag",
+    "created_at", "first_init_at", "ended_at", "stop_kind", "result_subtype", "shutdown_confirmed"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "job_id": { "type": "string", "minLength": 1 },
+    "attempt_no": { "type": "integer", "minimum": 1 },
+    "session_id": { "type": "string", "minLength": 36, "maxLength": 36 },
+    "resumed": { "type": "boolean" },
+    "cwd": { "type": "string", "minLength": 1 },
+    "process_tag": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "created_at": { "type": "string", "minLength": 1 },
+    "first_init_at": { "type": ["string", "null"] },
+    "ended_at": { "type": ["string", "null"] },
+    "stop_kind": { "type": ["string", "null"] },
+    "result_subtype": { "type": ["string", "null"] },
+    "shutdown_confirmed": { "type": ["boolean", "null"] }
+  },
+  "anyOf": [
+    {
+      "properties": {
+        "ended_at": { "type": "null" },
+        "stop_kind": { "type": "null" },
+        "shutdown_confirmed": { "type": "null" }
+      }
+    },
+    {
+      "properties": {
+        "ended_at": { "type": "string", "minLength": 1 },
+        "stop_kind": { "enum": ["quiescent", "operator_stop", "operator_pause", "timeout", "process_exit", "init_mismatch"] },
+        "shutdown_confirmed": { "type": "boolean" }
+      }
+    }
+  ],
+  "examples": [
+    { "schema": 1, "run_id": "run-1", "job_id": "unit-7", "attempt_no": 1, "session_id": "0b9f3c3e-8a51-4a0e-9a4f-3d2f7c1e5b10", "resumed": false, "cwd": "/work/unit-7", "process_tag": "lst_0123456789abcdef", "created_at": "2026-11-14T10:00:00.000000+00:00", "first_init_at": null, "ended_at": null, "stop_kind": null, "result_subtype": null, "shutdown_confirmed": null }
+  ]
+}

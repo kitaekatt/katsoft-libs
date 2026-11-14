@@ -66,7 +66,6 @@ judged.
 """
 from __future__ import annotations
 
-import json
 import os
 import secrets
 import shutil
@@ -79,6 +78,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+from llm_kit.adapters.claude_stream import StreamVerdict, parse_stream_line
 from llm_kit.relay.mailbox import LeaseLost, Mailbox
 
 #: The environment variable that tags a resume child with its lease id.
@@ -583,29 +583,19 @@ class ResumeRunner:
             _stop_confirmed(job.tag, active.leader, grace_s=0.0)
 
         active.stop = kill
-        verdict: dict[str, Any] = {}
+        verdict = StreamVerdict(session_id=job.session_id, cwd=job.cwd, permission_mode=job.claude_permission_mode)
         stderr: list[str] = []
 
         def read_out() -> None:
             assert proc.stdout is not None
             for line in proc.stdout:
-                try:
-                    event = json.loads(line)
-                except ValueError:
+                event = parse_stream_line(line)
+                if event is None:
                     continue
-                if not isinstance(event, dict):
-                    continue
-                kind, subtype = event.get("type"), event.get("subtype")
-                if "init" not in verdict:
-                    if kind == "system" and subtype == "init":
-                        verdict["init"] = event
-                        problem = self._init_problem(job, event)
-                        if problem is not None:
-                            verdict["mismatch"] = problem
-                            kill()
-                    continue  # nothing before this run's init counts (a stale result is never read)
-                if kind == "result" and event.get("session_id") == job.session_id and "result" not in verdict:
-                    verdict["result"] = event
+                verdict.observe(event)
+                # only the first init decides the run; a mismatch stops the child at once
+                if event is verdict.first_init and verdict.first_problem is not None:
+                    kill()
 
         def read_err() -> None:
             assert proc.stderr is not None
@@ -638,13 +628,15 @@ class ResumeRunner:
                 code = None  # the leader survived SIGKILL: unstopped is set and the claim stays held
             for reader in readers:
                 reader.join(timeout=5.0)
-        if "mismatch" in verdict:
-            return "declined", f"config_mismatch: {verdict['mismatch']}"
-        if "init" not in verdict:
+        if verdict.first_problem is not None:
+            return "declined", f"config_mismatch: {verdict.first_problem}"
+        if verdict.first_init is None:
             return "declined", f"claude exited {code} without an init event: {''.join(stderr)[-500:].strip()}"
-        result = verdict.get("result")
-        if result is None:
+        # nothing before this run's init counts (a stale result is never read)
+        matched = verdict.first_result_after_init
+        if matched is None:
             return "declined", f"claude exited {code} without a result event"
+        result = matched[1]
         if code != 0:
             return "declined", f"claude exited {code}: {str(result.get('result') or '')[:500]}"
         if result.get("is_error") is not False:
@@ -653,17 +645,6 @@ class ResumeRunner:
         if not isinstance(text, str) or not text.strip():
             return "declined", "claude returned an empty result"
         return "answered", fit_reply(text, job.address)
-
-    @staticmethod
-    def _init_problem(job: ResumeJob, event: Mapping[str, Any]) -> Optional[str]:
-        if event.get("session_id") != job.session_id:
-            return f"session_id {event.get('session_id')!r} is not {job.session_id!r}"
-        cwd = event.get("cwd")
-        if not isinstance(cwd, str) or os.path.realpath(cwd) != os.path.realpath(job.cwd):
-            return f"cwd {cwd!r} is not {job.cwd!r}"
-        if event.get("permissionMode") != job.claude_permission_mode:
-            return f"permissionMode {event.get('permissionMode')!r} is not {job.claude_permission_mode!r}"
-        return None
 
     # -- orphan recovery --------------------------------------------------------------
 

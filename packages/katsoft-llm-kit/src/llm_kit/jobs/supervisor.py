@@ -28,6 +28,7 @@ from typing import Any
 import uuid
 
 from llm_kit.storage.atomic_json import write as _atomic_write
+from llm_kit.storage.file_lock import file_lock
 from . import _supervisor_process as processes
 from ._supervisor_process import ProcessIdentity
 
@@ -216,43 +217,6 @@ def _write(path: Path, value: Mapping[str, Any]) -> None:
         path.chmod(0o600)
 
 
-@contextmanager
-def _lock(path: Path, *, blocking: bool = True) -> Iterator[None]:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+b") as stream:
-        if os.name == "nt":
-            import msvcrt
-            # Windows byte-range locks also deny reads. Check metadata before
-            # locking instead of reading a byte another owner can hold.
-            if os.fstat(stream.fileno()).st_size == 0:
-                stream.write(b"0")
-                stream.flush()
-            stream.seek(0)
-            # msvcrt's blocking lock has a fixed ten-retry limit. Use the
-            # nonblocking primitive and an explicit wait for the blocking case.
-            while True:
-                try:
-                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
-                    break
-                except OSError as exc:
-                    if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
-                        raise
-                    if not blocking:
-                        raise BlockingIOError(f"Supervisor lock held: {path}") from None
-                    time.sleep(POLL_S)
-        else:
-            import fcntl
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
-        try:
-            yield
-        finally:
-            if os.name == "nt":
-                stream.seek(0)
-                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
-
-
 def _load(handle: ProcessHandle | Path) -> tuple[ProcessHandle, JobProcessSpec]:
     directory = handle.run_dir if isinstance(handle, ProcessHandle) else _absolute(handle, "run_dir")
     intent = _read(directory / "intent.json", handle=handle if isinstance(handle, ProcessHandle) else None)
@@ -287,7 +251,7 @@ def _tree(handle: ProcessHandle) -> tuple[ProcessIdentity | None, list[ProcessId
 
 def _release(handle: ProcessHandle, spec: JobProcessSpec) -> None:
     assert spec.lease_path is not None
-    with _lock(_lease_lock_path(spec)):
+    with file_lock(_lease_lock_path(spec)):
         lease = _read(spec.lease_path, handle=handle)
         if lease is None or lease.get("nonce") != handle.nonce:
             raise SupervisorError("Cannot release a different supervised lease", handle=handle)
@@ -335,7 +299,7 @@ def start(spec: JobProcessSpec, *, startup_timeout_s: float = 10.0) -> ProcessHa
         raise ValueError(f"cwd is not a directory: {spec.cwd}")
     handle = ProcessHandle(spec.run_dir, uuid.uuid4().hex)
     assert spec.lease_path is not None
-    with _lock(_lease_lock_path(spec)):
+    with file_lock(_lease_lock_path(spec)):
         previous = _read(spec.lease_path)
         if previous is not None and previous.get("released") is not True:
             prior = ProcessHandle.from_dict(previous["handle"])
@@ -469,7 +433,7 @@ def adopt(handle: ProcessHandle | Path) -> ProcessStatus:
     handle, spec = _load(status.handle)
     previous_owner = _record(handle, "runner.json")
     try:
-        with _lock(handle.run_dir / "owner.lock", blocking=False):
+        with file_lock(handle.run_dir / "owner.lock", blocking=False):
             runner = _record(handle, "runner.json")
             if runner is not None and processes.live(ProcessIdentity.from_dict(runner["process"])) is not None:
                 return inspect(handle)

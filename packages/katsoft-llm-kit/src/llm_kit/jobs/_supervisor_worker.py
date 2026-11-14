@@ -24,9 +24,10 @@ from typing import Any
 
 from llm_kit.jobs import _supervisor_process as processes
 from llm_kit.jobs.supervisor import (
-    JobProcessSpec, ProcessHandle, SupervisorError, _load, _lock, _record, _settle,
+    JobProcessSpec, ProcessHandle, SupervisorError, _load, _record, _settle,
     _spawn_options, _state_reads_until, _tree, _verify_lease, _write,
 )
+from llm_kit.storage.file_lock import file_lock
 
 
 HANDSHAKE_S = 10.0
@@ -73,7 +74,7 @@ def _child(handle: ProcessHandle, spec: JobProcessSpec, *, finalizer: bool = Fal
 
 
 def _run(handle: ProcessHandle, spec: JobProcessSpec) -> int:
-    with _lock(handle.run_dir / "owner.lock", blocking=False):
+    with file_lock(handle.run_dir / "owner.lock", blocking=False):
         _verify_lease(handle, spec)
         # Keep the Windows kernel handle alive until the owner exits. No handle
         # inheritance is requested, so an owner crash closes the last handle.
@@ -147,7 +148,7 @@ def _run(handle: ProcessHandle, spec: JobProcessSpec) -> int:
 
 
 def _recover(handle: ProcessHandle, spec: JobProcessSpec) -> int:
-    with _lock(handle.run_dir / "owner.lock", blocking=False):
+    with file_lock(handle.run_dir / "owner.lock", blocking=False):
         _verify_lease(handle, spec)
         windows_job = processes.assign_windows_job()
         me = processes.identity(os.getpid())
