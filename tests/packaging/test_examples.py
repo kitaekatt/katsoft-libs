@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -20,15 +21,22 @@ import closure_support as support
 pytestmark = pytest.mark.wheel_closure
 
 EXAMPLES = support.REPO / "packages" / support.KIT_DIST / "examples"
+#: Examples that need the ``local`` extra (psutil: agent sessions and branch mode), so they run in
+#: ``session_venv``; every other example runs in ``closure_venv``. Both sets are POSIX-only (the
+#: example launches a ``/bin/sh`` stand-in for ``claude``).
+SESSION_EXAMPLES = ("agent_session_branch.py",)
 
 
-def example_problems(venv, tmp_path) -> list[str]:
-    """Why an example does not run under ``venv``; empty when every example runs."""
+def example_problems(venv, tmp_path, *, session: bool = False) -> list[str]:
+    """Why an example does not run under ``venv``; empty when every example runs.
+
+    ``session`` selects the ``SESSION_EXAMPLES`` instead of all the others.
+    """
     copy = tmp_path / "examples"
     shutil.copytree(EXAMPLES, copy)
     home = tmp_path / "home"
     home.mkdir()
-    scripts = sorted(copy.glob("*.py"))
+    scripts = [path for path in sorted(copy.glob("*.py")) if (path.name in SESSION_EXAMPLES) == session]
     if not scripts:
         return ["no example scripts"]
     problems = []
@@ -42,6 +50,14 @@ def example_problems(venv, tmp_path) -> list[str]:
 
 def test_every_example_runs_in_the_clean_venv(closure_venv, tmp_path):
     assert example_problems(closure_venv, tmp_path) == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the agent-session example launches a /bin/sh stand-in")
+def test_the_agent_session_examples_run_in_the_clean_venv(session_venv, tmp_path):
+    """Agent sessions and branch mode, end to end, from the built wheel (quality bar line 5)."""
+    for name in SESSION_EXAMPLES:
+        assert (EXAMPLES / name).is_file(), name
+    assert example_problems(session_venv, tmp_path, session=True) == []
 
 
 def test_a_broken_example_is_detected(closure_venv, tmp_path, monkeypatch):

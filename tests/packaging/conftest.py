@@ -92,6 +92,13 @@ def closure_venv(wheel_source, local_wheels, tmp_path_factory) -> Path:
 
 
 @pytest.fixture(scope="session")
+def session_venv(wheel_source, local_wheels, tmp_path_factory) -> Path:
+    """The closure venv plus the ``local`` extra (psutil), which agent sessions and branch mode need."""
+    return support.make_venv(tmp_path_factory.mktemp("closure-session"),
+                             _requirements(wheel_source, local_wheels, support.KIT_EXTRAS + ",local"))
+
+
+@pytest.fixture(scope="session")
 def base_venv(wheel_source, local_wheels, tmp_path_factory) -> Path:
     """A fresh venv holding the two distributions with no extras (standard library only)."""
     return support.make_venv(tmp_path_factory.mktemp("closure-base"),

@@ -2,6 +2,25 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## 1.27.1
+
+The example for agent sessions and branch mode. No library code changes; this release carries the example, its packaging test and the bar record that 1.26.0 and 1.27.0 left pending.
+
+Added:
+
+- `examples/agent_session_branch.py`: one agent-session job in branch mode, end to end, in a plain Python environment. It builds a temporary repository with a bare remote and the remote-tracking base ref `origin/dev`, writes a jobs file (`options.session: agent`, `workspace: {mode: branch, unit, root, base_ref}`), runs `llm-kit jobs run --session-root ... --supervisor-budget ...`, appends a mailbox message with `llm_kit.jobs.session.append_message` while the session runs, and then shows the end-of-run commit `WIP: <unit> run <n>` on the unit branch, that the base branch did not move, and the parked unit in the registry (`llm_kit.jobs.units.list_units`). It makes no model call: the documented override `LLM_KIT_CLAUDE_EXECUTABLE` names a stand-in for `claude` that is the same file started with `--as-fake-claude` (a small stream-json program). A real client changes only the executable and the harness entry. It needs the `local` extra (psutil) and the `config` or `jobs` extra (PyYAML), and `git` on PATH.
+- `tests/packaging/test_examples.py::test_the_agent_session_examples_run_in_the_clean_venv` runs it from the built wheel in a clean venv (`session_venv` in `tests/packaging/conftest.py`: the closure venv plus the `local` extra), with a scratch HOME and no PYTHONPATH. The test fails when the example is broken: with `--session-root` misspelled, the example exits 1 with `unrecognized arguments: --session-rot` and the test reports it.
+
+Quality bar for this version (all pieces of 1.26.0 and 1.27.0, plus the example):
+
+1. Public API documented: pass. No public name changed. The 1.26.0 and 1.27.0 records stand; the example has a module docstring and a docstring on each function.
+2. Semver release with a changelog: pass. Version 1.27.1 in `pyproject.toml`; this entry.
+3. Tests for each public function: pass. No public function changed; the 1.26.0 and 1.27.0 tests stand. The example is itself run by the packaging test above.
+4. No client names, prompts or data: pass. The example uses a generic unit id, repository and prompts.
+5. Examples run without a client app: pass for agent sessions and branch mode, which 1.26.0 and 1.27.0 marked pending. `WHEEL_CLOSURE_SOURCE=local uv run --extra dev pytest tests/packaging` runs `agent_session_branch.py` from the built wheel in a clean venv.
+6. JSON Schema for each file format: pass. No file format changed; the session-directory schemas of 1.26.0 and `unit_record.json` of 1.27.0 stand.
+7. Gate before adoption: pass. Line 5 is satisfied for agent sessions (1.26.0) and branch mode (1.27.0), so a client may adopt either from this version on.
+
 ## 1.27.0
 
 Branch-mode workspaces (agent-runs design 6.1, 6.2, 7.2, 11.5). A job with `workspace: {mode: branch, unit, root, base_ref, branch}` runs every attempt in the worktree of one unit of work, on the unit's own branch (default `agent/<unit>`), at the fixed path `<root>/<repo>/<unit>`. When the job's run ends for any reason, every remaining change is committed to the unit branch as `WIP: <unit> run <n>`. Ledger schema 15 records these worktrees with the workspace status `unit`.
