@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased
+## 1.27.0
 
 Branch-mode workspaces (agent-runs design 6.1, 6.2, 7.2, 11.5). A job with `workspace: {mode: branch, unit, root, base_ref, branch}` runs every attempt in the worktree of one unit of work, on the unit's own branch (default `agent/<unit>`), at the fixed path `<root>/<repo>/<unit>`. When the job's run ends for any reason, every remaining change is committed to the unit branch as `WIP: <unit> run <n>`. Ledger schema 15 records these worktrees with the workspace status `unit`.
 
@@ -24,12 +24,12 @@ Changed:
 Quality bar for the pieces above (`llm_kit.jobs.units`, `llm_kit.jobs.workspace`, the `unit_record.json` format):
 
 1. Public API documented: pass. Each listed name has a docstring (constants a `#:` comment or the module docstring). `public-surface.json` covers `llm_kit.jobs.units` and `llm_kit.jobs.workspace` whole; `tests/llm-kit/test_jobs_workspace.py` compares each list with the module's `__all__`.
-2. Semver release with a changelog: pending. This entry; the version stays 1.26.0 until the release.
+2. Semver release with a changelog: pass. Version 1.27.0 in `pyproject.toml`; this entry.
 3. Tests for each public function: pass. `test_jobs_units.py` (real Git: acquisition, the commit, held states, crash recovery, removal, merge records, the interprocess lock), `test_jobs_workspace.py` (detached and branch worktrees, base refs, concurrency, recovery, `jobs cancel`, GC, the spec) and `test_jobs_branch_mode.py` (agent sessions through the fake `claude` in a unit worktree, every exit path, a hard cancel) call each listed function. `test_jobs_ledger_v15.py` migrates a real schema 14 ledger (`fixtures/jobs_ledger_v14.sql`).
 4. No client names, prompts or data: pass. Unit ids, repositories and prompts in the tests are generic.
-5. Examples run without a client app: pending. No example exercises branch mode yet.
+5. Examples run without a client app: pending for branch mode. No example exercises it yet. The existing examples still run in the wheel closure venv (`tests/packaging/test_examples.py` with `WHEEL_CLOSURE_SOURCE=local`: 56 passed).
 6. JSON Schema for each file format: pass. `unit_record.json` describes `UnitRecord.to_mapping`, and the registry tests validate every state against it. The registry file itself is SQLite with its own schema version.
-7. Gate before adoption: recorded in this entry. Lines 2 and 5 are pending, so no client adopts branch mode before the release.
+7. Gate before adoption: recorded in this entry; line 5 is pending, so no client adopts branch mode until an example passes.
 
 ## 1.26.0
 
