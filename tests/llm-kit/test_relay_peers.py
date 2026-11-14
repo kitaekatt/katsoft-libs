@@ -9,6 +9,7 @@ native tests at the end of this file.
 from __future__ import annotations
 
 import dataclasses
+import errno
 import http.server
 import io
 import json
@@ -922,7 +923,12 @@ def test_peer_export_refuses_a_real_pty(cli_machines):
         done = subprocess.run([sys.executable, "-c", code, *exporter], stdout=slave, stderr=subprocess.PIPE,
                               stdin=subprocess.DEVNULL, env=env, text=True, timeout=60)
         os.close(slave)
-        shown = os.read(master, 65536).decode("utf-8", "replace")
+        try:
+            shown = os.read(master, 65536).decode("utf-8", "replace")
+        except OSError as exc:  # Linux: with every slave end closed and nothing written, read(master) is EIO, not EOF
+            if exc.errno != errno.EIO:
+                raise
+            shown = ""
     finally:
         os.close(master)
     assert done.returncode == 2 and "refusing to print a peer key to a terminal" in done.stderr
@@ -1043,5 +1049,6 @@ def test_native_peer_credentials_provisioned_and_loose_dirs_refused(tmp_path):
     # a peer key file a person made by hand (inherited ACL, not protected) is refused
     paths.peer_key(B).unlink()
     paths.peer_key(B).write_text("hand-made\n", encoding="ascii")
-    with pytest.raises(C.RelayConfigError, match="unprotected DACL"):
+    # unprotected DACL, or (elevated Administrator token: the default owner is BUILTIN\Administrators) a foreign owner
+    with pytest.raises(C.RelayConfigError, match=r"unprotected DACL|not owned by the current user \(owner S-1-5-32-544"):
         L.peer_key(paths, B, own=A)
