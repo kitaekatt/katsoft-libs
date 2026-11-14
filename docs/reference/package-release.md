@@ -95,8 +95,10 @@ The job summary records the commit, the result and the integrity.
 
 Trusted publishing can be set only on a package that exists on npm, so the user publishes version 1.0.0 by hand.
 
+The npm account uses a security key (WebAuthn) for two-factor authentication. A one-time code (`--otp`) does not work: npm rejects it with EOTP. Use the web sign-in flow, in a real terminal. Without a terminal, npm cannot ask for the key. Examples: an agent background shell, or the Claude Code `!` prefix. There, npm exits with EOTP and hides the URL as `***`. An agent shell can get a terminal with `script -q <log> npm publish ...`.
+
 1. On npmjs.com, use an account with two-factor authentication. Create the organization `katsoft` (free plan, public packages), unless the `@katsoft` scope exists.
-2. Run `npm login`.
+2. Run `npm login --auth-type=web`. npm prints a URL, `https://www.npmjs.com/auth/cli/<id>`. Open it in a browser and approve with the security key.
 3. Use a clean checkout of the reviewed commit: `git status` shows no changes.
 4. Publish:
 
@@ -106,12 +108,22 @@ Trusted publishing can be set only on a package that exists on npm, so the user 
    npm test
    npm run check-pack
    npm pack --dry-run --json   # note the "integrity" value
-   npm publish --access public # prepack builds dist/ and copies the schemas; npm asks for the 2FA code
+   npm publish --access public --auth-type=web # prepack builds dist/ and copies the schemas
    npm view @katsoft/llm-kit-config@1.0.0 dist.integrity
    ```
 
+   npm prints a new URL. Open it and click "Use security key". You can tick "Do not challenge npm publish, npm trust operations ... for the next 5 minutes". Then the next step needs no new approval.
+
+   The package page can show the new version before the registry API does. `npm view` can return 404 for a few minutes after npm prints `+ @katsoft/llm-kit-config@1.0.0`. Wait, then run it again.
+
    The integrity from `npm view` must equal the value from `npm pack --dry-run`. If it does not, stop and report it.
-5. On the package page on npmjs.com, open Settings, Trusted Publisher, GitHub Actions. Enter organization or user `kitaekatt`, repository `katsoft-libs`, workflow filename `release-npm.yml`, environment `npm`.
+5. Set the Trusted Publisher. Use the CLI (it needs the same security-key approval):
+
+   ```sh
+   npm trust github @katsoft/llm-kit-config --file release-npm.yml --repo kitaekatt/katsoft-libs --env npm --allow-publish --yes
+   ```
+
+   Or use the website: on the package page on npmjs.com, open Settings, Trusted Publisher, GitHub Actions. Enter organization or user `kitaekatt`, repository `katsoft-libs`, workflow filename `release-npm.yml`, environment `npm`.
 6. In the same settings, set Publishing access to "Require two-factor authentication and disallow tokens".
 7. In the GitHub repository settings, create the environment `npm`.
 8. Tag the published commit and push the tag: `git tag @katsoft/llm-kit-config@1.0.0 <commit>` and `git push origin @katsoft/llm-kit-config@1.0.0`. The workflow finds 1.0.0 on npm, compares the files and records the release.
