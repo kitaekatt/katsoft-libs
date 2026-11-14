@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased (1.26.0)
+## 1.26.0
 
 Agent sessions for jobs (agent-runs design, sections 5 and 11). A job with `options.session: agent` runs as a persisted `claude -p` stream-json agent session instead of a one-shot completion: the prompt is the first stdin message, a per-attempt mailbox feeds later messages and operator stops, Claude's stdout is kept verbatim as `events.jsonl`, and the last `result` event is the answer the contract judges. Ledger schema 14 records the session on each reservation and attempt.
 
@@ -29,12 +29,12 @@ Changed:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. Each listed name has a docstring (constants a `#:` comment). `public-surface.json` covers `llm_kit.completion.session_types`, `llm_kit.adapters.claude_stream`, `llm_kit.adapters.claude_session`, `llm_kit.jobs.session`, `llm_kit.storage.file_lock` and `llm_kit.jobs.run` whole; `tests/llm-kit/test_jobs_agent_session.py` compares each with the module (`__all__`, or the names `claude_stream` declares public, since it has no `__all__`).
-2. Semver release with a changelog: pending. This entry; the version stays 1.25.0 until the release, which also carries ledger schema 15 (branch-mode workspaces).
+2. Semver release with a changelog: pass. Version 1.26.0 in `pyproject.toml`; this entry.
 3. Tests for each public function: pass. `test_session_types.py`, `test_claude_stream.py`, `test_jobs_session.py`, `test_jobs_ledger_v14.py`, `test_claude_session.py` and `test_jobs_agent_session.py` call each listed function; the session tests drive a fake `claude` (`tests/llm-kit/fixtures/fake_claude_session.py`) through stdin and stdout.
 4. No client names, prompts or data: pass. The fake CLI and the tests use generic prompts.
 5. Examples run without a client app: pending. No example exercises an agent session yet; one needs a logged-in Claude CLI.
 6. JSON Schema for each file format: pass. The five session-directory files have schemas in `llm_kit/jobs/schemas/`; `test_jobs_session.py` validates every reader and writer against them; `events.jsonl` has the permissive event-line schema.
-7. Gate before adoption: recorded in this entry; lines 2 and 5 are pending, so no client adopts agent sessions before the release.
+7. Gate before adoption: recorded in this entry; line 5 is pending, so no client adopts agent sessions until an example passes.
 
 Run records and run stores (`llm_kit.runs`, Phase 2 unit 1). One format for model runs and comparisons, a store with a content-class policy, a derived index and the `llm-kit runs` CLI. The contract is `docs/reference/llm-kit-runs.md`; the formats are in `docs/reference/llm-kit-formats.md`.
 
@@ -55,12 +55,12 @@ Changed:
 Quality bar for the pieces above (`llm_kit.runs`, `llm_kit.cli.runs`, the three formats):
 
 1. Public API documented: pass. Each listed name has a docstring; `public-surface.json` covers `llm_kit.runs`, `llm_kit.runs.record`, `llm_kit.runs.store`, `llm_kit.runs.index` and `llm_kit.cli.runs` whole, and `tests/llm-kit/test_runs_record.py` compares each with the module's `__all__`.
-2. Semver release with a changelog: pending. This entry; the version stays 1.25.0 until the 1.26.0 release.
+2. Semver release with a changelog: pass. Version 1.26.0 in `pyproject.toml`; this entry.
 3. Tests for each public function: pass. `test_runs_record.py`, `test_runs_store.py` and `test_runs_cli.py` call each listed function.
 4. No client names, prompts or data: pass. The cases and tests use generic flows, models and text.
 5. Examples run without a client app: pass. `examples/record_runs.py` needs no extra and no network.
 6. JSON Schema for each file format: pass. `run-record.v1`, `run-import.v1` and `run-store.v1` schemas; the record, import and store tests validate their data against them. The index is a local SQLite cache, not an interchange format.
-7. Gate before adoption: recorded in this entry; line 2 is pending, so no client adopts `llm_kit.runs` before the release.
+7. Gate before adoption: recorded in this entry. The owner signed off the `runs` component's import edges on 2026-11-14 (`docs/reference/llm-kit-architecture.md`, "Decision summary").
 
 ## 1.25.0
 
