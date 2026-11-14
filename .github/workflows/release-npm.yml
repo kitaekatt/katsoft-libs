@@ -68,9 +68,7 @@ jobs:
       - name: Pack the release tarball
         run: |
           mkdir -p "$RUNNER_TEMP/release"
-          npm pack --json --pack-destination "$RUNNER_TEMP/release" > "$RUNNER_TEMP/pack.json"
-          echo "TARBALL=$RUNNER_TEMP/release/$(node -p "require(process.argv[1])[0].filename" "$RUNNER_TEMP/pack.json")" >> "$GITHUB_ENV"
-          echo "INTEGRITY=$(node -p "require(process.argv[1])[0].integrity" "$RUNNER_TEMP/pack.json")" >> "$GITHUB_ENV"
+          node scripts/pack-release.mjs "$RUNNER_TEMP/release" >> "$GITHUB_ENV"
 
       - name: Publish (trusted publishing, provenance), or verify an existing release
         run: |
