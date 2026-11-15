@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased
+## 1.28.0
 
 Recovery of a unit held before any job ledger exists. A client that holds a unit (`WorkspaceManager.hold`), runs a setup command and only then starts `llm-kit jobs run` had no recovery for a crash in that window: no ledger row names the unit, so `recover_run_units` cannot see it, and the lease lives only in the dead process.
 
@@ -19,12 +19,12 @@ Changed:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. Each new name has a docstring; both new functions are in `__all__` and `public-surface.json`.
-2. Semver release with a changelog: pending. This entry; no version change until a release.
+2. Semver release with a changelog: pass. Version 1.28.0 in `pyproject.toml`; this entry.
 3. Tests for each public function: pass. `test_jobs_units.py` (recovery by run and job beside a recorded live writer and after it exits, another owner, a live owner, idempotence, recording needs the active lease, accumulation and clearing) and `test_jobs_workspace.py` (a real `hold`, record and crash in a child process, recovered without a ledger). Each fails with its change reverted (the recorded-process union, the `owned_by` check, the lease check, the manager method).
 4. No client names, prompts or data: pass.
 5. Examples run without a client app: pass. No example changed.
 6. JSON Schema for each file format: pass. `unit_record.json` already allows `held_processes` in any state; the test validates an `active` record that carries them.
-7. Gate before adoption: pending the release (line 2).
+7. Gate before adoption: pass. Lines 1 to 6 pass for the pieces above, so a client may adopt them from this version on.
 
 ## 1.27.1
 
