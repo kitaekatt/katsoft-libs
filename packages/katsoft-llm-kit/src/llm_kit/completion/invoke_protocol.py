@@ -38,6 +38,10 @@ of ``selection`` or ``model``):
                  transports expose no such control and ignore it. Reasoning tokens
                  usually count against it, so a reasoning model needs room for both
 ``timeout_s``    per-call wall-clock cap in seconds, a positive number
+``max_retries``  automatic retries of an OpenAI-compatible transport call, a
+                 non-negative integer; ``0`` sends the request exactly once. Absent,
+                 the transport keeps its client default (the OpenAI SDK retries 2 times).
+                 The Claude and Codex CLI transports run once and ignore it
 ``consent``      opt in to the optional consent layer (``llm-kit consent``): omitted or
                  ``false`` = the layer is not used; ``true`` = the global policy;
                  ``{"scope": "<non-empty name>"}`` = that scope's policy over the global
@@ -122,6 +126,7 @@ _REQUEST_KEYS = (
     "max_tokens",
     "timeout_s",
     "consent",
+    "max_retries",
 )
 
 
@@ -156,6 +161,7 @@ class InvokeRequest:
     max_tokens: Optional[int]
     timeout_s: Optional[float]
     consent: Optional["ConsentRequest"] = None
+    max_retries: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -322,6 +328,10 @@ def parse_invoke_request(payload: Any) -> InvokeRequest:
         if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or not timeout_s > 0:
             raise InvokeRefusal(KIND_PROTOCOL, "timeout_s must be a positive number")
         timeout_s = float(timeout_s)
+    max_retries = payload.get("max_retries")
+    if max_retries is not None and (isinstance(max_retries, bool) or not isinstance(max_retries, int)
+                                    or max_retries < 0):
+        raise InvokeRefusal(KIND_PROTOCOL, "max_retries must be a non-negative integer")
     return InvokeRequest(
         project_root=_text(payload, "project_root"),
         file=_text(payload, "file"),
@@ -342,6 +352,7 @@ def parse_invoke_request(payload: Any) -> InvokeRequest:
         max_tokens=max_tokens,
         timeout_s=timeout_s,
         consent=parse_consent_field(payload),
+        max_retries=max_retries,
     )
 
 
@@ -473,6 +484,11 @@ def describe_invoke_schema() -> Dict[str, Any]:
                 "transports ignore it"
             ),
             "timeout_s": "number > 0, optional",
+            "max_retries": (
+                "integer >= 0, optional; automatic retries of an OpenAI-compatible transport call (0 sends "
+                "the request once). Absent: the client default (the OpenAI SDK retries 2 times). The Claude "
+                "and Codex CLI transports run once and ignore it"
+            ),
             "consent": (
                 "optional; omitted or false = the optional consent layer is not used, true = the global "
                 "policy, {\"scope\": \"<non-empty name>\"} = that scope's policy; anything else is refused "

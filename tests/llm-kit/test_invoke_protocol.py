@@ -633,6 +633,9 @@ def test_a_legacy_consent_file_still_allows_the_call(world, home, capsys):  # no
     ({"model": "luna", "effort": "bogus"}, "effort"),
     ({"model": "luna", "max_tokens": 0}, "protocol"),
     ({"model": "luna", "timeout_s": -1}, "protocol"),
+    ({"model": "luna", "max_retries": -1}, "protocol"),
+    ({"model": "luna", "max_retries": True}, "protocol"),
+    ({"model": "luna", "max_retries": 1.5}, "protocol"),
     ({"model": "luna", "output_schema": []}, "contract"),
     ({"model": "luna", "file": "../x.yaml"}, "project-file"),
     ({"model": "luna", "file": "absent.yaml"}, "project-file"),
@@ -670,11 +673,31 @@ def test_protocol_2_answers_in_json_only(world, capsys):
     assert out.code == 4 and "JSON only" in json.loads(out.err)["error"]["message"]
 
 
+@pytest.mark.parametrize("max_retries", [0, 3])
+def test_max_retries_reaches_the_transport_client(world, capsys, max_retries):
+    """``max_retries`` sets the OpenAI-compatible client's automatic retries for that call only."""
+    allow()
+    seen: list[dict] = []
+    make = world.client
+
+    def client():
+        built = make()
+        built.with_options = lambda **kwargs: (seen.append(kwargs), built)[1]
+        return built
+
+    world.client = client
+    code, doc, _ = call(world, capsys, selection="art", max_retries=max_retries)
+    assert code == 0 and doc["status"] == "completed" and seen == [{"max_retries": max_retries}]
+    code, _, _ = call(world, capsys, selection="art")
+    assert code == 0 and seen == [{"max_retries": max_retries}]  # absent: the client default is kept
+
+
 def test_request_schema_describes_either_protocol(capsys):
     one = json.loads(run(cli.main, ["completion", "request-schema"], capsys).out)
     two = json.loads(run(cli.main, ["completion", "request-schema", "--protocol", "2"], capsys).out)
     assert one["protocol"] == 1 and "options" in one["keys"]
-    assert two["protocol"] == 2 and {"selection", "model", "mode", "working_dir", "expect_files"} <= set(two["keys"])
+    assert two["protocol"] == 2 and {"selection", "model", "mode", "working_dir", "expect_files",
+                                      "max_retries"} <= set(two["keys"])
     assert two["exit_codes"]["4"].startswith("refused before any spawn")
 
 

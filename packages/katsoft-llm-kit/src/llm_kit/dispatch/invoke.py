@@ -379,6 +379,8 @@ def invoke(
         options = replace(options, max_tokens=row_cap)
     if request.timeout_s is not None:
         options = replace(options, timeout_s=request.timeout_s)
+    if request.max_retries is not None:
+        options = replace(options, max_retries=request.max_retries)
     workdir: Optional[Path] = None
     if request.mode == MODE_WORKSPACE:
         workdir = _confine_directory(root, request.working_dir or "")
