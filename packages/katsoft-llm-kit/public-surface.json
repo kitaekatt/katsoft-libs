@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0. The agent-session pieces (llm_kit.completion.session_types, llm_kit.adapters.claude_stream, llm_kit.adapters.claude_session, llm_kit.jobs.session, llm_kit.storage.file_lock) and the jobs runner (llm_kit.jobs.run) are listed whole from 1.26.0. The run records, run store, derived index and runs CLI (llm_kit.runs, llm_kit.runs.record, llm_kit.runs.store, llm_kit.runs.index, llm_kit.cli.runs) are listed whole from 1.26.0. The branch-mode unit registry and workspaces (llm_kit.jobs.units, llm_kit.jobs.workspace) are listed whole and are not yet released.",
+  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0. The agent-session pieces (llm_kit.completion.session_types, llm_kit.adapters.claude_stream, llm_kit.adapters.claude_session, llm_kit.jobs.session, llm_kit.storage.file_lock) and the jobs runner (llm_kit.jobs.run) are listed whole from 1.26.0. The run records, run store, derived index and runs CLI (llm_kit.runs, llm_kit.runs.record, llm_kit.runs.store, llm_kit.runs.index, llm_kit.cli.runs) are listed whole from 1.26.0. The comparison (llm_kit.runs.compare) is listed whole and is not yet released. The branch-mode unit registry and workspaces (llm_kit.jobs.units, llm_kit.jobs.workspace) are listed whole and are not yet released.",
   "package": "llm_kit",
   "current_version_file": ".claude-plugin/plugin.json",
   "covers": [
@@ -23,6 +23,7 @@
     "llm_kit.runs.record",
     "llm_kit.runs.store",
     "llm_kit.runs.index",
+    "llm_kit.runs.compare",
     "llm_kit.cli.runs"
   ],
   "entries": [
@@ -2717,6 +2718,10 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.schema.formats.COMPARE_CASE_V1",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.registry.project_models.SCHEMA",
       "status": "public"
     },
@@ -3701,6 +3706,90 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.runs.ACTIONS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.CALL_STATUSES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.COMPARE_CASE_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.INPUT_OVERHEAD_TOKENS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.LABEL_BOUND",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.LABEL_REUSED_FROM",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.AttemptOutcome",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.CallResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.Candidate",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.CompareCase",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.CompareError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.ComparePlan",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.CompareResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.PlannedAttempt",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.Price",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.Scorer",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.attempt_bound_usd",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.command_scorer",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.plan_compare",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.read_cases",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.run_compare",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.runs.record.CONTENT_CLASSES",
       "status": "public"
     },
@@ -3798,6 +3887,90 @@
     },
     {
       "name": "llm_kit.runs.index.RunIndex",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.ACTIONS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.CALL_STATUSES",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.COMPARE_CASE_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.INPUT_OVERHEAD_TOKENS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.LABEL_BOUND",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.LABEL_REUSED_FROM",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.AttemptOutcome",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.CallResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.Candidate",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.CompareCase",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.CompareError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.ComparePlan",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.CompareResult",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.PlannedAttempt",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.Price",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.Scorer",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.attempt_bound_usd",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.command_scorer",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.plan_compare",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.read_cases",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.runs.compare.run_compare",
       "status": "public"
     },
     {

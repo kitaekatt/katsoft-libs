@@ -25,7 +25,7 @@ Groups, and where each legacy command now lives:
 ``relay``       this machine's harness-messaging relay (``llm_kit.relay``): serve,
                 pause, resume, status and the ``/direct`` client verbs
 ``runs``        run records and run stores (``llm_kit.runs``): init, import,
-                list, show and reindex
+                list, show, reindex and compare
 
 Each carried verb keeps its arguments, output and exit codes. The exit-code
 tables differ by group because the legacy commands differed (the scripting
@@ -58,7 +58,7 @@ GROUPS = {
     "consent": "Show or change the optional consent layer for cost classes.",
     "graph": "Validate, run and inspect generation graphs.",
     "relay": "Serve this machine's relay, pause or resume it, or call it as a /direct client.",
-    "runs": "Create a run store, import run records, list and show them.",
+    "runs": "Create a run store, import run records, list and show them, compare models.",
 }
 
 #: legacy command (llm-scripting-kit, job-kit, content-pipeline adapters) -> its

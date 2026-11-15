@@ -407,6 +407,43 @@ def _graph_support_on_path(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# the comparison case file: shared cases
+# ---------------------------------------------------------------------------
+
+COMPARE_CASES = json.loads((CASES / "compare-case" / "cases.json").read_text(encoding="utf-8"))
+
+
+def test_the_compare_case_cases_name_the_shipped_schema():
+    from llm_kit.runs.compare import COMPARE_CASE_V1  # noqa: PLC0415
+
+    assert COMPARE_CASES["format"] == COMPARE_CASE_V1 == formats.COMPARE_CASE_V1
+    assert (CASES / "compare-case" / COMPARE_CASES["schema"]).resolve() == \
+        PACKAGE / "src" / "llm_kit" / "schema" / "formats" / formats.SCHEMA_FILES[formats.COMPARE_CASE_V1]
+
+
+@pytest.mark.parametrize("name", sorted(by_name(COMPARE_CASES["cases"])))
+def test_compare_case(name):
+    from llm_kit.runs.compare import CompareError, read_cases  # noqa: PLC0415
+
+    case = by_name(COMPARE_CASES["cases"])[name]
+    expect = case["expect"]
+    data = input_bytes(case["input"])
+    if "cases" in expect:
+        got = [{"id": c.id, "slots": dict(c.slots)} for c in read_cases(data)]
+        assert got == expect["cases"]
+        schema = formats.load_schema(formats.COMPARE_CASE_V1)
+        assert all(validate(schema, line) == () for line in expect["cases"])
+        return
+    with pytest.raises(CompareError) as caught:
+        read_cases(data)
+    assert caught.value.code == expect["error"]
+    if expect["line"] is None:
+        assert "line " not in str(caught.value)
+    else:
+        assert str(caught.value).startswith(f"line {expect['line']}")
+
+
+# ---------------------------------------------------------------------------
 # the public surface and the example
 # ---------------------------------------------------------------------------
 

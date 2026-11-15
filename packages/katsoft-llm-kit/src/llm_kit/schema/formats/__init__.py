@@ -11,6 +11,8 @@ Each format has one id and one JSON Schema file in this package:
   (:mod:`llm_kit.runs`).
 - ``llm-kit.run-store/v1``: the policy file ``store.json`` of a run store.
 - ``llm-kit.run-import/v1``: one line of a run import file.
+- ``llm-kit.compare-case/v1``: one line of a comparison case file
+  (:mod:`llm_kit.runs.compare`).
 
 The schemas are written in ``llm-scripting-kit.json-schema-subset/v1``, so
 :mod:`llm_kit.schema.json_schema` checks and validates them with no third-party
@@ -33,6 +35,7 @@ __all__ = [
     "RUN_RECORD_V1",
     "RUN_STORE_V1",
     "RUN_IMPORT_V1",
+    "COMPARE_CASE_V1",
     "SCHEMA_FILES",
     "load_schema",
 ]
@@ -49,6 +52,8 @@ RUN_RECORD_V1 = "llm-kit.run-record/v1"
 RUN_STORE_V1 = "llm-kit.run-store/v1"
 #: One line of a run import file (JSON Lines).
 RUN_IMPORT_V1 = "llm-kit.run-import/v1"
+#: One line of a comparison case file (JSON Lines): a case id and its slot values.
+COMPARE_CASE_V1 = "llm-kit.compare-case/v1"
 
 #: Format id -> the schema file name in this package. The file's ``$id`` is the format id.
 SCHEMA_FILES = {
@@ -58,6 +63,7 @@ SCHEMA_FILES = {
     RUN_RECORD_V1: "run-record.v1.schema.json",
     RUN_STORE_V1: "run-store.v1.schema.json",
     RUN_IMPORT_V1: "run-import.v1.schema.json",
+    COMPARE_CASE_V1: "compare-case.v1.schema.json",
 }
 
 

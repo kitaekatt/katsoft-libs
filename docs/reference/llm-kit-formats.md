@@ -10,6 +10,7 @@ Some llm-kit files have readers in more than one language. Each of these formats
 | `llm-kit.run-record/v1` | `run-record.v1.schema.json` | `llm_kit.runs.record` | `tests/formats/run-record/cases.json` (`records`) |
 | `llm-kit.run-import/v1` | `run-import.v1.schema.json` | `llm_kit.runs.store` | `tests/formats/run-record/cases.json` (`import_lines`) |
 | `llm-kit.run-store/v1` | `run-store.v1.schema.json` | `llm_kit.runs.store` | `tests/formats/run-record/cases.json` (`stores`) |
+| `llm-kit.compare-case/v1` | `compare-case.v1.schema.json` | `llm_kit.runs.compare` | `tests/formats/compare-case/cases.json` |
 
 `llm_kit.schema.formats.load_schema(format_id)` returns a schema. `llm_kit.schema.formats.SCHEMA_FILES` maps each format id to its file. The file's `$id` is the format id.
 
@@ -173,6 +174,18 @@ A JSON Lines file (UTF-8). Each line is one record event and the blobs it brings
 ## llm-kit.run-store/v1
 
 `store.json` at the root of a run store: `{"format": "llm-kit.run-store/v1", "accepts": [...]}`. `accepts` names one to three content classes, each one time (reader rule). The store refuses a record whose class is not in `accepts`.
+
+## llm-kit.compare-case/v1
+
+One line of a comparison case file (JSON Lines, UTF-8): `{"id": "c1", "slots": {"text": "..."}}`. `llm-kit runs compare --cases` reads it. The schema describes one line.
+
+1. A final LF is allowed. An empty line elsewhere is refused. A CR before the LF is removed. A file with no case is refused.
+2. Each line conforms to the schema: `id` is non-empty text, `slots` maps each slot name to text, and no other key is allowed.
+3. The ids of one file are unique.
+4. A refusal has the code `invalid` and names the line (`line 2`). A refusal of the whole file (not UTF-8, no case) names no line.
+5. The comparison checks each case against the prompt it fills: a slot with no value and a value with no slot are refused before any call.
+
+Python: `llm_kit.runs.compare.read_cases(path_or_bytes)`.
 
 ## Change a format
 

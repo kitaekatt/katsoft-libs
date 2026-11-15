@@ -1,0 +1,25 @@
+{
+  "format": "llm-kit.compare-case/v1",
+  "schema": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/compare-case.v1.schema.json",
+  "description": "Shared cases for every reader of llm-kit comparison case files (JSON Lines). Read 'input' as the bytes of a whole case file: 'lines' (join with LF and add one final LF), 'text' (UTF-8) or 'base64'. 'expect' is {cases: [{id, slots}]} in file order, or {error: 'invalid', line: n} where n is the 1-based line of the only problem (null when the problem is the whole file). The contract is docs/reference/llm-kit-formats.md.",
+  "cases": [
+    {"name": "two-cases", "input": {"lines": ["{\"id\": \"c1\", \"slots\": {\"text\": \"The cat sat.\"}}", "{\"id\": \"c2\", \"slots\": {\"text\": \"Rain.\", \"tone\": \"dry\"}}"]},
+     "expect": {"cases": [{"id": "c1", "slots": {"text": "The cat sat."}}, {"id": "c2", "slots": {"text": "Rain.", "tone": "dry"}}]}},
+    {"name": "no-slots", "note": "A prompt with no slot takes cases with empty slots.", "input": {"lines": ["{\"id\": \"only\", \"slots\": {}}"]},
+     "expect": {"cases": [{"id": "only", "slots": {}}]}},
+    {"name": "crlf-and-no-final-newline", "input": {"text": "{\"id\": \"c1\", \"slots\": {}}\r\n{\"id\": \"c2\", \"slots\": {}}"},
+     "expect": {"cases": [{"id": "c1", "slots": {}}, {"id": "c2", "slots": {}}]}},
+    {"name": "unicode-slot", "input": {"lines": ["{\"id\": \"c1\", \"slots\": {\"text\": \"caf\\u00e9\"}}"]},
+     "expect": {"cases": [{"id": "c1", "slots": {"text": "caf\u00e9"}}]}},
+    {"name": "empty-file", "input": {"text": ""}, "expect": {"error": "invalid", "line": null}},
+    {"name": "empty-line-inside", "input": {"lines": ["{\"id\": \"c1\", \"slots\": {}}", "", "{\"id\": \"c2\", \"slots\": {}}"]},
+     "expect": {"error": "invalid", "line": 2}},
+    {"name": "not-json", "input": {"lines": ["{\"id\": \"c1\", \"slots\": {}}", "{id: c2}"]}, "expect": {"error": "invalid", "line": 2}},
+    {"name": "slot-not-text", "input": {"lines": ["{\"id\": \"c1\", \"slots\": {\"n\": 2}}"]}, "expect": {"error": "invalid", "line": 1}},
+    {"name": "empty-id", "input": {"lines": ["{\"id\": \"\", \"slots\": {}}"]}, "expect": {"error": "invalid", "line": 1}},
+    {"name": "missing-slots", "input": {"lines": ["{\"id\": \"c1\"}"]}, "expect": {"error": "invalid", "line": 1}},
+    {"name": "unknown-key", "input": {"lines": ["{\"id\": \"c1\", \"slots\": {}, \"expected\": \"4\"}"]}, "expect": {"error": "invalid", "line": 1}},
+    {"name": "repeated-id", "input": {"lines": ["{\"id\": \"c1\", \"slots\": {}}", "{\"id\": \"c1\", \"slots\": {}}"]}, "expect": {"error": "invalid", "line": 2}},
+    {"name": "not-utf8", "input": {"base64": "/w=="}, "expect": {"error": "invalid", "line": null}}
+  ]
+}

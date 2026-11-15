@@ -69,13 +69,15 @@ def test_a_broken_example_is_detected(closure_venv, tmp_path, monkeypatch):
     assert problems and "broken on purpose" in problems[0]
 
 
-def test_the_run_store_example_needs_no_extra(base_venv, tmp_path):
-    """llm_kit.runs is standard library only: its example runs with no extra installed."""
-    script = tmp_path / "record_runs.py"
-    shutil.copy(EXAMPLES / "record_runs.py", script)
+@pytest.mark.parametrize("name, marker", [("record_runs.py", "refused as expected (policy)"),
+                                          ("compare_models.py", "zero budget: budget")])
+def test_the_run_store_examples_need_no_extra(base_venv, tmp_path, name, marker):
+    """llm_kit.runs, the comparison included, is standard library only: its examples run with no extra."""
+    script = tmp_path / name
+    shutil.copy(EXAMPLES / name, script)
     home = tmp_path / "home"
     home.mkdir()
     proc = subprocess.run([str(support.venv_python(base_venv)), "-I", str(script)], capture_output=True,
                           text=True, env=support.child_env(base_venv, home), cwd=tmp_path, timeout=120)
     assert proc.returncode == 0, proc.stderr[-400:]
-    assert "refused as expected (policy)" in proc.stdout
+    assert marker in proc.stdout

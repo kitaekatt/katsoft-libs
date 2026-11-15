@@ -158,7 +158,7 @@ def test_validate_record_refuses_non_json_values():
 def test_public_surface_lists_the_runs_names():
     names = {e["name"] for e in SURFACE["entries"] if e["status"] == "public"}
     for module_name in ("llm_kit.runs", "llm_kit.runs.record", "llm_kit.runs.store", "llm_kit.runs.index",
-                        "llm_kit.cli.runs"):
+                        "llm_kit.runs.compare", "llm_kit.cli.runs"):
         assert module_name in SURFACE["covers"], module_name
         module = __import__(module_name, fromlist=["__all__"])
         listed = {n.rsplit(".", 1)[1] for n in names if n.rsplit(".", 1)[0] == module_name}
@@ -167,4 +167,5 @@ def test_public_surface_lists_the_runs_names():
             value = getattr(module, name)
             if callable(value):
                 assert value.__doc__, f"{module_name}.{name}"
-    assert set(runs.__all__) == set(rec.__all__) | set(runs.store.__all__) | set(runs.index.__all__)
+    assert set(runs.__all__) == (set(rec.__all__) | set(runs.store.__all__) | set(runs.index.__all__)
+                                 | set(runs.compare.__all__))

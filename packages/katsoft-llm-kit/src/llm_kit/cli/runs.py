@@ -11,11 +11,17 @@ Verbs (``llm_kit.runs``; the contract is ``docs/reference/llm-kit-runs.md``):
 ``show``     one record as JSON; ``--with-blobs`` prints it as an import line
              with its blobs, ready for another store's ``import``.
 ``reindex``  delete the derived index and rebuild it from the events.
+``compare``  run a set of cases on two or more selections of the project model
+             file and record every attempt (``llm_kit.runs.compare``):
+             ``--prompt FILE --cases FILE --select A,B --flow F --content C
+             --max-usd N``, with ``--pricing FILE``, ``--dry-run`` and
+             ``--scorer COMMAND...`` (last).
 
 The store is ``--store DIR``, else the ``LLM_KIT_RUN_STORE`` variable; with
-neither the verb refuses. Exit codes: 0 success, 1 the store refused (a JSON
-``error`` object ``{kind: "runs", code, message}`` on stderr; nothing was
-written), 2 usage.
+neither the verb refuses. Exit codes: 0 success, 1 the store or the comparison
+refused, or a comparison stopped (a JSON ``error`` object ``{kind: "runs",
+code, message}`` on stderr; a refusal wrote nothing; a stopped comparison
+prints its partial result on stdout), 2 usage.
 """
 from __future__ import annotations
 
@@ -24,6 +30,7 @@ import json
 import sys
 from typing import Optional, Sequence
 
+from llm_kit.runs.compare import CompareError
 from llm_kit.runs.record import CONTENT_CLASSES, RECORD_STATUSES
 from llm_kit.runs.store import RunRecordStore, RunStoreError, import_file, resolve_store_path
 
@@ -38,6 +45,7 @@ VERBS = {
     "list": "List index rows that match the filters.",
     "show": "Show one record (optionally with its blobs).",
     "reindex": "Rebuild the derived index from the record events.",
+    "compare": "Compare model selections on a set of cases; record every attempt.",
 }
 
 
@@ -61,6 +69,9 @@ def _parser() -> argparse.ArgumentParser:
     parsers["show"].add_argument("id", help="the record id")
     parsers["show"].add_argument("--with-blobs", action="store_true",
                                  help="print an llm-kit.run-import/v1 line with the record's blobs")
+    from llm_kit.cli import _runs_compare  # noqa: PLC0415 -- dispatch and the adapters load for compare only
+
+    _runs_compare.add_arguments(parsers["compare"])
     return parser
 
 
@@ -85,6 +96,10 @@ def _dispatch(args: argparse.Namespace) -> int:
         _print(store.export_line(args.id) if args.with_blobs else store.get(args.id))
     elif args.verb == "reindex":
         _print(store.index().rebuild())
+    elif args.verb == "compare":
+        from llm_kit.cli import _runs_compare  # noqa: PLC0415
+
+        return _runs_compare.compare(args, store)
     else:
         raise AssertionError(f"unregistered verb: {args.verb}")
     return EXIT_OK
@@ -99,7 +114,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         return EXIT_OK if exc.code == 0 else EXIT_USAGE
     try:
         return _dispatch(args)
-    except RunStoreError as exc:
+    except (RunStoreError, CompareError) as exc:
         print(json.dumps({"error": {"kind": "runs", "code": exc.code, "message": str(exc)}}, sort_keys=True),
               file=sys.stderr)
         return EXIT_USAGE if exc.code == "no-store" else EXIT_REFUSED

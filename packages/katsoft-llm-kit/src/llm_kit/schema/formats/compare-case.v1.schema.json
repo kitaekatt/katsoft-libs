@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.compare-case/v1",
+  "title": "llm-kit comparison case, version 1 (one line of a case file)",
+  "description": "One line of a comparison case file (JSON Lines, UTF-8): the case id and the text value of each prompt slot. Reader rules the subset cannot state: a final LF is allowed and an empty line elsewhere is refused; a CR before the LF is removed; the ids of one file are unique; a case names exactly the slots of the prompt it is used with (checked against that prompt). Written in llm-scripting-kit.json-schema-subset/v1. Contract and shared cases: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "The case id: non-empty text, unique in the file.",
+      "type": "string",
+      "minLength": 1
+    },
+    "slots": {
+      "description": "Slot name -> the text that fills it.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "id",
+    "slots"
+  ],
+  "additionalProperties": false
+}

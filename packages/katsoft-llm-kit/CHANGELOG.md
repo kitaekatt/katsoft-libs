@@ -2,6 +2,35 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## Unreleased
+
+Comparisons of model selections, recorded in a run store (`llm-kit runs compare`). A comparison sends one prompt file, filled with each case, to two or more selections of the project model file and records every attempt as a `llm-kit.run-record/v1` record of one `compare` group.
+
+Added:
+
+- `llm_kit.runs.compare` (also re-exported by `llm_kit.runs`): `plan_compare` (checks everything and writes no record: cases, prompt, candidates, content class against the store policy, a cost bound for each call, reuse and the group's recorded spend) and `run_compare` (runs the plan with a caller the client gives: the started event before each call, the result after it, no retry). Types `Candidate`, `Price`, `CallResult`, `CompareCase`, `Scorer`, `PlannedAttempt`, `ComparePlan`, `AttemptOutcome`, `CompareResult`, `CompareError`; helpers `read_cases`, `command_scorer`, `attempt_bound_usd`; constants `ACTIONS`, `CALL_STATUSES`, `INPUT_OVERHEAD_TOKENS`, `LABEL_BOUND`, `LABEL_REUSED_FROM`, `COMPARE_CASE_V1`.
+  - Reuse: an attempt is `done` when its group holds an `ok` record with the same reuse key (`llm-kit.run-key/v1`) and the same scorer hash; a `copy` (a new record that reuses the answer with no call, label `compare.reused_from`) when an `ok` record with the key is in another group or has another scorer; else a `call`.
+  - Budget (`max_usd`): the spend of the whole group across runs, with failed attempts at their recorded cost (their bound when unknown) and started events with no result at their bound (label `compare.bound_usd`). An attempt whose worst-case bound would cross the budget is not started. The bound is the prompt's byte count plus 64 input tokens and the output cap (else the price's `context_window`) at the candidate's price; a selection with no price or no output bound is refused before any write, and a harness only with a free price.
+  - Scorer: a program that reads one `llm-kit.run-import/v1` line and returns it with `record.scores` filled; its name, version and hash are in `provenance.scorer`. A failed scorer records the attempt as `invalid` (`scorer-failed`) and stops the run.
+- `llm-kit runs compare --prompt FILE --cases FILE --select A,B --flow F --content C --max-usd N [--pricing FILE] [--max-output-tokens N] [--dry-run] [--scorer COMMAND...]`: resolves each selection through the project model file and its personal layer, prices it from the pricing table (`load_pricing` format, by wire model; a `local` endpoint is free), and calls through `llm_kit.dispatch.invoke` with `max_retries: 0`. `--dry-run` prints the plan and the cost bound and calls nothing. The composition is in `llm_kit.cli._runs_compare`.
+- The format `llm-kit.compare-case/v1` (one line of a case file: `{id, slots}`): `compare-case.v1.schema.json`, `llm_kit.schema.formats.COMPARE_CASE_V1`, shared cases in `tests/formats/compare-case/cases.json`.
+- Protocol 2 of `llm-kit completion complete` takes `max_retries` (a non-negative integer): the automatic retries of an OpenAI-compatible transport call (0 sends the request once). Absent, the client default is kept, as before.
+- `examples/compare_models.py`: a comparison with a stand-in caller, run again with every answer reused, and a zero budget that starts no call.
+
+Changed:
+
+- The `llm_kit.runs` component description in `docs/reference/llm-kit-architecture.md`: it makes no model call itself; a comparison takes the caller as an argument and the CLI composes it with `llm_kit.dispatch` and `llm_kit.registry`. The signed edges are unchanged (`runs -> {schema, graph, pipeline.artifacts}`).
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. Each name of `llm_kit.runs.compare.__all__` has a docstring and is in `public-surface.json` (with its `llm_kit.runs` re-export and `llm_kit.schema.formats.COMPARE_CASE_V1`); `test_runs_compare.py` and `test_runs_record.py` check the list against the code.
+2. Semver release with a changelog: pending. The version is not changed; the release that carries these pieces sets it and this entry's heading.
+3. Tests for each public function: pass. `test_runs_compare.py` (record before send, no retry, failed, halted and raising callers, reuse by every input of the key, copies, scorers, the bound, the group budget with failed and pending attempts, plan refusals, the CLI through the project model file with `max_retries: 0` on the wire, dry run), `test_formats.py` (the compare-case shared cases) and `test_invoke_protocol.py` (`max_retries`).
+4. No client names, prompts or data: pass. The tests and the example use generic models, prompts and cases.
+5. Examples run without a client app: pass. `examples/compare_models.py` runs in the clean venv with no extra (`tests/packaging/test_examples.py`).
+6. JSON Schema for each file format: pass. The case file has `compare-case.v1.schema.json`; the scorer reads and writes `llm-kit.run-import/v1` lines; the records are `llm-kit.run-record/v1`.
+7. Gate before adoption: pending line 2 (the release).
+
 ## 1.28.0
 
 Recovery of a unit held before any job ledger exists. A client that holds a unit (`WorkspaceManager.hold`), runs a setup command and only then starts `llm-kit jobs run` had no recovery for a crash in that window: no ledger row names the unit, so `recover_run_units` cannot see it, and the lease lives only in the dead process.
