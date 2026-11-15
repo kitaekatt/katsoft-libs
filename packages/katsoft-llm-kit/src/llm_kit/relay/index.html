@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<!-- index-pages: {"generated_by":"md-domain","source_sha":"b817411133879a1c8dc636c63c2321e37a7e8a2d","directory":"packages/katsoft-llm-kit/src/llm_kit/relay","kind":"page"} -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>The relay, hub, and channel clients that carry session messages, LLM completions, and operator questions between coding-agent sessions across a fleet of machines.</title>
+<link rel="stylesheet" href="../../../../../.databench/index-pages.css">
+</head>
+<body>
+<nav data-index-pages-chrome="nav"><ul><li><a href="../index.html"><span class="hh-nav-label">llm_kit</span> <span class="hh-nav-identity">LLM completion and execution library: shared completion protocol, four provider transports (OpenAI-compatible HTTP, Claude CLI, Codex CLI, OpenCode CLI), endpoint and model registry, dispatch routing, front-door API, graph viewer, CLI, and deployment-mode runtime</span></a></li><li><a href="../../../README.md"><span class="hh-nav-label">README.md</span> <span class="hh-nav-identity">Project-level getting-started and architecture overview for the llm-kit package.</span></a></li></ul></nav>
+<main>
+<h1>The relay, hub, and channel clients that carry session messages, LLM completions, and operator questions between coding-agent sessions across a fleet of machines.</h1>
+<p class="hh-orientation">This is the relay subsystem of llm-kit: a per-machine broker, a fleet-wide MCP hub, and the channel clients that bind coding-agent sessions to each other. One frozen wire module and its fifty-five JSON schemas define the contract; the relay server, the hub, and two channel implementations build against it. Everything binds loopback only. Configuration is opt-in per machine via a single YAML file, and all state lives under a private XDG directory.</p><section><h2>Where to start</h2><p>Open <a href="protocol.py">packages/katsoft-llm-kit/src/llm_kit/relay/protocol.py</a> first for the envelope grammar, verb table, error codes, and address format. The schemas subdirectory beside it pins each verb&#x27;s request and response shape as a JSON Schema.</p></section><section><h2>Routes</h2><ul><li><strong>Boot a relay on this machine</strong><ol><li><a href="config.py">packages/katsoft-llm-kit/src/llm_kit/relay/config.py</a> reads relay.yaml, resolves the machine label from env.json, and checks the opt-in gate</li><li><a href="lifecycle.py">packages/katsoft-llm-kit/src/llm_kit/relay/lifecycle.py</a> creates the state directory, tokens, and the singleton role lock</li><li>the relay server binds loopback and serves the protocol verbs</li></ol></li><li><strong>Hub reaches a peer relay</strong><ol><li><a href="hub.py">packages/katsoft-llm-kit/src/llm_kit/relay/hub.py</a> validates the tool call against the verb schema and checks pause</li><li><a href="client.py">packages/katsoft-llm-kit/src/llm_kit/relay/client.py</a> sends the POST with the peer key header to the peer HTTPS URL</li><li>the peer relay answers with its result envelope</li></ol></li><li><strong>One Codex channel turn</strong><ol><li><a href="codex_channel.py">packages/katsoft-llm-kit/src/llm_kit/relay/codex_channel.py</a> polls the relay and receives a message</li><li><a href="codex_appserver.py">packages/katsoft-llm-kit/src/llm_kit/relay/codex_appserver.py</a> starts a turn on the app-server child with the turn header</li><li>the channel acks on acceptance, waits for completion, and replies to the relay</li></ol></li></ul></section><section><h2>Wire contract</h2><ul><li><a href="protocol.py">packages/katsoft-llm-kit/src/llm_kit/relay/protocol.py</a>: the frozen relay-protocol/1 module: envelopes, verb table, stable error codes, address grammar, and the mailbox state machine</li><li><a href="schemas">packages/katsoft-llm-kit/src/llm_kit/relay/schemas</a>: fifty-five JSON Schemas defining each verb&#x27;s request and response shape, plus grant and audit structures</li></ul></section><section><h2>Configuration and process state</h2><ul><li><a href="config.py">packages/katsoft-llm-kit/src/llm_kit/relay/config.py</a>: machine identity, bind addresses, peer list, loopback model registry, and the relay.yaml opt-in gate</li><li><a href="lifecycle.py">packages/katsoft-llm-kit/src/llm_kit/relay/lifecycle.py</a>: state directory, token files, singleton role lock, pause flags, and peer credential management</li><li>A Windows ACL helper, a transcript reader, and the relay server process itself round out the support modules</li></ul></section><section><h2>Transport and routing</h2><ul><li><a href="client.py">packages/katsoft-llm-kit/src/llm_kit/relay/client.py</a>: the HTTP client that sends one POST per verb, with loopback and peer URL rules and a sent-or-not error model</li><li>A routing module verifies that machine labels in hub results are allowed by the target relay</li></ul></section><section><h2>Hub and sign-in</h2><ul><li><a href="hub.py">packages/katsoft-llm-kit/src/llm_kit/relay/hub.py</a>: the MCP server serving nine tools over one or more relays, with fan-out, pause, and schema validation</li><li><a href="hub_oauth.py">packages/katsoft-llm-kit/src/llm_kit/relay/hub_oauth.py</a>: single-user OAuth 2.1 sign-in for the claude.ai connector, active only when the hub publishes a public URL</li></ul></section><section><h2>Channel clients</h2><ul><li><a href="codex_channel.py">packages/katsoft-llm-kit/src/llm_kit/relay/codex_channel.py</a>: the owner-launched Codex channel: register, poll, one turn per message, reply</li><li><a href="codex_appserver.py">packages/katsoft-llm-kit/src/llm_kit/relay/codex_appserver.py</a>: the stdio JSON-RPC client for a codex app-server child, with sandbox and approval safety rules</li></ul></section><section><h2>Session and message services</h2><ul><li><a href="discovery.py">packages/katsoft-llm-kit/src/llm_kit/relay/discovery.py</a>: merges channel registrations with harness-store scans to answer list_sessions and read_session</li><li><a href="mailbox.py">packages/katsoft-llm-kit/src/llm_kit/relay/mailbox.py</a>: the SQLite ledger for messages, grants, audit rows, and named conversations</li><li><a href="llm.py">packages/katsoft-llm-kit/src/llm_kit/relay/llm.py</a>: the ask_llm service with loopback endpoint resolution and explicit consent checks</li><li><a href="questions.py">packages/katsoft-llm-kit/src/llm_kit/relay/questions.py</a>: list_questions and answer_question over watched job ledgers</li><li><a href="resume.py">packages/katsoft-llm-kit/src/llm_kit/relay/resume.py</a>: the remote-resume runner that starts one turn in an idle session for continue_session</li></ul></section><section><h2>Redaction</h2><p><a href="redact.py">packages/katsoft-llm-kit/src/llm_kit/relay/redact.py</a> replaces secret shapes in text and detects tool calls that touch credential paths, so a remote reader of a transcript never receives a key by accident.</p></section>
+</main>
+<script>
+if (window.parent !== window) {
+  window.parent.postMessage({
+    type: "index-pages:announce",
+    version: 1,
+    directory: "packages/katsoft-llm-kit/src/llm_kit/relay",
+    file: "index.html",
+    kind: "page",
+    source_sha: "b817411133879a1c8dc636c63c2321e37a7e8a2d"
+  }, "*");
+  document.addEventListener("click", function (event) {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var el = event.target;
+    while (el && el.nodeName !== "A") el = el.parentNode;
+    if (!el) return;
+    var href = el.getAttribute("href");
+    if (!href) return;
+    if (href.charAt(0) === "#" || href.charAt(0) === "/") return;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) return;
+    var target = href.split("#")[0].split("?")[0];
+    if (!target) return;
+    if (/(^|\/)index-page(\.[^/]+)?\.html$/.test(target)) return;
+    var parts = "packages/katsoft-llm-kit/src/llm_kit/relay".split("/");
+    if (parts.length === 1 && parts[0] === ".") parts = [];
+    var segs = target.split("/");
+    for (var i = 0; i < segs.length; i++) {
+      if (segs[i] === "" || segs[i] === ".") continue;
+      if (segs[i] === "..") { parts.pop(); continue; }
+      parts.push(segs[i]);
+    }
+    event.preventDefault();
+    window.parent.postMessage({
+      type: "index-pages:navigate",
+      version: 1,
+      path: parts.join("/")
+    }, "*");
+  });
+}
+</script>
+</body>
+</html>

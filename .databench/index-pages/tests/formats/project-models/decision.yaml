@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/formats/project-models",
+  "decision": "none",
+  "source_sha": "af8e3be1351fa81da5e71b45047edc0638e22bee",
+  "input_sha256": "f9c52ad55f382db53b5a02fae1285bd599d95ea1ed8a3fd3f40c9cf8365f6bdb",
+  "input_shape_sha256": "459c8c79975da006dae8eed87e3451b6177b76480576d81cb8e6b4b36100dbfd",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/jobs/schemas",
+  "decision": "none",
+  "source_sha": "b817411133879a1c8dc636c63c2321e37a7e8a2d",
+  "input_sha256": "2c4bfd02cf5102a2269f23e42a968b2d97db47fc7c3146b8c950208fc67e6759",
+  "input_shape_sha256": "383cccf93a5122cdd6548e6b917ddc01e083f507403876df10ad0ec8644d57bf",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

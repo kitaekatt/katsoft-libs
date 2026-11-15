@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/llm-kit-config/scripts",
+  "decision": "none",
+  "source_sha": "5913762a81d7012cd2bfab821b06cd2190f38c08",
+  "input_sha256": "7c6b9f9138f80f41c7a8d76fbe9bec4306210fde739863334dfbe6fb28236636",
+  "input_shape_sha256": "7912726cf6c872721537a5b58a7113e3c195be8a716c05168b6ea7eaa87541e5",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

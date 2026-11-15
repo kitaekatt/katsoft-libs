@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/formats/prompt-file",
+  "decision": "none",
+  "source_sha": "af8e3be1351fa81da5e71b45047edc0638e22bee",
+  "input_sha256": "41e9af90d29dbad4d68256cb9608a25bca39f1363a98131be2906f508a121952",
+  "input_shape_sha256": "69c75602dcb49d7fa4a5933d97eb4675ff857124598ea556c19308cd3ad90c04",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

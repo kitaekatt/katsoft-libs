@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/pipeline/analysis/mining",
+  "decision": "none",
+  "source_sha": "1c7e330b6d90be4d94dbe284b819fd9da1b48e6f",
+  "input_sha256": "41af77e3b739a813e4fc0a2c3fb6f9df6890541513e5f469ecd96612b1143928",
+  "input_shape_sha256": "b0fb799983c91f50d56a8179f67b7727198735796b0f01a67e85e62d5609c2c8",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

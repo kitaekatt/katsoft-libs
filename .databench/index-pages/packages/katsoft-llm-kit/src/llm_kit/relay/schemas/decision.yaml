@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/relay/schemas",
+  "decision": "none",
+  "source_sha": "5ecfa2953cf5776b1115924f2f5c1a6d63b47a3b",
+  "input_sha256": "ba0162a111fece08baecdfcd49facbdd139436becfb8bb2c2f56f1643871d6e2",
+  "input_shape_sha256": "d6bdedff6311a3dd6e2f35d121da30d76889f5610399754121fee97b2730923d",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

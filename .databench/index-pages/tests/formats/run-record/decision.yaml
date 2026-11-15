@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/formats/run-record",
+  "decision": "none",
+  "source_sha": "446a0d7d6ecb34a3c743b18c7ff84c47b58e16b7",
+  "input_sha256": "d7504854ec065f2751da1ded9a3b9b52b5dad2a2ede7035852bcd0b6e77bb0d8",
+  "input_shape_sha256": "38eeea7137769f7edfff40cb246885328fdd9e425ff52226b3cda2a8d8837ed0",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}
