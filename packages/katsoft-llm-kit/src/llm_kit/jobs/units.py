@@ -23,7 +23,11 @@ States (:class:`UnitState`). ``acquire_unit`` moves a new, ``parked`` or
 - ``active``: a run owns the unit (owner run, job, nonce and process identity).
   An active unit whose owner process died is recovered by :func:`finalize_unit`
   without a lease; while processes of the dead run survive it stays active and
-  is reported INDETERMINATE (``held_reason`` set).
+  is reported INDETERMINATE (``held_reason`` set). The owner may record the
+  processes that can write the worktree while it holds the unit
+  (:func:`record_unit_processes`); recovery treats them as survivors when alive,
+  so a crash before any job ledger exists is recoverable by run and job id
+  (:func:`recover_owned_unit`).
 - ``parked``: no run owns it; the worktree is clean and retained.
 - ``dirty_held``: the end-of-run commit failed or the worktree failed a removal
   check; a human resolves it. Exempt from reaping, blocked from reuse.
@@ -746,6 +750,7 @@ def finalize_unit(
     writers_stopped: bool = True,
     processes: Sequence[DetachedSurvivor] = (),
     resolve_dirty: bool = False,
+    owned_by: Optional[tuple[str, str]] = None,
     timeout_s: float = DEFAULT_FINALIZE_S,
 ) -> UnitFinalizeResult:
     """End a run of a unit: commit what remains to its branch, or hold it.
@@ -768,10 +773,19 @@ def finalize_unit(
     - ``active`` whose owner process is gone (crash recovery): when any of
       ``processes`` is alive the unit stays ``active`` and the result is
       ``indeterminate`` (``held_reason`` names them); else the commit is
-      made. An owner that is alive raises :class:`UnitOwnershipError`.
+      made. The identities recorded by :func:`record_unit_processes` count
+      with ``processes``. An owner that is alive raises
+      :class:`UnitOwnershipError`: a live owner is never finalized without
+      its lease.
     - ``dirty_held``: the commit is retried only with ``resolve_dirty``
       (a human's decision), else :class:`UnitOwnershipError`.
     - ``parked`` / ``removed``: nothing to do; returns ``clean`` unchanged.
+
+    ``owned_by`` is ``(run_id, job_id)``. Without ``lease``, the call raises
+    :class:`UnitOwnershipError` unless the unit's recorded owner run and job
+    are exactly these (checked under the repository lock, so a unit that
+    another run has acquired meanwhile is never finalized). It is ignored with
+    ``lease``, whose nonce already proves ownership.
 
     Raises :class:`UnitError` for an unknown unit or a liveness check without
     psutil; ``ValueError`` for a bad ``timeout_s``.
@@ -783,6 +797,13 @@ def finalize_unit(
         if record is None:
             raise UnitError(f"unknown unit {unit!r} of repository {repository} in {registry.path}")
         held = list(processes)
+        if lease is None and owned_by is not None and (
+            (record.owner_run_id, record.owner_job_id) != owned_by
+        ):
+            raise UnitOwnershipError(
+                f"unit {unit!r} is owned by run {record.owner_run_id!r} job "
+                f"{record.owner_job_id!r}, not run {owned_by[0]!r} job {owned_by[1]!r}"
+            )
         if lease is not None:
             if record.state is not UnitState.ACTIVE or record.owner is None or (
                 record.owner.nonce != lease.nonce
@@ -806,6 +827,7 @@ def finalize_unit(
                     f"unit {unit!r} is active and its owner process (pid {record.owner.process.pid}) "
                     "is alive"
                 )
+            held = list(record.held_processes) + held
             alive = live_processes(held)
             if alive:
                 reason = f"processes of the dead owning run survive: {_describe(alive)}"
@@ -846,6 +868,78 @@ def finalize_unit(
             commit_sha=outcome.sha if outcome.status is UnitFinalizeStatus.COMMITTED else None,
             detail=outcome.detail,
         )
+
+
+def record_unit_processes(
+    registry: UnitRegistry, lease: UnitLease, processes: Sequence[DetachedSurvivor]
+) -> UnitRecord:
+    """Record, in the registry, processes that may write an active unit's worktree.
+
+    The owning run calls this as soon as it starts a process that can write the
+    worktree (a setup command, a session leader), before waiting on it, with
+    every identity it knows. The identities are added to those already
+    recorded; the set is cleared when the unit is finalized with the lease or
+    acquired again. If the owner then dies without finalizing, recovery
+    (:func:`recover_owned_unit`, or :func:`finalize_unit` without a lease)
+    reads them back: while any is alive the unit stays ``active`` and
+    ``indeterminate`` instead of being committed under a running writer.
+    A process that was started but never recorded is not known to recovery.
+
+    Raises :class:`UnitOwnershipError` unless the unit is ``active`` with this
+    lease, and :class:`UnitError` for an unknown unit.
+    """
+    repository = Path(lease.repository).resolve()
+    with repository_lock(repository):
+        record = registry.get(repository, lease.unit)
+        if record is None:
+            raise UnitError(f"unknown unit {lease.unit!r} of repository {repository} in {registry.path}")
+        if record.state is not UnitState.ACTIVE or record.owner is None or (
+            record.owner.nonce != lease.nonce
+        ):
+            raise UnitOwnershipError(
+                f"unit {lease.unit!r} is not held by this lease (state {record.state.value})"
+            )
+        return registry._update(
+            record, held_processes_json=_processes_json((*record.held_processes, *processes))
+        )
+
+
+def recover_owned_unit(
+    registry: UnitRegistry,
+    repository: Path,
+    unit: str,
+    *,
+    run_id: str,
+    job_id: str,
+    processes: Sequence[DetachedSurvivor] = (),
+    timeout_s: float = DEFAULT_FINALIZE_S,
+) -> UnitFinalizeResult:
+    """Finalize, without its lease, a unit that ``run_id``/``job_id`` last held.
+
+    The recovery for a run that died after acquiring the unit and before any
+    job ledger existed, where the ledger-driven ``recover_run_units`` has
+    nothing to read. It is :func:`finalize_unit` without a lease, restricted to
+    the named owner run and job: an ``active`` unit whose owner process is gone
+    is committed (``committed`` or ``clean``, then ``parked``, or
+    ``dirty_held``), unless a process in ``processes`` or one recorded with
+    :func:`record_unit_processes` is alive, which leaves it ``active`` and
+    ``indeterminate``; a ``writer_held`` unit is re-checked; a ``parked`` or
+    ``removed`` unit is returned ``clean`` unchanged.
+
+    Raises :class:`UnitOwnershipError` when the owner process is alive, the
+    unit is owned by another run or job, or it is ``dirty_held``; otherwise
+    as :func:`finalize_unit`.
+    """
+    if not run_id or not job_id:
+        raise ValueError("recover_owned_unit needs a run_id and a job_id")
+    return finalize_unit(
+        registry,
+        repository,
+        unit,
+        processes=processes,
+        owned_by=(run_id, job_id),
+        timeout_s=timeout_s,
+    )
 
 
 def _writer_held(
@@ -1018,6 +1112,8 @@ __all__ = [
     "list_units",
     "live_processes",
     "record_unit_merge",
+    "record_unit_processes",
+    "recover_owned_unit",
     "remove_unit_worktree",
     "repository_identity",
     "repository_lock",

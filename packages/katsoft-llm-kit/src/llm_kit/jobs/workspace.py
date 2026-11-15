@@ -58,12 +58,14 @@ from .units import (
     UnitFinalizeStatus,
     UnitLease,
     UnitOwnershipError,
+    UnitRecord,
     UnitRegistry,
     UnitState,
     _registered_worktrees as _worktree_branches,
     acquire_unit,
     finalize_unit,
     list_units,
+    record_unit_processes,
     repository_identity,
     repository_lock,
 )
@@ -793,6 +795,24 @@ class WorkspaceManager:
         self._acquire(job, plan)
         _ensure_unit_worktree(plan.unit, plan.base_ref)
         return plan.unit.path
+
+    def record_unit_processes(
+        self, job_id: str, processes: Sequence[DetachedSurvivor]
+    ) -> Optional[UnitRecord]:
+        """Record processes that may write the job's unit worktree, under this manager's lease.
+
+        :func:`~llm_kit.jobs.units.record_unit_processes` with the lease that
+        :meth:`hold` or :meth:`create` acquired. Call it right after starting
+        a process (a setup command) so that, if this process dies before
+        :meth:`finalize_unit_run`, :func:`~llm_kit.jobs.units.recover_owned_unit`
+        sees the process. Returns ``None`` when no unit is held for the job.
+        """
+        lease = self._leases.get(job_id)
+        if lease is None:
+            return None
+        plan = self._plans[job_id]
+        assert plan.unit is not None
+        return record_unit_processes(UnitRegistry(plan.unit.registry_root), lease, processes)
 
     def finalize_unit_run(
         self,

@@ -292,6 +292,64 @@ def test_hold_owns_a_unit_for_a_continuation_and_ignores_other_jobs(repo, tmp_pa
     assert WorkspaceManager(tmp_path / "ws", (_isolated_job(repo),)).hold(_isolated_job(repo)) is None
 
 
+def test_a_setup_crash_after_hold_is_recovered_without_a_ledger(repo, tmp_path):
+    """hold, record the setup process, die: recover by run and job id, no ledger row anywhere."""
+    import psutil
+
+    from llm_kit.completion.session_types import DetachedSurvivor
+    from llm_kit.jobs.units import UnitFinalizeStatus, recover_owned_unit
+
+    root = tmp_path / "units"
+    job = _job(repo, root=root)
+    identity = repository_identity(repo.root)
+    writer = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    script = tmp_path / "scripts" / "setup_crash.py"
+    script.parent.mkdir(exist_ok=True)
+    script.write_text(textwrap.dedent(f"""
+        import os, sys
+        sys.path[:0] = [{str(SRC)!r}, {str(CONTRACTS)!r}]
+        from pathlib import Path
+        import psutil
+        from llm_kit.completion.session_types import DetachedSurvivor, ProcessIdentity
+        from llm_kit.jobs.model import Contract, Job, Prompt, WorkspaceSpec
+        from llm_kit.jobs.workspace import WorkspaceManager
+        job = Job(id="job", prompt=Prompt(user="w"), models=("fake",), directory=Path({str(repo.root)!r}),
+                  contract=Contract(command=("true",)),
+                  workspace=WorkspaceSpec(mode="branch", unit="u", root=Path({str(root)!r}),
+                                          base_ref="origin/dev"))
+        manager = WorkspaceManager(Path("/nonexistent"), (job,), run_id="entry-1")
+        assert manager.record_unit_processes("job", []) is None  # nothing held yet
+        path = manager.hold(job)
+        started = DetachedSurvivor(ProcessIdentity({writer.pid}, psutil.Process({writer.pid}).create_time()))
+        record = manager.record_unit_processes("job", [started])
+        assert record is not None and record.held_processes == (started,)
+        (path / "setup-output.txt").write_text("written by setup\\n")
+        os._exit(137)
+    """), encoding="utf-8")
+    try:
+        completed = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
+        assert completed.returncode == 137, completed.stderr
+        registry = UnitRegistry(root, create=False)
+        record = registry.get(identity, "u")
+        assert record is not None and record.state is UnitState.ACTIVE
+        assert [item.identity.pid for item in record.held_processes] == [writer.pid]
+        waiting = recover_owned_unit(registry, identity, "u", run_id="entry-1", job_id="job")
+        assert waiting.status is UnitFinalizeStatus.INDETERMINATE
+        assert registry.get(identity, "u").state is UnitState.ACTIVE
+    finally:
+        writer.kill()
+        writer.wait()
+    done = recover_owned_unit(registry, identity, "u", run_id="entry-1", job_id="job")
+    assert done.status is UnitFinalizeStatus.COMMITTED
+    assert repo.show("agent/u", "setup-output.txt") == "written by setup"
+    assert registry.get(identity, "u").state is UnitState.PARKED
+
+
+def test_record_unit_processes_is_none_for_a_job_without_a_unit(repo, tmp_path):
+    iso = _isolated_job(repo)
+    assert WorkspaceManager(tmp_path / "ws", (iso,)).record_unit_processes(iso.id, []) is None
+
+
 def test_hold_refuses_a_branch_mode_job_whose_plan_failed(repo, tmp_path):
     plain = tmp_path / "not-a-repo"
     plain.mkdir()

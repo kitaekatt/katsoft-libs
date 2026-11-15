@@ -2,6 +2,30 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## Unreleased
+
+Recovery of a unit held before any job ledger exists. A client that holds a unit (`WorkspaceManager.hold`), runs a setup command and only then starts `llm-kit jobs run` had no recovery for a crash in that window: no ledger row names the unit, so `recover_run_units` cannot see it, and the lease lives only in the dead process.
+
+Added:
+
+- `llm_kit.jobs.units.record_unit_processes(registry, lease, processes)` and `WorkspaceManager.record_unit_processes(job_id, processes)`: the owner records the processes that may write the worktree (a setup command and its tree) in the unit's registry row, right after starting them. The identities accumulate while the unit is `active` and are cleared by the lease finalization. An unrecorded process is not known to recovery.
+- `llm_kit.jobs.units.recover_owned_unit(registry, repository, unit, *, run_id, job_id, processes=(), timeout_s=...)`: finalizes, without its lease and without a ledger, the unit that `run_id`/`job_id` last held. It is `finalize_unit` without a lease, restricted to that owner: a dead owner's `active` unit is committed and parked (`committed` or `clean`) or held `dirty_held`; while any recorded or given process is alive it stays `active` and `indeterminate` and nothing is committed (detached survivors block finalization); a `writer_held` unit is re-checked; a `parked` unit is returned `clean` unchanged. A live owner raises `UnitOwnershipError`, as does another run or job.
+- `finalize_unit(..., owned_by=(run_id, job_id))`: without a lease, refuses a unit whose recorded owner run and job differ, checked under the repository lock.
+
+Changed:
+
+- `finalize_unit` without a lease on an `active` unit whose owner died now also treats the identities recorded by `record_unit_processes` as possible writers. Before, only the `processes` argument counted, and a unit recorded by no ledger had none.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. Each new name has a docstring; both new functions are in `__all__` and `public-surface.json`.
+2. Semver release with a changelog: pending. This entry; no version change until a release.
+3. Tests for each public function: pass. `test_jobs_units.py` (recovery by run and job beside a recorded live writer and after it exits, another owner, a live owner, idempotence, recording needs the active lease, accumulation and clearing) and `test_jobs_workspace.py` (a real `hold`, record and crash in a child process, recovered without a ledger). Each fails with its change reverted (the recorded-process union, the `owned_by` check, the lease check, the manager method).
+4. No client names, prompts or data: pass.
+5. Examples run without a client app: pass. No example changed.
+6. JSON Schema for each file format: pass. `unit_record.json` already allows `held_processes` in any state; the test validates an `active` record that carries them.
+7. Gate before adoption: pending the release (line 2).
+
 ## 1.27.1
 
 The example for agent sessions and branch mode. No library code changes; this release carries the example, its packaging test and the bar record that 1.26.0 and 1.27.0 left pending.

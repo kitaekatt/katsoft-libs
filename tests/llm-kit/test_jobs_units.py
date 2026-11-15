@@ -36,6 +36,8 @@ from llm_kit.jobs.units import (
     list_units,
     live_processes,
     record_unit_merge,
+    record_unit_processes,
+    recover_owned_unit,
     remove_unit_worktree,
     repository_identity,
     repository_lock,
@@ -447,6 +449,101 @@ def test_recovery_beside_surviving_processes_is_indeterminate(unit, tmp_path):
         survivor.kill()
         survivor.wait()
     assert unit.finalize(processes=(identity,)).status is UnitFinalizeStatus.COMMITTED
+
+
+def _crash_owner_recording(tmp_path: Path, unit: Unit, process: subprocess.Popen) -> DetachedSurvivor:
+    """Acquire, record ``process`` as a possible writer, write a file, then die without finalizing."""
+    identity = _identity_of(process)
+    script = _script(tmp_path, f"""
+        import os
+        from pathlib import Path
+        from llm_kit.completion.session_types import DetachedSurvivor, ProcessIdentity
+        from llm_kit.jobs.units import UnitRegistry, acquire_unit, record_unit_processes
+        registry = UnitRegistry(Path({str(unit.registry.root)!r}))
+        lease = acquire_unit(registry, repository=Path({str(unit.repository)!r}), unit={unit.unit!r},
+                             branch={unit.branch!r}, worktree=Path({str(unit.path)!r}),
+                             run_id="run-1", job_id="job-1")
+        record_unit_processes(registry, lease, [DetachedSurvivor(
+            ProcessIdentity({identity.identity.pid}, {identity.identity.create_time!r}))])
+        Path({str(unit.path)!r}, "left-behind.txt").write_text("crash\\n")
+        os._exit(9)
+    """)
+    completed = subprocess.run([sys.executable, str(script)], capture_output=True, text=True)
+    assert completed.returncode == 9, completed.stderr
+    return identity
+
+
+def test_recovery_by_run_and_job_waits_for_a_process_the_owner_recorded(unit, tmp_path):
+    writer = _sleeper()
+    try:
+        identity = _crash_owner_recording(tmp_path, unit, writer)
+        assert unit.record().held_processes == (identity,)
+        result = recover_owned_unit(unit.registry, unit.repository, "u", run_id="run-1", job_id="job-1")
+        assert result.status is UnitFinalizeStatus.INDETERMINATE
+        record = unit.record()
+        assert record.state is UnitState.ACTIVE and record.indeterminate
+        assert record.held_processes == (identity,) and "survive" in (record.held_reason or "")
+        assert unit.repo.log("agent/u")[0] != "WIP: u run 1"  # nothing committed under a live writer
+    finally:
+        writer.kill()
+        writer.wait()
+    result = recover_owned_unit(unit.registry, unit.repository, "u", run_id="run-1", job_id="job-1")
+    assert result.status is UnitFinalizeStatus.COMMITTED
+    assert unit.repo.show("agent/u", "left-behind.txt") == "crash"
+    record = unit.record()
+    assert record.state is UnitState.PARKED and record.held_processes == ()
+
+
+def test_recovery_by_run_and_job_commits_when_nothing_was_recorded(unit, tmp_path):
+    _crash_owner(tmp_path, unit)
+    result = recover_owned_unit(unit.registry, unit.repository, "u", run_id="run-1", job_id="job-1")
+    assert result.status is UnitFinalizeStatus.COMMITTED and unit.record().state is UnitState.PARKED
+    again = recover_owned_unit(unit.registry, unit.repository, "u", run_id="run-1", job_id="job-1")
+    assert again.status is UnitFinalizeStatus.CLEAN and again.detail == "already parked"  # idempotent
+
+
+def test_recovery_by_run_and_job_refuses_another_owner_and_a_live_owner(unit, tmp_path):
+    _crash_owner(tmp_path, unit, run_id="run-1", job_id="job-1")
+    for run_id, job_id in (("run-2", "job-1"), ("run-1", "job-2")):
+        with pytest.raises(UnitOwnershipError, match="is owned by run 'run-1' job 'job-1'"):
+            recover_owned_unit(unit.registry, unit.repository, "u", run_id=run_id, job_id=job_id)
+    assert unit.record().state is UnitState.ACTIVE  # untouched
+    with pytest.raises(ValueError, match="needs a run_id and a job_id"):
+        recover_owned_unit(unit.registry, unit.repository, "u", run_id="", job_id="job-1")
+    unit.finalize()
+    unit.acquire(run_id="run-3", job_id="job-3")  # a live owner is never finalized lease-free
+    with pytest.raises(UnitOwnershipError, match="owner process .* is alive"):
+        recover_owned_unit(unit.registry, unit.repository, "u", run_id="run-3", job_id="job-3")
+
+
+def test_recorded_processes_accumulate_and_are_cleared_by_the_lease_finalization(unit):
+    lease = unit.acquire()
+    first, second = _sleeper(), _sleeper()
+    try:
+        a, b = _identity_of(first), _identity_of(second)
+        record_unit_processes(unit.registry, lease, [a])
+        record = record_unit_processes(unit.registry, lease, [a, b])
+        assert record.held_processes == (a, b) and record.state is UnitState.ACTIVE
+        assert record.held_reason is None and not record.indeterminate
+        conforms(record)
+    finally:
+        first.kill(); second.kill(); first.wait(); second.wait()
+    result = unit.finalize(lease=lease)
+    assert result.status is UnitFinalizeStatus.CLEAN and result.record.held_processes == ()
+
+
+def test_recording_processes_needs_the_active_lease(unit):
+    lease = unit.acquire()
+    unit.finalize(lease=lease)
+    with pytest.raises(UnitOwnershipError, match="is not held by this lease"):
+        record_unit_processes(unit.registry, lease, [])
+    other = unit.acquire(run_id="run-2")
+    with pytest.raises(UnitOwnershipError, match="is not held by this lease"):
+        record_unit_processes(unit.registry, lease, [])  # the old lease, a newer owner
+    record_unit_processes(unit.registry, other, [])
+    gone = units.UnitLease(unit.repository, "nope", other.nonce, 1, unit.branch, unit.path)
+    with pytest.raises(UnitError, match="unknown unit 'nope'"):
+        record_unit_processes(unit.registry, gone, [])
 
 
 def test_recovery_refuses_while_the_owner_is_alive(unit):

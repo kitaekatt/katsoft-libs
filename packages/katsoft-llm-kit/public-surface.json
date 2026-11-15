@@ -3485,6 +3485,14 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.jobs.units.record_unit_processes",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.units.recover_owned_unit",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.jobs.units.remove_unit_worktree",
       "status": "public"
     },
