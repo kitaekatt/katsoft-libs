@@ -31,7 +31,7 @@ const { row, effort, source } = select(registry, "summary.write");
 
 ## Requests
 
-A selection can describe the whole request: the row's defaults, a named request profile (`requests`) that the selection's `request` names, and the call, in that order. `endpoints` in the file says where an endpoint takes the effort. `traits` are your labels for a row; they are never sent.
+A selection can describe the whole request: the row's defaults, a named request profile (`requests`) that the selection's `request` names, and the call, in that order. `endpoints` in the file says where an endpoint takes the effort, and may name its connection: `base_url` and `key_env`, the name of the environment variable that holds the key (never a key). A caller whose own configuration knows the endpoint uses its own connection. `traits` are your labels for a row; they are never sent.
 
 ```js
 import { chatFields, resolveRequest } from "@katsoft/llm-kit-config";

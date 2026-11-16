@@ -31,6 +31,7 @@
     {"name": "Selection", "kind": "type", "status": "public"},
     {"name": "SelectionSource", "kind": "type", "status": "public"},
     {"name": "EffortStyle", "kind": "type", "status": "public"},
+    {"name": "Endpoint", "kind": "type", "status": "public"},
     {"name": "RequestDefaults", "kind": "type", "status": "public"},
     {"name": "RequestProfile", "kind": "type", "status": "public"},
     {"name": "RequestCall", "kind": "type", "status": "public"},

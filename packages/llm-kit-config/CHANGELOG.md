@@ -4,6 +4,20 @@ Each released version has one entry. The quality bar is in the repository's root
 
 ## Unreleased
 
+Added:
+
+- `parseRegistry` reads an endpoint's connection: `endpoints.<name>.base_url` and `key_env` (both or neither; `key_env` is an environment variable name or null, never a key), returned in the normalized document. New type `Endpoint`. The reader does not call endpoints; a caller whose own configuration knows the endpoint uses its own connection (`docs/reference/llm-kit-formats.md`, "Connections"). 10 new shared cases.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. `Endpoint` has a JSDoc block and is in `public-surface.json`; `test/surface.test.mjs` passes.
+2. Semver release with a changelog: pending. This entry; the version changes at release (a minor release).
+3. Tests for each public function: pass. `test/cases.test.mjs` runs the new cases through `parseRegistry`.
+4. No client names, prompts or data: pass.
+5. Examples run without a client app: pass. No example changed.
+6. JSON Schema for each file format: pass. The schema states both endpoint shapes; the cases validate with ajv.
+7. Gate before adoption: pass for lines 1, 3 to 6; line 2 at release.
+
 Fixed:
 
 - `parseRegistry` and `parseOverlay` refuse, at the path `""`, a decimal integer of more than 4300 digits (as the Python reader does) and a value that nests more than 100 levels of lists and mappings (aliases count as copies). A far deeper file threw a `RangeError` (stack overflow) instead of an `LlmKitConfigError`. 16 new shared cases in `tests/formats/project-models/cases.json`.

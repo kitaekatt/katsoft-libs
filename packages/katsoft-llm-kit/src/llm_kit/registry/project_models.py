@@ -6,6 +6,10 @@ project's own repository):
     version: 1
     endpoints:                   # optional; how this project places an effort on a transport
       openrouter: {effort_style: reasoning-object}   # a row's endpoint; wins over the registry
+      vendor:                    # optional connection, for a machine whose registry lacks it
+        effort_style: top-level
+        base_url: https://api.vendor.example/v1
+        key_env: VENDOR_API_KEY  # the NAME of the key's variable (null: keyless), never a key
     catalog:                     # ordered; the order is the project's order
       - id: luna                 # opaque, unique, chosen by the project
         label: Luna              # presentation text
@@ -33,9 +37,14 @@ The request settings (``temperature``, ``top_p``, ``max_output_tokens``,
 ``reasoning_budget``, ``extras``) layer row < selection < call; the resolved
 request and its rules are in :mod:`llm_kit.registry.request_settings`.
 
-The file holds no keys, key files, base URLs, consent or vendor capability
+The file holds no keys, key files, consent, billing or vendor capability
 claims: endpoints, credentials and billing resolve through the endpoint
-registry, and the effort menu is the library's, measured per exact model
+registry. An ``endpoints`` entry may name a connection (``base_url`` and
+``key_env``, the name of the environment variable that holds the key); it binds
+a row only on a machine whose registry and model config do not know that
+endpoint, and its calls take no billing mode, so a native ``usage.cost`` stays an
+estimate. A machine that knows the endpoint uses its own connection; the
+file's ``effort_style`` wins either way. The effort menu is the library's, measured per exact model
 (``model_profiles``). A project may narrow a menu and never widen it; a harness
 model the library has not measured has no menu, so its row declares no
 ``efforts`` and its selections carry a null effort. ``efforts: []`` declares that a
@@ -85,7 +94,7 @@ id; an effort is in the row's declared ``efforts``). The BINDING part checks
 what only this machine knows: for each row whose ``endpoint`` resolves in the
 endpoint registry, that each effort is in the library menu for that endpoint and
 model, and that ``extras`` holds no reserved key. A row whose endpoint resolves
-to no registry endpoint is UNBOUND: the endpoint is the consumer's name, so the
+to no registry endpoint, and that the file's ``endpoints`` does not connect, is UNBOUND: the endpoint is the consumer's name, so the
 row loads with every check that needs no endpoint (its declared ``efforts``, the
 endpoint-independent reserved extras), and the result names it
 (:attr:`ProjectModels.unbound`, :attr:`Validation.unbound`). A call or a plan that
@@ -129,7 +138,7 @@ __all__ = [
     "SCHEMA", "FILE_VERSION", "DEFAULT_FILE",
     "CODE_INVALID", "CODE_STALE", "CODE_PATH", "CODE_SYMLINK", "CODE_MISSING", "CODE_DEPENDENCY",
     "CODE_UNKNOWN_SELECTION", "REQUEST_SETTINGS", "PROFILE_RESERVED_EXTRAS", "LEGACY_ROW_EXTRAS",
-    "endpoint_styles", "check_setting", "validate_profile", "KEEP_REQUEST",
+    "endpoint_styles", "endpoint_connection", "PROJECT_ENDPOINT", "check_setting", "validate_profile", "KEEP_REQUEST",
     "LOCAL_SUFFIX", "LAYER_TRACKED", "LAYER_LOCAL", "SOURCE_DEFAULT", "SOURCE_OVERRIDE",
     "ProjectModelsError", "EndpointInfo", "EffortMenuResolver",
     "library_effort_menu_with_source", "library_effort_menu",
@@ -166,6 +175,10 @@ CODE_UNKNOWN_SELECTION = "unknown-selection"
 #: The personal layer: ``<file-stem>.local.yaml`` beside the project file.
 LOCAL_SUFFIX = ".local.yaml"
 #: The ``layer`` values: the tracked file and the personal layer.
+#: :attr:`EndpointInfo.kind` of an endpoint this machine does not know that the
+#: project file connects (``endpoints.<name>.base_url``): calls use that connection.
+PROJECT_ENDPOINT = "project"
+
 LAYER_TRACKED = "tracked"
 LAYER_LOCAL = "local"
 #: The ``source`` values of a resolved selection (:func:`resolve_selections`).
@@ -182,7 +195,11 @@ _LOCAL_TOP_KEYS = ("version", "selections")
 _ROW_KEYS = ("id", "label", "endpoint", "model", "efforts", "max_output_tokens", "traits", "request_defaults")
 _ROW_REQUIRED = ("id", "label", "endpoint", "model")
 _SELECTION_KEYS = ("model", "effort", "request")
-_ENDPOINT_KEYS = ("effort_style",)
+_ENDPOINT_KEYS = ("effort_style", "base_url", "key_env")
+# A connection's base URL: http:// or https://, a host, then printable ASCII with no space.
+_BASE_URL = re.compile(r"https?://[\x21-\x2e\x30-\x7e][\x21-\x7e]*")
+# The name of the environment variable that holds a connection's key.
+_KEY_ENV = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 #: The typed request settings, in canonical order. ``max_output_tokens`` and
 #: ``reasoning_budget`` are counts; ``temperature`` is 0 or more; ``top_p`` is 0 to 1.
 REQUEST_SETTINGS = ("temperature", "top_p", "max_output_tokens", "reasoning_budget")
@@ -249,6 +266,9 @@ def _invalid(where: str, message: str, *, path: Optional[str] = None) -> Project
 class EndpointInfo:
     """What validation needs to know about one registry endpoint.
 
+    ``kind`` is the registry entry kind (``transport``, ``harness``), ``wrapper``
+    for a config endpoint record, or :data:`PROJECT_ENDPOINT` for an endpoint
+    this machine does not know that the project file connects (``base_url``).
     ``harness`` is set for a harness entry (``codex``, ``claude``, ...);
     ``effort_style`` for a transport or wrapper endpoint that resolves one.
     ``route`` keys the measured exact-model profiles: the harness name for a
@@ -306,6 +326,26 @@ def _route_of(base_url: Optional[str]) -> Optional[str]:
     return route_of_base_url(base_url)
 
 
+def endpoint_connection(document: Mapping, name: str) -> Optional[dict]:
+    """The connection the project file declares for endpoint ``name``, or None.
+
+    ``document`` is a normalized project model document. Returns a
+    :func:`llm_kit.registry.models.connection_endpoint` result (``base_url``,
+    ``key_env``, the file's effort style) when ``endpoints[name]`` has a
+    ``base_url``, else None. The file names the key's environment variable,
+    never a key. A machine whose endpoint registry or model config knows
+    ``name`` uses its own connection instead (binding resolves the machine
+    first; see :data:`PROJECT_ENDPOINT`). Raises nothing.
+    """
+    entry = (document.get("endpoints") or {}).get(name)
+    if not entry or "base_url" not in entry:
+        return None
+    from .models import connection_endpoint  # noqa: PLC0415
+
+    return connection_endpoint(name, base_url=entry["base_url"], key_env=entry["key_env"],
+                               effort_style=entry["effort_style"])
+
+
 def endpoint_styles(document: Mapping) -> "dict[str, str]":
     """Endpoint name -> the effort style the project file declares for it (``endpoints``).
 
@@ -323,21 +363,24 @@ class _Endpoints:
     registry's effort style of a transport or wrapper endpoint; a harness keeps its own.
     """
 
-    def __init__(self, project_root: Optional[str], styles: "Optional[Mapping[str, str]]" = None) -> None:
+    def __init__(self, project_root: Optional[str], document: Optional[Mapping] = None) -> None:
         self._project_root = project_root
         self._loaded: Optional["tuple[dict, Any]"] = None
         self._seen: dict[str, Optional[EndpointInfo]] = {}
-        self.styles: "dict[str, str]" = dict(styles or {})
+        self.use_document(document or {})
 
-    def use_styles(self, styles: "Mapping[str, str]") -> None:
-        """Replace the declared effort styles; lookups made before are forgotten."""
-        self.styles = dict(styles)
+    def use_document(self, document: Mapping) -> None:
+        """Use the effort styles and connections ``document``'s ``endpoints`` declares; lookups made before are forgotten."""
+        self.styles: "dict[str, str]" = endpoint_styles(document)
+        self.base_urls: "dict[str, str]" = {
+            name: entry["base_url"] for name, entry in (document.get("endpoints") or {}).items() if "base_url" in entry
+        }
         self._seen.clear()
 
     @classmethod
     def for_document(cls, project_root: Optional[str], document: Mapping) -> "_Endpoints":
-        """The lookups for ``document``, with the effort styles its ``endpoints`` declares."""
-        return cls(project_root, endpoint_styles(document))
+        """The lookups for ``document``, with the effort styles and connections its ``endpoints`` declares."""
+        return cls(project_root, document)
 
     def _load(self) -> "tuple[dict, Any]":
         if self._loaded is None:
@@ -373,6 +416,8 @@ class _Endpoints:
         endpoints = config.get("endpoints") or {}
         if isinstance(endpoints, Mapping) and name in endpoints:
             return self._wrapper(name, config)
+        if name in self.base_urls:  # the machine does not know it: the file's connection binds it
+            return EndpointInfo(name, PROJECT_ENDPOINT, route=_route_of(self.base_urls[name]))
         return None
 
     def _wrapper(self, name: str, config: dict) -> EndpointInfo:
@@ -846,7 +891,7 @@ def _traits(value: Any, where: str) -> list[str]:
 
 
 def _validate_endpoints(value: Any) -> "dict[str, dict]":
-    """The key-sorted ``endpoints`` block: endpoint name -> ``{effort_style}``.
+    """The key-sorted ``endpoints`` block: endpoint name -> ``{effort_style, base_url?, key_env?}``.
 
     Checks the structure only; that each name is a row's endpoint is checked
     after the catalogue (:func:`_check_endpoint_names`).
@@ -865,8 +910,32 @@ def _validate_endpoints(value: Any) -> "dict[str, dict]":
         style = entry["effort_style"]
         if style not in EFFORT_STYLES:
             raise _invalid(f"{where}.effort_style", f"must be one of {list(EFFORT_STYLES)}, not {style!r}")
-        out[name] = {"effort_style": style}
+        out[name] = {"effort_style": style, **_connection(entry, where)}
     return {name: out[name] for name in sorted(out)}
+
+
+def _connection(entry: Mapping, where: str) -> dict:
+    """An endpoint's ``base_url`` and ``key_env``: both or neither; ``key_env`` null is keyless."""
+    if "base_url" not in entry:
+        if "key_env" in entry:
+            raise _invalid(f"{where}.key_env", "names the key of a connection; declare base_url with it")
+        return {}
+    base_url = entry["base_url"]
+    if not isinstance(base_url, str) or not _BASE_URL.fullmatch(base_url):
+        raise _invalid(
+            f"{where}.base_url",
+            f"must be an http:// or https:// URL with a host, in printable ASCII with no space, not {base_url!r}",
+        )
+    if "key_env" not in entry:
+        raise _invalid(where, "'key_env' is required with base_url (null for a keyless endpoint)")
+    key_env = entry["key_env"]
+    if key_env is not None and (not isinstance(key_env, str) or not _KEY_ENV.fullmatch(key_env)):
+        raise _invalid(
+            f"{where}.key_env",
+            "must be the name of an environment variable (an ASCII letter or _, then letters, digits and _) "
+            f"or null, not {key_env!r}; the file never holds a key",
+        )
+    return {"base_url": base_url, "key_env": key_env}
 
 
 def _check_endpoint_names(names: "list[str]", rows: "list[dict]", endpoints: "Optional[_Endpoints]") -> None:
@@ -1084,7 +1153,7 @@ def _validate_top(
     _check_version(top)
     declared = _validate_endpoints(top["endpoints"]) if "endpoints" in top else None
     if endpoints is not None:
-        endpoints.use_styles(endpoint_styles({"endpoints": declared or {}}))
+        endpoints.use_document({"endpoints": declared or {}})
     rows, menus, efforts_of = _validate_catalog(top.get("catalog", []), endpoints, menu_of, unbound)
     if declared is not None:
         _check_endpoint_names(list(top["endpoints"]), rows, endpoints)

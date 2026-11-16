@@ -3718,6 +3718,302 @@
           "path": ""
         }
       }
+    },
+    {
+      "name": "endpoint-connection",
+      "note": "An endpoint may name its connection: an http(s) base URL and the NAME of the environment variable that holds its key, never a key. A reader on a machine whose endpoint registry does not know the endpoint calls it there.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  direct: {effort_style: top-level, base_url: 'https://api.vendor.example/v1', key_env: VENDOR_API_KEY}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: direct",
+          "    model: vendor-model-1",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "endpoints": {
+            "direct": {
+              "effort_style": "top-level",
+              "base_url": "https://api.vendor.example/v1",
+              "key_env": "VENDOR_API_KEY"
+            }
+          },
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "direct",
+              "model": "vendor-model-1"
+            }
+          ],
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "endpoint-connection-keyless",
+      "note": "key_env null declares a keyless endpoint (a local server).",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  direct: {effort_style: unsupported, base_url: 'http://127.0.0.1:8080/v1', key_env: null}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: direct",
+          "    model: vendor-model-1",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "endpoints": {
+            "direct": {
+              "effort_style": "unsupported",
+              "base_url": "http://127.0.0.1:8080/v1",
+              "key_env": null
+            }
+          },
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "direct",
+              "model": "vendor-model-1"
+            }
+          ],
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "endpoint-base-url-without-key-env",
+      "note": "A base URL needs key_env (null for a keyless endpoint), so a missing line never means no key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  direct: {effort_style: top-level, base_url: 'https://api.vendor.example/v1'}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: direct",
+          "    model: vendor-model-1",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "endpoints['direct']"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "endpoint-key-env-without-base-url",
+      "note": "key_env names the key of a connection; without base_url there is none.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  direct: {effort_style: top-level, key_env: VENDOR_API_KEY}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: direct",
+          "    model: vendor-model-1",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "endpoints['direct'].key_env"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "endpoint-base-url-not-http",
+      "note": "A base URL starts with http:// or https://.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  direct: {effort_style: top-level, base_url: 'ftp://api.vendor.example/v1', key_env: VENDOR_API_KEY}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: direct",
+          "    model: vendor-model-1",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "endpoints['direct'].base_url"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "endpoint-base-url-without-host",
+      "note": "A base URL has a host after the scheme.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  direct: {effort_style: top-level, base_url: 'https:///v1', key_env: VENDOR_API_KEY}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: direct",
+          "    model: vendor-model-1",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "endpoints['direct'].base_url"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "endpoint-base-url-with-space",
+      "note": "A base URL is printable ASCII with no space.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  direct: {effort_style: top-level, base_url: 'https://api.vendor.example/v 1', key_env: VENDOR_API_KEY}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: direct",
+          "    model: vendor-model-1",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "endpoints['direct'].base_url"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "endpoint-base-url-not-text",
+      "note": "A base URL is text.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  direct: {effort_style: top-level, base_url: 8080, key_env: VENDOR_API_KEY}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: direct",
+          "    model: vendor-model-1",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "endpoints['direct'].base_url"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "endpoint-key-env-not-a-name",
+      "note": "key_env is an environment variable name: an ASCII letter or _, then letters, digits and _. A key value is refused.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  direct: {effort_style: top-level, base_url: 'https://api.vendor.example/v1', key_env: sk-or-v1-0123}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: direct",
+          "    model: vendor-model-1",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "endpoints['direct'].key_env"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "endpoint-key-env-not-text",
+      "note": "key_env is text or null.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  direct: {effort_style: top-level, base_url: 'https://api.vendor.example/v1', key_env: [VENDOR_API_KEY]}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: direct",
+          "    model: vendor-model-1",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "endpoints['direct'].key_env"
+        },
+        "schema": "refuses"
+      }
     }
   ]
 }

@@ -4,6 +4,21 @@ Each released version has one entry. The quality bar is in the repository's root
 
 ## Unreleased
 
+Added:
+
+- A project model file can connect an endpoint the machine does not know: `endpoints.<name>.base_url` and `key_env` (the name of the environment variable that holds the key, or null for a keyless endpoint; never a key). The format stays `llm-kit.project-models/v1` (optional keys that an older reader refuses as unknown). Precedence: a machine whose model config or endpoint registry knows the name uses its own connection whole; otherwise the file's connection binds the rows, which are then not `unbound`; the file's `effort_style` wins either way. A protocol 2 call on such a row (so `llm-kit runs compare` too) sends the row's model as written, takes the key from the named variable and the `.env` layers, and records a native `usage.cost` as an estimate (the file declares no billing). Contract: `docs/reference/llm-kit-formats.md`, "Connections"; 10 new shared cases.
+- `llm_kit.registry.project_models.endpoint_connection(document, name)` and `PROJECT_ENDPOINT` (the `EndpointInfo.kind` of such an endpoint); `llm_kit.registry.models.connection_endpoint(name, base_url=, key_env=, effort_style=)`; keyword `connection=` on `llm_kit.dispatch.factory.create_backend`, field `connection` on `OpenAICompatBackend`, keyword `resolved=` on `llm_kit.adapters.client.make_openai_client` and `llm_kit.registry.api_key.get_api_key`.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. Each new name and keyword has a docstring; `endpoint_connection` and `PROJECT_ENDPOINT` are in `__all__` and `public-surface.json`.
+2. Semver release with a changelog: pending. This entry; the version changes at release (a minor release: new optional keys and names).
+3. Tests for each public function: pass. `test_invoke_protocol.py`: a connected row is called on the file's connection, with the model as written and the file's effort style; the machine registry wins over the file; a client for a connection uses its base URL and the key its variable holds (and the keyless key); `endpoint_connection` is called directly. `test_runs_compare.py`: a compare calls a connected row. Each fails before the change.
+4. No client names, prompts or data: pass. Generic endpoint names and hosts.
+5. Examples run without a client app: pass. No example changed.
+6. JSON Schema for each file format: pass. `project-models.v1.schema.json` states both endpoint shapes; the shared cases validate their data against it.
+7. Gate before adoption: pass for lines 1, 3 to 6; line 2 at release.
+
 Changed:
 
 - The shipped OpenRouter endpoints (`openrouter`, `or-qwen`, `or-gpt-mini`, `or-gemini-lite` in `DEFAULT_MODEL_CONFIG`) declare `billing: {mode: provider-reported}`. OpenRouter's `usage.cost` is the amount it charged, so a call on them reports it as the authoritative cost (`cost.usd`, `cost.source` `provider`) instead of an estimate (`estimated_source` `openrouter.usage.cost`). `llm-kit runs compare` records it with `source: reported`, and a graph spend ledger settles on it. An endpoint that does not declare the billing mode keeps a native `usage.cost` as an estimate, as before; a user config layer that points `openrouter` at another base URL should drop the declaration.

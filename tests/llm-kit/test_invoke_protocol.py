@@ -79,6 +79,7 @@ class World:
         self.claude_answer = "answer"
         self.http_error: Optional[BaseException] = None
         self.claude_raw: Optional[str] = None
+        self.selections: list = []
 
     # --- the OpenAI-SDK-shaped client
     def client(self) -> Any:
@@ -141,6 +142,7 @@ def world(home, tmp_path, monkeypatch):  # noqa: F811
 
     def build(endpoint=None, **kwargs):
         selection = real(endpoint, **kwargs)
+        w.selections.append(selection)
         backend = selection.backend
         if backend.name == "claude-cli":
             backend = dataclasses.replace(backend, runner=w.claude_runner, executable="claude")
@@ -390,6 +392,71 @@ def test_a_call_to_a_row_on_an_unknown_endpoint_refuses_naming_the_row_and_endpo
     assert world.runner_calls == 0
     code, _doc, err = call(world, capsys, model="deepseek")  # the other rows of the same file still call
     assert code == 0 and err is None and world.runner_calls == 1
+
+
+# --- an endpoint the project file connects -----------------------------------------------------
+
+_DIRECT = {"effort_style": "top-level", "base_url": "https://api.vendor.example/v1", "key_env": "VENDOR_API_KEY"}
+
+
+def _with_direct_row(world: World, model: str) -> None:
+    """A row on endpoint ``direct``, which the file connects (base URL and key variable)."""
+    document = {**_DOC, "endpoints": {"direct": _DIRECT},
+                "catalog": [*_DOC["catalog"], {"id": "direct", "label": "Direct", "endpoint": "direct",
+                                               "model": model}],
+                "selections": {**_DOC["selections"], "direct": {"model": "direct", "effort": "high"}}}
+    pm.write_project_models(document, project_root=str(world.root))
+
+
+def test_a_row_on_an_endpoint_the_file_connects_is_called_on_that_connection(world, capsys):
+    """Red on revert: without the file's connection the row is unbound and the call refuses."""
+    _with_direct_row(world, "vendor-model-1")
+    stored = pm.read_project_models(project_root=str(world.root))
+    assert stored.unbound == ()
+    assert pm.endpoint_connection(stored.document, "direct") == {
+        "name": "direct", "base_url": "https://api.vendor.example/v1", "key_env": "VENDOR_API_KEY", "key_file": None,
+        "models": {}, "default": None, "defaultCheap": None, "account_check": "none", "frontdoor": False,
+        "billing_mode": None, "effort_style": "top-level", "effort_style_source": "endpoint"}
+    assert pm.endpoint_connection(stored.document, "openrouter") is None  # declared nowhere in the file
+    allow()
+    code, doc, err = call(world, capsys, selection="direct")
+    assert code == 0 and err is None, (doc, err)
+    connection = world.selections[-1].backend.connection
+    assert (connection["base_url"], connection["key_env"]) == ("https://api.vendor.example/v1", "VENDOR_API_KEY")
+    assert world.http[-1]["model"] == "vendor-model-1"  # the row's exact wire model, sent as written (no alias map)
+    assert world.http[-1]["extra_body"] == {"reasoning_effort": "high"}  # the file's effort style places it
+    assert doc["resolved"]["endpoint"] == "direct" and doc["cost"]["class"] == "metered"
+    # a usage.cost from an endpoint the file connects is an estimate: the file cannot declare billing
+    assert (doc["cost"]["usd"], doc["cost"]["estimated_usd"]) == (None, 0.0007)
+
+
+def test_the_machine_endpoint_registry_wins_over_the_files_connection(world, capsys, tmp_path):
+    from llm_kit.registry.models import resolve_endpoint
+
+    registry = write(tmp_path / "registry.yaml",
+                     "version: 1\nmodels:\n  direct: {base_url: http://machine.invalid/v1, model: m, key_env: null}\n")
+    world.monkeypatch.setenv("MODEL_ENDPOINTS_REGISTRY", str(registry))
+    _with_direct_row(world, "vendor/model-1")
+    allow()
+    code, doc, err = call(world, capsys, selection="direct")
+    assert code == 0 and err is None, (doc, err)
+    assert world.selections[-1].backend.connection is None  # the backend resolves the machine's entry by name
+    assert resolve_endpoint("direct", project_root=str(world.root))["base_url"] == "http://machine.invalid/v1"
+    assert world.http[-1]["extra_body"] == {"reasoning_effort": "high"}  # the file's effort style still wins
+
+
+def test_a_client_for_a_connection_uses_its_base_url_and_the_key_its_variable_holds(home, monkeypatch, tmp_path):  # noqa: F811
+    from llm_kit.adapters.client import KEYLESS_API_KEY, make_openai_client
+    from llm_kit.registry.models import connection_endpoint
+
+    resolved = connection_endpoint("direct", base_url="https://api.vendor.example/v1", key_env="VENDOR_API_KEY")
+    with pytest.raises(RuntimeError, match="VENDOR_API_KEY"):
+        make_openai_client(project_root=tmp_path, endpoint="direct", resolved=resolved)
+    monkeypatch.setenv("VENDOR_API_KEY", "vendor-key")
+    client = make_openai_client(project_root=tmp_path, endpoint="direct", resolved=resolved)
+    assert str(client.base_url).rstrip("/") == "https://api.vendor.example/v1" and client.api_key == "vendor-key"
+    keyless = connection_endpoint("local", base_url="http://127.0.0.1:8080/v1", key_env=None)
+    assert make_openai_client(project_root=tmp_path, endpoint="local", resolved=keyless).api_key == KEYLESS_API_KEY
 
 
 def test_protocol2_refuses_images_on_non_image_adapter_before_dispatch(world, capsys):

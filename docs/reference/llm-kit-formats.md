@@ -48,7 +48,9 @@ The tracked project model file, by default `.llm-kit/models.yaml`. The module do
 | Key | Rule |
 |---|---|
 | `version` | Required. The integer 1. |
-| `endpoints` | Optional mapping. A key is the endpoint of a catalog row (text with no leading or trailing whitespace). A value is `{effort_style}`, required, one of `top-level`, `ninfer`, `chat_template_kwargs`, `reasoning-object`, `unsupported`. See "Request settings". |
+| `endpoints` | Optional mapping. A key is the endpoint of a catalog row (text with no leading or trailing whitespace). A value is `{effort_style, base_url, key_env}`. `effort_style` is required, one of `top-level`, `ninfer`, `chat_template_kwargs`, `reasoning-object`, `unsupported`; see "Request settings". `base_url` and `key_env` are optional and come together: the endpoint's OpenAI-compatible connection (see "Connections"). |
+| endpoint `base_url` | `http://` or `https://`, then a host, then printable ASCII (U+0021 to U+007E) with no space. |
+| endpoint `key_env` | Required with `base_url` and refused without it. The name of the environment variable that holds the key (an ASCII letter or `_`, then ASCII letters, digits and `_`), or null for a keyless endpoint. The file never holds a key. |
 | `catalog` | Optional list of rows, default empty. Order is kept. |
 | row `id`, `label`, `endpoint`, `model` | Required text: not empty, no leading or trailing whitespace. Ids are unique. |
 | row `efforts` | Optional list of non-empty text with no repeats. Omitted: the row does not narrow the effort menu. `[]`: the row has no effort. |
@@ -70,7 +72,17 @@ Validation has two parts.
 - Portable validation checks the bytes, the YAML, the structure and the references above. It needs only the file. Python: `validate_portable_document(data)`. Every reader does this part.
 - Binding needs the machine's endpoint registry. It checks that each `endpoint` resolves, that each effort is in the library effort menu for that endpoint and model, and that `extras` has no reserved key (`model`, `messages`, `stream`, `api_key`, `reasoning_effort`, and `reasoning` on a `reasoning-object` endpoint). Python: `validate_document`, and every read and write. A row that declares no `efforts` accepts any non-empty effort in portable validation; binding checks it against the menu.
 - An effort style that the file's `endpoints` declares wins over the registry's style of that endpoint for this project: the menu, the reserved `reasoning` extra and the wire all use it. A model with no measured profile then takes that style's menu (`reasoning-object` lists `none`). Binding refuses a style on a harness endpoint (`endpoints['x'].effort_style`).
-- An `endpoint` is the consumer's name; no reader refuses a file because the machine's registry does not know it. Binding loads a row whose endpoint resolves to no registry endpoint as unbound: the row keeps the checks that need no endpoint (its declared `efforts`, and the reserved extras other than `reasoning`), and the result names it (Python: `ProjectModels.unbound`, `Validation.unbound`). A call or a plan that resolves to an unbound row refuses at that point and names the row and the endpoint. Case `endpoint-is-opaque-text`.
+- An `endpoint` is the consumer's name; no reader refuses a file because the machine's registry does not know it. Binding loads a row whose endpoint resolves to no registry endpoint, and that the file does not connect (see "Connections"), as unbound: the row keeps the checks that need no endpoint (its declared `efforts`, and the reserved extras other than `reasoning`), and the result names it (Python: `ProjectModels.unbound`, `Validation.unbound`). A call or a plan that resolves to an unbound row refuses at that point and names the row and the endpoint. Case `endpoint-is-opaque-text`.
+
+### Connections
+
+An `endpoints` entry with `base_url` and `key_env` is a connection: it says how to reach the endpoint on a machine that does not know it. Precedence, per endpoint name:
+
+1. The machine wins. When the machine's own configuration knows the name (Python: the model config layers, then the endpoint registry), a call uses the machine's connection whole: its base URL, its key, its billing mode. The file's `base_url` and `key_env` are not used on that machine.
+2. Otherwise the file's connection binds the rows on that endpoint. A call sends the row's `model` as written (no alias map), with the key from the variable `key_env` names (Python: the environment, then the `.env` layers). The file declares no billing, so a native `usage.cost` is an estimate and the cost class is `metered`.
+3. Either way, the file's `effort_style` wins over the machine's style (see above).
+
+A reader that does not call endpoints (the TypeScript package) returns the connection in the normalized document and leaves the precedence to its caller. Python: `endpoint_connection(document, name)`; protocol 2 calls (and so `llm-kit runs compare`) use it. Cases `endpoint-connection` and `endpoint-connection-keyless`.
 
 Binding never accepts a file that portable validation refuses. When the file has no binding problem, full validation refuses it at the same path as portable validation.
 
@@ -86,7 +98,7 @@ A refusal has a code and a path. Every refusal of the file content has the code 
 - `document`: the top level is not a mapping, or has an unknown key.
 - `version`, `catalog`, `selections`.
 - `catalog[1]`, `catalog[1].id`, `catalog[1].efforts[0]`, `catalog[0].request_defaults.extras.a.b[2]`.
-- `endpoints['api']`, `endpoints['api'].effort_style`, `requests['p']`, `requests['p'].temperature`, `requests['p'].extras`, `catalog[0].traits[1]`, `catalog[0].request_defaults.extras`.
+- `endpoints['api']`, `endpoints['api'].effort_style`, `endpoints['api'].base_url`, `endpoints['api'].key_env`, `requests['p']`, `requests['p'].temperature`, `requests['p'].extras`, `catalog[0].traits[1]`, `catalog[0].request_defaults.extras`.
 - `selections['draft.write']`, `selections['draft.write'].model`, `selections['draft.write'].effort`, `selections['draft.write'].request`. A selection key is shown in single quotes. The cases use only keys without quotes, backslashes or control characters; for other keys the quoting is the reader's own.
 - `selections`: a key that is not a string.
 
@@ -238,6 +250,6 @@ Python: `llm_kit.runs.compare.read_cases(path_or_bytes)`.
 ## Change a format
 
 - A change that a v1 reader would read in a different way is a new format version: a new id, a new schema file and new cases. Keep the v1 files.
-- An optional key that a v1 reader refuses as unknown can be added to v1: every file without it reads as before, and an older reader refuses a file that uses it, so no reader misreads one. The request settings (`endpoints`, `requests`, row `traits`, typed `request_defaults`, selection `request`) were added this way.
+- An optional key that a v1 reader refuses as unknown can be added to v1: every file without it reads as before, and an older reader refuses a file that uses it, so no reader misreads one. The request settings (`endpoints`, `requests`, row `traits`, typed `request_defaults`, selection `request`) and the endpoint connection (`base_url`, `key_env`) were added this way.
 - Before you change a reader rule, add the case that shows it.
 - Every Python writer of a format checks its output against the schema in its tests (`tests/llm-kit/test_formats.py`, `tests/llm-kit/test_project_models*.py`).

@@ -323,7 +323,7 @@ def invoke(
         raise InvokeRefusal(
             KIND_CONFIGURATION,
             f"row {row_id!r} names endpoint {row['endpoint']!r}, which resolves to no registry endpoint on this "
-            f"machine (known: {', '.join(endpoints.known()) or '<none>'}); declare it in the endpoint registry to call this row",
+            f"machine (known: {', '.join(endpoints.known()) or '<none>'}); declare it in the endpoint registry, or its base_url and key_env in the file's endpoints, to call this row",
         )
 
     # 3. effort ---------------------------------------------------------------
@@ -369,7 +369,13 @@ def invoke(
 
     # 4. backend and mode -----------------------------------------------------
     try:
-        selection = backend_factory(row["endpoint"], model=row["model"], project_root=str(root))
+        # An endpoint this machine does not know, which the file connects: the call uses that connection.
+        connection = (
+            project_models.endpoint_connection(document, row["endpoint"])
+            if info.kind == project_models.PROJECT_ENDPOINT else None
+        )
+        extra = {"connection": connection} if connection is not None else {}
+        selection = backend_factory(row["endpoint"], model=row["model"], project_root=str(root), **extra)
     except (EndpointResolveError, ModelResolveError, EndpointRegistryError) as exc:
         raise InvokeRefusal(KIND_CONFIGURATION, str(exc)) from None
     backend = selection.backend

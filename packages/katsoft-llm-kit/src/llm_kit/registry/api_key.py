@@ -48,7 +48,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from .constants import (
     API_KEY_ENV,
@@ -253,6 +253,7 @@ def get_api_key(
     project_root: Optional[Path] = None,
     *,
     endpoint: Optional[str] = None,
+    resolved: Optional[Mapping[str, Any]] = None,
 ) -> KeyLookupResult:
     """Resolve the API key for an endpoint.
 
@@ -262,6 +263,10 @@ def get_api_key(
         endpoint: Named endpoint whose ``key_env`` to resolve. ``None`` means
             the default endpoint (``openrouter``, ``OPENROUTER_API_KEY``) -- the
             fast path, identical to previous behavior with no config load.
+        resolved: The endpoint already resolved (a ``resolve_endpoint`` or
+            ``connection_endpoint`` result, such as a connection a project model
+            file declares). Its ``key_env`` and ``key_file`` are used and no
+            configuration is read; ``endpoint`` is then only a name.
 
     Returns:
         KeyLookupResult with the key, source label, and source path.
@@ -279,6 +284,9 @@ def get_api_key(
     # hardcoded OPENROUTER_API_KEY rather than raising, the same
     # degrade-to-missing-layer contract _default_endpoint_key_file already
     # applies one layer down.
+    if resolved is not None:
+        resolved_file = resolved.get("key_file")
+        return _resolve_key(resolved["key_env"], project_root, lambda: resolved_file)
     from .models import resolve_endpoint  # noqa: PLC0415
 
     ep_name = endpoint if endpoint is not None else None

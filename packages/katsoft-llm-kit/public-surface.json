@@ -2943,6 +2943,14 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.registry.project_models.endpoint_connection",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.PROJECT_ENDPOINT",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.registry.project_models.check_setting",
       "status": "public"
     },
