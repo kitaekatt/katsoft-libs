@@ -526,6 +526,19 @@ def test_the_cli_refuses_an_unpriced_or_unbounded_selection_before_any_write(cli
     assert cli_project.wire.requests == [] and list(cli_project.store.event_files()) == []
 
 
+def test_the_cli_loads_a_file_with_an_unknown_endpoint_and_refuses_only_its_selection(cli_project, capsys):
+    models = {**_MODELS, "catalog": [*_MODELS["catalog"], {"id": "far", "label": "Far", "endpoint": "nowhere",
+                                                          "model": "example/far"}],
+              "selections": {**_MODELS["selections"], "f": {"model": "far"}}}
+    pm.write_project_models(models, project_root=str(cli_project.root))
+    code, out, err = compare_cli(capsys, cli_project, "--dry-run")
+    assert code == 0 and err is None and out["dry_run"] is True
+    code, _, err = compare_cli(capsys, cli_project, "--select", "a,f", "--dry-run")
+    assert code == 1 and err["error"]["code"] == "invalid"
+    assert "'f'" in err["error"]["message"] and "'nowhere'" in err["error"]["message"]
+    assert cli_project.wire.requests == [] and list(cli_project.store.event_files()) == []
+
+
 def test_the_cli_reports_a_budget_stop_with_the_partial_result(cli_project, capsys):
     code, out, err = compare_cli(capsys, cli_project, "--max-usd", "0.0003")
     assert code == 1 and err["error"]["code"] == "budget"

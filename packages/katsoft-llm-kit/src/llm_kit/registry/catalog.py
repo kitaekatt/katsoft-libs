@@ -20,6 +20,9 @@ probing a provider or reading any user cache:
   all. A menu is the model's vendor menu; an endpoint that resolves no effort
   style (the shipped ``openrouter`` record until it declares one) would drop it,
   and a note names the remedy.
+- A row whose endpoint resolves to no registry endpoint on this machine (an
+  unbound row, :attr:`~llm_kit.registry.project_models.ProjectModels.unbound`)
+  is not in ``models``; a note names it. Its selections stay in ``selections``.
 - ``selections`` are the tracked file's selections, as stored (the defaults).
   ``resolved_selections`` layers the personal file over them and reports, per
   key, ``{effective, default, source}`` (``source`` is ``default`` or
@@ -147,8 +150,12 @@ def build_catalog(
     rows: list[dict] = []
     for row in project.document["catalog"]:
         info = endpoints.info(row["endpoint"])
-        if info is None:  # validation resolved it a moment ago; a vanished endpoint is an error
-            raise KeyError(f"catalog row {row['id']!r}: endpoint {row['endpoint']!r} no longer resolves")
+        if info is None:  # an unbound row: this machine cannot call it, so it is not in ``models``
+            notes.append(
+                f"{row['id']}: endpoint {row['endpoint']!r} resolves to no registry endpoint on this machine; "
+                "the row is not callable here"
+            )
+            continue
         adapter = adapter_of(info)
         menu, menu_source = library_effort_menu_with_source(info, row["model"])
         declared = row.get("efforts")

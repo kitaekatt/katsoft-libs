@@ -248,7 +248,6 @@ REFUSALS = {
     "none_on_a_menu_without_it": (_edit(lambda d: d["selections"].update(x={"model": "zeta", "effort": "none"})), "is not accepted"),
     "off_is_not_translated": (_edit(lambda d: d["selections"].update(x={"model": "zeta", "effort": False})), "must be a non-empty string or null"),
     "efforts_not_a_list": (_edit(lambda d: d["catalog"][0].update(efforts="low")), "must be a list"),
-    "unresolved_endpoint": (_edit(lambda d: d["catalog"][0].update(endpoint="nowhere")), "resolves to no registry endpoint"),
     "duplicate_id": (_edit(lambda d: d["catalog"][1].update(id="zeta")), "duplicate id"),
     "empty_id": (_edit(lambda d: d["catalog"][0].update(id="")), "non-empty"),
     "empty_label": (_edit(lambda d: d["catalog"][0].update(label=" ")), "non-empty"),
@@ -302,6 +301,39 @@ def test_cli_write_and_validate_refuse_before_replacing(project, capsys, monkeyp
         assert error["kind"] == "project-models" and error["code"] == "invalid"
         assert needle in error["message"]
         assert stored(project) == before and leftovers(project) == []
+
+
+def _with_unbound_row(**row):
+    d = doc()
+    d["catalog"].append({"id": "far", "label": "Far", "endpoint": "nowhere", "model": "vendor/far", **row})
+    d["selections"]["picture"] = {"model": "far", "effort": "low" if row.get("efforts") else None}
+    return d
+
+
+def test_a_row_on_an_endpoint_this_machine_does_not_know_loads_unbound(project):
+    """The endpoint is the consumer's name: an unknown one loads, and the result names the row."""
+    document = _with_unbound_row(efforts=["low"])
+    assert pm.validate_project_models(document, project_root=str(project)).unbound == ("far",)
+    pm.write_project_models(document, project_root=str(project))
+    got = pm.read_project_models(project_root=str(project))
+    assert got.unbound == ("far",) and got.to_json()["unbound"] == ["far"]
+    assert got.document == pm.validate_portable_document(document)
+    assert pm.read_resolved_models(project_root=str(project)).selections["picture"]["effective"] == {
+        "model": "far", "effort": "low"}
+    pm.write_project_models(doc(), project_root=str(project))
+    assert pm.read_project_models(project_root=str(project)).unbound == ()
+
+
+@pytest.mark.parametrize(("row", "selection_effort", "needle"), [
+    ({"efforts": ["low"]}, "high", "is not accepted"),
+    ({"request_defaults": {"extras": {"api_key": "k"}}}, None, "reserved"),
+])
+def test_an_unbound_row_keeps_every_check_that_needs_no_endpoint(project, row, selection_effort, needle):
+    document = _with_unbound_row(**row)
+    document["selections"]["picture"]["effort"] = selection_effort
+    with pytest.raises(pm.ProjectModelsError) as caught:
+        pm.validate_project_models(document, project_root=str(project))
+    assert needle in str(caught.value)
 
 
 def test_validation_names_the_first_problem_by_path(project):
@@ -572,7 +604,7 @@ def test_cli_write_show_validate_flow(project, capsys, monkeypatch):
     assert got.code == 0
     assert json.loads(got.out) == {
         "schema": pm.SCHEMA, "valid": True, "path": DEFAULT_REL,
-        "canonical_sha256": pm.digest(_CANONICAL.encode()), "catalog_rows": 3, "selections": 3,
+        "canonical_sha256": pm.digest(_CANONICAL.encode()), "catalog_rows": 3, "selections": 3, "unbound": [],
     }
     assert not (project / ".llm-kit").exists()
 

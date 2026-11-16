@@ -278,7 +278,11 @@ def invoke(
     endpoints = project_models._Endpoints(str(root))  # noqa: SLF001 -- the registry lookup validation used
     info = endpoints.info(row["endpoint"])
     if info is None:
-        raise InvokeRefusal(KIND_CONFIGURATION, f"endpoint {row['endpoint']!r} of row {row_id!r} no longer resolves")
+        raise InvokeRefusal(
+            KIND_CONFIGURATION,
+            f"row {row_id!r} names endpoint {row['endpoint']!r}, which resolves to no registry endpoint on this "
+            f"machine (known: {', '.join(endpoints.known()) or '<none>'}); declare it in the endpoint registry to call this row",
+        )
 
     # 3. effort ---------------------------------------------------------------
     if request.effort_given:

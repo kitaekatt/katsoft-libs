@@ -121,6 +121,9 @@ def candidates(
             raise CompareError("invalid", f"selection {name!r} is not in the project model file "
                                f"(known: {', '.join(resolved.selections) or '<none>'})")
         row = rows[chosen["model"]]
+        if row["id"] in resolved.project.unbound:
+            raise CompareError("invalid", f"selection {name!r} resolves to row {row['id']!r}, whose endpoint "
+                               f"{row['endpoint']!r} resolves to no registry endpoint on this machine")
         entry = entries.get(row["endpoint"])
         harness = entry is not None and entry.kind == HARNESS_KIND
         extras = dict((row.get("request_defaults") or {}).get("extras") or {})

@@ -63,6 +63,7 @@ Validation has two parts.
 
 - Portable validation checks the bytes, the YAML, the structure and the references above. It needs only the file. Python: `validate_portable_document(data)`. Every reader does this part.
 - Binding needs the machine's endpoint registry. It checks that each `endpoint` resolves, that each effort is in the library effort menu for that endpoint and model, and that `extras` has no reserved key (`model`, `messages`, `stream`, `api_key`, `reasoning_effort`, and `reasoning` on a `reasoning-object` endpoint). Python: `validate_document`, and every read and write. A row that declares no `efforts` accepts any non-empty effort in portable validation; binding checks it against the menu.
+- An `endpoint` is the consumer's name; no reader refuses a file because the machine's registry does not know it. Binding loads a row whose endpoint resolves to no registry endpoint as unbound: the row keeps the checks that need no endpoint (its declared `efforts`, and the reserved extras other than `reasoning`), and the result names it (Python: `ProjectModels.unbound`, `Validation.unbound`). A call or a plan that resolves to an unbound row refuses at that point and names the row and the endpoint. Case `endpoint-is-opaque-text`.
 
 Binding never accepts a file that portable validation refuses. When the file has no binding problem, full validation refuses it at the same path as portable validation.
 

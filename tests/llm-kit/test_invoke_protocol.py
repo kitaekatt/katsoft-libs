@@ -350,6 +350,21 @@ def test_protocol2_refuses_prohibited_codex_config_before_dispatch(world, capsys
     assert world.runner_calls == 0
 
 
+def test_a_call_to_a_row_on_an_unknown_endpoint_refuses_naming_the_row_and_endpoint(world, capsys):
+    document = {**_DOC, "catalog": [*_DOC["catalog"], {"id": "far", "label": "Far", "endpoint": "nowhere",
+                                                      "model": "vendor/far"}],
+                "selections": {**_DOC["selections"], "picture": {"model": "far"}}}
+    pm.write_project_models(document, project_root=str(world.root))
+    for request in ({"model": "far"}, {"selection": "picture"}):
+        code, _doc, err = call(world, capsys, **request)
+        assert code == 4 and err["error"]["kind"] == "configuration"
+        assert "'far'" in err["error"]["message"] and "'nowhere'" in err["error"]["message"]
+        assert "resolves to no registry endpoint" in err["error"]["message"]
+    assert world.runner_calls == 0
+    code, _doc, err = call(world, capsys, model="deepseek")  # the other rows of the same file still call
+    assert code == 0 and err is None and world.runner_calls == 1
+
+
 def test_protocol2_refuses_images_on_non_image_adapter_before_dispatch(world, capsys):
     (world.root / "picture.png").write_bytes(b"png")
     code, _doc, err = call(world, capsys, model="deepseek", images=["picture.png"])

@@ -17,6 +17,7 @@
       "path": ".llm-kit/models.yaml",
       "schema": "llm-kit.project-models/v1",
       "selections": 2,
+      "unbound": [],
       "valid": true
     }
   }

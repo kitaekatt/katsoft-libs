@@ -537,6 +537,60 @@
       }
     },
     {
+      "name": "endpoint-is-opaque-text",
+      "note": "An endpoint is text the reader does not resolve. A row on an endpoint that this machine's registry does not know loads, and a selection may name it; binding loads such a row unbound, and a call or plan that resolves to it refuses at that point.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: known",
+          "    label: Known",
+          "    endpoint: api",
+          "    model: vendor/known",
+          "  - id: elsewhere",
+          "    label: Elsewhere",
+          "    endpoint: not-on-this-machine",
+          "    model: vendor/elsewhere",
+          "    efforts: [low]",
+          "selections:",
+          "  draft.write: {model: known}",
+          "  picture.make: {model: elsewhere, effort: low}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "known",
+              "label": "Known",
+              "endpoint": "api",
+              "model": "vendor/known"
+            },
+            {
+              "id": "elsewhere",
+              "label": "Elsewhere",
+              "endpoint": "not-on-this-machine",
+              "model": "vendor/elsewhere",
+              "efforts": [
+                "low"
+              ]
+            }
+          ],
+          "selections": {
+            "draft.write": {
+              "model": "known",
+              "effort": null
+            },
+            "picture.make": {
+              "model": "elsewhere",
+              "effort": "low"
+            }
+          }
+        }
+      }
+    },
+    {
       "name": "unicode-text",
       "note": "Text is Unicode; keys and values may hold any character.",
       "tracked": {

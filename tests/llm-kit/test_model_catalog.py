@@ -307,6 +307,16 @@ def test_an_invalid_stored_file_is_refused_rather_than_shown(project, capsys, mo
     assert "not in the library menu" in json.loads(out.err)["error"]["message"]
 
 
+def test_a_row_on_an_unknown_endpoint_is_left_out_of_models_with_a_note(project, capsys, monkeypatch):
+    path = project / ".llm-kit" / "models.yaml"
+    path.write_text(path.read_text().replace(
+        "catalog:\n", "catalog:\n  - {id: far, label: Far, endpoint: nowhere, model: vendor/far}\n", 1))
+    out, got = _catalog(capsys, monkeypatch, project)
+    assert out.code == 0, out.err
+    assert "far" not in [m["id"] for m in got["models"]] and got["models"]
+    assert any(n.startswith("far: endpoint 'nowhere' resolves to no registry endpoint") for n in got["notes"])
+
+
 def test_the_python_api_matches_the_cli(project, capsys, monkeypatch):
     from llm_kit.adapters.capabilities import adapter_capabilities
     tracked = pm.read_project_models(project_root=str(project))

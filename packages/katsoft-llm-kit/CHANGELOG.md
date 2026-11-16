@@ -2,6 +2,25 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## Unreleased
+
+A project model file whose rows name an endpoint this machine does not know now loads; a call to such a row refuses at the call. The endpoint is the consumer's name (the TypeScript reader `@katsoft/llm-kit-config` never resolved it), so a client may keep rows for its own endpoints (for example picture or video providers) in the same file.
+
+Changed:
+
+- Binding (`validate_document`, every read and write of `llm_kit.registry.project_models`) loads a row whose endpoint resolves to no registry endpoint as unbound, in place of refusing the file. The row keeps the checks that need no endpoint: its declared `efforts`, and the reserved extras other than `reasoning`.
+- `ProjectModels.unbound` and `Validation.unbound`: the ids of the unbound rows, in catalogue order (`[]` when none). Both are in `to_json()`, so `llm-kit models project show` and `validate` print them.
+- Protocol 2 (`llm-kit completion complete`) refuses a call whose model or selection resolves to an unbound row with kind `configuration`; the message names the row, the endpoint and the known endpoints.
+- `llm-kit runs compare` (also `--dry-run`) refuses a selection that resolves to an unbound row (`invalid`, naming the selection, row and endpoint) before any write; the other selections of the file plan as before.
+- `llm-kit models catalog` leaves an unbound row out of `models` and adds a note naming it, in place of a `KeyError`.
+- `docs/reference/llm-kit-formats.md`, "Portable validation and binding": the rule; shared case `endpoint-is-opaque-text` in `tests/formats/project-models/cases.json`.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. The two new attributes have docstrings on their classes; no name is added to `public-surface.json`.
+3. Tests for each public function: pass. `test_project_models.py` (an unbound row loads and is named; its effort and reserved-extras checks stay), `test_formats.py` (the shared case, portable and bound), `test_invoke_protocol.py` (the call refuses; another row of the file still calls), `test_runs_compare.py` (the dry run plans; the unbound selection refuses before any write), `test_model_catalog.py` (the note); the `models project show` and `validate` CLI goldens print `unbound`.
+4. No client names, prompts or data: pass. The tests use generic rows and endpoints.
+
 ## 1.29.0
 
 Comparisons of model selections, recorded in a run store (`llm-kit runs compare`). A comparison sends one prompt file, filled with each case, to two or more selections of the project model file and records every attempt as a `llm-kit.run-record/v1` record of one `compare` group.

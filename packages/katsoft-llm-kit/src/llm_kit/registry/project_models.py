@@ -63,9 +63,15 @@ Portable validation and binding. Validation has two parts. The PORTABLE part
 checks what any reader in any language can check from the file alone: the
 structure, the JSON values, and the references (a selection names a catalogue
 id; an effort is in the row's declared ``efforts``). The BINDING part checks
-what only this machine knows: that each ``endpoint`` resolves in the endpoint
-registry, that each effort is in the library menu for that endpoint and model,
-and that ``extras`` holds no reserved key. :func:`validate_portable_document`
+what only this machine knows: for each row whose ``endpoint`` resolves in the
+endpoint registry, that each effort is in the library menu for that endpoint and
+model, and that ``extras`` holds no reserved key. A row whose endpoint resolves
+to no registry endpoint is UNBOUND: the endpoint is the consumer's name, so the
+row loads with every check that needs no endpoint (its declared ``efforts``, the
+endpoint-independent reserved extras), and the result names it
+(:attr:`ProjectModels.unbound`, :attr:`Validation.unbound`). A call or a plan that
+resolves to an unbound row refuses at that point, naming the row and the
+endpoint. :func:`validate_portable_document`
 and :func:`validate_portable_local_document` run the portable part only;
 :func:`validate_document` and every read and write run both. The shared format
 rules, the JSON Schemas (``llm_kit.schema.formats``) and the cases every reader runs
@@ -594,12 +600,18 @@ def _efforts(
 
 
 def _validate_catalog(
-    catalog_in: Any, endpoints: "Optional[_Endpoints]", menu_of: Optional[EffortMenuResolver]
+    catalog_in: Any,
+    endpoints: "Optional[_Endpoints]",
+    menu_of: Optional[EffortMenuResolver],
+    unbound: "Optional[list[str]]" = None,
 ) -> "tuple[list[dict], dict[str, Optional[tuple[str, ...]]], dict[str, Optional[list[str]]]]":
     """``(rows, menus, efforts_of)``: the normalized catalogue and each row's library menu and declared efforts.
 
     ``endpoints`` None is portable validation: no endpoint is resolved, every
-    menu is None and no extra is reserved.
+    menu is None and no extra is reserved. With ``endpoints``, a row whose
+    endpoint resolves to no registry endpoint is unbound: its menu is None, the
+    endpoint-independent reserved extras are refused, and its id is appended to
+    ``unbound`` when given.
     """
     if not isinstance(catalog_in, (list, tuple)):
         raise _invalid("catalog", f"must be a list, not {type(catalog_in).__name__}")
@@ -623,11 +635,10 @@ def _validate_catalog(
         if endpoints is not None:
             info = endpoints.info(endpoint)
             if info is None:
-                raise _invalid(
-                    f"{where}.endpoint",
-                    f"{endpoint!r} resolves to no registry endpoint (known: {', '.join(endpoints.known()) or '<none>'})",
-                )
-            menu = tuple((menu_of or library_effort_menu)(info, model))
+                if unbound is not None:
+                    unbound.append(row_id)
+            else:
+                menu = tuple((menu_of or library_effort_menu)(info, model))
         out: dict = {"id": row_id, "label": label, "endpoint": endpoint, "model": model}
         efforts: Optional[list[str]] = None
         if "efforts" in row:
@@ -641,7 +652,7 @@ def _validate_catalog(
             out["request_defaults"] = _request_defaults(
                 row["request_defaults"],
                 f"{where}.request_defaults",
-                bound=info is not None,
+                bound=endpoints is not None,
                 reasoning_reserved=info is not None and info.effort_style == REASONING_OBJECT,
             )
         menus[row_id] = menu
@@ -705,8 +716,17 @@ def validate_document(
     with a path such as ``catalog[1].efforts[0]``. Nothing is written.
     ``menu_for`` replaces :func:`library_effort_menu` (the exact-model seam).
     """
+    return _validate_bound(data, project_root, menu_for)[0]
+
+
+def _validate_bound(
+    data: Any, project_root: Optional[str], menu_for: Optional[EffortMenuResolver]
+) -> "tuple[dict, tuple[str, ...]]":
+    """``(document, unbound)``: :func:`validate_document` and the ids of its unbound rows."""
     _import_yaml()  # the registry and the canonical form both need it: name the extra first
-    return _validate_top(data, _Endpoints(project_root), menu_for or library_effort_menu)
+    unbound: list[str] = []
+    document = _validate_top(data, _Endpoints(project_root), menu_for or library_effort_menu, unbound)
+    return document, tuple(unbound)
 
 
 def validate_portable_document(data: Any) -> dict:
@@ -734,12 +754,15 @@ def _check_version(top: Mapping) -> None:
 
 
 def _validate_top(
-    data: Any, endpoints: "Optional[_Endpoints]", menu_of: Optional[EffortMenuResolver]
+    data: Any,
+    endpoints: "Optional[_Endpoints]",
+    menu_of: Optional[EffortMenuResolver],
+    unbound: "Optional[list[str]]" = None,
 ) -> dict:
     """The normalized tracked document; ``endpoints`` None is portable validation."""
     top = _mapping(data, "document", _TOP_KEYS)
     _check_version(top)
-    rows, menus, efforts_of = _validate_catalog(top.get("catalog", []), endpoints, menu_of)
+    rows, menus, efforts_of = _validate_catalog(top.get("catalog", []), endpoints, menu_of, unbound)
     selections = _validate_selections(top.get("selections", {}), menus, efforts_of)
     return {
         "version": FILE_VERSION,
@@ -859,24 +882,35 @@ def _read_existing(project_file: ProjectFile) -> Optional[bytes]:
 
 @dataclass(frozen=True)
 class ProjectModels:
-    """The stored file, validated: its normalized document and the stored bytes' digest."""
+    """The stored file, validated: its normalized document and the stored bytes' digest.
+
+    ``unbound`` is the ids, in catalogue order, of the rows whose endpoint
+    resolves to no registry endpoint on this machine; a call to one refuses.
+    """
 
     path: str
     sha256: str
     document: dict
+    unbound: "tuple[str, ...]" = ()
 
     def to_json(self) -> dict:
-        return {"schema": SCHEMA, "path": self.path, "sha256": self.sha256, "document": self.document}
+        return {"schema": SCHEMA, "path": self.path, "sha256": self.sha256, "document": self.document,
+                "unbound": list(self.unbound)}
 
 
 @dataclass(frozen=True)
 class Validation:
-    """A document that passed validation, and the digest ``write`` would store."""
+    """A document that passed validation, and the digest ``write`` would store.
+
+    ``unbound`` names the rows whose endpoint resolves to no registry endpoint
+    (see :class:`ProjectModels`).
+    """
 
     path: str
     canonical_sha256: str
     catalog_rows: int
     selections: int
+    unbound: "tuple[str, ...]" = ()
 
     def to_json(self) -> dict:
         return {
@@ -886,6 +920,7 @@ class Validation:
             "canonical_sha256": self.canonical_sha256,
             "catalog_rows": self.catalog_rows,
             "selections": self.selections,
+            "unbound": list(self.unbound),
         }
 
 
@@ -916,10 +951,8 @@ def _read_tracked(
     data = _read_existing(project_file)
     if data is None:
         raise ProjectModelsError(CODE_MISSING, f"{project_file.relative} does not exist under {project_file.root}")
-    document = validate_document(
-        parse_yaml_document(data), project_root=str(project_file.root), menu_for=menu_for
-    )
-    return ProjectModels(project_file.relative, digest(data), document)
+    document, unbound = _validate_bound(parse_yaml_document(data), str(project_file.root), menu_for)
+    return ProjectModels(project_file.relative, digest(data), document, unbound)
 
 
 def read_project_models(
@@ -953,12 +986,13 @@ def validate_project_models(
     file name, ``dependency`` without PyYAML.
     """
     project_file = resolve_project_file(project_root, file)
-    normalized = validate_document(document, project_root=str(project_file.root), menu_for=menu_for)
+    normalized, unbound = _validate_bound(document, str(project_file.root), menu_for)
     return Validation(
         project_file.relative,
         digest(render_yaml(normalized)),
         len(normalized["catalog"]),
         len(normalized["selections"]),
+        unbound,
     )
 
 
