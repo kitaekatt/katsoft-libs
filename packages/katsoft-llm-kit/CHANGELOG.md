@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased
+## 1.34.0
 
 Added:
 
@@ -17,7 +17,7 @@ Changed:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. `wire_model_of` has a docstring and is in `__all__` and `public-surface.json`; the module docstrings of `project_models`, `request_settings` and `registry.catalog` state the field and the rule.
-2. Semver release with a changelog: pass for this entry. No version is set: the release takes a minor version (new optional key, new name, new resolved-request key).
+2. Semver release with a changelog: pass. Version 1.34.0 in `pyproject.toml` (a minor release: new optional key, new name, new resolved-request key); this entry.
 3. Tests for each public function: pass. `test_project_models.py`: the declared `none` binds on both styles and is refused when undeclared, out of order, repeated, beside an effort outside the menu, on a measured menu; `wire_model` round-trips in canonical place and binds the wire model's menu. `test_invoke_protocol.py`: a connected row sends its wire model and `reasoning_effort: none`. `test_runs_compare.py`: the dry run, the price, the sent body and the record use the wire model. `test_model_catalog.py`, `test_pipeline_cap.py`, `test_request_settings.py` (protocol 2 sends each case's `wire_model`). Each fails before the change.
 4. No client names, prompts or data: pass. Generic vendor names and ids.
 5. Examples run without a client app: pass. No example changed.
