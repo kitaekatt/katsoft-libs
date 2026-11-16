@@ -37,7 +37,9 @@ The tracked project model file, by default `.llm-kit/models.yaml`. The module do
    - `0x10000` is 65536. `0100` is octal 64. `65_536` is 65536. `1:30` is base 60 (90). `019` and `0o17` are strings.
    - A float needs a dot, and its exponent needs a sign: `1.0e+3` is 1000.0, but `1.0e3` and `1e3` are strings. `.5` is 0.5.
    - `2026-11-13` is a date. `!!str 2026-11-13` is a string.
-5. Refuse a duplicate key at any depth, a merge key (`<<`), `!!omap`, `!!pairs`, a control character that YAML does not allow (such as U+0007), an empty document and more than one document.
+   - Text that resolves to a type, or that an explicit tag names, but cannot be built is refused at `""`: an impossible date or time (`2026-02-30`, `2026-01-01 25:00:00`), a timestamp offset of a day or more, an integer with no digit (`0x_`), `!!bool foo`, `!!int abc`, `!!int ''`, `!!float abc`, `!!timestamp foo`.
+   - A decimal integer of more than 4300 digits is refused at `""` (Python's default limit, held on every interpreter). A shorter one outside the exact range is refused at its path (rule 7).
+5. Refuse a duplicate key at any depth, a merge key (`<<`), `!!omap`, `!!pairs`, a control character that YAML does not allow (such as U+0007), an empty document, more than one document, and a value that nests more than 100 levels of lists and mappings. The top-level mapping is level 1; an alias counts as a copy of its anchored value; where a container that holds itself repeats, it adds no level. A reader does not fail with a stack overflow on a deeper file.
 6. Anchors and aliases are allowed. An alias is a copy of its anchored value. A value that holds itself through an alias is refused at the path of the alias.
 7. Every value must be JSON data. Refuse a date, a timestamp, binary data, a set, a key that is not a string, NaN, infinity (also a float that overflows, such as `1.0e+400`) and an integer outside -(2**53 - 1) to 2**53 - 1. A YAML decimal stays a decimal: `65536.0` is not an integer, although a JSON reader can see 65536.
 
@@ -80,7 +82,7 @@ Portable validation returns the normalized document: `version` 1, `endpoints` an
 
 A refusal has a code and a path. Every refusal of the file content has the code `invalid`. The path names the first problem:
 
-- `""`: the bytes or the YAML (not UTF-8, a YAML error, a duplicate key, a merge key, an empty file).
+- `""`: the bytes or the YAML (not UTF-8, a YAML error, a value that cannot be built, a duplicate key, a merge key, an empty file, nesting past 100 levels).
 - `document`: the top level is not a mapping, or has an unknown key.
 - `version`, `catalog`, `selections`.
 - `catalog[1]`, `catalog[1].id`, `catalog[1].efforts[0]`, `catalog[0].request_defaults.extras.a.b[2]`.

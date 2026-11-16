@@ -2,6 +2,12 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## Unreleased
+
+Fixed:
+
+- The project model reader (`parse_yaml_document`, so every read of the tracked file and the personal layer) raises `ProjectModelsError` (`invalid`, `where` `""`) for every bad YAML value. Before, text that PyYAML resolves or an explicit tag names but cannot build escaped as `ValueError`, `KeyError`, `AttributeError` or `IndexError`: `2026-02-30`, `2026-01-01 25:00:00`, a timestamp offset of a day or more, `0x_`, `!!bool foo`, `!!int abc`, `!!int ''`, `!!float abc`, `!!timestamp foo`. A decimal integer of more than 4300 digits is refused on every interpreter. A value that nests more than 100 levels of lists and mappings (aliases count as copies) is refused, and a far deeper file no longer escapes as `RecursionError`. Contract: `docs/reference/llm-kit-formats.md`, "Bytes and YAML"; 16 new shared cases in `tests/formats/project-models/cases.json`, which the TypeScript reader runs too.
+
 ## 1.32.0
 
 Deletion of a unit branch. A unit whose worktree is removed kept its branch with no supported way to delete it; a client deleting it by hand had no guard against deleting work that was never merged or that moved after the decision.

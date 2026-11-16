@@ -172,6 +172,11 @@ LAYER_LOCAL = "local"
 SOURCE_DEFAULT = "default"
 SOURCE_OVERRIDE = "override"
 
+# A value nests at most this many levels of lists and mappings (the top-level mapping is level 1).
+_MAX_NESTING = 100
+# Python's default limit on the digits of a decimal integer (sys.int_info.default_max_str_digits).
+_MAX_DECIMAL_DIGITS = 4300
+
 _TOP_KEYS = ("version", "endpoints", "catalog", "requests", "selections")
 _LOCAL_TOP_KEYS = ("version", "selections")
 _ROW_KEYS = ("id", "label", "endpoint", "model", "efforts", "max_output_tokens", "traits", "request_defaults")
@@ -454,6 +459,27 @@ def _yaml_types() -> "tuple[type, type, type]":
     yaml = _import_yaml()
 
     class Loader(yaml.SafeLoader):
+        def construct_object(self, node: Any, deep: bool = False) -> Any:
+            # PyYAML's scalar constructors fail on some text their resolvers or an
+            # explicit tag accept (2026-02-30, 0x_, !!bool foo, !!timestamp foo)
+            # with these errors instead of a YAML error.
+            try:
+                return super().construct_object(node, deep=deep)
+            except (ValueError, KeyError, AttributeError, IndexError) as exc:
+                text = repr(node.value) if isinstance(node, yaml.ScalarNode) else "value"
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"{node.tag} {text} cannot be built: {exc}", node.start_mark
+                ) from None
+
+        def construct_yaml_int(self, node: Any) -> int:
+            # Python's default limit, held here so every interpreter reads the same files.
+            for digits in _decimal_digits(self.construct_scalar(node)):
+                if len(digits) > _MAX_DECIMAL_DIGITS:
+                    raise yaml.constructor.ConstructorError(
+                        None, None, f"a decimal integer of more than {_MAX_DECIMAL_DIGITS} digits", node.start_mark
+                    )
+            return super().construct_yaml_int(node)
+
         def construct_mapping(self, node: Any, deep: bool = False) -> dict:
             mapping = super().construct_mapping(node, deep=deep)
             if len(mapping) != len(node.value):
@@ -520,9 +546,66 @@ def parse_yaml_document(data: bytes) -> Any:
         document = yaml.load(text, Loader=loader)  # noqa: S506 -- a SafeLoader subclass
     except yaml.YAMLError as exc:
         raise _invalid("", f"the file is not valid YAML: {exc}") from None
+    except RecursionError:
+        # PyYAML's composer recurses once per level; far past _MAX_NESTING it runs out of stack.
+        raise _invalid("", f"the file is not supported: a value nests more than {_MAX_NESTING} levels") from None
     if document is None:
         raise _invalid("", "the file is empty")
+    if _nesting(document) > _MAX_NESTING:
+        raise _invalid("", f"the file is not supported: a value nests more than {_MAX_NESTING} levels")
     return document
+
+
+def _decimal_digits(text: str) -> "list[str]":
+    """The decimal digit runs PyYAML's ``construct_yaml_int`` passes to ``int(text)`` (none for 0b, 0x, octal)."""
+    value = text.replace("_", "")
+    if value[:1] in ("-", "+"):
+        value = value[1:]
+    if value == "" or value.startswith("0"):
+        return []
+    parts = value.split(":") if ":" in value else [value]
+    runs = []
+    for part in parts:
+        part = part.strip()
+        runs.append(part[1:] if part[:1] in ("-", "+") else part)
+    return runs
+
+
+def _nesting(value: Any) -> int:
+    """How many levels of lists and mappings ``value`` nests; a scalar is 0, ``{}`` is 1.
+
+    An alias counts as a copy of its anchored value. A container that holds
+    itself (an alias cycle) adds nothing where it repeats; a reader refuses that
+    cycle later, at the alias. The walk visits each container once and uses no
+    recursion, so it is safe for any depth. Every reader counts the same way
+    (docs/reference/llm-kit-formats.md).
+    """
+    if not isinstance(value, (dict, list)):
+        return 0
+    done: "dict[int, int]" = {}
+    open_ids: "set[int]" = set()
+    stack: list = [(value, iter(value.values() if isinstance(value, dict) else value), 0)]
+    open_ids.add(id(value))
+    while stack:
+        container, children, deepest = stack[-1]
+        for child in children:
+            if not isinstance(child, (dict, list)) or id(child) in open_ids:
+                continue
+            if id(child) in done:
+                deepest = max(deepest, done[id(child)])
+                continue
+            stack[-1] = (container, children, deepest)
+            open_ids.add(id(child))
+            stack.append((child, iter(child.values() if isinstance(child, dict) else child), 0))
+            break
+        else:
+            stack.pop()
+            open_ids.discard(id(container))
+            done[id(container)] = deepest + 1
+            if stack:
+                parent, siblings, best = stack[-1]
+                stack[-1] = (parent, siblings, max(best, deepest + 1))
+    return done[id(value)]
 
 
 # ---------------------------------------------------------------------------

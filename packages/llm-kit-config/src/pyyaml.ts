@@ -119,6 +119,12 @@ function constructTimestamp(value: string): Foreign {
   return new Foreign("timestamp", `A${utc}`);
 }
 
+/** Python's default limit on the digits of a decimal integer; the Python reader holds it on every interpreter. */
+const MAX_DECIMAL_DIGITS = 4300;
+
+/** A value nests at most this many levels of lists and mappings (the top-level mapping is level 1). */
+const MAX_NESTING = 100;
+
 const INT_DIGITS: Readonly<Record<number, RegExp>> = { 2: /^[01]+$/, 8: /^[0-7]+$/, 10: /^[0-9]+$/, 16: /^[0-9a-f]+$/i };
 const INT_PREFIX: Readonly<Record<number, string>> = { 2: "0b", 8: "0o", 10: "", 16: "0x" };
 
@@ -129,6 +135,7 @@ function pythonInt(text: string, base: 2 | 8 | 10 | 16): bigint {
   const prefix = INT_PREFIX[base]!;
   if (prefix && body.toLowerCase().startsWith(prefix)) body = body.slice(2);
   if (!INT_DIGITS[base]!.test(body)) fail(`${JSON.stringify(text)} is not an integer in base ${base}`);
+  if (base === 10 && body.length > MAX_DECIMAL_DIGITS) fail(`a decimal integer of more than ${MAX_DECIMAL_DIGITS} digits`);
   const value = BigInt(`${prefix || ""}${body}`);
   return match[1] === "-" ? -value : value;
 }
@@ -457,8 +464,55 @@ export function loadYaml(text: string, source?: string): PyValue {
     value = new Builder().value(document.contents as Composed);
   } catch (error) {
     if (error instanceof YamlProblem) throw invalid("", `the file is not valid YAML: ${error.message}`, source);
+    // The parser and the builder recurse once per level; far past MAX_NESTING they run out of stack.
+    if (error instanceof RangeError) throw invalid("", `the file is not supported: a value nests more than ${MAX_NESTING} levels`, source);
     throw error;
   }
+  if (nesting(value) > MAX_NESTING) throw invalid("", `the file is not supported: a value nests more than ${MAX_NESTING} levels`, source);
   if (value === null) throw invalid("", "the file is empty", source);
   return value;
+}
+
+/**
+ * How many levels of lists and mappings `value` nests; a scalar is 0, `{}` is 1.
+ * An alias is a copy of its anchored value; a container that holds itself adds
+ * nothing where it repeats (the validation refuses that cycle at the alias). Each
+ * container is visited once, with no recursion. The Python reader counts the same way.
+ */
+function nesting(value: PyValue): number {
+  const children = (container: PyValue[] | PyMap): Iterator<PyValue> =>
+    (Array.isArray(container) ? container : container.entries.map(([, item]) => item))[Symbol.iterator]();
+  const isContainer = (item: PyValue): item is PyValue[] | PyMap => Array.isArray(item) || item instanceof PyMap;
+  if (!isContainer(value)) return 0;
+  const done = new Map<PyValue[] | PyMap, number>();
+  const open = new Set<PyValue[] | PyMap>([value]);
+  const stack: Array<{ container: PyValue[] | PyMap; items: Iterator<PyValue>; deepest: number }> = [
+    { container: value, items: children(value), deepest: 0 },
+  ];
+  while (stack.length > 0) {
+    const top = stack.at(-1)!;
+    let next: PyValue[] | PyMap | undefined;
+    for (let step = top.items.next(); !step.done; step = top.items.next()) {
+      const child = step.value;
+      if (!isContainer(child) || open.has(child)) continue;
+      const known = done.get(child);
+      if (known !== undefined) {
+        top.deepest = Math.max(top.deepest, known);
+        continue;
+      }
+      next = child;
+      break;
+    }
+    if (next !== undefined) {
+      open.add(next);
+      stack.push({ container: next, items: children(next), deepest: 0 });
+      continue;
+    }
+    stack.pop();
+    open.delete(top.container);
+    done.set(top.container, top.deepest + 1);
+    const parent = stack.at(-1);
+    if (parent) parent.deepest = Math.max(parent.deepest, top.deepest + 1);
+  }
+  return done.get(value)!;
 }

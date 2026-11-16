@@ -2,6 +2,12 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
+## Unreleased
+
+Fixed:
+
+- `parseRegistry` and `parseOverlay` refuse, at the path `""`, a decimal integer of more than 4300 digits (as the Python reader does) and a value that nests more than 100 levels of lists and mappings (aliases count as copies). A far deeper file threw a `RangeError` (stack overflow) instead of an `LlmKitConfigError`. 16 new shared cases in `tests/formats/project-models/cases.json`.
+
 ## 1.1.0
 
 The project model file can describe the whole request of a selection, so a client builds it from the file alone. The format stays `llm-kit.project-models/v1`: every key below is optional, and a file without them reads as before.
