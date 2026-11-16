@@ -680,3 +680,16 @@ def test_the_module_imports_no_harness_or_plugin_code():
     assert not {n for n in names if n.split(".")[0] in {"bootstrap_lib", "katsoft_contracts", "llm_kit"}}
     source = Path(pm.__file__).read_text(encoding="utf-8")
     assert ".claude" not in source
+
+
+def test_a_decimal_integer_over_4300_digits_is_refused_on_an_interpreter_without_that_limit():
+    """The format's digit limit is the reader's own rule, not the interpreter's (sys.set_int_max_str_digits)."""
+    text = ("version: 1\ncatalog:\n  - id: a\n    label: " + "1" * 4301 + "\n    endpoint: api\n    model: m\n").encode()
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(0)  # no limit
+    try:
+        with pytest.raises(pm.ProjectModelsError) as caught:
+            pm.parse_yaml_document(text)
+    finally:
+        sys.set_int_max_str_digits(previous)
+    assert caught.value.where == "" and "4300 digits" in str(caught.value)

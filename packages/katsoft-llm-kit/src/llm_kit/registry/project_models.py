@@ -550,6 +550,8 @@ def _yaml_types() -> "tuple[type, type, type]":
     # PyYAML builds these as lists of tuples, which would pass as nested lists.
     Loader.add_constructor("tag:yaml.org,2002:omap", refuse)
     Loader.add_constructor("tag:yaml.org,2002:pairs", refuse)
+    # PyYAML's table holds the base class function, so the override takes effect only when registered.
+    Loader.add_constructor("tag:yaml.org,2002:int", Loader.construct_yaml_int)
 
     class FlowList(list):
         """A list rendered in flow style (``[a, b]``)."""
