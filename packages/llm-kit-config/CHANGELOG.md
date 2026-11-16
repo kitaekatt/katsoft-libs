@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
-## Unreleased
+## 1.3.0
 
 Added:
 
@@ -13,7 +13,7 @@ Added:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. The JSDoc of `CatalogRow.wire_model` and `ResolvedRequest.wire_model` states them; no export is added, so `public-surface.json` is unchanged; `test/surface.test.mjs` passes.
-2. Semver release with a changelog: pass for this entry. No version is set: the release takes a minor version.
+2. Semver release with a changelog: pass. Version 1.3.0 in `package.json` and `package-lock.json` (a minor release); this entry.
 3. Tests for each public function: pass. `test/cases.test.mjs` and `test/requests.test.mjs` run the new cases through `parseRegistry`, `resolveRequest` and `chatFields`; they fail before the change.
 4. No client names, prompts or data: pass.
 5. Examples run without a client app: pass. No example changed; the README example sends `request.wire_model`.
