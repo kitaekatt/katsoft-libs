@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased
+## 1.33.0
 
 Added:
 
@@ -12,12 +12,12 @@ Added:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. Each new name and keyword has a docstring; `endpoint_connection` and `PROJECT_ENDPOINT` are in `__all__` and `public-surface.json`.
-2. Semver release with a changelog: pending. This entry; the version changes at release (a minor release: new optional keys and names).
+2. Semver release with a changelog: pass. Version 1.33.0 in `pyproject.toml` (a minor release: new optional keys and names); this entry.
 3. Tests for each public function: pass. `test_invoke_protocol.py`: a connected row is called on the file's connection, with the model as written and the file's effort style; the machine registry wins over the file; a client for a connection uses its base URL and the key its variable holds (and the keyless key); `endpoint_connection` is called directly. `test_runs_compare.py`: a compare calls a connected row. Each fails before the change.
 4. No client names, prompts or data: pass. Generic endpoint names and hosts.
 5. Examples run without a client app: pass. No example changed.
 6. JSON Schema for each file format: pass. `project-models.v1.schema.json` states both endpoint shapes; the shared cases validate their data against it.
-7. Gate before adoption: pass for lines 1, 3 to 6; line 2 at release.
+7. Gate before adoption: pass. Lines 1 to 6 pass for the pieces above, so a client may adopt them from this version on.
 
 Changed:
 
@@ -26,7 +26,7 @@ Changed:
 
 Fixed:
 
-- A process started through the console script `llm-kit` no longer holds the launcher open for its lifetime. On Windows the launcher `llm-kit.exe` is a zip archive that the interpreter puts at `sys.path[0]`; the first `importlib.metadata` scan (`library_version()` in `llm-kit relay serve`, the runtime identity check, any distribution lookup) caches a zip path object that keeps the archive open, so Windows refused to delete or rename `llm-kit.exe` (os error 32) and `uv sync` could not upgrade the environment while the relay ran. `llm_kit.cli.main()` called without `argv` (the console path) now drops a file at `sys.path[0]` before its first scan; a directory there (`python -m llm_kit.cli`) and a call with an explicit `argv` keep `sys.path` as it was. Bar: line 1 pass (the helper is private; `main` states the behavior in its docstring), line 3 pass (`test_cli_launcher_archive.py`: the first case fails before the change, with the archive open after the scan, and the other two keep the scope), lines 4 to 6 pass (no client name, no example change, no file format), line 2 at release (a patch-level change in a release that already carries the minor-level entries above).
+- A process started through the console script `llm-kit` no longer holds the launcher open for its lifetime. On Windows the launcher `llm-kit.exe` is a zip archive that the interpreter puts at `sys.path[0]`; the first `importlib.metadata` scan (`library_version()` in `llm-kit relay serve`, the runtime identity check, any distribution lookup) caches a zip path object that keeps the archive open, so Windows refused to delete or rename `llm-kit.exe` (os error 32) and `uv sync` could not upgrade the environment while the relay ran. `llm_kit.cli.main()` called without `argv` (the console path) now drops a file at `sys.path[0]` before its first scan; a directory there (`python -m llm_kit.cli`) and a call with an explicit `argv` keep `sys.path` as it was. Bar: line 1 pass (the helper is private; `main` states the behavior in its docstring), line 3 pass (`test_cli_launcher_archive.py`: the first case fails before the change, with the archive open after the scan, and the other two keep the scope), lines 4 to 6 pass (no client name, no example change, no file format), line 2 pass (version 1.33.0; a patch-level change in a release that carries the minor-level entries above).
 - The project model reader (`parse_yaml_document`, so every read of the tracked file and the personal layer) raises `ProjectModelsError` (`invalid`, `where` `""`) for every bad YAML value. Before, text that PyYAML resolves or an explicit tag names but cannot build escaped as `ValueError`, `KeyError`, `AttributeError` or `IndexError`: `2026-02-30`, `2026-01-01 25:00:00`, a timestamp offset of a day or more, `0x_`, `!!bool foo`, `!!int abc`, `!!int ''`, `!!float abc`, `!!timestamp foo`. A decimal integer of more than 4300 digits is refused on every interpreter. A value that nests more than 100 levels of lists and mappings (aliases count as copies) is refused, and a far deeper file no longer escapes as `RecursionError`. Contract: `docs/reference/llm-kit-formats.md`, "Bytes and YAML"; 16 new shared cases in `tests/formats/project-models/cases.json`, which the TypeScript reader runs too.
 
 ## 1.32.0
