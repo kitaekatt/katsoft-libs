@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
-## Unreleased
+## 1.1.0
 
 The project model file can describe the whole request of a selection, so a client builds it from the file alone. The format stays `llm-kit.project-models/v1`: every key below is optional, and a file without them reads as before.
 
@@ -17,12 +17,12 @@ Added:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. Each new name has a JSDoc block; `test/surface.test.mjs` passes.
-2. Semver release with a changelog: this entry; the version is set at release.
+2. Semver release with a changelog: pass. Version 1.1.0 in `package.json` and `package-lock.json`; this entry.
 3. Tests for each public function: pass. `test/requests.test.mjs` runs all 30 request cases through `resolveRequest` and `chatFields`; `test/cases.test.mjs` runs the 25 new project model cases; `test/api.test.mjs` covers errors, sources, freezing and argument types.
 4. No client names, prompts or data: pass. Generic rows and endpoints.
 5. Examples run without a client app: pass. `npm run check-pack` runs `examples/request.mjs` from the packed tarball.
 6. JSON Schema for each file format: pass. The schemas gain the new keys; the shared cases validate parsed data and results with ajv.
-7. Gate before adoption: recorded in this entry.
+7. Gate before adoption: pass. Lines 1 to 6 pass for the pieces above, so a client may adopt them from this version on.
 
 ## 1.0.1
 
