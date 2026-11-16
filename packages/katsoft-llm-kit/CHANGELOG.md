@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased
+## 1.29.0
 
 Comparisons of model selections, recorded in a run store (`llm-kit runs compare`). A comparison sends one prompt file, filled with each case, to two or more selections of the project model file and records every attempt as a `llm-kit.run-record/v1` record of one `compare` group.
 
@@ -24,12 +24,12 @@ Changed:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. Each name of `llm_kit.runs.compare.__all__` has a docstring and is in `public-surface.json` (with its `llm_kit.runs` re-export and `llm_kit.schema.formats.COMPARE_CASE_V1`); `test_runs_compare.py` and `test_runs_record.py` check the list against the code.
-2. Semver release with a changelog: pending. The version is not changed; the release that carries these pieces sets it and this entry's heading.
+2. Semver release with a changelog: pass. Version 1.29.0 in `pyproject.toml`; this entry.
 3. Tests for each public function: pass. `test_runs_compare.py` (record before send, no retry, failed, halted and raising callers, reuse by every input of the key, copies, scorers, the bound, the group budget with failed and pending attempts, plan refusals, the CLI through the project model file with `max_retries: 0` on the wire, dry run), `test_formats.py` (the compare-case shared cases) and `test_invoke_protocol.py` (`max_retries`).
 4. No client names, prompts or data: pass. The tests and the example use generic models, prompts and cases.
 5. Examples run without a client app: pass. `examples/compare_models.py` runs in the clean venv with no extra (`tests/packaging/test_examples.py`).
 6. JSON Schema for each file format: pass. The case file has `compare-case.v1.schema.json`; the scorer reads and writes `llm-kit.run-import/v1` lines; the records are `llm-kit.run-record/v1`.
-7. Gate before adoption: pending line 2 (the release).
+7. Gate before adoption: pass. Lines 1 to 6 pass for the pieces above, so a client may adopt them from this version on.
 
 ## 1.28.0
 
