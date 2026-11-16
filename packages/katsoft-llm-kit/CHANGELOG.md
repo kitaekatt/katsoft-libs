@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased
+## 1.31.0
 
 The project model file can describe the whole request of a selection, so a request can be rebuilt, compared and cached from data. The format stays `llm-kit.project-models/v1`: every key below is optional, a file without them reads as before, and an older reader refuses a file that uses them (unknown keys), so none misreads one.
 
@@ -24,12 +24,12 @@ Migration: a row that kept consumer flags in `request_defaults.extras` (sent as 
 Quality bar for the pieces above:
 
 1. Public API documented: pass. Each new name has a docstring and is in `public-surface.json`; `test_formats.py` checks the list.
-2. Semver release with a changelog: this entry; the version is set at release.
+2. Semver release with a changelog: pass. Version 1.31.0 in `pyproject.toml`; this entry.
 3. Tests for each public function: pass. `test_formats.py` (both shared case files), `test_request_settings.py` (protocol 2 sends each case's wire fields through the real OpenAI-compatible backend; harness refusal; binding with the project style; catalog; the local-override writer), `test_runs_compare.py` (the candidate's settings are in the reuse key).
 4. No client names, prompts or data: pass.
 5. Examples run without a client app: pass. `examples/validate_and_render.py` resolves the request of each selection.
 6. JSON Schema for each file format: pass. Both schemas gain the new keys; every valid case conforms.
-7. Gate before adoption: recorded in this entry.
+7. Gate before adoption: pass. Lines 1 to 6 pass for the pieces above, so a client may adopt them from this version on.
 
 ## 1.30.0
 
