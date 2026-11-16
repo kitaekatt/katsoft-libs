@@ -191,6 +191,14 @@ def test_a_non_openrouter_endpoint_keeps_4096_without_a_row_and_uses_its_row(pro
     assert [s.get("max_tokens") for s in project.sent] == [4096, 2048]
 
 
+def test_a_call_finds_the_row_by_the_wire_model_it_sends(project):
+    """The pipeline names the model the endpoint is sent, so a row with a wire_model answers for that id."""
+    project.edit_row("big", wire_model="a/big-wire")
+    _call(project, project.backend(), "a/big-wire")
+    _call(project, project.backend(), "a/big")  # the row's own name is not what the endpoint is sent
+    assert [s.get("max_tokens", "absent") for s in project.sent] == [65536, "absent"]
+
+
 def test_a_row_on_another_endpoint_does_not_apply(project):
     # a/loc is declared for the local endpoint only
     _call(project, project.backend("orr"), "a/loc")

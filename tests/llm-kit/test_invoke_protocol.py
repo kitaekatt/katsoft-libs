@@ -399,13 +399,31 @@ def test_a_call_to_a_row_on_an_unknown_endpoint_refuses_naming_the_row_and_endpo
 _DIRECT = {"effort_style": "top-level", "base_url": "https://api.vendor.example/v1", "key_env": "VENDOR_API_KEY"}
 
 
-def _with_direct_row(world: World, model: str) -> None:
+def _with_direct_row(world: World, model: str, *, effort: str = "high", **row: Any) -> None:
     """A row on endpoint ``direct``, which the file connects (base URL and key variable)."""
     document = {**_DOC, "endpoints": {"direct": _DIRECT},
                 "catalog": [*_DOC["catalog"], {"id": "direct", "label": "Direct", "endpoint": "direct",
-                                               "model": model}],
-                "selections": {**_DOC["selections"], "direct": {"model": "direct", "effort": "high"}}}
+                                               "model": model, **row}],
+                "selections": {**_DOC["selections"], "direct": {"model": "direct", "effort": effort}}}
     pm.write_project_models(document, project_root=str(world.root))
+
+
+def test_a_row_is_sent_as_its_wire_model_with_the_none_it_declares(world, capsys):
+    """A vendor direct API: the consumer names the row ``vendor/swift-1``, the endpoint takes ``swift-1`` and
+    ``reasoning_effort: none``. Red on revert: the row's model goes out, or binding refuses ``none``."""
+    _with_direct_row(world, "vendor/swift-1", effort="none", wire_model="swift-1", efforts=["none", "low", "high"])
+    world.http_model = "swift-1"
+    allow()
+    code, doc, err = call(world, capsys, selection="direct")
+    assert code == 0 and err is None, (doc, err)
+    assert world.http[-1]["model"] == "swift-1"
+    assert world.http[-1]["extra_body"] == {"reasoning_effort": "none"}  # top-level sends it as written
+    assert doc["resolved"]["requested_model"] == "swift-1" and doc["resolved"]["model_verified"] is True
+    assert doc["selection"] == {"id": "direct", "model": "direct"}
+    # an effort the row does not declare is still refused before dispatch
+    sent = len(world.http)
+    code, doc, err = call(world, capsys, selection="direct", effort="medium")
+    assert code != 0 and len(world.http) == sent
 
 
 def test_a_row_on_an_endpoint_the_file_connects_is_called_on_that_connection(world, capsys):

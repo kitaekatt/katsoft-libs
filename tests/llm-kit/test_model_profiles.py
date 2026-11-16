@@ -305,9 +305,10 @@ def test_an_openrouter_row_can_now_declare_efforts(project):
     # an openrouter model nobody measured still cannot invent a menu
     unmeasured = copy.deepcopy(document)
     unmeasured["catalog"][0].update(endpoint="or-other", model="deepseek/not-measured")
-    # (or-other resolves a top-level style, so the style menu applies: low|medium|high)
-    unmeasured["catalog"][0]["efforts"] = ["none"]
-    with pytest.raises(pm.ProjectModelsError, match="'none' is not in the library menu"):
+    # (or-other resolves a top-level style, so the style menu applies: low|medium|high, and the
+    # explicit none a row may declare first, which no selection of a row that omits it can name)
+    unmeasured["catalog"][0]["efforts"] = ["none", "max"]
+    with pytest.raises(pm.ProjectModelsError, match="'max' is not in the library menu"):
         pm.validate_project_models(unmeasured, project_root=str(project))
 
 

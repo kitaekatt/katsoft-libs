@@ -333,13 +333,15 @@ def invoke(
         requested_effort, effort_source = selected_effort, EFFORT_FROM_SELECTION
     else:
         requested_effort, effort_source = None, EFFORT_FROM_NONE
+    # The model id the endpoint is sent: the row's wire_model, else its model.
+    wire_model = project_models.wire_model_of(row)
     if requested_effort is not None:
-        menu = tuple(project_models.library_effort_menu(info, row["model"]))
+        menu = tuple(project_models.library_effort_menu(info, wire_model))
         allowed = tuple(row["efforts"]) if "efforts" in row else menu
         if requested_effort not in allowed:
             no_dial = not allowed and (
                 "efforts" in row or project_models.exact_effort_menu(
-                    info.route, row["model"], effort_style=info.effort_style
+                    info.route, wire_model, effort_style=info.effort_style
                 ) == ()
             )
             none_text = (
@@ -375,7 +377,7 @@ def invoke(
             if info.kind == project_models.PROJECT_ENDPOINT else None
         )
         extra = {"connection": connection} if connection is not None else {}
-        selection = backend_factory(row["endpoint"], model=row["model"], project_root=str(root), **extra)
+        selection = backend_factory(row["endpoint"], model=wire_model, project_root=str(root), **extra)
     except (EndpointResolveError, ModelResolveError, EndpointRegistryError) as exc:
         raise InvokeRefusal(KIND_CONFIGURATION, str(exc)) from None
     backend = selection.backend
@@ -583,7 +585,7 @@ def invoke(
         usage_source = types.SimpleNamespace(output_tokens=int(raised.output_tokens))
 
     reported_model = getattr(response, "reported_model", None) if response is not None else None
-    requested_model = row["model"]
+    requested_model = wire_model
     resolved = {
         "endpoint": selection.endpoint,
         "adapter": getattr(backend, "name", None),

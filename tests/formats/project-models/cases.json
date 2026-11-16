@@ -3808,6 +3808,161 @@
       }
     },
     {
+      "name": "wire-model",
+      "note": "A row may name the model id its endpoint is sent (wire_model); model stays the consumer's name for the row. The normalized row keeps wire_model after model.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: swift",
+          "    label: Swift",
+          "    endpoint: direct",
+          "    model: vendor/swift-1",
+          "    wire_model: swift-1",
+          "selections:",
+          "  k: {model: swift}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "swift",
+              "label": "Swift",
+              "endpoint": "direct",
+              "model": "vendor/swift-1",
+              "wire_model": "swift-1"
+            }
+          ],
+          "selections": {
+            "k": {
+              "model": "swift",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "wire-model-empty",
+      "note": "wire_model is text: not empty.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: swift",
+          "    label: Swift",
+          "    endpoint: direct",
+          "    model: vendor/swift-1",
+          "    wire_model: \"\""
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].wire_model"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "wire-model-padded",
+      "note": "wire_model has no leading or trailing whitespace.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: swift",
+          "    label: Swift",
+          "    endpoint: direct",
+          "    model: vendor/swift-1",
+          "    wire_model: \" swift-1\""
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].wire_model"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "wire-model-null",
+      "note": "wire_model is omitted, never null.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: swift",
+          "    label: Swift",
+          "    endpoint: direct",
+          "    model: vendor/swift-1",
+          "    wire_model: null"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].wire_model"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "declared-none-effort",
+      "note": "A row may declare the explicit-disable effort none, and a selection may name it. Portable validation accepts it as any declared effort; binding holds it to the library rule (docs/reference/llm-kit-formats.md, 'Portable validation and binding').",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  direct: {effort_style: top-level}",
+          "catalog:",
+          "  - id: swift",
+          "    label: Swift",
+          "    endpoint: direct",
+          "    model: vendor/swift-1",
+          "    efforts: [none, low, medium, high]",
+          "selections:",
+          "  k: {model: swift, effort: none}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "endpoints": {
+            "direct": {
+              "effort_style": "top-level"
+            }
+          },
+          "catalog": [
+            {
+              "id": "swift",
+              "label": "Swift",
+              "endpoint": "direct",
+              "model": "vendor/swift-1",
+              "efforts": [
+                "none",
+                "low",
+                "medium",
+                "high"
+              ]
+            }
+          ],
+          "selections": {
+            "k": {
+              "model": "swift",
+              "effort": "none"
+            }
+          }
+        }
+      }
+    },
+    {
       "name": "endpoint-base-url-without-key-env",
       "note": "A base URL needs key_env (null for a keyless endpoint), so a missing line never means no key.",
       "tracked": {

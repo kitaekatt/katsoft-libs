@@ -73,8 +73,10 @@ export interface CatalogRow {
   readonly label: string;
   /** The endpoint name; the consumer resolves it. */
   readonly endpoint: string;
-  /** The exact wire model for that endpoint. */
+  /** The consumer's name for the model; also the wire model when the row names no `wire_model`. */
   readonly model: string;
+  /** The model id the endpoint is sent, when it differs from `model`; omitted: `model` is sent. */
+  readonly wire_model?: string;
   /** Omitted: the row does not narrow the effort menu. `[]`: the row has no effort. */
   readonly efforts?: readonly string[];
   /** The output cap for calls to this model, from 1 to 2**53 - 1. */
@@ -169,7 +171,7 @@ export interface ParseOptions {
 const MAX_INTEGER = 2n ** 53n - 1n;
 const TOP_KEYS = ["version", "endpoints", "catalog", "requests", "selections"] as const;
 const LOCAL_TOP_KEYS = ["version", "selections"] as const;
-const ROW_KEYS = ["id", "label", "endpoint", "model", "efforts", "max_output_tokens", "traits", "request_defaults"] as const;
+const ROW_KEYS = ["id", "label", "endpoint", "model", "wire_model", "efforts", "max_output_tokens", "traits", "request_defaults"] as const;
 const ROW_REQUIRED = ["id", "label", "endpoint", "model"] as const;
 const SELECTION_KEYS = ["model", "effort", "request"] as const;
 const DEFAULTS_KEYS = ["temperature", "top_p", "reasoning_budget", "extras"] as const;
@@ -398,7 +400,7 @@ function catalog(value: PyValue, where = "catalog"): { rows: CatalogRow[]; effor
     const id = text(row.get("id")!, `${at}.id`);
     if (declared.has(id)) throw invalid(`${at}.id`, `duplicate id ${JSON.stringify(id)}`);
     const out: {
-      id: string; label: string; endpoint: string; model: string; efforts?: string[];
+      id: string; label: string; endpoint: string; model: string; wire_model?: string; efforts?: string[];
       max_output_tokens?: number; traits?: string[]; request_defaults?: RequestDefaults;
     } = {
       id,
@@ -406,6 +408,7 @@ function catalog(value: PyValue, where = "catalog"): { rows: CatalogRow[]; effor
       endpoint: text(row.get("endpoint")!, `${at}.endpoint`),
       model: text(row.get("model")!, `${at}.model`),
     };
+    if (row.has("wire_model")) out.wire_model = text(row.get("wire_model")!, `${at}.wire_model`);
     let rowEfforts: string[] | undefined;
     if (row.has("efforts")) out.efforts = rowEfforts = efforts(row.get("efforts")!, `${at}.efforts`);
     if (row.has("max_output_tokens")) out.max_output_tokens = maxOutputTokens(row.get("max_output_tokens")!, `${at}.max_output_tokens`);

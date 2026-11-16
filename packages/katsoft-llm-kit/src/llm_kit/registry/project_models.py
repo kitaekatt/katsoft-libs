@@ -14,7 +14,7 @@ project's own repository):
       - id: luna                 # opaque, unique, chosen by the project
         label: Luna              # presentation text
         endpoint: luna           # a registry endpoint (credentials, adapter)
-        model: gpt-6-luna        # the exact wire model for that endpoint
+        model: gpt-6-luna        # the model; also the wire model unless wire_model names one
         efforts: [low, high]     # optional; a menu-ordered subset of the library menu
                                  # (efforts: [] declares NO effort for the row)
         max_output_tokens: 65536 # optional; positive integer, the output cap this model's
@@ -23,6 +23,7 @@ project's own repository):
         label: Flash
         endpoint: openrouter
         model: vendor/flash-1
+        wire_model: flash-1      # optional; the model id the endpoint is sent, when it differs
         traits: [long_drafts]    # optional; the consumer's labels, never sent
         request_defaults:        # optional; typed defaults and wire extras (a JSON mapping)
           temperature: 0.7
@@ -51,8 +52,18 @@ model the library has not measured has no menu, so its row declares no
 row has no effort dial at all (any model; the shipped profile of a model the vendor
 lists without one has the same empty menu): every selection of it carries a null
 effort and a request for it refuses any effort. ``null`` effort means "omit"; the string ``none`` is an explicit
-disable value accepted only where the library menu lists it. Nothing here
+disable value accepted only where the library menu lists it, or where the row
+declares it first in ``efforts`` on a style that sends the effort as written
+(``top-level``, ``chat_template_kwargs``) and the library measured no menu for the
+model: those styles' conventional menu omits ``none`` because not every server
+takes it, so the project states that its provider does. Nothing here
 translates ``off`` or any other word.
+
+``wire_model`` is the model id the row's endpoint is sent, when it differs from
+``model`` (a vendor's own id beside the consumer's routing name). It defaults to
+``model``. Calls send it, the effort menu is the menu measured for it, a price is
+looked up by it, and a run record names it as the model that answered
+(:func:`wire_model_of`).
 
 ``max_output_tokens`` is the project's configured output cap for that model. A
 protocol 2 call to a transport (OpenAI-compatible) row uses it when the request
@@ -72,7 +83,7 @@ Canonical form (what ``write`` stores and ``render_yaml`` returns): UTF-8, LF,
 two-space indentation, one final newline, catalogue order preserved, top-level
 keys in the order version/endpoints/catalog/requests/selections (endpoints and
 requests only when the file has them), row fields in the fixed order
-id/label/endpoint/model/efforts/max_output_tokens/traits/request_defaults, typed
+id/label/endpoint/model/wire_model/efforts/max_output_tokens/traits/request_defaults, typed
 settings in the order temperature/top_p/max_output_tokens/reasoning_budget/extras,
 every free-form mapping (``endpoints``, ``requests``, ``selections``, ``extras``)
 sorted by key. Comments are not
@@ -125,7 +136,16 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Optional
 
-from .effort import EFFORT_KEY, EFFORT_STYLES, REASONING_KEY, REASONING_OBJECT, TEMPLATE_KEY, style_effort_menu
+from .effort import (
+    CHAT_TEMPLATE_KWARGS,
+    EFFORT_KEY,
+    EFFORT_STYLES,
+    REASONING_KEY,
+    REASONING_OBJECT,
+    TEMPLATE_KEY,
+    TOP_LEVEL,
+    style_effort_menu,
+)
 from .model_profiles import (
     MENU_ENDPOINT_STYLE,
     MENU_EXACT_MODEL,
@@ -141,7 +161,7 @@ __all__ = [
     "endpoint_styles", "endpoint_connection", "PROJECT_ENDPOINT", "check_setting", "validate_profile", "KEEP_REQUEST",
     "LOCAL_SUFFIX", "LAYER_TRACKED", "LAYER_LOCAL", "SOURCE_DEFAULT", "SOURCE_OVERRIDE",
     "ProjectModelsError", "EndpointInfo", "EffortMenuResolver",
-    "library_effort_menu_with_source", "library_effort_menu",
+    "library_effort_menu_with_source", "library_effort_menu", "wire_model_of",
     "parse_json_document", "parse_yaml_document",
     "validate_document", "validate_portable_document",
     "render_yaml", "digest",
@@ -192,7 +212,9 @@ _MAX_DECIMAL_DIGITS = 4300
 
 _TOP_KEYS = ("version", "endpoints", "catalog", "requests", "selections")
 _LOCAL_TOP_KEYS = ("version", "selections")
-_ROW_KEYS = ("id", "label", "endpoint", "model", "efforts", "max_output_tokens", "traits", "request_defaults")
+_ROW_KEYS = (
+    "id", "label", "endpoint", "model", "wire_model", "efforts", "max_output_tokens", "traits", "request_defaults",
+)
 _ROW_REQUIRED = ("id", "label", "endpoint", "model")
 _SELECTION_KEYS = ("model", "effort", "request")
 _ENDPOINT_KEYS = ("effort_style", "base_url", "key_env")
@@ -319,6 +341,42 @@ def library_effort_menu(endpoint: EndpointInfo, model: str) -> "tuple[str, ...]"
     :func:`library_effort_menu_with_source` for the rule.
     """
     return library_effort_menu_with_source(endpoint, model)[0]
+
+
+#: The styles that send an effort as written. Their conventional menu omits ``none``
+#: because not every server takes it; a row on one may declare it (:func:`_declarable_menu`).
+_DECLARABLE_NONE_STYLES = (TOP_LEVEL, CHAT_TEMPLATE_KWARGS)
+
+
+def _declarable_menu(endpoint: EndpointInfo, model: str, menu: "tuple[str, ...]") -> "tuple[str, ...]":
+    """The efforts a row on ``endpoint`` for wire model ``model`` may declare, low to high.
+
+    ``menu`` is the library menu. When it is the conventional menu of a style that
+    sends the effort as written (``top-level``, ``chat_template_kwargs``) and the
+    library measured no menu for the model, ``none`` goes first: the provider takes
+    it only when the row declares it, and a selection of a row that does not
+    declare it is still held to ``menu``. A measured, harness or ``none``-listing
+    menu is returned unchanged; no other effort is ever added or remapped.
+    """
+    if (
+        "none" in menu
+        or endpoint.harness is not None
+        or endpoint.effort_style not in _DECLARABLE_NONE_STYLES
+        or menu != style_effort_menu(endpoint.effort_style)
+        or exact_effort_menu(endpoint.route, model, effort_style=endpoint.effort_style) is not None
+    ):
+        return menu
+    return ("none", *menu)
+
+
+def wire_model_of(row: Mapping) -> str:
+    """The model id a call to ``row`` sends its endpoint: the row's ``wire_model``, else its ``model``.
+
+    ``row`` is a catalog row of a normalized project model document. Calls, the
+    effort menu, prices and run records use this id; ``model`` stays the
+    consumer's name for the row. Raises ``KeyError`` for a mapping with no ``model``.
+    """
+    return row["wire_model"] if "wire_model" in row else row["model"]
 
 
 def _route_of(base_url: Optional[str]) -> Optional[str]:
@@ -997,6 +1055,10 @@ def _validate_catalog(
         label = _text(row["label"], f"{where}.label")
         endpoint = _text(row["endpoint"], f"{where}.endpoint")
         model = _text(row["model"], f"{where}.model")
+        out: dict = {"id": row_id, "label": label, "endpoint": endpoint, "model": model}
+        if "wire_model" in row:
+            out["wire_model"] = _text(row["wire_model"], f"{where}.wire_model")
+        wire = wire_model_of(out)
         info: Optional[EndpointInfo] = None
         menu: "Optional[tuple[str, ...]]" = None
         if endpoints is not None:
@@ -1005,11 +1067,11 @@ def _validate_catalog(
                 if unbound is not None:
                     unbound.append(row_id)
             else:
-                menu = tuple((menu_of or library_effort_menu)(info, model))
-        out: dict = {"id": row_id, "label": label, "endpoint": endpoint, "model": model}
+                menu = tuple((menu_of or library_effort_menu)(info, wire))
         efforts: Optional[list[str]] = None
         if "efforts" in row:
-            efforts = _efforts(row["efforts"], f"{where}.efforts", menu, endpoint, model)
+            declarable = None if info is None or menu is None else _declarable_menu(info, wire, menu)
+            efforts = _efforts(row["efforts"], f"{where}.efforts", declarable, endpoint, wire)
             out["efforts"] = efforts
         if "max_output_tokens" in row:
             out["max_output_tokens"] = _max_output_tokens(

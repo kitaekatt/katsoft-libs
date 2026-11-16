@@ -42,8 +42,10 @@ export interface ResolvedRequest {
   readonly row: string;
   /** The row's endpoint name. */
   readonly endpoint: string;
-  /** The exact wire model. */
+  /** The row's model (the consumer's name for it). */
   readonly model: string;
+  /** The model id the endpoint is sent: the row's `wire_model`, else its `model`. A sender puts this in the body. */
+  readonly wire_model: string;
   /** The effort, or `null`. */
   readonly effort: string | null;
   /** The effort style the file's `endpoints` declares for the endpoint, or `null` (the consumer decides). */
@@ -187,6 +189,7 @@ function requestFor(document: ProjectModelsDocument, selection: Selection, call:
     row: row.id,
     endpoint: row.endpoint,
     model: row.model,
+    wire_model: row.wire_model ?? row.model,
     effort,
     effort_style: Object.hasOwn(endpoints, row.endpoint) ? endpoints[row.endpoint]!.effort_style : null,
     temperature: pick("temperature"),

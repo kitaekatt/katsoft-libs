@@ -16,6 +16,11 @@ probing a provider or reading any user cache:
   key): either the library's measured profile for that exact model has an empty menu
   (``effort_source`` ``library-model``) or the project file declares ``efforts: []``
   (``effort_source`` ``project-no-effort``). Any effort for it is refused.
+- A row that declares the explicit ``none`` its style's conventional menu omits
+  (``top-level``, ``chat_template_kwargs``) reports ``effort_source``
+  ``library-endpoint-style+project-none``.
+- ``wire_model`` is the model id the row's endpoint is sent, present only when the
+  row declares one; the row's menu is the menu for that id.
 - ``effort_delivery`` says whether the endpoint can put an effort on the wire at
   all. A menu is the model's vendor menu; an endpoint that resolves no effort
   style (the shipped ``openrouter`` record until it declares one) would drop it,
@@ -72,6 +77,7 @@ from .project_models import (
     _Endpoints,
     library_effort_menu_with_source,
     resolve_selections,
+    wire_model_of,
 )
 
 SCHEMA = "llm-kit.model-catalog/v1"
@@ -87,6 +93,8 @@ TRANSPORT_ADAPTER = ADAPTER_OPENAI_COMPAT
 
 #: ``effort_source`` of a row whose project file declares ``efforts: []`` (no effort dial).
 EFFORT_SOURCE_PROJECT_NONE = "project-no-effort"
+#: ``effort_source`` suffix of a row that declares the explicit ``none`` its library menu omits.
+EFFORT_SOURCE_DECLARED_NONE = "+project-none"
 
 #: Harnesses whose cost class depends on how the CLI is authenticated.
 _AUTH_DEPENDENT = ("claude", "codex")
@@ -160,12 +168,14 @@ def build_catalog(
             )
             continue
         adapter = adapter_of(info)
-        menu, menu_source = library_effort_menu_with_source(info, row["model"])
+        menu, menu_source = library_effort_menu_with_source(info, wire_model_of(row))
         declared = row.get("efforts")
         if declared is not None and not declared:
             effort_source = EFFORT_SOURCE_PROJECT_NONE
         elif menu_source == MENU_NONE:
             effort_source = MENU_NONE
+        elif declared is not None and "none" in declared and "none" not in menu:
+            effort_source = f"{menu_source}{EFFORT_SOURCE_DECLARED_NONE}"
         elif declared is not None:
             effort_source = f"{menu_source}+project-subset"
         else:
@@ -196,6 +206,8 @@ def build_catalog(
             "modes": list(_modes_for(modes_by_adapter, adapter)),
             "cost": _cost(info, entry, endpoints.entries(), harness_auth),
         }
+        if "wire_model" in row:
+            item["wire_model"] = row["wire_model"]
         if "max_output_tokens" in row:
             item["max_output_tokens"] = row["max_output_tokens"]
             if info.kind == HARNESS_KIND:

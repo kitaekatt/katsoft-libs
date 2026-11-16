@@ -179,16 +179,19 @@ def _project_catalog_rows(project_root: Optional[Path]) -> list:
 def _row_output_cap(project_root: Optional[Path], endpoint: str, model: str) -> Optional[int]:
     """The output cap the project model file configures for ``model`` on ``endpoint``.
 
-    The pipeline selects a model by endpoint and model id, not by row, so the rows matching
-    that pair answer. The precedence is the one protocol 2 applies to a selected row: a row's
-    ``max_output_tokens`` beats a row's ``request_defaults.extras.max_tokens``; None when no
-    matching row declares either. Two matching rows declaring different values of the same kind
+    The pipeline selects a model by endpoint and the model id it sends, not by row, so the rows
+    whose endpoint and wire model (``wire_model``, else ``model``) match that pair answer. The
+    precedence is the one protocol 2 applies to a selected row: a row's ``max_output_tokens``
+    beats a row's ``request_defaults.extras.max_tokens``; None when no matching row declares
+    either. Two matching rows declaring different values of the same kind
     are ambiguous and refuse, naming the rows, rather than choosing one.
     """
+    from llm_kit.registry import project_models  # noqa: PLC0415
+
     matching = [
         row
         for row in _project_catalog_rows(project_root)
-        if row["endpoint"] == endpoint and row["model"] == model
+        if row["endpoint"] == endpoint and project_models.wire_model_of(row) == model
     ]
     typed = {row["id"]: row["max_output_tokens"] for row in matching if "max_output_tokens" in row}
     bridged: Dict[str, Any] = {}

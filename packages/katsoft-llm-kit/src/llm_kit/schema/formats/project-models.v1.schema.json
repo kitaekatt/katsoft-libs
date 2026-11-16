@@ -42,13 +42,14 @@
     },
     "effort_style": {"enum": ["top-level", "ninfer", "chat_template_kwargs", "reasoning-object", "unsupported"]},
     "row": {
-      "description": "One catalog row. Omitted efforts: the row does not narrow the effort menu. efforts []: the row has no effort. traits are the consumer's labels for the row; no reader puts them in a request.",
+      "description": "One catalog row. model is the consumer's name for the model; wire_model, when present, is the model id the endpoint is sent (else model). Omitted efforts: the row does not narrow the effort menu. efforts []: the row has no effort. traits are the consumer's labels for the row; no reader puts them in a request.",
       "type": "object",
       "properties": {
         "id": {"$ref": "#/$defs/text"},
         "label": {"$ref": "#/$defs/text"},
         "endpoint": {"$ref": "#/$defs/text"},
         "model": {"$ref": "#/$defs/text"},
+        "wire_model": {"$ref": "#/$defs/text"},
         "efforts": {"type": "array", "items": {"$ref": "#/$defs/text"}},
         "max_output_tokens": {"$ref": "#/$defs/count"},
         "traits": {"type": "array", "items": {"$ref": "#/$defs/text"}},

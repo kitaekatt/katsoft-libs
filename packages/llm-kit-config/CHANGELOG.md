@@ -2,6 +2,24 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
+## Unreleased
+
+Added:
+
+- `parseRegistry` reads a row's optional `wire_model`: the model id the row's endpoint is sent, when it differs from `model`. `CatalogRow.wire_model`.
+- `resolveRequest` returns `wire_model`, always set (the row's `wire_model`, else `model`); a sender puts it in the body. `ResolvedRequest.wire_model`. A caller that compares a whole resolved request sees the new key. 4 new shared cases in `tests/formats/project-models/cases.json` and 1 in `requests.json`; every request case states the new key.
+- A row may declare the explicit effort `none`; the reader accepts it as any declared effort, and `chatFields` sends it as written on `top-level` (Python binding holds it to the library rule: `docs/reference/llm-kit-formats.md`, "Portable validation and binding"). 1 new shared case.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. The JSDoc of `CatalogRow.wire_model` and `ResolvedRequest.wire_model` states them; no export is added, so `public-surface.json` is unchanged; `test/surface.test.mjs` passes.
+2. Semver release with a changelog: pass for this entry. No version is set: the release takes a minor version.
+3. Tests for each public function: pass. `test/cases.test.mjs` and `test/requests.test.mjs` run the new cases through `parseRegistry`, `resolveRequest` and `chatFields`; they fail before the change.
+4. No client names, prompts or data: pass.
+5. Examples run without a client app: pass. No example changed; the README example sends `request.wire_model`.
+6. JSON Schema for each file format: pass. The schema states `wire_model`; the cases validate with ajv.
+7. Gate before adoption: pass. Lines 1 to 6 pass.
+
 ## 1.2.0
 
 Added:

@@ -52,7 +52,8 @@ The tracked project model file, by default `.llm-kit/models.yaml`. The module do
 | endpoint `base_url` | `http://` or `https://`, then a host, then printable ASCII (U+0021 to U+007E) with no space. |
 | endpoint `key_env` | Required with `base_url` and refused without it. The name of the environment variable that holds the key (an ASCII letter or `_`, then ASCII letters, digits and `_`), or null for a keyless endpoint. The file never holds a key. |
 | `catalog` | Optional list of rows, default empty. Order is kept. |
-| row `id`, `label`, `endpoint`, `model` | Required text: not empty, no leading or trailing whitespace. Ids are unique. |
+| row `id`, `label`, `endpoint`, `model` | Required text: not empty, no leading or trailing whitespace. Ids are unique. `model` is the consumer's name for the model. |
+| row `wire_model` | Optional text, as `model` (null is refused; omit the key). The model id the endpoint is sent, when it differs from `model`: for example the vendor's own id beside the name the consumer routes on. Omitted: the wire model is `model`. Calls send the wire model, binding reads the effort menu for it, a price is looked up by it and a run record names it (`resolved.model`). |
 | row `efforts` | Optional list of non-empty text with no repeats. Omitted: the row does not narrow the effort menu. `[]`: the row has no effort. |
 | row `max_output_tokens` | Optional integer from 1 to 2**53 - 1. The row's default output cap. |
 | row `traits` | Optional list of non-empty text with no repeats: the consumer's labels for the row. No reader puts a trait in a request. |
@@ -70,8 +71,9 @@ No other keys are allowed at any level. Checks run in this order, so the first p
 Validation has two parts.
 
 - Portable validation checks the bytes, the YAML, the structure and the references above. It needs only the file. Python: `validate_portable_document(data)`. Every reader does this part.
-- Binding needs the machine's endpoint registry. It checks that each `endpoint` resolves, that each effort is in the library effort menu for that endpoint and model, and that `extras` has no reserved key (`model`, `messages`, `stream`, `api_key`, `reasoning_effort`, and `reasoning` on a `reasoning-object` endpoint). Python: `validate_document`, and every read and write. A row that declares no `efforts` accepts any non-empty effort in portable validation; binding checks it against the menu.
+- Binding needs the machine's endpoint registry. It checks that each `endpoint` resolves, that each effort is in the library effort menu for that endpoint and wire model, and that `extras` has no reserved key (`model`, `messages`, `stream`, `api_key`, `reasoning_effort`, and `reasoning` on a `reasoning-object` endpoint). Python: `validate_document`, and every read and write. A row that declares no `efforts` accepts any non-empty effort in portable validation; binding checks it against the menu.
 - An effort style that the file's `endpoints` declares wins over the registry's style of that endpoint for this project: the menu, the reserved `reasoning` extra and the wire all use it. A model with no measured profile then takes that style's menu (`reasoning-object` lists `none`). Binding refuses a style on a harness endpoint (`endpoints['x'].effort_style`).
+- The explicit `none` (reasoning off). The menu of `top-level` and `chat_template_kwargs` is `low`, `medium`, `high`, because not every server takes `none`. A row on one of these styles whose wire model has no measured profile may declare `none` as the first item of its `efforts`: the project states that its provider takes `reasoning_effort: none`, and it is sent as written. No other effort is added, and no value is remapped. A selection or call of a row that does not declare `none` is still refused for it, and a measured menu or a harness menu is never widened. Python tests: `test_project_models.py`, "an explicit `none` the row declares".
 - An `endpoint` is the consumer's name; no reader refuses a file because the machine's registry does not know it. Binding loads a row whose endpoint resolves to no registry endpoint, and that the file does not connect (see "Connections"), as unbound: the row keeps the checks that need no endpoint (its declared `efforts`, and the reserved extras other than `reasoning`), and the result names it (Python: `ProjectModels.unbound`, `Validation.unbound`). A call or a plan that resolves to an unbound row refuses at that point and names the row and the endpoint. Case `endpoint-is-opaque-text`.
 
 ### Connections
@@ -79,7 +81,7 @@ Validation has two parts.
 An `endpoints` entry with `base_url` and `key_env` is a connection: it says how to reach the endpoint on a machine that does not know it. Precedence, per endpoint name:
 
 1. The machine wins. When the machine's own configuration knows the name (Python: the model config layers, then the endpoint registry), a call uses the machine's connection whole: its base URL, its key, its billing mode. The file's `base_url` and `key_env` are not used on that machine.
-2. Otherwise the file's connection binds the rows on that endpoint. A call sends the row's `model` as written (no alias map), with the key from the variable `key_env` names (Python: the environment, then the `.env` layers). The file declares no billing, so a native `usage.cost` is an estimate and the cost class is `metered`.
+2. Otherwise the file's connection binds the rows on that endpoint. A call sends the row's wire model (`wire_model`, else `model`) as written (no alias map), with the key from the variable `key_env` names (Python: the environment, then the `.env` layers). The file declares no billing, so a native `usage.cost` is an estimate and the cost class is `metered`.
 3. Either way, the file's `effort_style` wins over the machine's style (see above).
 
 A reader that does not call endpoints (the TypeScript package) returns the connection in the normalized document and leaves the precedence to its caller. Python: `endpoint_connection(document, name)`; protocol 2 calls (and so `llm-kit runs compare`) use it. Cases `endpoint-connection` and `endpoint-connection-keyless`.
@@ -138,7 +140,7 @@ The `extras` of a profile or a call may not hold `model`, `messages`, `stream`, 
 
 ### The resolved request
 
-`{row, endpoint, model, effort, effort_style, temperature, top_p, max_output_tokens, reasoning_budget, extras, traits}`. Every key is present; an unset value is null, `extras` is `{}` and `traits` is `[]` when empty. `effort_style` is the style the file's `endpoints` declares for the row's endpoint, else null (the client uses its own: Python uses the endpoint registry). A key no layer names is refused with code `unknown-selection` at `selections['<key>']`.
+`{row, endpoint, model, wire_model, effort, effort_style, temperature, top_p, max_output_tokens, reasoning_budget, extras, traits}`. Every key is present; `model` is the row's model and `wire_model` the model id its endpoint is sent (the row's `wire_model`, else `model`), which a sender puts in the body; an unset value is null, `extras` is `{}` and `traits` is `[]` when empty. `effort_style` is the style the file's `endpoints` declares for the row's endpoint, else null (the client uses its own: Python uses the endpoint registry). A key no layer names is refused with code `unknown-selection` at `selections['<key>']`.
 
 ### The wire (OpenAI-compatible chat)
 
@@ -184,7 +186,7 @@ Each status is one branch of the schema (`$defs/started`, `$defs/ok`, `$defs/inv
 | `failed` | No usable answer (transport, provider or runner error). | object or `null` | required |
 | `refused` | The model or provider declined. | object or `null` | required |
 
-Fields of every record: `format`, `id`, `status`, `started_at`, `flow` (the writer's name for the work), `group` (`id`, `kind` `compare`, `eval` or `single`, `label`), `case` (`id`, `input_sha256`, `input`), `prompt` (`id`, `file`, `sha256`, `slots_sha256`, or `null`), `selection` (`name`, `model`, `effort`), `resolved` (`row`, `endpoint`, `model`, `effort`, `registry_sha256`, or `null`), `request` (`max_output_tokens`, `extras`, `sent_sha256`), `inputs`, `provenance` (`git_sha`, `git_dirty`, `tool`, `files`, `scorer`), `content` and `labels`. A result adds `ended_at`, `output` (`text`, `parsed`), `error` (`code`, `message`), `scores`, `usage`, `cost` and `timings`.
+Fields of every record: `format`, `id`, `status`, `started_at`, `flow` (the writer's name for the work), `group` (`id`, `kind` `compare`, `eval` or `single`, `label`), `case` (`id`, `input_sha256`, `input`), `prompt` (`id`, `file`, `sha256`, `slots_sha256`, or `null`), `selection` (`name`, `model`, `effort`), `resolved` (`row`, `endpoint`, `model`, `effort`, `registry_sha256`, or `null`; `model` is the model the call sent, for a project model file row its wire model), `request` (`max_output_tokens`, `extras`, `sent_sha256`), `inputs`, `provenance` (`git_sha`, `git_dirty`, `tool`, `files`, `scorer`), `content` and `labels`. A result adds `ended_at`, `output` (`text`, `parsed`), `error` (`code`, `message`), `scores`, `usage`, `cost` and `timings`.
 
 Text bodies are not in the record. `case.input`, `output.text` and `scores[].note` are blob references `blob:<64 lowercase hex>`, the SHA-256 of the bytes in the store.
 

@@ -2,6 +2,28 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## Unreleased
+
+Added:
+
+- Row `wire_model` in the project model file: the model id the row's endpoint is sent, when it differs from `model` (a vendor's own id on its direct API, beside the aggregator-style name a consumer routes on). Omitted, the wire model is `model`, as before. Protocol 2 (`llm_kit.dispatch.invoke`) sends it and reports it as `resolved.requested_model`; binding reads the effort menu for it; `llm-kit runs compare` plans, prices (`--pricing` key) and records it (`resolved.model` of each run record, so it is in the reuse key); `llm-kit models catalog` shows it; the content pipeline's output cap lookup matches a row by it. The format stays `llm-kit.project-models/v1` (an optional key that an older reader refuses as unknown). New `llm_kit.registry.project_models.wire_model_of(row)`. 4 new shared cases in `tests/formats/project-models/cases.json`.
+- The resolved request (`request_for`, `resolve_request`, `REQUEST_KEYS`) has the key `wire_model`, always present (`model` when the row names none). A caller that compares a whole resolved request sees the new key. 1 new shared case in `tests/formats/project-models/requests.json`; every other case states the new key.
+- A row may declare the explicit effort `none` (reasoning off) as the first item of its `efforts` on a style that sends the effort as written (`top-level`, `chat_template_kwargs`) when the library measured no menu for its wire model. Those styles' menu is `low`, `medium`, `high` because not every server takes `none`; the row states that its provider does, and `none` is sent as written. Nothing else changes: no other effort is added, no value is remapped, a row that does not declare `none` still refuses it for a selection or a call, and a measured or harness menu is never widened. `llm-kit models catalog` reports such a row with `effort_source` `library-endpoint-style+project-none`. Contract: `docs/reference/llm-kit-formats.md`, "Portable validation and binding"; 1 new shared case.
+
+Changed:
+
+- `test_model_profiles.py`: an unmeasured openrouter.ai model on the `top-level` style may now declare `none` first; the test now pins that it still cannot declare an effort outside the style menu (`max`).
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. `wire_model_of` has a docstring and is in `__all__` and `public-surface.json`; the module docstrings of `project_models`, `request_settings` and `registry.catalog` state the field and the rule.
+2. Semver release with a changelog: pass for this entry. No version is set: the release takes a minor version (new optional key, new name, new resolved-request key).
+3. Tests for each public function: pass. `test_project_models.py`: the declared `none` binds on both styles and is refused when undeclared, out of order, repeated, beside an effort outside the menu, on a measured menu; `wire_model` round-trips in canonical place and binds the wire model's menu. `test_invoke_protocol.py`: a connected row sends its wire model and `reasoning_effort: none`. `test_runs_compare.py`: the dry run, the price, the sent body and the record use the wire model. `test_model_catalog.py`, `test_pipeline_cap.py`, `test_request_settings.py` (protocol 2 sends each case's `wire_model`). Each fails before the change.
+4. No client names, prompts or data: pass. Generic vendor names and ids.
+5. Examples run without a client app: pass. No example changed.
+6. JSON Schema for each file format: pass. `project-models.v1.schema.json` states `wire_model`; the shared cases validate their data against it.
+7. Gate before adoption: pass. Lines 1 to 6 pass, so a client may adopt `wire_model` and the declared `none` from the release that carries this entry.
+
 ## 1.33.0
 
 Added:
