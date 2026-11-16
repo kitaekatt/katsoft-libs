@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
-## Unreleased
+## 1.2.0
 
 Added:
 
@@ -11,12 +11,12 @@ Added:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. `Endpoint` has a JSDoc block and is in `public-surface.json`; `test/surface.test.mjs` passes.
-2. Semver release with a changelog: pending. This entry; the version changes at release (a minor release).
+2. Semver release with a changelog: pass. Version 1.2.0 in `package.json` and `package-lock.json` (a minor release); this entry.
 3. Tests for each public function: pass. `test/cases.test.mjs` runs the new cases through `parseRegistry`.
 4. No client names, prompts or data: pass.
 5. Examples run without a client app: pass. No example changed.
 6. JSON Schema for each file format: pass. The schema states both endpoint shapes; the cases validate with ajv.
-7. Gate before adoption: pass for lines 1, 3 to 6; line 2 at release.
+7. Gate before adoption: pass. Lines 1 to 6 pass, so a client may adopt `Endpoint` and the connection keys from this version on.
 
 Fixed:
 
