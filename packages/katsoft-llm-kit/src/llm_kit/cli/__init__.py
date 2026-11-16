@@ -38,6 +38,8 @@ not delegate to them and they do not delegate to it.
 from __future__ import annotations
 
 import argparse
+import importlib
+import os
 import sys
 from typing import Optional, Sequence
 
@@ -158,15 +160,40 @@ def _run_group(group: str, rest: Sequence[str]) -> int:
     return run(list(rest))
 
 
+def _release_launcher_archive() -> None:
+    """Take a console-script launcher off ``sys.path`` so the process does not hold it open.
+
+    A console script (``llm-kit.exe`` on Windows) is a zip archive with a
+    ``__main__.py``, and the interpreter puts that file at ``sys.path[0]``. The
+    first ``importlib.metadata`` scan (``library_version``, the runtime identity
+    check, any distribution lookup) builds a path object for each ``sys.path``
+    entry and caches it for the life of the process; for a zip that object keeps
+    the archive open. Windows then refuses to delete or rename the launcher, so
+    ``uv sync`` cannot replace it while a long-running command such as
+    ``llm-kit relay serve`` is alive. The launcher's only job was to run its
+    ``__main__.py``, which has already imported this module, so nothing imports
+    from it afterwards. A directory first on ``sys.path`` (``python -m
+    llm_kit.cli``) is left alone.
+    """
+    if sys.path and isinstance(sys.path[0], str) and os.path.isfile(sys.path[0]):
+        del sys.path[0]
+        importlib.invalidate_caches()
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run the CLI and return its exit status.
 
-    With ``argv`` omitted (the console-script and launcher path) the plugin's
-    copy first moves into the plugin's provisioned venv, or exits 2 under a
+    With ``argv`` omitted (the console-script and launcher path) the launcher
+    archive first leaves ``sys.path`` (``_release_launcher_archive``), then the
+    plugin's copy moves into the plugin's provisioned venv, or exits 2 under a
     redirected data root whose venv is missing. The installed package stays in
     the environment it was started in: it has no plugin venv to move into.
-    An explicit ``argv`` is a library call and stays in the caller's interpreter.
+    An explicit ``argv`` is a library call and stays in the caller's interpreter
+    and keeps its ``sys.path``.
     """
+    if argv is None:
+        # Before the first importlib.metadata scan: _runtime.mode() makes one.
+        _release_launcher_archive()
     if argv is None and _runtime.mode() == "legacy":
         # reexec_under_plugin_venv re-executes ``[target, *sys.argv]`` and
         # treats argv[0] as a script path, but argv[0] here is a console-script
