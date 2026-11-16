@@ -2,19 +2,34 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "llm-kit.project-models/v1",
   "title": "llm-kit project model file, version 1",
-  "description": "The tracked project model file (default .llm-kit/models.yaml) after YAML parsing. Written in llm-scripting-kit.json-schema-subset/v1. Reader rules this subset cannot state: text values have no leading or trailing whitespace; catalog ids are unique; an efforts list has no repeats; a selection names a catalog id; a selection effort is in the row's efforts when the row declares them, and is null when the row declares an empty list; an integer is in -(2**53 - 1) to 2**53 - 1; version and max_output_tokens are integers, not decimals such as 1.0. Contract and shared cases: docs/reference/llm-kit-formats.md.",
+  "description": "The tracked project model file (default .llm-kit/models.yaml) after YAML parsing. Written in llm-scripting-kit.json-schema-subset/v1. Reader rules this subset cannot state: text values have no leading or trailing whitespace; catalog ids are unique; an efforts list and a traits list have no repeats; a selection names a catalog id; a selection effort is in the row's efforts when the row declares them, and is null when the row declares an empty list; a selection request names a key of requests; a selection with an effort names no request that sets reasoning_budget; each endpoints key is the endpoint of a catalog row; a row's request_defaults does not set a typed setting both as a key and in extras (temperature, top_p); a request profile's extras holds no reserved key (model, messages, stream, api_key, reasoning_effort, reasoning, temperature, top_p, max_tokens, max_completion_tokens, chat_template_kwargs.reasoning_effort); an integer is in -(2**53 - 1) to 2**53 - 1; version, max_output_tokens and reasoning_budget are integers, not decimals such as 1.0. Contract and shared cases: docs/reference/llm-kit-formats.md.",
   "type": "object",
   "properties": {
     "version": {"type": "integer", "const": 1},
+    "endpoints": {"type": "object", "additionalProperties": {"$ref": "#/$defs/endpoint"}},
     "catalog": {"type": "array", "items": {"$ref": "#/$defs/row"}},
+    "requests": {"type": "object", "additionalProperties": {"$ref": "#/$defs/request"}},
     "selections": {"type": "object", "additionalProperties": {"$ref": "#/$defs/selection"}}
   },
   "required": ["version"],
   "additionalProperties": false,
   "$defs": {
     "text": {"type": "string", "minLength": 1},
+    "count": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "temperature": {"description": "Sampling temperature, 0 or more.", "type": "number", "minimum": 0},
+    "top_p": {"description": "Nucleus sampling share, 0 to 1.", "type": "number", "minimum": 0, "maximum": 1},
+    "extras": {"description": "Wire fields of the endpoint, sent as given.", "type": "object", "additionalProperties": {"$ref": "#/$defs/json"}},
+    "endpoint": {
+      "description": "How this project's calls reach an endpoint that a catalog row names. effort_style places the effort on the wire and wins over the machine's endpoint registry.",
+      "type": "object",
+      "properties": {
+        "effort_style": {"enum": ["top-level", "ninfer", "chat_template_kwargs", "reasoning-object", "unsupported"]}
+      },
+      "required": ["effort_style"],
+      "additionalProperties": false
+    },
     "row": {
-      "description": "One catalog row. Omitted efforts: the row does not narrow the effort menu. efforts []: the row has no effort.",
+      "description": "One catalog row. Omitted efforts: the row does not narrow the effort menu. efforts []: the row has no effort. traits are the consumer's labels for the row; no reader puts them in a request.",
       "type": "object",
       "properties": {
         "id": {"$ref": "#/$defs/text"},
@@ -22,11 +37,16 @@
         "endpoint": {"$ref": "#/$defs/text"},
         "model": {"$ref": "#/$defs/text"},
         "efforts": {"type": "array", "items": {"$ref": "#/$defs/text"}},
-        "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "max_output_tokens": {"$ref": "#/$defs/count"},
+        "traits": {"type": "array", "items": {"$ref": "#/$defs/text"}},
         "request_defaults": {
+          "description": "The lowest layer of every request of this row. The row's own max_output_tokens is its output cap default.",
           "type": "object",
           "properties": {
-            "extras": {"type": "object", "additionalProperties": {"$ref": "#/$defs/json"}}
+            "temperature": {"$ref": "#/$defs/temperature"},
+            "top_p": {"$ref": "#/$defs/top_p"},
+            "reasoning_budget": {"$ref": "#/$defs/count"},
+            "extras": {"$ref": "#/$defs/extras"}
           },
           "additionalProperties": false
         }
@@ -34,12 +54,25 @@
       "required": ["id", "label", "endpoint", "model"],
       "additionalProperties": false
     },
+    "request": {
+      "description": "A named set of request settings that selections point at. It sits above the row's request_defaults and below the call.",
+      "type": "object",
+      "properties": {
+        "temperature": {"$ref": "#/$defs/temperature"},
+        "top_p": {"$ref": "#/$defs/top_p"},
+        "max_output_tokens": {"$ref": "#/$defs/count"},
+        "reasoning_budget": {"$ref": "#/$defs/count"},
+        "extras": {"$ref": "#/$defs/extras"}
+      },
+      "additionalProperties": false
+    },
     "selection": {
-      "description": "A selection key's model (a catalog id) and effort. An omitted effort and a null effort mean the same: no effort.",
+      "description": "A selection key's model (a catalog id), effort and request profile. An omitted effort and a null effort mean the same: no effort. An omitted request means no request profile.",
       "type": "object",
       "properties": {
         "model": {"$ref": "#/$defs/text"},
-        "effort": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/text"}]}
+        "effort": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/text"}]},
+        "request": {"$ref": "#/$defs/text"}
       },
       "required": ["model"],
       "additionalProperties": false

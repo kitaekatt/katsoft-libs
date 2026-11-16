@@ -14,8 +14,10 @@
  *   read failure). The original error is in `cause`.
  * - `unknown-selection`: {@link select} was asked for a key that no layer names.
  * - `slot`: {@link renderPrompt} was given values that do not match the slots.
+ * - `wire`: {@link chatFields} cannot put a resolved request on the wire (an effort or a
+ *   reasoning budget the effort style cannot carry, or an extras key it would write twice).
  */
-export type LlmKitConfigErrorCode = "invalid" | "missing" | "io" | "unknown-selection" | "slot";
+export type LlmKitConfigErrorCode = "invalid" | "missing" | "io" | "unknown-selection" | "slot" | "wire";
 
 /**
  * A refusal from this package. Every function fails on the first problem it

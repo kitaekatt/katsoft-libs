@@ -21,13 +21,29 @@ import { applyOverlay, loadOverlay, loadRegistry, select } from "@katsoft/llm-ki
 
 const registry = applyOverlay(loadRegistry(".llm-kit/models.yaml"), loadOverlay("config/staging.models.yaml"));
 const { row, effort, source } = select(registry, "summary.write");
-// row: {id, label, endpoint, model, efforts?, max_output_tokens?, request_defaults?}
+// row: {id, label, endpoint, model, efforts?, max_output_tokens?, traits?, request_defaults?}
 ```
 
 - `parseRegistry(input, {source})` and `loadRegistry(path)` read and validate the tracked file. The result is a frozen `Registry`: `document` (the normalized file) and `resolved` (each key's `effective` and `default` selection and its `source`).
 - `parseOverlay(input, {source})` and `loadOverlay(path)` read an overlay and check its structure.
 - `applyOverlay(registry, ...overlays)` checks each overlay against the catalog and applies the overlays in order. Per key, the last layer that names the key replaces the whole selection. An entry equal to the tracked entry is not an override. A key that only an overlay names has no default.
 - `select(registry, key)` returns `{key, row, effort, source}`. It throws `unknown-selection` when no layer names the key. `findSelection(registry, key)` returns `undefined` in that case, and only in that case.
+
+## Requests
+
+A selection can describe the whole request: the row's defaults, a named request profile (`requests`) that the selection's `request` names, and the call, in that order. `endpoints` in the file says where an endpoint takes the effort. `traits` are your labels for a row; they are never sent.
+
+```js
+import { chatFields, resolveRequest } from "@katsoft/llm-kit-config";
+
+const request = resolveRequest(registry, "summary.write", { max_output_tokens: 300 });
+// {row, endpoint, model, effort, effort_style, temperature, top_p, max_output_tokens, reasoning_budget, extras, traits}
+const body = { model: request.model, messages, ...chatFields(request, { effortStyle: "top-level" }) };
+```
+
+- `resolveRequest(registry, key, call)` layers the settings. Per setting the highest layer wins; `extras` merge per key. `effort` and `reasoning_budget` are one reasoning control: the highest layer that sets either wins. A call `effort: null` sends no reasoning control.
+- `chatFields(request, {effortStyle})` returns the OpenAI-compatible body fields: `max_tokens`, `temperature`, `top_p`, the effort in its style, the budget and the extras. `effortStyle` is used only when the file declares no style for the endpoint. It throws `wire` when the style cannot carry the effort or the budget.
+- The Python reader resolves the same request and its protocol 2 call sends the same fields; the shared cases are `tests/formats/project-models/requests.json`.
 
 The package does not know environment names, endpoints or credentials. The caller selects which overlay files to apply and maps `endpoint` to a provider. The package does not bind endpoints or check efforts against a provider's menu. The Python reader calls these checks "binding".
 
@@ -57,6 +73,7 @@ Every function stops at the first problem and throws `LlmKitConfigError`. Nothin
 | `io` | The file exists but cannot be read. `cause` holds the system error. |
 | `unknown-selection` | `select` got a key that no layer names. |
 | `slot` | `renderPrompt` got values that do not match the slots. `where` is the slot name, or `suffix`. |
+| `wire` | `chatFields` cannot put the request on the wire. `where` is `effort`, `reasoning_budget` or `extras.<key>`. |
 
 `source` is the file path, or the `source` option you gave. A wrong argument type is a `TypeError`.
 

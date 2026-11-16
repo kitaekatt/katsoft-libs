@@ -28,6 +28,9 @@ probing a provider or reading any user cache:
   key, ``{effective, default, source}`` (``source`` is ``default`` or
   ``override``); ``local`` names that file. Read ``resolved_selections`` for
   what a call should use.
+- ``traits`` (the row's consumer labels, never sent) and ``request_defaults`` are the
+  row's, present only when the row declares them. An effort style the file's
+  ``endpoints`` declares wins over the registry's in ``effort_delivery``.
 - ``max_output_tokens`` is the row's declared output cap, present only when the row
   declares one. It is the cap a protocol 2 call to a transport row carries when the
   request names no ``max_tokens``; a harness row (claude, codex) may declare it, and a
@@ -145,7 +148,7 @@ def build_catalog(
     is optional: without it a claude or codex row's cost class is ``null`` instead
     of a guess.
     """
-    endpoints = _Endpoints(project_root)
+    endpoints = _Endpoints.for_document(project_root, project.document)
     notes: list[str] = list(endpoints.notes())
     rows: list[dict] = []
     for row in project.document["catalog"]:
@@ -200,6 +203,8 @@ def build_catalog(
                     f"{row['id']}: max_output_tokens is declared but {info.harness} accepts no output "
                     "cap, so it is not applied; the harness keeps its native behavior"
                 )
+        if "traits" in row:
+            item["traits"] = list(row["traits"])
         if "request_defaults" in row:
             item["request_defaults"] = row["request_defaults"]
         rows.append(item)

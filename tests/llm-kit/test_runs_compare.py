@@ -563,3 +563,19 @@ def test_the_public_surface_lists_the_compare_names():
         value = getattr(cmp, name)
         if callable(value):
             assert value.__doc__ and len(value.__doc__.strip()) > 40, name
+
+
+def test_a_candidate_carries_the_request_settings_of_its_selection_in_the_reuse_key(cli_project):
+    """The temperature and budget the call sends are part of the record's request, so a change is a new key."""
+    models = {**_MODELS, "endpoints": {"openrouter": {"effort_style": "reasoning-object"}},
+              "catalog": [{**_MODELS["catalog"][0], "traits": ["label_only"]}, *_MODELS["catalog"][1:]],
+              "requests": {"cold": {"temperature": 0, "reasoning_budget": 300, "max_output_tokens": 900}},
+              "selections": {**_MODELS["selections"], "a": {"model": "flash", "request": "cold"}}}
+    pm.write_project_models(models, project_root=str(cli_project.root))
+    (a,) = _runs_compare.candidates(cli_project.root, file=None, selections=["a"], pricing={}, max_output_tokens=None)
+    assert a.max_output_tokens == 900 and a.effort is None
+    assert a.extras == {"temperature": 0, "reasoning": {"max_tokens": 300}}  # no trait reaches the request
+    models["requests"]["cold"]["temperature"] = 0.5
+    pm.write_project_models(models, project_root=str(cli_project.root))
+    (warm,) = _runs_compare.candidates(cli_project.root, file=None, selections=["a"], pricing={}, max_output_tokens=None)
+    assert warm.extras["temperature"] == 0.5

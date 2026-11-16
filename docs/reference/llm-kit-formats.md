@@ -4,7 +4,7 @@ Some llm-kit files have readers in more than one language. Each of these formats
 
 | Format id | Schema (in `llm_kit/schema/formats/`) | Python reader | Shared cases |
 |---|---|---|---|
-| `llm-kit.project-models/v1` | `project-models.v1.schema.json` | `llm_kit.registry.project_models` | `tests/formats/project-models/cases.json` |
+| `llm-kit.project-models/v1` | `project-models.v1.schema.json` | `llm_kit.registry.project_models`, `llm_kit.registry.request_settings` | `tests/formats/project-models/cases.json`, `tests/formats/project-models/requests.json` |
 | `llm-kit.project-models-local/v1` | `project-models-local.v1.schema.json` | `llm_kit.registry.project_models` | `tests/formats/project-models/cases.json` |
 | `llm-kit.prompt-file/v1` | `prompt-file.v1.schema.json` | `llm_kit.graph.prompt` | `tests/formats/prompt-file/cases.json` |
 | `llm-kit.run-record/v1` | `run-record.v1.schema.json` | `llm_kit.runs.record` | `tests/formats/run-record/cases.json` (`records`) |
@@ -46,16 +46,20 @@ The tracked project model file, by default `.llm-kit/models.yaml`. The module do
 | Key | Rule |
 |---|---|
 | `version` | Required. The integer 1. |
+| `endpoints` | Optional mapping. A key is the endpoint of a catalog row (text with no leading or trailing whitespace). A value is `{effort_style}`, required, one of `top-level`, `ninfer`, `chat_template_kwargs`, `reasoning-object`, `unsupported`. See "Request settings". |
 | `catalog` | Optional list of rows, default empty. Order is kept. |
 | row `id`, `label`, `endpoint`, `model` | Required text: not empty, no leading or trailing whitespace. Ids are unique. |
 | row `efforts` | Optional list of non-empty text with no repeats. Omitted: the row does not narrow the effort menu. `[]`: the row has no effort. |
-| row `max_output_tokens` | Optional integer from 1 to 2**53 - 1. |
-| row `request_defaults` | Optional mapping that holds only `extras`, a mapping of JSON values. |
-| `selections` | Optional mapping, default empty. A key is text with no leading or trailing whitespace. A value is `{model, effort}`. |
+| row `max_output_tokens` | Optional integer from 1 to 2**53 - 1. The row's default output cap. |
+| row `traits` | Optional list of non-empty text with no repeats: the consumer's labels for the row. No reader puts a trait in a request. |
+| row `request_defaults` | Optional mapping: `temperature`, `top_p`, `reasoning_budget` (typed settings, see "Request settings") and `extras`, a mapping of JSON values. A typed default may not also be in `extras` (`temperature`, `top_p`; `reasoning` beside `reasoning_budget`). |
+| `requests` | Optional mapping of request profiles. A key is text with no leading or trailing whitespace. A profile holds any of `temperature`, `top_p`, `max_output_tokens`, `reasoning_budget` and `extras`; its `extras` hold no reserved name (see "Request settings"). |
+| `selections` | Optional mapping, default empty. A key is text with no leading or trailing whitespace. A value is `{model, effort, request}`. |
 | selection `model` | Required. A catalog id. |
 | selection `effort` | Optional. Omitted and null mean the same: no effort. When the row declares `efforts`, the effort is one of them; when the row declares `[]`, the effort is null. |
+| selection `request` | Optional. A key of `requests` (null is refused; omit the key for no profile). A selection with an effort names no request that sets `reasoning_budget`. |
 
-No other keys are allowed at any level.
+No other keys are allowed at any level. Checks run in this order, so the first problem is the same in every reader: `version`, the structure of `endpoints`, `catalog`, that each `endpoints` key is a row's endpoint, `requests`, `selections`.
 
 ### Portable validation and binding
 
@@ -63,13 +67,14 @@ Validation has two parts.
 
 - Portable validation checks the bytes, the YAML, the structure and the references above. It needs only the file. Python: `validate_portable_document(data)`. Every reader does this part.
 - Binding needs the machine's endpoint registry. It checks that each `endpoint` resolves, that each effort is in the library effort menu for that endpoint and model, and that `extras` has no reserved key (`model`, `messages`, `stream`, `api_key`, `reasoning_effort`, and `reasoning` on a `reasoning-object` endpoint). Python: `validate_document`, and every read and write. A row that declares no `efforts` accepts any non-empty effort in portable validation; binding checks it against the menu.
+- An effort style that the file's `endpoints` declares wins over the registry's style of that endpoint for this project: the menu, the reserved `reasoning` extra and the wire all use it. A model with no measured profile then takes that style's menu (`reasoning-object` lists `none`). Binding refuses a style on a harness endpoint (`endpoints['x'].effort_style`).
 - An `endpoint` is the consumer's name; no reader refuses a file because the machine's registry does not know it. Binding loads a row whose endpoint resolves to no registry endpoint as unbound: the row keeps the checks that need no endpoint (its declared `efforts`, and the reserved extras other than `reasoning`), and the result names it (Python: `ProjectModels.unbound`, `Validation.unbound`). A call or a plan that resolves to an unbound row refuses at that point and names the row and the endpoint. Case `endpoint-is-opaque-text`.
 
 Binding never accepts a file that portable validation refuses. When the file has no binding problem, full validation refuses it at the same path as portable validation.
 
 ### Result
 
-Portable validation returns the normalized document: `version` 1, `catalog` (each row with only the keys it declares), and `selections` with `effort` always present (null when omitted). Aliases are expanded.
+Portable validation returns the normalized document: `version` 1, `endpoints` and `requests` when the file has them (sorted by key), `catalog` (each row with only the keys it declares), and `selections` with `effort` always present (null when omitted) and `request` only when given. Aliases are expanded.
 
 ### Errors
 
@@ -79,7 +84,8 @@ A refusal has a code and a path. Every refusal of the file content has the code 
 - `document`: the top level is not a mapping, or has an unknown key.
 - `version`, `catalog`, `selections`.
 - `catalog[1]`, `catalog[1].id`, `catalog[1].efforts[0]`, `catalog[0].request_defaults.extras.a.b[2]`.
-- `selections['draft.write']`, `selections['draft.write'].model`, `selections['draft.write'].effort`. A selection key is shown in single quotes. The cases use only keys without quotes, backslashes or control characters; for other keys the quoting is the reader's own.
+- `endpoints['api']`, `endpoints['api'].effort_style`, `requests['p']`, `requests['p'].temperature`, `requests['p'].extras`, `catalog[0].traits[1]`, `catalog[0].request_defaults.extras`.
+- `selections['draft.write']`, `selections['draft.write'].model`, `selections['draft.write'].effort`, `selections['draft.write'].request`. A selection key is shown in single quotes. The cases use only keys without quotes, backslashes or control characters; for other keys the quoting is the reader's own.
 - `selections`: a key that is not a string.
 
 Python raises `ProjectModelsError` with `code` and `where` (the path).
@@ -90,7 +96,46 @@ The personal layer beside the tracked file, by default `.llm-kit/models.local.ya
 
 - It holds `version` (required, 1) and `selections` (optional). It holds no catalog.
 - Each selection is checked as a tracked selection, against the tracked catalog. Python: `validate_portable_local_document(data, tracked_document)`.
-- Resolution is per key and replaces the whole selection. A key in the local layer wins over the same key in the tracked file. A key that only the local layer names is an override with no default. A local entry equal to the tracked entry is no override (an omitted effort equals null). Python: `resolve_selections(defaults, overrides)` returns, for each key, `effective`, `default` (null for a local-only key) and `source` (`default` or `override`).
+- Each selection is checked as a tracked selection, and its `request` against the tracked `requests`.
+- Resolution is per key and replaces the whole selection, its `request` included: an override that changes only the model repeats the `request` (Python's `set_local_override` copies it by default). A key in the local layer wins over the same key in the tracked file. A key that only the local layer names is an override with no default. A local entry equal to the tracked entry is no override (an omitted effort equals null; the `request` must be equal too). Python: `resolve_selections(defaults, overrides)` returns, for each key, `effective`, `default` (null for a local-only key) and `source` (`default` or `override`).
+
+## Request settings
+
+A selection describes the whole request, so a client can build it from the file alone and a repeated request is the same request. The shared cases are `tests/formats/project-models/requests.json`. Python: `llm_kit.registry.request_settings.resolve_request(document, key, overrides=, call=)` and `request_for(document, selection, call=)`. TypeScript: `resolveRequest(registry, key, call)` and `chatFields(request, {effortStyle})`.
+
+### Typed settings
+
+| Setting | Rule |
+|---|---|
+| `temperature` | A number, 0 or more. |
+| `top_p` | A number from 0 to 1. |
+| `max_output_tokens` | An integer from 1 to 2**53 - 1 (`60.0` is refused). |
+| `reasoning_budget` | An integer from 1 to 2**53 - 1: reasoning tokens. Effort `none` turns reasoning off. |
+
+### Layers
+
+1. The row: its `request_defaults` and its own `max_output_tokens`. In the row's `extras`, `temperature`, `top_p` and `max_tokens` are the older spellings of the row's typed defaults: the reader moves them out of `extras` and checks them as settings when the request is resolved (a bad value is refused at `catalog[i].request_defaults.extras.<key>`). The row's typed `max_output_tokens` wins over `extras.max_tokens`.
+2. The selection: its `effort` and the profile its `request` names.
+3. The call: any of the profile keys, and `effort` (text or null). Only `effort` may be null. Paths of a call problem start with `call` (`call`, `call.temperature`, `call.extras`, `call.effort`). A call effort is held to the row's declared `efforts`.
+
+Per typed setting, the highest layer that sets it wins. `extras` merge per top-level key, row then profile then call; a nested object is replaced whole. Reasoning is one control with two forms, `effort` and `reasoning_budget`. The highest layer that sets either wins; one layer may not set both (the selection's effort and its profile's budget are one layer). A call that names `effort`, null included, decides the reasoning: `effort: null` sends no effort and no budget.
+
+The `extras` of a profile or a call may not hold `model`, `messages`, `stream`, `api_key`, `reasoning_effort`, `reasoning`, `temperature`, `top_p`, `max_tokens`, `max_completion_tokens` or `chat_template_kwargs.reasoning_effort` (path: the `extras` mapping, or its `chat_template_kwargs`).
+
+### The resolved request
+
+`{row, endpoint, model, effort, effort_style, temperature, top_p, max_output_tokens, reasoning_budget, extras, traits}`. Every key is present; an unset value is null, `extras` is `{}` and `traits` is `[]` when empty. `effort_style` is the style the file's `endpoints` declares for the row's endpoint, else null (the client uses its own: Python uses the endpoint registry). A key no layer names is refused with code `unknown-selection` at `selections['<key>']`.
+
+### The wire (OpenAI-compatible chat)
+
+The body fields of a resolved request, beside `model` and `messages`:
+
+- `max_tokens` (from `max_output_tokens`), `temperature`, `top_p`, when set; then every `extras` key. An extras key that repeats one of these is refused (`extras.<key>`).
+- The effort, by style: `top-level` sends `reasoning_effort`; `ninfer` the same with `high` sent as `xhigh`; `chat_template_kwargs` adds `reasoning_effort` to that object and keeps its other members; `reasoning-object` sends `reasoning: {effort}`, or `{enabled: false}` for `none`, and takes only `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. No style, or `unsupported`, refuses an effort (`effort`). Extras that already hold the effort's key refuse it (`extras.reasoning`, `extras.reasoning_effort`, `extras.chat_template_kwargs.reasoning_effort`).
+- A reasoning budget needs `reasoning-object` and sends `reasoning: {max_tokens}` (else refused at `reasoning_budget`).
+- `traits` are never sent.
+
+TypeScript `chatFields` returns these fields (code `wire` for a refusal). Python protocol 2 (`llm_kit.dispatch.invoke`) sends them for a transport row: its test sends each case and compares the recorded request. A harness row (claude, codex) refuses `temperature`, `top_p` and `reasoning_budget`, which it has no control for.
 
 ## llm-kit.prompt-file/v1
 
@@ -191,5 +236,6 @@ Python: `llm_kit.runs.compare.read_cases(path_or_bytes)`.
 ## Change a format
 
 - A change that a v1 reader would read in a different way is a new format version: a new id, a new schema file and new cases. Keep the v1 files.
+- An optional key that a v1 reader refuses as unknown can be added to v1: every file without it reads as before, and an older reader refuses a file that uses it, so no reader misreads one. The request settings (`endpoints`, `requests`, row `traits`, typed `request_defaults`, selection `request`) were added this way.
 - Before you change a reader rule, add the case that shows it.
 - Every Python writer of a format checks its output against the schema in its tests (`tests/llm-kit/test_formats.py`, `tests/llm-kit/test_project_models*.py`).

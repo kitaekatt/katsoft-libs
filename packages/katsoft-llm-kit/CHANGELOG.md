@@ -2,6 +2,35 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## Unreleased
+
+The project model file can describe the whole request of a selection, so a request can be rebuilt, compared and cached from data. The format stays `llm-kit.project-models/v1`: every key below is optional, a file without them reads as before, and an older reader refuses a file that uses them (unknown keys), so none misreads one.
+
+Added:
+
+- Format keys: `endpoints` (`{<endpoint>: {effort_style}}`, which wins over the endpoint registry's style for this project's calls: menu, binding and wire), `requests` (named request profiles: `temperature`, `top_p`, `max_output_tokens`, `reasoning_budget`, `extras`), row `traits` (the consumer's labels; never sent), typed row `request_defaults` (`temperature`, `top_p`, `reasoning_budget`) and selection `request` (also in the personal layer). Schemas, the contract (`docs/reference/llm-kit-formats.md`, "Request settings") and 25 new shared cases in `tests/formats/project-models/cases.json`.
+- `llm_kit.registry.request_settings`: `resolve_request(document, key, overrides=, call=)`, `request_for(document, selection, call=)` and `REQUEST_KEYS`. Layers: row < selection (effort, request profile) < call; `effort` and `reasoning_budget` are one reasoning control. Shared cases in `tests/formats/project-models/requests.json` (30), which the TypeScript reader runs too.
+- `llm_kit.registry.project_models`: `check_setting`, `validate_profile`, `endpoint_styles`, `REQUEST_SETTINGS`, `PROFILE_RESERVED_EXTRAS`, `LEGACY_ROW_EXTRAS`, `CODE_UNKNOWN_SELECTION`, `KEEP_REQUEST`; `set_local_override(..., request=KEEP_REQUEST)` keeps the tracked selection's request profile when it overrides only the model.
+
+Changed:
+
+- Protocol 2 (`llm-kit completion complete`) sends the resolved request: `temperature`, `top_p`, the output cap and a reasoning budget (`reasoning: {max_tokens}`, `reasoning-object` style only) from the file; the project file's effort style places the effort. A harness row refuses `temperature`, `top_p` and `reasoning_budget` (kind `configuration`). A request whose fields are all from v1 files sends the same body as before.
+- In a row's extras, `temperature` and `top_p` are now read as the row's typed defaults, as `max_tokens` already was; the body on the wire is the same. On a harness row they are now refused, where before the adapter dropped them.
+- `llm-kit runs compare` records the resolved settings in each candidate's `request.extras`, so a changed temperature or budget is a new reuse key; traits are not in it.
+- `llm-kit models catalog` shows row `traits` and the project file's effort style in `effort_delivery`.
+
+Migration: a row that kept consumer flags in `request_defaults.extras` (sent as body fields) moves them to `traits`.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. Each new name has a docstring and is in `public-surface.json`; `test_formats.py` checks the list.
+2. Semver release with a changelog: this entry; the version is set at release.
+3. Tests for each public function: pass. `test_formats.py` (both shared case files), `test_request_settings.py` (protocol 2 sends each case's wire fields through the real OpenAI-compatible backend; harness refusal; binding with the project style; catalog; the local-override writer), `test_runs_compare.py` (the candidate's settings are in the reuse key).
+4. No client names, prompts or data: pass.
+5. Examples run without a client app: pass. `examples/validate_and_render.py` resolves the request of each selection.
+6. JSON Schema for each file format: pass. Both schemas gain the new keys; every valid case conforms.
+7. Gate before adoption: recorded in this entry.
+
 ## 1.30.0
 
 A project model file whose rows name an endpoint this machine does not know now loads; a call to such a row refuses at the call. The endpoint is the consumer's name (the TypeScript reader `@katsoft/llm-kit-config` never resolved it), so a client may keep rows for its own endpoints (for example picture or video providers) in the same file.

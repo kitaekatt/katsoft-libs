@@ -86,9 +86,10 @@ from llm_kit.completion.invoke_protocol import (
 from llm_kit.completion.requirements import arm_call
 from llm_kit.completion.types import BackendOptions, LLMResponse
 from llm_kit.completion.workspace_manifest import FileRecord, check_expected, diff, scan
-from llm_kit.registry import project_models
+from llm_kit.registry import project_models, request_settings
 from llm_kit.registry import consent as consent_store
 from llm_kit.registry.cost import COST_CLASSES, HarnessAuth, classify
+from llm_kit.registry.effort import REASONING_KEY, REASONING_OBJECT, plan_effort
 from llm_kit.registry.model_endpoints import EndpointRegistryError
 from llm_kit.registry.models import (
     EndpointResolveError,
@@ -221,6 +222,47 @@ def _model_verified(requested: str, reported: Optional[str]) -> bool:
     return claude_cli_alias(reported) == requested
 
 
+def _machine_style(backend: Any) -> Optional[str]:
+    """The effort style the machine's endpoint registry resolves for ``backend`` (None: unknown or none)."""
+    profile = getattr(backend, "endpoint_profile", None)
+    return profile().effort.style if callable(profile) else None
+
+
+def _with_reasoning_budget(options: BackendOptions, wanted: Mapping[str, Any], style: Optional[str], row_id: str) -> BackendOptions:
+    """``options`` with the resolved reasoning budget in the ``reasoning`` object; only that style carries one."""
+    if style != REASONING_OBJECT:
+        raise InvokeRefusal(
+            KIND_EFFORT,
+            f"endpoint {wanted['endpoint']!r} (row {row_id!r}) takes effort style {style!r}, which carries no "
+            f"reasoning budget; declare endpoints.{wanted['endpoint']}.effort_style reasoning-object in the project "
+            "model file or use an effort; nothing was dispatched",
+        )
+    if REASONING_KEY in options.extras:
+        raise InvokeRefusal(
+            KIND_CONFIGURATION,
+            f"row {row_id!r}: extras already hold {REASONING_KEY!r}, so the reasoning_budget cannot be placed; "
+            "nothing was dispatched",
+        )
+    return replace(options, extras={**dict(options.extras), REASONING_KEY: {"max_tokens": wanted["reasoning_budget"]}})
+
+
+def _place_project_effort(
+    options: BackendOptions, effort: Optional[str], style: str, endpoint: str
+) -> "tuple[BackendOptions, Optional[str]]":
+    """``(options, sent)``: the effort placed in the extras in the project file's ``style``."""
+    try:
+        plan = plan_effort(options.extras, effort, style)
+    except ValueError as exc:
+        raise InvokeRefusal(KIND_EFFORT, f"{exc}; nothing was dispatched") from None
+    if effort is not None and not plan.effort_delivered:
+        raise InvokeRefusal(
+            KIND_EFFORT,
+            f"endpoint {endpoint!r} cannot put effort {effort!r} on the wire ({plan.outcome}, effort style "
+            f"{style!r} from the project model file); nothing was dispatched",
+        )
+    return replace(options, extras=plan.extra_body, effort=None), plan.applied
+
+
 def invoke(
     request: InvokeRequest,
     *,
@@ -275,7 +317,7 @@ def invoke(
     if row is None:
         known = ", ".join(r["id"] for r in document["catalog"]) or "<none>"
         raise InvokeRefusal(KIND_SELECTION, f"model {row_id!r} is not a catalogue id in {stored.path} (known: {known})")
-    endpoints = project_models._Endpoints(str(root))  # noqa: SLF001 -- the registry lookup validation used
+    endpoints = project_models._Endpoints.for_document(str(root), document)  # noqa: SLF001 -- validation's lookup
     info = endpoints.info(row["endpoint"])
     if info is None:
         raise InvokeRefusal(
@@ -312,13 +354,26 @@ def invoke(
                 "nothing was dispatched",
             )
 
+    # The request the file describes for this call: row < selection (effort, request profile) < call.
+    call_layer: Dict[str, Any] = {}
+    if request.effort_given:
+        call_layer["effort"] = request.effort
+    if request.max_tokens is not None:
+        call_layer["max_output_tokens"] = request.max_tokens
+    try:
+        wanted = request_settings.request_for(
+            document, chosen if request.selection is not None else {"model": row_id, "effort": None}, call=call_layer
+        )
+    except project_models.ProjectModelsError as exc:
+        raise InvokeRefusal(KIND_CONFIGURATION, f"{exc.code}: {exc}") from None
+
     # 4. backend and mode -----------------------------------------------------
     try:
         selection = backend_factory(row["endpoint"], model=row["model"], project_root=str(root))
     except (EndpointResolveError, ModelResolveError, EndpointRegistryError) as exc:
         raise InvokeRefusal(KIND_CONFIGURATION, str(exc)) from None
     backend = selection.backend
-    row_extras = dict((row.get("request_defaults") or {}).get("extras") or {})
+    row_extras = dict(wanted["extras"])
     row_codex_config = parse_codex_config(row_extras.get("codex_config"), what="request_defaults.extras.codex_config")
     effective_codex_config = {**row_codex_config, **dict(request.codex_config)}
     backend_name = getattr(backend, "name", None)
@@ -353,22 +408,23 @@ def invoke(
 
     # 5. options, working directory, contract, effort delivery -----------------
     adapter_extras = {key: value for key, value in row_extras.items() if key != "codex_config"}
-    # The output cap of a transport call: the request's max_tokens, else the row's typed
-    # max_output_tokens, else the row's request_defaults.extras.max_tokens, else none (the
-    # provider's own limit applies). The extras key is taken out of the extras either way: left
-    # in, it would ride as a top-level body field and override every higher step on the wire.
-    # A harness (claude, codex) takes no cap, so its extras and options are left as they were.
+    # The output cap of a transport call is the resolved max_output_tokens: the request's
+    # max_tokens, else the request profile's, else the row's typed max_output_tokens, else the
+    # row's request_defaults.extras.max_tokens (request_settings reads that older spelling as the
+    # row default and takes it out of the extras), else none: the provider's own limit applies.
+    # A harness (claude, codex) takes no cap, so only an explicit request max_tokens is passed on,
+    # and a setting it has no control for is refused rather than dropped.
     transport_cap = record is None or "max_tokens" in record.params
-    row_cap: Optional[int] = None
-    if transport_cap:
-        extras_cap = adapter_extras.pop("max_tokens", None)
-        if extras_cap is not None and (isinstance(extras_cap, bool) or not isinstance(extras_cap, int) or extras_cap < 1):
-            raise InvokeRefusal(
-                KIND_CONFIGURATION,
-                f"row {row_id!r} (model {row['model']!r}) request_defaults.extras.max_tokens must be a "
-                f"positive integer, not {extras_cap!r}",
-            )
-        row_cap = row.get("max_output_tokens", extras_cap)
+    if not transport_cap:
+        for name in ("temperature", "top_p", "reasoning_budget"):
+            if wanted[name] is not None:
+                raise InvokeRefusal(
+                    KIND_CONFIGURATION,
+                    f"row {row_id!r} runs on {backend_name or 'an adapter'}, which has no {name} control; "
+                    f"remove {name} from the request settings of this selection; nothing was dispatched",
+                )
+    if transport_cap and wanted["top_p"] is not None:
+        adapter_extras["top_p"] = wanted["top_p"]
     if effective_codex_config:
         adapter_extras["__llm_kit_codex_config"] = effective_codex_config
     options = BackendOptions(
@@ -376,11 +432,12 @@ def invoke(
         extras=adapter_extras,
         output_contract=request.output_contract,
         log_prefix=f"[{selection.endpoint}]",
+        temperature=wanted["temperature"],
     )
-    if request.max_tokens is not None:
+    if not transport_cap and request.max_tokens is not None:
         options = replace(options, max_tokens=request.max_tokens)
-    elif row_cap is not None:
-        options = replace(options, max_tokens=row_cap)
+    elif transport_cap and wanted["max_output_tokens"] is not None:
+        options = replace(options, max_tokens=wanted["max_output_tokens"])
     if request.timeout_s is not None:
         options = replace(options, timeout_s=request.timeout_s)
     if request.max_retries is not None:
@@ -399,8 +456,15 @@ def invoke(
         except OutputContractUnsatisfiable as exc:
             raise InvokeRefusal(KIND_CONTRACT, str(exc)) from None
     sent_effort: Optional[str] = requested_effort
+    project_style = wanted["effort_style"] if transport_cap else None
+    if transport_cap and wanted["reasoning_budget"] is not None:
+        options = _with_reasoning_budget(options, wanted, project_style or _machine_style(backend), row_id)
     effort_plan = getattr(backend, "effort_plan", None)
-    if callable(effort_plan):
+    if project_style is not None:
+        # The project file places the effort for this endpoint: the extras leave here with the
+        # effort already in them, and the backend adds none of its own.
+        options, sent_effort = _place_project_effort(options, requested_effort, project_style, row["endpoint"])
+    elif callable(effort_plan):
         plan = effort_plan(options)
         sent_effort = plan.applied
         if requested_effort is not None and not plan.effort_delivered:

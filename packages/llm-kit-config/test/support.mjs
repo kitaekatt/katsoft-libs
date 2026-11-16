@@ -16,6 +16,7 @@ export function readJson(path) {
 
 export const REGISTRY_CASES = readJson(join(FORMATS, "project-models", "cases.json"));
 export const PROMPT_CASES = readJson(join(FORMATS, "prompt-file", "cases.json"));
+export const REQUEST_CASES = readJson(join(FORMATS, "project-models", "requests.json"));
 
 /** The bytes a case input names: lines (LF-joined, final LF), text (UTF-8) or base64. */
 export function inputBytes(spec) {

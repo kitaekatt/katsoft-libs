@@ -4,6 +4,8 @@ A project keeps one YAML file (default ``.llm-kit/models.yaml``, tracked in the
 project's own repository):
 
     version: 1
+    endpoints:                   # optional; how this project places an effort on a transport
+      openrouter: {effort_style: reasoning-object}   # a row's endpoint; wins over the registry
     catalog:                     # ordered; the order is the project's order
       - id: luna                 # opaque, unique, chosen by the project
         label: Luna              # presentation text
@@ -13,10 +15,23 @@ project's own repository):
                                  # (efforts: [] declares NO effort for the row)
         max_output_tokens: 65536 # optional; positive integer, the output cap this model's
                                  # calls carry when the call names none (see below)
-        request_defaults:        # optional; only ``extras`` (a JSON mapping)
+      - id: flash
+        label: Flash
+        endpoint: openrouter
+        model: vendor/flash-1
+        traits: [long_drafts]    # optional; the consumer's labels, never sent
+        request_defaults:        # optional; typed defaults and wire extras (a JSON mapping)
+          temperature: 0.7
           extras: {provider: {sort: latency}}
-    selections:                  # opaque consumer keys -> {model, effort}
+    requests:                    # optional; named request profiles a selection points at
+      classify: {temperature: 0, max_output_tokens: 60}
+    selections:                  # opaque consumer keys -> {model, effort, request}
       draft.generate.primary: {model: luna, effort: high}
+      draft.label: {model: flash, effort: none, request: classify}
+
+The request settings (``temperature``, ``top_p``, ``max_output_tokens``,
+``reasoning_budget``, ``extras``) layer row < selection < call; the resolved
+request and its rules are in :mod:`llm_kit.registry.request_settings`.
 
 The file holds no keys, key files, base URLs, consent or vendor capability
 claims: endpoints, credentials and billing resolve through the endpoint
@@ -45,9 +60,13 @@ its own. Parsing, strict validation, canonical rendering, hashing and the
 atomic save all live here; the CLI (``llm-kit models project``) is a thin shell.
 
 Canonical form (what ``write`` stores and ``render_yaml`` returns): UTF-8, LF,
-two-space indentation, one final newline, catalogue order preserved, row fields
-in the fixed order id/label/endpoint/model/efforts/max_output_tokens/request_defaults, every
-free-form mapping (``selections``, ``extras``) sorted by key. Comments are not
+two-space indentation, one final newline, catalogue order preserved, top-level
+keys in the order version/endpoints/catalog/requests/selections (endpoints and
+requests only when the file has them), row fields in the fixed order
+id/label/endpoint/model/efforts/max_output_tokens/traits/request_defaults, typed
+settings in the order temperature/top_p/max_output_tokens/reasoning_budget/extras,
+every free-form mapping (``endpoints``, ``requests``, ``selections``, ``extras``)
+sorted by key. Comments are not
 round-tripped. The digest of a file is the SHA-256 of its bytes as stored.
 
 A second, personal layer sits beside the file: ``<file-stem>.local.yaml``
@@ -93,11 +112,11 @@ import os
 import re
 import stat
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Optional
 
-from .effort import EFFORT_KEY, REASONING_KEY, REASONING_OBJECT, TEMPLATE_KEY, style_effort_menu
+from .effort import EFFORT_KEY, EFFORT_STYLES, REASONING_KEY, REASONING_OBJECT, TEMPLATE_KEY, style_effort_menu
 from .model_profiles import (
     MENU_ENDPOINT_STYLE,
     MENU_EXACT_MODEL,
@@ -109,6 +128,8 @@ from .model_profiles import (
 __all__ = [
     "SCHEMA", "FILE_VERSION", "DEFAULT_FILE",
     "CODE_INVALID", "CODE_STALE", "CODE_PATH", "CODE_SYMLINK", "CODE_MISSING", "CODE_DEPENDENCY",
+    "CODE_UNKNOWN_SELECTION", "REQUEST_SETTINGS", "PROFILE_RESERVED_EXTRAS", "LEGACY_ROW_EXTRAS",
+    "endpoint_styles", "check_setting", "validate_profile", "KEEP_REQUEST",
     "LOCAL_SUFFIX", "LAYER_TRACKED", "LAYER_LOCAL", "SOURCE_DEFAULT", "SOURCE_OVERRIDE",
     "ProjectModelsError", "EndpointInfo", "EffortMenuResolver",
     "library_effort_menu_with_source", "library_effort_menu",
@@ -140,6 +161,7 @@ CODE_PATH = "path"
 CODE_SYMLINK = "symlink"
 CODE_MISSING = "missing"
 CODE_DEPENDENCY = "dependency"
+CODE_UNKNOWN_SELECTION = "unknown-selection"
 
 #: The personal layer: ``<file-stem>.local.yaml`` beside the project file.
 LOCAL_SUFFIX = ".local.yaml"
@@ -150,12 +172,27 @@ LAYER_LOCAL = "local"
 SOURCE_DEFAULT = "default"
 SOURCE_OVERRIDE = "override"
 
-_TOP_KEYS = ("version", "catalog", "selections")
+_TOP_KEYS = ("version", "endpoints", "catalog", "requests", "selections")
 _LOCAL_TOP_KEYS = ("version", "selections")
-_ROW_KEYS = ("id", "label", "endpoint", "model", "efforts", "max_output_tokens", "request_defaults")
+_ROW_KEYS = ("id", "label", "endpoint", "model", "efforts", "max_output_tokens", "traits", "request_defaults")
 _ROW_REQUIRED = ("id", "label", "endpoint", "model")
-_SELECTION_KEYS = ("model", "effort")
-_DEFAULTS_KEYS = ("extras",)
+_SELECTION_KEYS = ("model", "effort", "request")
+_ENDPOINT_KEYS = ("effort_style",)
+#: The typed request settings, in canonical order. ``max_output_tokens`` and
+#: ``reasoning_budget`` are counts; ``temperature`` is 0 or more; ``top_p`` is 0 to 1.
+REQUEST_SETTINGS = ("temperature", "top_p", "max_output_tokens", "reasoning_budget")
+#: The keys of a row's ``request_defaults`` (its output cap default is the row's own ``max_output_tokens``).
+_DEFAULTS_KEYS = ("temperature", "top_p", "reasoning_budget", "extras")
+#: The keys of a named request profile (``requests``).
+_PROFILE_KEYS = REQUEST_SETTINGS + ("extras",)
+#: Extras names a request profile or a call may not hold: a typed setting or the
+#: effort owns them, or the call itself does. Row extras keep the older rules.
+PROFILE_RESERVED_EXTRAS = frozenset({
+    "model", "messages", "stream", "api_key", EFFORT_KEY, REASONING_KEY,
+    "temperature", "top_p", "max_tokens", "max_completion_tokens",
+})
+#: In a row's extras, these keys are the older spellings of the row's typed defaults.
+LEGACY_ROW_EXTRAS = (("temperature", "temperature"), ("top_p", "top_p"), ("max_tokens", "max_output_tokens"))
 # Extras a project default must not carry: the effort belongs to ``efforts`` and
 # selections (so the menu check cannot be bypassed), and these name what the
 # call itself owns.
@@ -172,7 +209,8 @@ class ProjectModelsError(ValueError):
     ``stale`` (``if_match`` does not match the stored file), ``path`` (the file
     escapes the project root), ``symlink`` (a path component is a symlink),
     ``missing`` (the file or root does not exist), ``dependency`` (PyYAML is
-    not installed).
+    not installed), ``unknown-selection`` (no layer names the selection key a
+    request was resolved for, :mod:`llm_kit.registry.request_settings`).
 
     ``where`` is the path of the first problem in the document, such as
     ``catalog[1].efforts[0]`` or ``selections['draft'].effort``; it is ``""``
@@ -263,13 +301,38 @@ def _route_of(base_url: Optional[str]) -> Optional[str]:
     return route_of_base_url(base_url)
 
 
-class _Endpoints:
-    """Registry lookups for one validation pass, loaded on first use."""
+def endpoint_styles(document: Mapping) -> "dict[str, str]":
+    """Endpoint name -> the effort style the project file declares for it (``endpoints``).
 
-    def __init__(self, project_root: Optional[str]) -> None:
+    ``document`` is a normalized project model document. A style declared here wins
+    over the machine's endpoint registry for this project's calls. Returns ``{}``
+    when the file declares none; raises nothing.
+    """
+    return {name: entry["effort_style"] for name, entry in (document.get("endpoints") or {}).items()}
+
+
+class _Endpoints:
+    """Registry lookups for one validation pass, loaded on first use.
+
+    ``styles`` (endpoint name -> effort style, see :func:`endpoint_styles`) replaces the
+    registry's effort style of a transport or wrapper endpoint; a harness keeps its own.
+    """
+
+    def __init__(self, project_root: Optional[str], styles: "Optional[Mapping[str, str]]" = None) -> None:
         self._project_root = project_root
         self._loaded: Optional["tuple[dict, Any]"] = None
         self._seen: dict[str, Optional[EndpointInfo]] = {}
+        self.styles: "dict[str, str]" = dict(styles or {})
+
+    def use_styles(self, styles: "Mapping[str, str]") -> None:
+        """Replace the declared effort styles; lookups made before are forgotten."""
+        self.styles = dict(styles)
+        self._seen.clear()
+
+    @classmethod
+    def for_document(cls, project_root: Optional[str], document: Mapping) -> "_Endpoints":
+        """The lookups for ``document``, with the effort styles its ``endpoints`` declares."""
+        return cls(project_root, endpoint_styles(document))
 
     def _load(self) -> "tuple[dict, Any]":
         if self._loaded is None:
@@ -282,7 +345,10 @@ class _Endpoints:
 
     def info(self, name: str) -> Optional[EndpointInfo]:
         if name not in self._seen:
-            self._seen[name] = self._resolve(name)
+            info = self._resolve(name)
+            if info is not None and info.harness is None and name in self.styles:
+                info = replace(info, effort_style=self.styles[name])
+            self._seen[name] = info
         return self._seen[name]
 
     def _resolve(self, name: str) -> Optional[EndpointInfo]:
@@ -517,37 +583,120 @@ def _json_value(value: Any, where: str, _open: "frozenset[int]" = frozenset()) -
     raise _invalid(where, f"must be JSON data, not {type(value).__name__}")
 
 
+def _number(value: Any, where: str) -> Any:
+    """A JSON number (an int in the exact range, or a finite float); a boolean is refused."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _invalid(where, f"must be a number, not {value!r}")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise _invalid(where, "must be a finite number")
+    if isinstance(value, int) and abs(value) > _MAX_INTEGER:
+        raise _invalid(where, f"must be a number from -{_MAX_INTEGER} to {_MAX_INTEGER}, not {value}")
+    return value
+
+
+def check_setting(name: str, value: Any, where: str) -> Any:
+    """Validate one typed request setting and return it.
+
+    ``name`` is one of :data:`REQUEST_SETTINGS`: ``max_output_tokens`` and
+    ``reasoning_budget`` are integers from 1 to 2**53 - 1 (a decimal such as
+    ``60.0`` is refused), ``temperature`` is a number 0 or more, ``top_p`` a
+    number from 0 to 1. Raises :class:`ProjectModelsError` (``invalid``) at
+    ``where``.
+    """
+    if name in ("max_output_tokens", "reasoning_budget"):
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= _MAX_INTEGER:
+            raise _invalid(where, f"must be an integer from 1 to {_MAX_INTEGER}, not {value!r}")
+        return value
+    number = _number(value, where)
+    if name == "temperature" and number < 0:
+        raise _invalid(where, f"must be 0 or more, not {number!r}")
+    if name == "top_p" and not 0 <= number <= 1:
+        raise _invalid(where, f"must be from 0 to 1, not {number!r}")
+    return number
+
+
+def _check_profile_extras(extras: Mapping, where: str) -> None:
+    """Refuse an extras name a typed setting, the effort or the call owns (:data:`PROFILE_RESERVED_EXTRAS`)."""
+    for key in extras:
+        if key in PROFILE_RESERVED_EXTRAS:
+            raise _invalid(
+                where, f"{key!r} is reserved; set it as a typed setting, through the effort, or in the call"
+            )
+    nested = extras.get(TEMPLATE_KEY)
+    if isinstance(nested, Mapping) and EFFORT_KEY in nested:
+        raise _invalid(f"{where}.{TEMPLATE_KEY}", f"{EFFORT_KEY!r} is reserved; set the effort instead")
+
+
+def validate_profile(value: Any, where: str, *, call: bool = False) -> dict:
+    """Validate a request profile (an entry of ``requests``) or, with ``call``, a call layer.
+
+    A profile holds any of :data:`REQUEST_SETTINGS` and ``extras`` (a JSON
+    mapping with no :data:`PROFILE_RESERVED_EXTRAS` key). A call also holds
+    ``effort`` (null or non-empty text), and may not hold both ``effort`` and
+    ``reasoning_budget``. Returns the normalized copy with only the given keys,
+    in canonical order. Raises :class:`ProjectModelsError` (``invalid``) for the
+    first problem, with its path in ``where`` (``requests['p'].temperature``,
+    ``call.extras``).
+    """
+    allowed = _PROFILE_KEYS + (("effort",) if call else ())
+    given = _mapping(value, where, allowed)
+    out: dict = {}
+    for name in REQUEST_SETTINGS:
+        if name in given:
+            out[name] = check_setting(name, given[name], f"{where}.{name}")
+    if "extras" in given:
+        extras = given["extras"]
+        if not isinstance(extras, Mapping):
+            raise _invalid(f"{where}.extras", "must be a mapping")
+        copy = _json_value(extras, f"{where}.extras")
+        _check_profile_extras(copy, f"{where}.extras")
+        out["extras"] = copy
+    if call and "effort" in given:
+        effort = given["effort"]
+        if effort is not None and (not isinstance(effort, str) or not effort):
+            raise _invalid(f"{where}.effort", f"must be a non-empty string or null, not {effort!r}")
+        if "reasoning_budget" in given:
+            raise _invalid(where, "sets both effort and reasoning_budget; one layer sets one reasoning control")
+        out["effort"] = effort
+    return out
+
+
 def _request_defaults(
     value: Any, where: str, *, bound: bool = True, reasoning_reserved: bool = False
 ) -> dict:
-    """Validate a row's request defaults.
+    """Validate a row's request defaults: its typed defaults and its extras.
 
     ``bound`` (binding) refuses the reserved extras; portable validation passes
     False. ``reasoning_reserved`` is set for a ``reasoning-object`` endpoint only:
     there a raw ``reasoning`` extra would override the selected effort and bypass
-    the menu.
+    the menu. A typed default may not also be spelled in extras (``temperature``,
+    ``top_p``; ``reasoning`` beside ``reasoning_budget``).
     """
     defaults = _mapping(value, where, _DEFAULTS_KEYS)
     out: dict = {}
+    for name in ("temperature", "top_p", "reasoning_budget"):
+        if name in defaults:
+            out[name] = check_setting(name, defaults[name], f"{where}.{name}")
     if "extras" in defaults:
         extras = defaults["extras"]
         if not isinstance(extras, Mapping):
             raise _invalid(f"{where}.extras", "must be a mapping")
         copy = _json_value(extras, f"{where}.extras")
-        if not bound:
-            out["extras"] = copy
-            return out
-        for key in copy:
-            if key in _RESERVED_EXTRAS or (reasoning_reserved and key == REASONING_KEY):
+        if bound:
+            for key in copy:
+                if key in _RESERVED_EXTRAS or (reasoning_reserved and key == REASONING_KEY):
+                    raise _invalid(
+                        f"{where}.extras", f"{key!r} is reserved; set effort through efforts and selections"
+                    )
+            nested = copy.get(TEMPLATE_KEY)
+            if isinstance(nested, Mapping) and EFFORT_KEY in nested:
                 raise _invalid(
-                    f"{where}.extras", f"{key!r} is reserved; set effort through efforts and selections"
+                    f"{where}.extras.{TEMPLATE_KEY}",
+                    f"{EFFORT_KEY!r} is reserved; set effort through efforts and selections",
                 )
-        nested = copy.get(TEMPLATE_KEY)
-        if isinstance(nested, Mapping) and EFFORT_KEY in nested:
-            raise _invalid(
-                f"{where}.extras.{TEMPLATE_KEY}",
-                f"{EFFORT_KEY!r} is reserved; set effort through efforts and selections",
-            )
+        for name, wire in (("temperature", "temperature"), ("top_p", "top_p"), ("reasoning_budget", REASONING_KEY)):
+            if name in out and wire in copy:
+                raise _invalid(f"{where}.extras", f"{wire!r} repeats the typed {name}; keep one")
         out["extras"] = copy
     return out
 
@@ -599,6 +748,70 @@ def _efforts(
     return out
 
 
+def _traits(value: Any, where: str) -> list[str]:
+    """A row's traits: non-empty strings with no repeats. Consumer labels; never sent."""
+    if not isinstance(value, (list, tuple)):
+        raise _invalid(where, f"must be a list, not {value!r}")
+    out: list[str] = []
+    for i, item in enumerate(value):
+        if not isinstance(item, str) or not item:
+            raise _invalid(f"{where}[{i}]", f"must be a non-empty string, not {item!r}")
+        if item in out:
+            raise _invalid(f"{where}[{i}]", f"{item!r} repeats")
+        out.append(item)
+    return out
+
+
+def _validate_endpoints(value: Any) -> "dict[str, dict]":
+    """The key-sorted ``endpoints`` block: endpoint name -> ``{effort_style}``.
+
+    Checks the structure only; that each name is a row's endpoint is checked
+    after the catalogue (:func:`_check_endpoint_names`).
+    """
+    if not isinstance(value, Mapping):
+        raise _invalid("endpoints", f"must be a mapping, not {type(value).__name__}")
+    out: dict[str, dict] = {}
+    for name in value:
+        if not isinstance(name, str):
+            raise _invalid("endpoints", f"key {name!r} must be a string")
+        where = f"endpoints[{name!r}]"
+        _text(name, f"endpoints key {name!r}", path=where)
+        entry = _mapping(value[name], where, _ENDPOINT_KEYS)
+        if "effort_style" not in entry:
+            raise _invalid(where, "'effort_style' is required")
+        style = entry["effort_style"]
+        if style not in EFFORT_STYLES:
+            raise _invalid(f"{where}.effort_style", f"must be one of {list(EFFORT_STYLES)}, not {style!r}")
+        out[name] = {"effort_style": style}
+    return {name: out[name] for name in sorted(out)}
+
+
+def _check_endpoint_names(names: "list[str]", rows: "list[dict]", endpoints: "Optional[_Endpoints]") -> None:
+    """Each declared endpoint is a row's endpoint; binding also refuses a style on a harness."""
+    used = {row["endpoint"] for row in rows}
+    for name in names:
+        where = f"endpoints[{name!r}]"
+        if name not in used:
+            raise _invalid(where, f"no catalog row names endpoint {name!r}")
+        info = endpoints.info(name) if endpoints is not None else None
+        if info is not None and info.harness is not None:
+            raise _invalid(f"{where}.effort_style", f"{name!r} is a {info.harness} harness, which takes no effort style")
+
+
+def _validate_requests(value: Any) -> "dict[str, dict]":
+    """The key-sorted ``requests`` block: profile name -> normalized profile (:func:`validate_profile`)."""
+    if not isinstance(value, Mapping):
+        raise _invalid("requests", f"must be a mapping, not {type(value).__name__}")
+    out: dict[str, dict] = {}
+    for name in value:
+        if not isinstance(name, str):
+            raise _invalid("requests", f"key {name!r} must be a string")
+        where = f"requests[{name!r}]"
+        _text(name, f"requests key {name!r}", path=where)
+        out[name] = validate_profile(value[name], where)
+    return {name: out[name] for name in sorted(out)}
+
+
 def _validate_catalog(
     catalog_in: Any,
     endpoints: "Optional[_Endpoints]",
@@ -648,6 +861,8 @@ def _validate_catalog(
             out["max_output_tokens"] = _max_output_tokens(
                 row["max_output_tokens"], f"{where}.max_output_tokens", row_id, model
             )
+        if "traits" in row:
+            out["traits"] = _traits(row["traits"], f"{where}.traits")
         if "request_defaults" in row:
             out["request_defaults"] = _request_defaults(
                 row["request_defaults"],
@@ -665,11 +880,14 @@ def _validate_selections(
     selections_in: Any,
     menus: "Mapping[str, Optional[tuple[str, ...]]]",
     efforts_of: "Mapping[str, Optional[list[str]]]",
+    requests: "Mapping[str, Mapping]",
 ) -> "dict[str, dict]":
     """The key-sorted normalized selections; each must name a catalog id and an accepted effort.
 
     The accepted efforts are the row's declared ``efforts``; a row that declares
     none accepts its library menu, or (portable, menu None) any non-empty string.
+    A ``request`` names a key of ``requests``; a selection with an effort names no
+    request that sets ``reasoning_budget`` (one layer, one reasoning control).
     """
     if not isinstance(selections_in, Mapping):
         raise _invalid("selections", f"must be a mapping, not {type(selections_in).__name__}")
@@ -700,7 +918,21 @@ def _validate_selections(
                     f"{where}.effort",
                     f"{effort!r} is not accepted for {target!r} (accepted: {list(allowed)})",
                 )
-        selections[key] = {"model": target, "effort": effort}
+        selection: dict = {"model": target, "effort": effort}
+        if "request" in picked:
+            name = _text(picked["request"], f"{where}.request")
+            if name not in requests:
+                raise _invalid(
+                    f"{where}.request",
+                    f"{name!r} is not a key of requests (known: {', '.join(requests) or '<none>'})",
+                )
+            if effort is not None and "reasoning_budget" in requests[name]:
+                raise _invalid(
+                    f"{where}.effort",
+                    f"effort {effort!r} and the reasoning_budget of request {name!r} are one layer; set one",
+                )
+            selection["request"] = name
+        selections[key] = selection
     return {key: selections[key] for key in sorted(selections)}
 
 
@@ -759,16 +991,30 @@ def _validate_top(
     menu_of: Optional[EffortMenuResolver],
     unbound: "Optional[list[str]]" = None,
 ) -> dict:
-    """The normalized tracked document; ``endpoints`` None is portable validation."""
+    """The normalized tracked document; ``endpoints`` None is portable validation.
+
+    Order of the checks (it fixes which problem is reported first): the version,
+    the ``endpoints`` structure, the catalogue (with the declared effort styles),
+    that each ``endpoints`` name is a row's endpoint, ``requests``, ``selections``.
+    """
     top = _mapping(data, "document", _TOP_KEYS)
     _check_version(top)
+    declared = _validate_endpoints(top["endpoints"]) if "endpoints" in top else None
+    if endpoints is not None:
+        endpoints.use_styles(endpoint_styles({"endpoints": declared or {}}))
     rows, menus, efforts_of = _validate_catalog(top.get("catalog", []), endpoints, menu_of, unbound)
-    selections = _validate_selections(top.get("selections", {}), menus, efforts_of)
-    return {
-        "version": FILE_VERSION,
-        "catalog": rows,
-        "selections": selections,
-    }
+    if declared is not None:
+        _check_endpoint_names(list(top["endpoints"]), rows, endpoints)
+    requests = _validate_requests(top["requests"]) if "requests" in top else None
+    selections = _validate_selections(top.get("selections", {}), menus, efforts_of, requests or {})
+    document: dict = {"version": FILE_VERSION}
+    if declared is not None:
+        document["endpoints"] = declared
+    document["catalog"] = rows
+    if requests is not None:
+        document["requests"] = requests
+    document["selections"] = selections
+    return document
 
 
 # ---------------------------------------------------------------------------
@@ -789,14 +1035,17 @@ def render_yaml(document: Mapping) -> bytes:
     rows = []
     for row in document["catalog"]:
         shown = dict(row)
-        if "efforts" in shown:
-            shown["efforts"] = flow_list(shown["efforts"])
+        for key in ("efforts", "traits"):
+            if key in shown:
+                shown[key] = flow_list(shown[key])
         rows.append(shown)
-    shown_document = {
-        "version": document["version"],
-        "catalog": rows,
-        "selections": document["selections"],
-    }
+    shown_document: dict = {"version": document["version"]}
+    if "endpoints" in document:
+        shown_document["endpoints"] = document["endpoints"]
+    shown_document["catalog"] = rows
+    if "requests" in document:
+        shown_document["requests"] = document["requests"]
+    shown_document["selections"] = document["selections"]
     text = yaml.dump(
         shown_document,
         Dumper=dumper,
@@ -1140,7 +1389,7 @@ def validate_local_document(
     try:
         _import_yaml()
         return _validate_local(
-            data, tracked.document["catalog"], _Endpoints(str(local_file.root)),
+            data, tracked.document, _Endpoints.for_document(str(local_file.root), tracked.document),
             menu_for or library_effort_menu,
         )
     except ProjectModelsError as exc:
@@ -1159,17 +1408,17 @@ def validate_portable_local_document(data: Any, tracked_document: Any) -> dict:
     (``invalid``) for the first problem, with its path in ``where``.
     """
     tracked = validate_portable_document(tracked_document)
-    return _validate_local(data, tracked["catalog"], None, None)
+    return _validate_local(data, tracked, None, None)
 
 
 def _validate_local(
-    data: Any, catalog: Any, endpoints: "Optional[_Endpoints]", menu_of: Optional[EffortMenuResolver]
+    data: Any, tracked: Mapping, endpoints: "Optional[_Endpoints]", menu_of: Optional[EffortMenuResolver]
 ) -> dict:
-    """The normalized personal layer against ``catalog``; ``endpoints`` None is portable validation."""
+    """The normalized personal layer against the normalized ``tracked`` document; ``endpoints`` None is portable."""
     top = _mapping(data, "document", _LOCAL_TOP_KEYS)
     _check_version(top)
-    _rows, menus, efforts_of = _validate_catalog(catalog, endpoints, menu_of)
-    selections = _validate_selections(top.get("selections", {}), menus, efforts_of)
+    _rows, menus, efforts_of = _validate_catalog(tracked["catalog"], endpoints, menu_of)
+    selections = _validate_selections(top.get("selections", {}), menus, efforts_of, tracked.get("requests") or {})
     return {"version": FILE_VERSION, "selections": selections}
 
 
@@ -1433,11 +1682,16 @@ def write_local_overrides(
     return result
 
 
+#: The ``request`` default of :func:`set_local_override`: keep the tracked selection's request profile.
+KEEP_REQUEST = "<keep>"
+
+
 def set_local_override(
     key: str,
     model: str,
     effort: Optional[str] = None,
     *,
+    request: Optional[str] = KEEP_REQUEST,
     project_root: Optional[str] = None,
     file: Optional[str] = None,
     if_match: Optional[str] = None,
@@ -1445,13 +1699,22 @@ def set_local_override(
 ) -> LocalWriteResult:
     """Set one override (``effort`` None omits the effort); equal to the default, it clears the key.
 
-    Returns the :class:`LocalWriteResult` of the write. Raises
-    :class:`ProjectModelsError` as :func:`write_local_overrides` does.
+    An override replaces the whole selection, so ``request`` names its request
+    profile: :data:`KEEP_REQUEST` (the default) copies the tracked selection's
+    ``request``, so overriding only the model keeps the role's settings; None
+    omits it; a name sets it. Returns the :class:`LocalWriteResult` of the
+    write. Raises :class:`ProjectModelsError` as :func:`write_local_overrides`
+    does.
     """
     project_file = resolve_project_file(project_root, file)
     tracked = _read_tracked(project_file, menu_for)
     current = _read_local(tracked, resolve_local_file(project_file), menu_for).selections
-    current[key] = {"model": model, "effort": effort}
+    entry: dict = {"model": model, "effort": effort}
+    if request == KEEP_REQUEST:
+        request = (tracked.document["selections"].get(key) or {}).get("request")
+    if request is not None:
+        entry["request"] = request
+    current[key] = entry
     return write_local_overrides(
         {"version": FILE_VERSION, "selections": current},
         project_root=project_root, file=file, if_match=if_match, menu_for=menu_for,

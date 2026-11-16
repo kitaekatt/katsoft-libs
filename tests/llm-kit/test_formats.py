@@ -25,6 +25,7 @@ from llm_kit.graph.model import GraphError, Op, OpRegistry, ParamSpec
 from llm_kit.graph.prompt import PromptError, PromptFile, parse_prompt_file, read_prompt_file, render_prompt, render_prompt_file
 from llm_kit.graph.testing import make_project
 from llm_kit.registry import project_models as pm
+from llm_kit.registry import request_settings as rs
 from llm_kit.schema.json_schema import check_schema, validate
 from test_cli_harness import home, write  # noqa: F401 -- home is a fixture
 
@@ -32,6 +33,7 @@ REPO = Path(__file__).resolve().parents[2]
 PACKAGE = REPO / "packages" / "katsoft-llm-kit"
 CASES = REPO / "tests" / "formats"
 REGISTRY_CASES = json.loads((CASES / "project-models" / "cases.json").read_text(encoding="utf-8"))
+REQUEST_CASES = json.loads((CASES / "project-models" / "requests.json").read_text(encoding="utf-8"))
 PROMPT_CASES = json.loads((CASES / "prompt-file" / "cases.json").read_text(encoding="utf-8"))
 TRACKED_SCHEMA = formats.load_schema(formats.PROJECT_MODELS_V1)
 LOCAL_SCHEMA = formats.load_schema(formats.PROJECT_MODELS_LOCAL_V1)
@@ -256,6 +258,43 @@ def test_the_error_path_survives_the_local_file_name(bound_root):
         pm.read_resolved_models(project_root=str(bound_root))
     assert str(caught.value).startswith(".llm-kit/models.local.yaml: selections['k'].model:")
     assert caught.value.where == "selections['k'].model"
+
+
+# ---------------------------------------------------------------------------
+# the project model file: the resolved request (shared cases)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", sorted(by_name(REQUEST_CASES["cases"])))
+def test_request_case(name):
+    """Each case's request resolves to exactly the expected request, or refuses at the expected path."""
+    case = by_name(REQUEST_CASES["cases"])[name]
+    stage, outcome = _portable(case)
+    assert stage == "ok", str(outcome[1])
+    _tracked_data, tracked, _local_data, local = outcome
+    overrides = local["selections"] if local is not None else None
+    expect = case["expect"]
+    if "error" in expect:
+        with pytest.raises(pm.ProjectModelsError) as caught:
+            rs.resolve_request(tracked, case["key"], overrides=overrides, call=case.get("call"))
+        assert (caught.value.code, caught.value.where) == (expect["error"]["code"], expect["error"]["path"]), \
+            str(caught.value)
+        return
+    got = rs.resolve_request(tracked, case["key"], overrides=overrides, call=case.get("call"))
+    assert got == expect["request"]
+    assert json.loads(json.dumps(got)) == got, "the resolved request is JSON data"
+
+
+def test_the_request_cases_cover_every_rule():
+    names = set(by_name(REQUEST_CASES["cases"]))
+    for needed in ("row-defaults-only", "profile-over-row", "call-over-profile", "extras-merge-per-key",
+                   "legacy-row-extras-are-read-as-settings", "traits-are-not-sent",
+                   "project-style-places-effort-none", "row-budget-when-no-effort",
+                   "selection-effort-beats-row-budget", "call-effort-beats-profile-budget",
+                   "call-null-effort-sends-no-reasoning", "call-effort-and-budget", "local-layer-selection",
+                   "unknown-selection"):
+        assert needed in names, needed
+    assert REQUEST_CASES["format"] == formats.PROJECT_MODELS_V1
 
 
 # ---------------------------------------------------------------------------

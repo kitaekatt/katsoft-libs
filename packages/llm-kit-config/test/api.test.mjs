@@ -7,8 +7,8 @@ import { join } from "node:path";
 import { after, describe, test } from "node:test";
 
 import {
-  LlmKitConfigError, SCHEMA_IDS, applyOverlay, findSelection, loadOverlay, loadPrompt, loadRegistry, parseOverlay,
-  parsePrompt, parseRegistry, renderPrompt, select,
+  LlmKitConfigError, SCHEMA_IDS, applyOverlay, chatFields, findSelection, loadOverlay, loadPrompt, loadRegistry,
+  parseOverlay, parsePrompt, parseRegistry, renderPrompt, resolveRequest, select,
 } from "../dist/index.js";
 
 const scratch = mkdtempSync(join(tmpdir(), "llm-kit-config-api-"));
@@ -249,5 +249,50 @@ describe("SCHEMA_IDS", () => {
       promptFile: "llm-kit.prompt-file/v1",
     });
     assert.ok(Object.isFrozen(SCHEMA_IDS));
+  });
+});
+
+
+describe("resolveRequest and chatFields", () => {
+  const registry = parseRegistry([
+    "version: 1",
+    "catalog:",
+    "  - {id: a, label: A, endpoint: api, model: vendor/a, traits: [t]}",
+    "requests:",
+    "  cold: {temperature: 0, extras: {seed: 1}}",
+    "selections:",
+    "  k: {model: a, effort: low, request: cold}",
+    "",
+  ].join("\n"), { source: "models.yaml" });
+
+  test("the request is frozen and a call cannot change the registry", () => {
+    const request = resolveRequest(registry, "k", { extras: { seed: 2 } });
+    assert.ok(Object.isFrozen(request) && Object.isFrozen(request.extras) && Object.isFrozen(request.traits));
+    assert.equal(request.extras.seed, 2);
+    assert.equal(resolveRequest(registry, "k").extras.seed, 1);
+    assert.equal(registry.document.requests.cold.extras.seed, 1);
+  });
+
+  test("errors carry the registry source; a call error names its key", () => {
+    assert.throws(() => resolveRequest(registry, "k", { top_p: 2 }), refusal("invalid", "call.top_p", { source: "models.yaml" }));
+    assert.throws(() => resolveRequest(registry, "nope"), refusal("unknown-selection", "selections['nope']", { source: "models.yaml" }));
+    assert.throws(() => resolveRequest(registry, "k", { extras: { when: new Date() } }), refusal("invalid", "call.extras.when"));
+    assert.throws(() => resolveRequest(registry, "k", []), refusal("invalid", "call"));
+  });
+
+  test("chatFields takes the consumer's style only when the file declares none, and returns a new object", () => {
+    const request = resolveRequest(registry, "k");
+    const fields = chatFields(request, { effortStyle: "ninfer" });
+    assert.deepEqual(fields, { temperature: 0, seed: 1, reasoning_effort: "low" });
+    fields.seed = 9;
+    assert.equal(request.extras.seed, 1);
+    assert.throws(() => chatFields(request), refusal("wire", "effort"));
+  });
+
+  test("wrong argument types are TypeErrors", () => {
+    assert.throws(() => resolveRequest({}, "k"), TypeError);
+    assert.throws(() => resolveRequest(registry, 1), TypeError);
+    assert.throws(() => chatFields(null), TypeError);
+    assert.throws(() => chatFields(resolveRequest(registry, "k"), { effortStyle: "sideways" }), TypeError);
   });
 });

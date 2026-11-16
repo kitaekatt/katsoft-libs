@@ -11,6 +11,8 @@
     {"name": "applyOverlay", "kind": "function", "status": "public"},
     {"name": "select", "kind": "function", "status": "public"},
     {"name": "findSelection", "kind": "function", "status": "public"},
+    {"name": "resolveRequest", "kind": "function", "status": "public"},
+    {"name": "chatFields", "kind": "function", "status": "public"},
     {"name": "parsePrompt", "kind": "function", "status": "public"},
     {"name": "loadPrompt", "kind": "function", "status": "public"},
     {"name": "renderPrompt", "kind": "function", "status": "public"},
@@ -28,6 +30,12 @@
     {"name": "ResolvedSelection", "kind": "type", "status": "public"},
     {"name": "Selection", "kind": "type", "status": "public"},
     {"name": "SelectionSource", "kind": "type", "status": "public"},
+    {"name": "EffortStyle", "kind": "type", "status": "public"},
+    {"name": "RequestDefaults", "kind": "type", "status": "public"},
+    {"name": "RequestProfile", "kind": "type", "status": "public"},
+    {"name": "RequestCall", "kind": "type", "status": "public"},
+    {"name": "ResolvedRequest", "kind": "type", "status": "public"},
+    {"name": "ChatFieldsOptions", "kind": "type", "status": "public"},
     {"name": "PromptFile", "kind": "type", "status": "public"},
     {"name": "RenderOptions", "kind": "type", "status": "public"}
   ]

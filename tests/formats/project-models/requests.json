@@ -1,0 +1,1248 @@
+{
+  "format": "llm-kit.project-models/v1",
+  "description": "Shared cases of the request a selection resolves to, and of its OpenAI-compatible body fields. Read 'tracked' (and 'local', when present) as cases.json does, layer the personal layer over the tracked selections, then resolve the request of 'key' with the call layer 'call' (absent: an empty call). 'expect' is {request} (the resolved request; every key is present, null when unset) or {error: {code, path}}. 'wire', when present, renders the resolved request as OpenAI-compatible chat body fields: 'endpoint_style' is the consumer's style when the file declares none (null: none), and 'expect' is {fields} (every body field except model, messages, stream and user) or {error: {path}}. A reader that sends calls itself must put exactly these fields on the wire. Compare JSON values; object key order does not count. The contract is docs/reference/llm-kit-formats.md, 'Request settings'.",
+  "cases": [
+    {
+      "name": "row-defaults-only",
+      "note": "A selection with no effort and no request profile takes the row's defaults. traits come back and are never sent.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    max_output_tokens: 4000",
+          "    traits: [x]",
+          "    request_defaults:",
+          "      temperature: 0.7",
+          "      top_p: 0.9",
+          "      extras: {provider: {sort: latency}}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": null,
+          "effort_style": null,
+          "temperature": 0.7,
+          "top_p": 0.9,
+          "max_output_tokens": 4000,
+          "reasoning_budget": null,
+          "extras": {
+            "provider": {
+              "sort": "latency"
+            }
+          },
+          "traits": [
+            "x"
+          ]
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "max_tokens": 4000,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "provider": {
+              "sort": "latency"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile-over-row",
+      "note": "The request profile is above the row: its settings win, the row's other settings stay.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    max_output_tokens: 4000",
+          "    traits: [x]",
+          "    request_defaults:",
+          "      temperature: 0.7",
+          "      top_p: 0.9",
+          "      extras: {provider: {sort: latency}}",
+          "requests:",
+          "  classify: {temperature: 0, max_output_tokens: 60}",
+          "selections:",
+          "  k: {model: a, effort: low, request: classify}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": "low",
+          "effort_style": null,
+          "temperature": 0,
+          "top_p": 0.9,
+          "max_output_tokens": 60,
+          "reasoning_budget": null,
+          "extras": {
+            "provider": {
+              "sort": "latency"
+            }
+          },
+          "traits": [
+            "x"
+          ]
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "max_tokens": 60,
+            "temperature": 0,
+            "top_p": 0.9,
+            "reasoning_effort": "low",
+            "provider": {
+              "sort": "latency"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "call-over-profile",
+      "note": "The call is the top layer: its output cap and effort win.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    max_output_tokens: 4000",
+          "    traits: [x]",
+          "    request_defaults:",
+          "      temperature: 0.7",
+          "      top_p: 0.9",
+          "      extras: {provider: {sort: latency}}",
+          "requests:",
+          "  classify: {temperature: 0, max_output_tokens: 60}",
+          "selections:",
+          "  k: {model: a, effort: low, request: classify}"
+        ]
+      },
+      "key": "k",
+      "call": {
+        "max_output_tokens": 200,
+        "effort": "high"
+      },
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": "high",
+          "effort_style": null,
+          "temperature": 0,
+          "top_p": 0.9,
+          "max_output_tokens": 200,
+          "reasoning_budget": null,
+          "extras": {
+            "provider": {
+              "sort": "latency"
+            }
+          },
+          "traits": [
+            "x"
+          ]
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "max_tokens": 200,
+            "temperature": 0,
+            "top_p": 0.9,
+            "reasoning_effort": "high",
+            "provider": {
+              "sort": "latency"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "call-settings",
+      "note": "A call may set every typed setting and extras.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    max_output_tokens: 4000",
+          "    traits: [x]",
+          "    request_defaults:",
+          "      temperature: 0.7",
+          "      top_p: 0.9",
+          "      extras: {provider: {sort: latency}}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "call": {
+        "temperature": 1.2,
+        "top_p": 0.5,
+        "max_output_tokens": 10,
+        "extras": {
+          "seed": 3
+        }
+      },
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": null,
+          "effort_style": null,
+          "temperature": 1.2,
+          "top_p": 0.5,
+          "max_output_tokens": 10,
+          "reasoning_budget": null,
+          "extras": {
+            "provider": {
+              "sort": "latency"
+            },
+            "seed": 3
+          },
+          "traits": [
+            "x"
+          ]
+        }
+      }
+    },
+    {
+      "name": "extras-merge-per-key",
+      "note": "extras merge per top-level key: row, then profile, then call. A nested object is replaced whole.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {provider: {sort: latency}, seed: 1, stop: [END]}",
+          "requests:",
+          "  p: {extras: {provider: {order: [x]}}}",
+          "selections:",
+          "  k: {model: a, request: p}"
+        ]
+      },
+      "key": "k",
+      "call": {
+        "extras": {
+          "seed": 2
+        }
+      },
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": null,
+          "effort_style": null,
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": null,
+          "extras": {
+            "provider": {
+              "order": [
+                "x"
+              ]
+            },
+            "seed": 2,
+            "stop": [
+              "END"
+            ]
+          },
+          "traits": []
+        }
+      }
+    },
+    {
+      "name": "legacy-row-extras-are-read-as-settings",
+      "note": "In a row's extras, temperature, top_p and max_tokens are the old spellings of the row's typed defaults: the reader moves them out of extras.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {temperature: 0.5, top_p: 0.8, max_tokens: 300, stop: [END]}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": null,
+          "effort_style": null,
+          "temperature": 0.5,
+          "top_p": 0.8,
+          "max_output_tokens": 300,
+          "reasoning_budget": null,
+          "extras": {
+            "stop": [
+              "END"
+            ]
+          },
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "max_tokens": 300,
+            "temperature": 0.5,
+            "top_p": 0.8,
+            "stop": [
+              "END"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "typed-row-cap-beats-legacy-max-tokens",
+      "note": "A row's max_output_tokens wins over its extras.max_tokens, which is dropped.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    max_output_tokens: 4000",
+          "    request_defaults: {extras: {max_tokens: 300}}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": null,
+          "effort_style": null,
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": 4000,
+          "reasoning_budget": null,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "max_tokens": 4000
+          }
+        }
+      }
+    },
+    {
+      "name": "legacy-max-tokens-not-a-count",
+      "note": "A legacy extras.max_tokens must be a positive integer; the refusal comes when the request is resolved.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    request_defaults: {extras: {max_tokens: 0}}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.max_tokens"
+        }
+      }
+    },
+    {
+      "name": "legacy-temperature-not-a-number",
+      "note": "A legacy extras.temperature must be a valid temperature.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    request_defaults: {extras: {temperature: warm}}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.temperature"
+        }
+      }
+    },
+    {
+      "name": "traits-are-not-sent",
+      "note": "Consumer labels belong in traits; the request carries them back and the wire never sees them.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    traits: [text_only_chat, long_drafts]",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": null,
+          "effort_style": null,
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": null,
+          "extras": {},
+          "traits": [
+            "text_only_chat",
+            "long_drafts"
+          ]
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {}
+        }
+      }
+    },
+    {
+      "name": "project-style-places-effort-none",
+      "note": "The project file's endpoint style wins over the machine's: effort none goes out as a reasoning object, also for a model with no measured profile.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  openrouter: {effort_style: reasoning-object}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a, effort: none}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": "none",
+          "effort_style": "reasoning-object",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": null,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "reasoning": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "project-style-places-effort-low",
+      "note": "Another effort in the reasoning-object style.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  openrouter: {effort_style: reasoning-object}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a, effort: low}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": "low",
+          "effort_style": "reasoning-object",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": null,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "row-budget-when-no-effort",
+      "note": "A row's reasoning_budget applies when no higher layer sets a reasoning control.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  openrouter: {effort_style: reasoning-object}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    request_defaults: {reasoning_budget: 256}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": null,
+          "effort_style": "reasoning-object",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": 256,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "reasoning": {
+              "max_tokens": 256
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "selection-effort-beats-row-budget",
+      "note": "A selection's effort is a higher layer than the row's budget: the budget is not sent.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  openrouter: {effort_style: reasoning-object}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    request_defaults: {reasoning_budget: 256}",
+          "selections:",
+          "  k: {model: a, effort: none}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": "none",
+          "effort_style": "reasoning-object",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": null,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "reasoning": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile-budget",
+      "note": "A request profile's reasoning_budget is the selection layer's reasoning control.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  openrouter: {effort_style: reasoning-object}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "requests:",
+          "  think: {reasoning_budget: 1024, max_output_tokens: 2000}",
+          "selections:",
+          "  k: {model: a, request: think}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": null,
+          "effort_style": "reasoning-object",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": 2000,
+          "reasoning_budget": 1024,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "max_tokens": 2000,
+            "reasoning": {
+              "max_tokens": 1024
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "call-effort-beats-profile-budget",
+      "note": "A call effort is the top layer's reasoning control: the profile's budget is not sent.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  openrouter: {effort_style: reasoning-object}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "requests:",
+          "  think: {reasoning_budget: 1024, max_output_tokens: 2000}",
+          "selections:",
+          "  k: {model: a, request: think}"
+        ]
+      },
+      "key": "k",
+      "call": {
+        "effort": "low"
+      },
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": "low",
+          "effort_style": "reasoning-object",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": 2000,
+          "reasoning_budget": null,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "max_tokens": 2000,
+            "reasoning": {
+              "effort": "low"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "call-null-effort-sends-no-reasoning",
+      "note": "A call effort null sends no reasoning control at all: no effort and no budget from any layer.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  openrouter: {effort_style: reasoning-object}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    request_defaults: {reasoning_budget: 256}",
+          "selections:",
+          "  k: {model: a, effort: none}"
+        ]
+      },
+      "key": "k",
+      "call": {
+        "effort": null
+      },
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": null,
+          "effort_style": "reasoning-object",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": null,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {}
+        }
+      }
+    },
+    {
+      "name": "call-effort-and-budget",
+      "note": "One layer may not set both an effort and a reasoning_budget.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "call": {
+        "effort": "low",
+        "reasoning_budget": 100
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "call"
+        }
+      }
+    },
+    {
+      "name": "call-temperature-below-zero",
+      "note": "A call setting follows the file's rules.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "call": {
+        "temperature": -1
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "call.temperature"
+        }
+      }
+    },
+    {
+      "name": "call-setting-null",
+      "note": "Only effort may be null in a call; omit another setting to inherit it.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "call": {
+        "max_output_tokens": null
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "call.max_output_tokens"
+        }
+      }
+    },
+    {
+      "name": "call-extras-reserved",
+      "note": "A call's extras may not hold a name a typed setting or the effort owns.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "call": {
+        "extras": {
+          "max_tokens": 5
+        }
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "call.extras"
+        }
+      }
+    },
+    {
+      "name": "call-unknown-key",
+      "note": "A call holds only temperature, top_p, max_output_tokens, reasoning_budget, extras and effort.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "call": {
+        "seed": 1
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "call"
+        }
+      }
+    },
+    {
+      "name": "call-effort-outside-the-row-efforts",
+      "note": "A call effort is held to the row's declared efforts.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    efforts: [low, high]",
+          "selections:",
+          "  k: {model: a, effort: low}"
+        ]
+      },
+      "key": "k",
+      "call": {
+        "effort": "medium"
+      },
+      "expect": {
+        "error": {
+          "code": "invalid",
+          "path": "call.effort"
+        }
+      }
+    },
+    {
+      "name": "unknown-selection",
+      "note": "A key that no layer names.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "ghost",
+      "expect": {
+        "error": {
+          "code": "unknown-selection",
+          "path": "selections['ghost']"
+        }
+      }
+    },
+    {
+      "name": "local-layer-selection",
+      "note": "The personal layer's selection, with its own request profile, is the one resolved.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "  - id: b",
+          "    label: B",
+          "    endpoint: openrouter",
+          "    model: vendor/b",
+          "requests:",
+          "  classify: {temperature: 0, max_output_tokens: 60}",
+          "  loose: {temperature: 1}",
+          "selections:",
+          "  k: {model: a, request: loose}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  k: {model: b, effort: low, request: classify}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "b",
+          "endpoint": "openrouter",
+          "model": "vendor/b",
+          "effort": "low",
+          "effort_style": null,
+          "temperature": 0,
+          "top_p": null,
+          "max_output_tokens": 60,
+          "reasoning_budget": null,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "max_tokens": 60,
+            "temperature": 0,
+            "reasoning_effort": "low"
+          }
+        }
+      }
+    },
+    {
+      "name": "budget-needs-the-reasoning-object-style",
+      "note": "Only the reasoning-object style carries a reasoning budget.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    request_defaults: {reasoning_budget: 256}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": null,
+          "effort_style": null,
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": 256,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "error": {
+            "path": "reasoning_budget"
+          }
+        }
+      }
+    },
+    {
+      "name": "effort-with-the-unsupported-style",
+      "note": "An endpoint that takes no effort refuses one.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  openrouter: {effort_style: unsupported}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a, effort: low}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": "low",
+          "effort_style": "unsupported",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": null,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "error": {
+            "path": "effort"
+          }
+        }
+      }
+    },
+    {
+      "name": "chat-template-kwargs-keeps-other-members",
+      "note": "The chat_template_kwargs style adds the effort beside the members extras already hold.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  openrouter: {effort_style: chat_template_kwargs}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    request_defaults: {extras: {chat_template_kwargs: {enable_thinking: true}}}",
+          "selections:",
+          "  k: {model: a, effort: low}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": "low",
+          "effort_style": "chat_template_kwargs",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": null,
+          "extras": {
+            "chat_template_kwargs": {
+              "enable_thinking": true
+            }
+          },
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "fields": {
+            "chat_template_kwargs": {
+              "enable_thinking": true,
+              "reasoning_effort": "low"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "row-extras-hold-the-effort-key",
+      "note": "A row's extras that already hold the effort's wire key cannot carry a selection effort as well.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "    request_defaults: {extras: {reasoning_effort: high}}",
+          "selections:",
+          "  k: {model: a, effort: low}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": "low",
+          "effort_style": null,
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": null,
+          "extras": {
+            "reasoning_effort": "high"
+          },
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": "top-level",
+        "expect": {
+          "error": {
+            "path": "extras.reasoning_effort"
+          }
+        }
+      }
+    },
+    {
+      "name": "no-style-and-an-effort",
+      "note": "With no style in the file and none from the consumer, an effort cannot be placed.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: openrouter",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a, effort: low}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "a",
+          "endpoint": "openrouter",
+          "model": "vendor/a",
+          "effort": "low",
+          "effort_style": null,
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": null,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": null,
+        "expect": {
+          "error": {
+            "path": "effort"
+          }
+        }
+      }
+    }
+  ]
+}

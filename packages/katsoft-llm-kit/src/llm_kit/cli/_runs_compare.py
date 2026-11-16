@@ -5,9 +5,12 @@ it (the CLI is the composition root, :mod:`llm_kit.cli._compose`):
 
 - each ``--select`` key resolves through the project model file and its
   personal layer (:func:`llm_kit.registry.project_models.read_resolved_models`)
+  and its request settings (:func:`llm_kit.registry.request_settings.request_for`)
   to a :class:`~llm_kit.runs.compare.Candidate`: the catalogue row, endpoint,
-  wire model, effort, output cap and request extras that
-  ``llm_kit.dispatch.invoke`` will send;
+  wire model, effort, output cap and request parameters that
+  ``llm_kit.dispatch.invoke`` will send (``temperature``, ``top_p`` and a reasoning
+  budget are in the candidate's extras under their wire names, so they are part of
+  the reuse key);
 - its price: 0 for an endpoint the registry classifies ``local``
   (:func:`llm_kit.registry.cost.classify`), else the entry for its wire model
   in the ``--pricing`` table (the pricing table format of
@@ -103,7 +106,7 @@ def candidates(
     Raises :class:`~llm_kit.runs.compare.CompareError` ``invalid`` for an
     unreadable model file or a key that it does not name.
     """
-    from llm_kit.registry import project_models  # noqa: PLC0415
+    from llm_kit.registry import project_models, request_settings  # noqa: PLC0415
     from llm_kit.registry.cost import LOCAL, classify  # noqa: PLC0415
     from llm_kit.registry.model_endpoints import HARNESS_KIND  # noqa: PLC0415
     from llm_kit.registry.models import discover_model_entries  # noqa: PLC0415
@@ -126,11 +129,20 @@ def candidates(
                                f"{row['endpoint']!r} resolves to no registry endpoint on this machine")
         entry = entries.get(row["endpoint"])
         harness = entry is not None and entry.kind == HARNESS_KIND
-        extras = dict((row.get("request_defaults") or {}).get("extras") or {})
+        call = {} if max_output_tokens is None or harness else {"max_output_tokens": max_output_tokens}
+        try:
+            wanted = request_settings.request_for(resolved.project.document, chosen, call=call)
+        except project_models.ProjectModelsError as exc:
+            raise CompareError("invalid", f"selection {name!r}: {exc}") from None
+        extras = dict(wanted["extras"])
         cap = None
         if not harness:
-            cap = max_output_tokens if max_output_tokens is not None else row.get("max_output_tokens",
-                                                                                  extras.get("max_tokens"))
+            cap = wanted["max_output_tokens"]
+            for key in ("temperature", "top_p"):
+                if wanted[key] is not None:
+                    extras[key] = wanted[key]
+            if wanted["reasoning_budget"] is not None:
+                extras["reasoning"] = {"max_tokens": wanted["reasoning_budget"]}
         if classify(entry, entries=entries).cost_class == LOCAL:
             price: Optional[Price] = Price(0, 0)
         else:

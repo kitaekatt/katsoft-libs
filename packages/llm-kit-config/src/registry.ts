@@ -14,10 +14,41 @@
 import { LlmKitConfigError, invalid, withSource } from "./errors.js";
 import { Float, Foreign, PyMap, loadYaml } from "./pyyaml.js";
 import type { PyValue } from "./pyyaml.js";
+import { PROFILE_KEYS, REQUEST_SETTINGS, checkProfileExtras, checkSetting } from "./settings.js";
+import type { Num, SettingName } from "./settings.js";
 import { compareCodePoints, decodeText, deepFreeze, define, hasOuterSpace, pythonRepr, readBytes } from "./text.js";
 
 /** Any JSON value: what a row's `request_defaults.extras` holds. */
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+
+/** The effort styles an `endpoints` entry may name: where a request puts the effort on the wire. */
+export type EffortStyle = "top-level" | "ninfer" | "chat_template_kwargs" | "reasoning-object" | "unsupported";
+
+/** A row's request defaults: typed settings and wire extras, the lowest layer of a request. */
+export interface RequestDefaults {
+  /** Sampling temperature, 0 or more. */
+  readonly temperature?: number;
+  /** Nucleus sampling share, 0 to 1. */
+  readonly top_p?: number;
+  /** A reasoning token budget, 1 or more. */
+  readonly reasoning_budget?: number;
+  /** Wire fields of the endpoint, sent as given. */
+  readonly extras?: { readonly [key: string]: JsonValue };
+}
+
+/** A named request profile (an entry of `requests`): the settings a selection points at. */
+export interface RequestProfile {
+  /** Sampling temperature, 0 or more. */
+  readonly temperature?: number;
+  /** Nucleus sampling share, 0 to 1. */
+  readonly top_p?: number;
+  /** The output cap, 1 or more. */
+  readonly max_output_tokens?: number;
+  /** A reasoning token budget, 1 or more. */
+  readonly reasoning_budget?: number;
+  /** Wire fields; no name a typed setting or the effort owns. */
+  readonly extras?: { readonly [key: string]: JsonValue };
+}
 
 /** One catalog row of the project model file. The keys are the file's keys. */
 export interface CatalogRow {
@@ -33,24 +64,32 @@ export interface CatalogRow {
   readonly efforts?: readonly string[];
   /** The output cap for calls to this model, from 1 to 2**53 - 1. */
   readonly max_output_tokens?: number;
-  /** Request defaults; only `extras`, a mapping of JSON values. */
-  readonly request_defaults?: { readonly extras?: { readonly [key: string]: JsonValue } };
+  /** The consumer's labels for the row; no reader puts them in a request. */
+  readonly traits?: readonly string[];
+  /** The row's request defaults. */
+  readonly request_defaults?: RequestDefaults;
 }
 
-/** A selection: a catalog id and an effort (`null` for no effort). */
+/** A selection: a catalog id, an effort (`null` for no effort) and an optional request profile name. */
 export interface Selection {
   /** A catalog row id. */
   readonly model: string;
   /** One of the row's efforts, or `null`. */
   readonly effort: string | null;
+  /** A key of `requests`; absent for no request profile. */
+  readonly request?: string;
 }
 
 /** The normalized tracked file: what portable validation returns. */
 export interface ProjectModelsDocument {
   /** Always 1. */
   readonly version: 1;
+  /** Endpoint name to how this project places an effort for it; present when the file has the key. */
+  readonly endpoints?: { readonly [name: string]: { readonly effort_style: EffortStyle } };
   /** The catalog rows in file order. */
   readonly catalog: readonly CatalogRow[];
+  /** Request profile name to profile, sorted by name; present when the file has the key. */
+  readonly requests?: { readonly [name: string]: RequestProfile };
   /** Selection key to selection, sorted by key. */
   readonly selections: { readonly [key: string]: Selection };
 }
@@ -113,12 +152,14 @@ export interface ParseOptions {
 }
 
 const MAX_INTEGER = 2n ** 53n - 1n;
-const TOP_KEYS = ["version", "catalog", "selections"] as const;
+const TOP_KEYS = ["version", "endpoints", "catalog", "requests", "selections"] as const;
 const LOCAL_TOP_KEYS = ["version", "selections"] as const;
-const ROW_KEYS = ["id", "label", "endpoint", "model", "efforts", "max_output_tokens", "request_defaults"] as const;
+const ROW_KEYS = ["id", "label", "endpoint", "model", "efforts", "max_output_tokens", "traits", "request_defaults"] as const;
 const ROW_REQUIRED = ["id", "label", "endpoint", "model"] as const;
-const SELECTION_KEYS = ["model", "effort"] as const;
-const DEFAULTS_KEYS = ["extras"] as const;
+const SELECTION_KEYS = ["model", "effort", "request"] as const;
+const DEFAULTS_KEYS = ["temperature", "top_p", "reasoning_budget", "extras"] as const;
+const ENDPOINT_KEYS = ["effort_style"] as const;
+const EFFORT_STYLES: readonly EffortStyle[] = ["top-level", "ninfer", "chat_template_kwargs", "reasoning-object", "unsupported"];
 
 /** Registries and overlays this module made; applyOverlay and select accept only these. */
 const REGISTRIES = new WeakSet<object>();
@@ -186,14 +227,104 @@ function jsonValue(value: PyValue, where: string, open: ReadonlySet<object> = ne
   throw invalid(where, `must be JSON data, not ${value.kind}`);
 }
 
-function requestDefaults(value: PyValue, where: string): NonNullable<CatalogRow["request_defaults"]> {
+/** A YAML value as a {@link Num}, or `undefined` when it is not a number (a boolean is not one). */
+function pyNumber(value: PyValue): Num | undefined {
+  if (typeof value === "bigint") return { integer: true, value: Number(value), inRange: value <= MAX_INTEGER && value >= -MAX_INTEGER };
+  if (value instanceof Float) return { integer: false, value: value.value, inRange: true };
+  return undefined;
+}
+
+function setting(name: SettingName, value: PyValue, where: string): number {
+  return checkSetting(name, pyNumber(value), where);
+}
+
+function extrasOf(value: PyValue, where: string): { [key: string]: JsonValue } {
+  if (!(value instanceof PyMap)) throw invalid(where, "must be a mapping");
+  return jsonValue(value, where) as { [key: string]: JsonValue };
+}
+
+function requestDefaults(value: PyValue, where: string): RequestDefaults {
   const defaults = mapping(value, where, DEFAULTS_KEYS);
-  const out: { extras?: { [key: string]: JsonValue } } = {};
-  if (defaults.has("extras")) {
-    const extras = defaults.get("extras")!;
-    if (!(extras instanceof PyMap)) throw invalid(`${where}.extras`, "must be a mapping");
-    out.extras = jsonValue(extras, `${where}.extras`) as { [key: string]: JsonValue };
+  const out: { temperature?: number; top_p?: number; reasoning_budget?: number; extras?: { [key: string]: JsonValue } } = {};
+  for (const name of ["temperature", "top_p", "reasoning_budget"] as const) {
+    if (defaults.has(name)) out[name] = setting(name, defaults.get(name)!, `${where}.${name}`);
   }
+  if (defaults.has("extras")) {
+    const extras = extrasOf(defaults.get("extras")!, `${where}.extras`);
+    for (const [name, wire] of [["temperature", "temperature"], ["top_p", "top_p"], ["reasoning_budget", "reasoning"]] as const) {
+      if (name in out && Object.hasOwn(extras, wire)) throw invalid(`${where}.extras`, `'${wire}' repeats the typed ${name}; keep one`);
+    }
+    out.extras = extras;
+  }
+  return out;
+}
+
+/** A request profile (an entry of `requests`), Python `validate_profile`. */
+function requestProfile(value: PyValue, where: string): RequestProfile {
+  const given = mapping(value, where, PROFILE_KEYS);
+  const out: { [key: string]: number | { [key: string]: JsonValue } } = {};
+  for (const name of REQUEST_SETTINGS) {
+    if (given.has(name)) out[name] = setting(name, given.get(name)!, `${where}.${name}`);
+  }
+  if (given.has("extras")) {
+    const extras = extrasOf(given.get("extras")!, `${where}.extras`);
+    checkProfileExtras(extras, `${where}.extras`);
+    out.extras = extras;
+  }
+  return out as RequestProfile;
+}
+
+function traits(value: PyValue, where: string): string[] {
+  if (!Array.isArray(value)) throw invalid(where, "must be a list");
+  const out: string[] = [];
+  value.forEach((item, index) => {
+    const at = `${where}[${index}]`;
+    if (typeof item !== "string" || item === "") throw invalid(at, "must be a non-empty string");
+    if (out.includes(item)) throw invalid(at, `${JSON.stringify(item)} repeats`);
+    out.push(item);
+  });
+  return out;
+}
+
+/** A key of `endpoints` or `requests`: a string with no outer whitespace. */
+function blockKey(key: PyValue, block: string): string {
+  if (typeof key !== "string") throw invalid(block, `a key must be a string, not ${typeName(key)}`);
+  if (key === "" || hasOuterSpace(key)) throw invalid(`${block}[${pythonRepr(key)}]`, "the key must be non-empty with no leading or trailing whitespace");
+  return key;
+}
+
+/** The `endpoints` block: the names in file order and the key-sorted entries. Structure only. */
+function endpointsBlock(value: PyValue): { names: string[]; entries: { [name: string]: { effort_style: EffortStyle } } } {
+  if (!(value instanceof PyMap)) throw invalid("endpoints", `must be a mapping, not ${typeName(value)}`);
+  const names: string[] = [];
+  const found = new Map<string, EffortStyle>();
+  for (const [key, raw] of value.entries) {
+    const name = blockKey(key, "endpoints");
+    const where = `endpoints[${pythonRepr(name)}]`;
+    const entry = mapping(raw, where, ENDPOINT_KEYS);
+    if (!entry.has("effort_style")) throw invalid(where, "'effort_style' is required");
+    const style = entry.get("effort_style")!;
+    if (typeof style !== "string" || !(EFFORT_STYLES as readonly string[]).includes(style)) {
+      throw invalid(`${where}.effort_style`, `must be one of ${EFFORT_STYLES.join(", ")}`);
+    }
+    names.push(name);
+    found.set(name, style as EffortStyle);
+  }
+  const entries: { [name: string]: { effort_style: EffortStyle } } = {};
+  for (const name of [...found.keys()].sort(compareCodePoints)) define(entries, name, { effort_style: found.get(name)! });
+  return { names, entries };
+}
+
+/** The `requests` block, key-sorted. */
+function requestsBlock(value: PyValue): { [name: string]: RequestProfile } {
+  if (!(value instanceof PyMap)) throw invalid("requests", `must be a mapping, not ${typeName(value)}`);
+  const found = new Map<string, RequestProfile>();
+  for (const [key, raw] of value.entries) {
+    const name = blockKey(key, "requests");
+    found.set(name, requestProfile(raw, `requests[${pythonRepr(name)}]`));
+  }
+  const out: { [name: string]: RequestProfile } = {};
+  for (const name of [...found.keys()].sort(compareCodePoints)) define(out, name, found.get(name)!);
   return out;
 }
 
@@ -231,7 +362,7 @@ function catalog(value: PyValue, where = "catalog"): { rows: CatalogRow[]; effor
     if (declared.has(id)) throw invalid(`${at}.id`, `duplicate id ${JSON.stringify(id)}`);
     const out: {
       id: string; label: string; endpoint: string; model: string; efforts?: string[];
-      max_output_tokens?: number; request_defaults?: NonNullable<CatalogRow["request_defaults"]>;
+      max_output_tokens?: number; traits?: string[]; request_defaults?: RequestDefaults;
     } = {
       id,
       label: text(row.get("label")!, `${at}.label`),
@@ -241,11 +372,29 @@ function catalog(value: PyValue, where = "catalog"): { rows: CatalogRow[]; effor
     let rowEfforts: string[] | undefined;
     if (row.has("efforts")) out.efforts = rowEfforts = efforts(row.get("efforts")!, `${at}.efforts`);
     if (row.has("max_output_tokens")) out.max_output_tokens = maxOutputTokens(row.get("max_output_tokens")!, `${at}.max_output_tokens`);
+    if (row.has("traits")) out.traits = traits(row.get("traits")!, `${at}.traits`);
     if (row.has("request_defaults")) out.request_defaults = requestDefaults(row.get("request_defaults")!, `${at}.request_defaults`);
     declared.set(id, rowEfforts);
     rows.push(out);
   });
   return { rows, efforts: declared };
+}
+
+/** What the references of a selection are checked against: each row's declared efforts, and the request profiles. */
+interface Refs {
+  readonly efforts: Map<string, string[] | undefined>;
+  readonly requests: { readonly [name: string]: RequestProfile };
+}
+
+/** The request reference of a selection: a key of `requests`, with no budget beside an effort (one layer). */
+function checkRequest(selection: Selection, where: string, refs: Refs): void {
+  if (selection.request === undefined) return;
+  if (!Object.hasOwn(refs.requests, selection.request)) {
+    throw invalid(`${where}.request`, `${JSON.stringify(selection.request)} is not a key of requests`);
+  }
+  if (selection.effort !== null && refs.requests[selection.request]!.reasoning_budget !== undefined) {
+    throw invalid(`${where}.effort`, `effort ${JSON.stringify(selection.effort)} and the reasoning_budget of request ${JSON.stringify(selection.request)} are one layer; set one`);
+  }
 }
 
 /** The reference checks of one selection: its model is a catalog id and its effort is accepted. */
@@ -264,7 +413,8 @@ function checkReference(selection: Selection, where: string, declared: Map<strin
  * `declared`, each selection's references are checked where Python checks
  * them; without it, only the structure is checked.
  */
-function selections(value: PyValue, declared?: Map<string, string[] | undefined>): Array<[string, Selection]> {
+function selections(value: PyValue, refs?: Refs): Array<[string, Selection]> {
+  const declared = refs?.efforts;
   if (!(value instanceof PyMap)) throw invalid("selections", `must be a mapping, not ${typeName(value)}`);
   const out: Array<[string, Selection]> = [];
   for (const [key, raw] of value.entries) {
@@ -279,8 +429,13 @@ function selections(value: PyValue, declared?: Map<string, string[] | undefined>
     if (effort !== null && (typeof effort !== "string" || effort === "")) {
       throw invalid(`${where}.effort`, "must be a non-empty string or null (YAML reads on/off/yes/no as booleans; quote the word)");
     }
-    const selection: Selection = { model, effort };
-    if (declared) checkReference(selection, where, declared);
+    const base: Selection = { model, effort };
+    if (declared) checkReference(base, where, declared);
+    let selection = base;
+    if (picked.has("request")) {
+      selection = { model, effort, request: text(picked.get("request")!, `${where}.request`) };
+      if (refs) checkRequest(selection, where, refs);
+    }
     out.push([key, selection]);
   }
   return out;
@@ -297,16 +452,35 @@ function sortedSelections(entries: Array<[string, Selection]>): { [key: string]:
   return out;
 }
 
+/**
+ * The tracked document. The order of the checks fixes which problem is reported first, as in
+ * the Python reader: the version, the `endpoints` structure, the catalog, that each `endpoints`
+ * name is a row's endpoint, `requests`, `selections`.
+ */
 function validateTracked(data: PyValue): ProjectModelsDocument {
   const top = mapping(data, "document", TOP_KEYS);
   checkVersion(top);
+  const endpoints = top.has("endpoints") ? endpointsBlock(top.get("endpoints")!) : undefined;
   const { rows, efforts: declared } = catalog(top.has("catalog") ? top.get("catalog")! : []);
-  const picked = selections(top.has("selections") ? top.get("selections")! : new PyMap(), declared);
-  return { version: 1, catalog: rows, selections: sortedSelections(picked) };
+  if (endpoints) {
+    const used = new Set(rows.map((row) => row.endpoint));
+    for (const name of endpoints.names) {
+      if (!used.has(name)) throw invalid(`endpoints[${pythonRepr(name)}]`, `no catalog row names endpoint ${JSON.stringify(name)}`);
+    }
+  }
+  const requests = top.has("requests") ? requestsBlock(top.get("requests")!) : undefined;
+  const picked = selections(top.has("selections") ? top.get("selections")! : new PyMap(), { efforts: declared, requests: requests ?? {} });
+  const document: {
+    version: 1; endpoints?: { [name: string]: { effort_style: EffortStyle } }; catalog: CatalogRow[];
+    requests?: { [name: string]: RequestProfile }; selections: { [key: string]: Selection };
+  } = { version: 1, catalog: rows, selections: sortedSelections(picked) };
+  if (endpoints) document.endpoints = endpoints.entries;
+  if (requests) document.requests = requests;
+  return document;
 }
 
 function sameSelection(a: Selection | null, b: Selection | null): boolean {
-  return a !== null && b !== null && a.model === b.model && a.effort === b.effort;
+  return a !== null && b !== null && a.model === b.model && a.effort === b.effort && a.request === b.request;
 }
 
 function makeRegistry(
@@ -325,6 +499,11 @@ function makeRegistry(
   const registry: Registry = source === undefined ? { document, resolved } : { source, document, resolved };
   REGISTRIES.add(deepFreeze(registry));
   return registry;
+}
+
+/** Whether `value` is a registry this module made (the request module accepts only these). */
+export function isRegistry(value: unknown): value is Registry {
+  return typeof value === "object" && value !== null && REGISTRIES.has(value);
 }
 
 function withContext<T>(source: string | undefined, run: () => T): T {
@@ -428,8 +607,10 @@ export function loadOverlay(path: string): Overlay {
  * the tracked entry is no override (`source` stays `default`).
  *
  * Each overlay's selections are checked against the registry's catalog first,
- * in file order: the model must be a catalog id, and the effort must be one of
- * the row's `efforts` when the row declares them (`null` when it declares `[]`).
+ * in file order: the model must be a catalog id, the effort must be one of
+ * the row's `efforts` when the row declares them (`null` when it declares `[]`),
+ * and a `request` must be a key of the tracked file's `requests` (with no
+ * `reasoning_budget` beside an effort).
  *
  * @param registry - A registry from this package (with or without overlays).
  * @param overlays - Overlays from {@link parseOverlay} or {@link loadOverlay}.
@@ -441,6 +622,7 @@ export function loadOverlay(path: string): Overlay {
 export function applyOverlay(registry: Registry, ...overlays: Overlay[]): Registry {
   if (!REGISTRIES.has(registry)) throw new TypeError("registry must come from parseRegistry, loadRegistry or applyOverlay");
   const declared = new Map<string, string[] | undefined>(registry.document.catalog.map((row) => [row.id, row.efforts as string[] | undefined]));
+  const refs: Refs = { efforts: declared, requests: registry.document.requests ?? {} };
   const layers: OverlayDocument[] = [];
   for (const [key, entry] of Object.entries(registry.resolved)) {
     if (entry.source === "override" || entry.default === null) layers.push({ version: 1, selections: { [key]: entry.effective } });
@@ -449,7 +631,11 @@ export function applyOverlay(registry: Registry, ...overlays: Overlay[]): Regist
     const order = OVERLAYS.get(overlay);
     if (order === undefined) throw new TypeError("each overlay must come from parseOverlay or loadOverlay");
     withContext(overlay.source, () => {
-      for (const key of order) checkReference(overlay.document.selections[key]!, `selections[${pythonRepr(key)}]`, declared);
+      for (const key of order) {
+        const where = `selections[${pythonRepr(key)}]`;
+        checkReference(overlay.document.selections[key]!, where, declared);
+        checkRequest(overlay.document.selections[key]!, where, refs);
+      }
     });
     layers.push(overlay.document);
   }

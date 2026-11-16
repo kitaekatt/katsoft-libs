@@ -2448,6 +2448,716 @@
         },
         "schema": "accepts"
       }
+    },
+    {
+      "name": "request-settings-full",
+      "note": "Every request-settings key: an endpoint's effort style, row traits and typed row defaults, a named request profile, and a selection that points at it. A key that is absent stays absent in the normalized document; a selection without request has no request key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  api: {effort_style: reasoning-object}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    max_output_tokens: 4000",
+          "    traits: [long_drafts, text_only]",
+          "    request_defaults:",
+          "      temperature: 0.7",
+          "      top_p: 1",
+          "      reasoning_budget: 256",
+          "      extras: {provider: {sort: latency}}",
+          "requests:",
+          "  classify: {temperature: 0, max_output_tokens: 60}",
+          "  write: {temperature: 0.9, top_p: 0.95, max_output_tokens: 900, reasoning_budget: 1024, extras: {seed: 7}}",
+          "selections:",
+          "  text.age: {model: a, effort: none, request: classify}",
+          "  text.draft: {model: a, request: write}",
+          "  text.plain: {model: a}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "endpoints": {
+            "api": {
+              "effort_style": "reasoning-object"
+            }
+          },
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "max_output_tokens": 4000,
+              "traits": [
+                "long_drafts",
+                "text_only"
+              ],
+              "request_defaults": {
+                "temperature": 0.7,
+                "top_p": 1,
+                "reasoning_budget": 256,
+                "extras": {
+                  "provider": {
+                    "sort": "latency"
+                  }
+                }
+              }
+            }
+          ],
+          "requests": {
+            "classify": {
+              "temperature": 0,
+              "max_output_tokens": 60
+            },
+            "write": {
+              "temperature": 0.9,
+              "top_p": 0.95,
+              "max_output_tokens": 900,
+              "reasoning_budget": 1024,
+              "extras": {
+                "seed": 7
+              }
+            }
+          },
+          "selections": {
+            "text.age": {
+              "model": "a",
+              "effort": "none",
+              "request": "classify"
+            },
+            "text.draft": {
+              "model": "a",
+              "effort": null,
+              "request": "write"
+            },
+            "text.plain": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "empty-endpoints-and-requests",
+      "note": "An empty endpoints or requests mapping is kept as given.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints: {}",
+          "requests: {}"
+        ]
+      },
+      "expect": {
+        "document": {
+          "version": 1,
+          "endpoints": {},
+          "catalog": [],
+          "requests": {},
+          "selections": {}
+        }
+      }
+    },
+    {
+      "name": "selection-names-an-unknown-request",
+      "note": "A selection's request is a key of requests.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  p: {temperature: 0}",
+          "selections:",
+          "  k: {model: a, request: q}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections['k'].request"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "selection-request-null",
+      "note": "A request is a profile name; null is refused (omit the key for no profile).",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "selections:",
+          "  k: {model: a, request: ~}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections['k'].request"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "effort-and-budget-in-one-layer",
+      "note": "A selection's effort and its request profile's reasoning_budget are one layer: both is refused. A row's reasoning_budget is a lower layer, so a selection effort beside it is valid (see request-settings-full).",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  think: {reasoning_budget: 512}",
+          "selections:",
+          "  k: {model: a, effort: low, request: think}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "selections['k'].effort"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "request-profile-unknown-key",
+      "note": "A request profile holds only temperature, top_p, max_output_tokens, reasoning_budget and extras.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "requests:",
+          "  p: {temperature: 0, seed: 1}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['p']"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "request-profile-not-a-mapping",
+      "note": "requests maps a name to a mapping.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "requests:",
+          "  p: fast"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['p']"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "temperature-below-zero",
+      "note": "temperature is a number, 0 or more.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "requests:",
+          "  p: {temperature: -0.5}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['p'].temperature"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "temperature-boolean",
+      "note": "A YAML boolean is not a number.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "requests:",
+          "  p: {temperature: on}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['p'].temperature"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "top-p-above-one",
+      "note": "top_p is a number from 0 to 1.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "requests:",
+          "  p: {top_p: 1.5}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['p'].top_p"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "max-output-tokens-decimal-in-profile",
+      "note": "max_output_tokens is an integer; 60.0 is a decimal (a JSON Schema validator reads it as an integer, so this is a reader rule).",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "requests:",
+          "  p: {max_output_tokens: 60.0}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['p'].max_output_tokens"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "reasoning-budget-zero",
+      "note": "reasoning_budget is an integer, 1 or more. Effort none turns reasoning off.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "requests:",
+          "  p: {reasoning_budget: 0}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['p'].reasoning_budget"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "profile-extras-reserved",
+      "note": "A request profile's extras may not hold a name that a typed setting or the effort owns (here temperature). This is portable: a reader needs no registry to see it.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "requests:",
+          "  p: {extras: {temperature: 0.2}}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['p'].extras"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "profile-extras-reserved-nested-effort",
+      "note": "chat_template_kwargs.reasoning_effort is the effort's; other chat_template_kwargs members are free.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "requests:",
+          "  p: {extras: {chat_template_kwargs: {reasoning_effort: low}}}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['p'].extras.chat_template_kwargs"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "row-spells-a-setting-twice",
+      "note": "A row that sets temperature as a typed default and in extras is refused. An extras-only temperature stays valid (see full-document).",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      temperature: 0.5",
+          "      extras: {temperature: 0.7}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "row-request-defaults-max-output-tokens",
+      "note": "A row's output cap default is the row's max_output_tokens, not a request_defaults key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults: {max_output_tokens: 10}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "traits-repeat",
+      "note": "traits is a list of non-empty text with no repeats.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    traits: [x, x]"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].traits[1]"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "traits-not-text",
+      "note": "A trait is non-empty text.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    traits: [x, 3]"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].traits[1]"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "endpoint-style-unknown",
+      "note": "effort_style is one of top-level, ninfer, chat_template_kwargs, reasoning-object, unsupported.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  api: {effort_style: sideways}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "endpoints['api'].effort_style"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "endpoint-without-style",
+      "note": "An endpoints entry needs effort_style.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  api: {}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "endpoints['api']"
+        },
+        "schema": "refuses"
+      }
+    },
+    {
+      "name": "endpoint-names-no-row",
+      "note": "Each endpoints key is the endpoint of a catalog row, so a misspelt name cannot hide.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  apl: {effort_style: top-level}",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "endpoints['apl']"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "local-request-reference",
+      "note": "A personal-layer selection may name a tracked request profile; equal to the default (request included) it is no override.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  p: {temperature: 0}",
+          "  q: {temperature: 1}",
+          "selections:",
+          "  k: {model: a, request: p}",
+          "  same: {model: a, request: p}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  k: {model: a, request: q}",
+          "  same: {model: a, request: p}"
+        ]
+      },
+      "expect": {
+        "local": {
+          "version": 1,
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null,
+              "request": "q"
+            },
+            "same": {
+              "model": "a",
+              "effort": null,
+              "request": "p"
+            }
+          }
+        },
+        "resolved": {
+          "k": {
+            "effective": {
+              "model": "a",
+              "effort": null,
+              "request": "q"
+            },
+            "default": {
+              "model": "a",
+              "effort": null,
+              "request": "p"
+            },
+            "source": "override"
+          },
+          "same": {
+            "effective": {
+              "model": "a",
+              "effort": null,
+              "request": "p"
+            },
+            "default": {
+              "model": "a",
+              "effort": null,
+              "request": "p"
+            },
+            "source": "default"
+          }
+        }
+      }
+    },
+    {
+      "name": "local-drops-the-request",
+      "note": "An override replaces the whole selection: one that omits request has no request profile.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  p: {temperature: 0}",
+          "selections:",
+          "  k: {model: a, request: p}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "expect": {
+        "local": {
+          "version": 1,
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        },
+        "resolved": {
+          "k": {
+            "effective": {
+              "model": "a",
+              "effort": null
+            },
+            "default": {
+              "model": "a",
+              "effort": null,
+              "request": "p"
+            },
+            "source": "override"
+          }
+        }
+      }
+    },
+    {
+      "name": "local-names-an-unknown-request",
+      "note": "A personal-layer request must be a key of the tracked requests.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  k: {model: a, request: p}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "local",
+          "code": "invalid",
+          "path": "selections['k'].request"
+        },
+        "schema": "accepts"
+      }
+    },
+    {
+      "name": "local-effort-and-budget-in-one-layer",
+      "note": "The one-layer rule holds in the personal layer too.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  think: {reasoning_budget: 512}"
+        ]
+      },
+      "local": {
+        "lines": [
+          "version: 1",
+          "selections:",
+          "  k: {model: a, effort: high, request: think}"
+        ]
+      },
+      "expect": {
+        "error": {
+          "layer": "local",
+          "code": "invalid",
+          "path": "selections['k'].effort"
+        },
+        "schema": "accepts"
+      }
     }
   ]
 }

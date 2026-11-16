@@ -2,6 +2,28 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
+## Unreleased
+
+The project model file can describe the whole request of a selection, so a client builds it from the file alone. The format stays `llm-kit.project-models/v1`: every key below is optional, and a file without them reads as before.
+
+Added:
+
+- Reading the new keys: `endpoints` (`{<endpoint>: {effort_style}}`), `requests` (named request profiles: `temperature`, `top_p`, `max_output_tokens`, `reasoning_budget`, `extras`), row `traits` (consumer labels, never sent), typed row `request_defaults` (`temperature`, `top_p`, `reasoning_budget`) and selection `request`. Overlays may name a `request`; `applyOverlay` checks it against the tracked `requests`.
+- `resolveRequest(registry, key, call)`: the resolved request (row < selection < call), every key present.
+- `chatFields(request, {effortStyle})`: its OpenAI-compatible body fields, with the effort placed in its style.
+- Types `EffortStyle`, `RequestDefaults`, `RequestProfile`, `RequestCall`, `ResolvedRequest`, `ChatFieldsOptions`; error code `wire`.
+- `examples/request.mjs`.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. Each new name has a JSDoc block; `test/surface.test.mjs` passes.
+2. Semver release with a changelog: this entry; the version is set at release.
+3. Tests for each public function: pass. `test/requests.test.mjs` runs all 30 request cases through `resolveRequest` and `chatFields`; `test/cases.test.mjs` runs the 25 new project model cases; `test/api.test.mjs` covers errors, sources, freezing and argument types.
+4. No client names, prompts or data: pass. Generic rows and endpoints.
+5. Examples run without a client app: pass. `npm run check-pack` runs `examples/request.mjs` from the packed tarball.
+6. JSON Schema for each file format: pass. The schemas gain the new keys; the shared cases validate parsed data and results with ajv.
+7. Gate before adoption: recorded in this entry.
+
 ## 1.0.1
 
 No code change. This is the first release that GitHub Actions publishes through npm trusted publishing, with provenance. The code, the types and the schemas are the same as in 1.0.0.

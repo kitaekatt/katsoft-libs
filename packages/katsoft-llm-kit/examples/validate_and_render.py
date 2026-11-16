@@ -9,7 +9,8 @@ app, endpoint registry or network:
 
 The script reads models.yaml and summary.prompt.md beside it. It checks each
 against the format's JSON Schema, runs the portable validation of the project
-model file, resolves one selection, and fills the prompt. It exits non-zero
+model file, resolves one selection and the whole request of each selection
+(row defaults, request profile and call layered), and fills the prompt. It exits non-zero
 with a message when a check fails.
 """
 
@@ -20,6 +21,7 @@ from pathlib import Path
 from llm_kit.schema.formats import PROJECT_MODELS_V1, PROMPT_FILE_V1, load_schema
 from llm_kit.graph.prompt import read_prompt_file, render_prompt_file
 from llm_kit.registry.project_models import parse_yaml_document, validate_portable_document
+from llm_kit.registry.request_settings import resolve_request
 from llm_kit.schema.json_schema import validate
 
 HERE = Path(__file__).resolve().parent
@@ -38,6 +40,10 @@ def main() -> int:
     pick = document["selections"]["summary.write"]
     row = next(r for r in document["catalog"] if r["id"] == pick["model"])
     print(f"summary.write: endpoint {row['endpoint']}, model {row['model']}, effort {pick['effort']}")
+    for key in sorted(document["selections"]):
+        request = resolve_request(document, key, call={"max_output_tokens": 200} if key == "summary.review" else None)
+        print(f"{key}: temperature {request['temperature']}, max_output_tokens {request['max_output_tokens']}, "
+              f"traits {request['traits']}")
 
     prompt_path = HERE / "summary.prompt.md"
     prompt = read_prompt_file(prompt_path)
