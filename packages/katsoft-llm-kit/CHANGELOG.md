@@ -2,6 +2,30 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## 1.32.0
+
+Deletion of a unit branch. A unit whose worktree is removed kept its branch with no supported way to delete it; a client deleting it by hand had no guard against deleting work that was never merged or that moved after the decision.
+
+Added:
+
+- `llm_kit.jobs.units.delete_unit_branch(registry, repository, unit, *, expected_tip, reason, target_ref=None)`, with `reason` in `BRANCH_DELETION_REASONS` (`"merged"`, `"discarded"`). It takes `repository_lock` itself (not reentrant: a caller must not hold it). It refuses, with the new `UnitBranchDeletionRefused` (a `UnitError` with `reason`), a unit that is not `removed`, a branch checked out in any worktree, a branch whose tip is not `expected_tip`, and for `"merged"` a tip that is not an ancestor of `target_ref` (`git merge-base --is-ancestor`; a squash or cherry-pick is not proof). `target_ref` is required for `"merged"` (a ref already fetched, or a commit id; nothing is fetched) and refused for `"discarded"`. The deletion is `git update-ref -d refs/heads/<branch> <expected_tip>`, so a branch that moves at the last moment is kept. A repeat call whose branch is already absent and whose row records the same reason and tip returns that record unchanged.
+- `UnitRecord.branch_deleted_reason`, `branch_deleted_tip_sha`, `branch_deleted_target_sha` (`"merged"` only) and `branch_deleted_at`: the deletion evidence on the unit row, also in `to_mapping()`.
+
+Changed:
+
+- The registry schema is 2 (`REGISTRY_SCHEMA`): four nullable columns for the deletion evidence. Opening a version 1 registry migrates it in place and keeps its rows. An llm-kit before 1.32.0 then refuses that registry ("newer than this llm-kit reads"), so every process that shares a worktree root must run 1.32.0 or later.
+- `unit_record.json` gains the four keys as optional properties, so a record written before 1.32.0 still conforms; the record `schema` stays 1.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. `delete_unit_branch`, `UnitBranchDeletionRefused` and `BRANCH_DELETION_REASONS` have docstrings or comments and are in `__all__` and `public-surface.json`; `test_jobs_workspace.py` checks the list.
+2. Semver release with a changelog: pass. Version 1.32.0 in `pyproject.toml`; this entry.
+3. Tests for each public function: pass. `test_jobs_units.py`, against real Git: a merged branch is deleted and the evidence recorded; a branch not reachable from the target, a branch that moved past the expected tip, a unit that is not removed and a branch checked out in another worktree are refused and kept; a discarded branch is deleted; argument validation; a repeat call returns the same record and a mismatched one is refused; an absent branch without a recorded deletion is refused; a version 1 registry migrates. The ancestor check, the expected-tip check (alone and with the `update-ref` old value), the checked-out check, the state check and the idempotent return each turn their test red when reverted.
+4. No client names, prompts or data: pass.
+5. Examples run without a client app: pass. No example changed.
+6. JSON Schema for each file format: pass. `unit_record.json` has the new keys; the tests validate deleted (merged and discarded) and migrated records against it.
+7. Gate before adoption: pass. Lines 1 to 6 pass for the pieces above, so a client may adopt them from this version on.
+
 ## 1.31.0
 
 The project model file can describe the whole request of a selection, so a request can be rebuilt, compared and cached from data. The format stays `llm-kit.project-models/v1`: every key below is optional, a file without them reads as before, and an older reader refuses a file that uses them (unknown keys), so none misreads one.

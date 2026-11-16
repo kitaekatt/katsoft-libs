@@ -3439,6 +3439,10 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.jobs.units.BRANCH_DELETION_REASONS",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.jobs.units.CLAIM_SECTION",
       "status": "public"
     },
@@ -3464,6 +3468,10 @@
     },
     {
       "name": "llm_kit.jobs.units.WIP_MESSAGE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.units.UnitBranchDeletionRefused",
       "status": "public"
     },
     {
@@ -3516,6 +3524,10 @@
     },
     {
       "name": "llm_kit.jobs.units.check_unit_id",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.jobs.units.delete_unit_branch",
       "status": "public"
     },
     {

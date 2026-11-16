@@ -23,6 +23,7 @@ import pytest
 from llm_kit.completion.session_types import DetachedSurvivor, ProcessIdentity
 from llm_kit.jobs import units
 from llm_kit.jobs.units import (
+    UnitBranchDeletionRefused,
     UnitBusyError,
     UnitError,
     UnitFinalizeStatus,
@@ -32,6 +33,7 @@ from llm_kit.jobs.units import (
     UnitState,
     acquire_unit,
     check_unit_id,
+    delete_unit_branch,
     finalize_unit,
     list_units,
     live_processes,
@@ -149,16 +151,35 @@ def test_repository_identity_refuses_a_directory_outside_git(tmp_path):
 def test_the_registry_has_its_own_schema_and_refuses_a_newer_one(tmp_path):
     registry = UnitRegistry(tmp_path / "root")
     assert registry.path == (tmp_path / "root" / units.REGISTRY_FILENAME).resolve()
-    assert registry.schema_version() == units.REGISTRY_SCHEMA == 1
+    assert registry.schema_version() == units.REGISTRY_SCHEMA == 2
     assert UnitRegistry(tmp_path / "root", create=False).list() == ()
     connection = sqlite3.connect(registry.path)
-    connection.execute("UPDATE schema_version SET version = 2")
+    connection.execute("UPDATE schema_version SET version = 3")
     connection.commit()
     connection.close()
-    with pytest.raises(UnitError, match="schema version 2, newer"):
+    with pytest.raises(UnitError, match="schema version 3, newer"):
         UnitRegistry(tmp_path / "root")
     with pytest.raises(UnitError, match="no unit registry"):
         UnitRegistry(tmp_path / "absent", create=False)
+
+
+def test_a_version_1_registry_is_migrated_and_keeps_its_rows(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    connection = sqlite3.connect(root / units.REGISTRY_FILENAME)
+    for statement in units._SCHEMA_STEPS[0]:
+        connection.execute(statement)
+    connection.execute(
+        "INSERT INTO units (repository, unit, branch, worktree, state, run_count, created_at, updated_at)"
+        " VALUES ('/r/.git', 'u', 'agent/u', '/w/u', 'removed', 1, 1.0, 1.0)"
+    )
+    connection.commit()
+    connection.close()
+    registry = UnitRegistry(root)
+    assert registry.schema_version() == 2
+    (record,) = registry.list()
+    assert record.unit == "u" and record.branch_deleted_reason is None
+    conforms(record)
 
 
 # ---------------------------------------------------------------------------
@@ -651,6 +672,134 @@ def test_list_units_reads_a_root_and_is_empty_without_a_registry(unit, tmp_path)
     unit.acquire()
     (listed,) = list_units(unit.registry.root)
     assert listed.unit == "u" and listed.state is UnitState.ACTIVE
+
+
+# ---------------------------------------------------------------------------
+# branch deletion
+# ---------------------------------------------------------------------------
+
+
+def _removed_with_work(unit: Unit) -> str:
+    """Run the unit once with a change, remove its worktree; return the branch tip."""
+    lease = unit.acquire()
+    unit.write()
+    tip = unit.finalize(lease=lease).commit_sha
+    remove_unit_worktree(unit.registry, unit.repository, "u")
+    return tip
+
+
+def _merge_into_origin_dev(unit: Unit) -> str:
+    git("push", "-q", "origin", "agent/u:dev", cwd=unit.repo.root)
+    git("fetch", "-q", "origin", cwd=unit.repo.root)
+    return unit.repo.head("origin/dev")
+
+
+def _branch_exists(unit: Unit) -> bool:
+    return bool(git("rev-parse", "-q", "--verify", "refs/heads/agent/u", cwd=unit.repo.root, check=False))
+
+
+def test_a_merged_branch_is_deleted_and_the_evidence_recorded(unit):
+    tip = _removed_with_work(unit)
+    target = _merge_into_origin_dev(unit)
+    record = delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="merged",
+                                target_ref="origin/dev")
+    assert not _branch_exists(unit)
+    assert record.state is UnitState.REMOVED
+    assert (record.branch_deleted_reason, record.branch_deleted_tip_sha, record.branch_deleted_target_sha) == (
+        "merged", tip, target)
+    assert record.branch_deleted_at is not None
+    assert unit.record() == record
+    conforms(record)
+
+
+def test_a_branch_not_reachable_from_the_target_is_not_deleted(unit):
+    tip = _removed_with_work(unit)
+    with pytest.raises(UnitBranchDeletionRefused, match="not an ancestor of origin/dev") as caught:
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="merged",
+                           target_ref="origin/dev")
+    assert "not an ancestor" in caught.value.reason
+    assert _branch_exists(unit) and unit.record().branch_deleted_reason is None
+
+
+def test_a_branch_that_moved_past_the_expected_tip_is_not_deleted(unit):
+    tip = _removed_with_work(unit)
+    _merge_into_origin_dev(unit)
+    tree = git("rev-parse", f"{tip}^{{tree}}", cwd=unit.repo.root)
+    later = git("commit-tree", tree, "-p", tip, "-m", "later", cwd=unit.repo.root)
+    git("update-ref", "refs/heads/agent/u", later, cwd=unit.repo.root)
+    with pytest.raises(UnitBranchDeletionRefused, match="moved"):
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="merged",
+                           target_ref="origin/dev")
+    assert unit.repo.head("agent/u") == later
+    with pytest.raises(UnitBranchDeletionRefused, match="moved"):
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="discarded")
+    assert unit.repo.head("agent/u") == later
+
+
+def test_a_unit_whose_worktree_is_not_removed_keeps_its_branch(unit):
+    lease = unit.acquire()
+    unit.write()
+    tip = unit.finalize(lease=lease).commit_sha
+    with pytest.raises(UnitBranchDeletionRefused, match="is parked, not removed"):
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="discarded")
+    assert _branch_exists(unit)
+    with pytest.raises(UnitError, match="unknown unit 'nope'"):
+        delete_unit_branch(unit.registry, unit.repository, "nope", expected_tip=tip, reason="discarded")
+
+
+def test_a_branch_checked_out_in_another_worktree_is_not_deleted(unit, tmp_path):
+    tip = _removed_with_work(unit)
+    other = tmp_path / "elsewhere"
+    git("worktree", "add", "-q", str(other), "agent/u", cwd=unit.repo.root)
+    with pytest.raises(UnitBranchDeletionRefused, match="checked out in"):
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="discarded")
+    assert _branch_exists(unit)
+
+
+def test_a_discarded_branch_is_deleted_without_a_target(unit):
+    tip = _removed_with_work(unit)
+    record = delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="discarded")
+    assert not _branch_exists(unit)
+    assert (record.branch_deleted_reason, record.branch_deleted_tip_sha, record.branch_deleted_target_sha) == (
+        "discarded", tip, None)
+    conforms(record)
+
+
+def test_branch_deletion_validates_its_arguments(unit):
+    tip = _removed_with_work(unit)
+    with pytest.raises(ValueError, match="reason"):
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="gone")
+    with pytest.raises(ValueError, match="target_ref"):
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="merged")
+    with pytest.raises(ValueError, match="target_ref"):
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="discarded",
+                           target_ref="origin/dev")
+    with pytest.raises(ValueError, match="expected_tip"):
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=" ", reason="discarded")
+    assert _branch_exists(unit)
+
+
+def test_repeating_a_branch_deletion_returns_the_same_record(unit):
+    tip = _removed_with_work(unit)
+    target = _merge_into_origin_dev(unit)
+    first = delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="merged",
+                               target_ref="origin/dev")
+    unit.repo.advance_remote("later.txt", "later\n")  # the target moves on; the evidence stands
+    again = delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="merged",
+                               target_ref="origin/dev")
+    assert again == first and first.branch_deleted_target_sha == target
+    with pytest.raises(UnitBranchDeletionRefused, match="no branch"):
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="discarded")
+    with pytest.raises(UnitBranchDeletionRefused, match="no branch"):
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip="0" * 40, reason="merged",
+                           target_ref="origin/dev")
+
+
+def test_an_absent_branch_without_a_recorded_deletion_is_refused(unit):
+    tip = _removed_with_work(unit)
+    git("branch", "-q", "-D", "agent/u", cwd=unit.repo.root)
+    with pytest.raises(UnitBranchDeletionRefused, match="no branch"):
+        delete_unit_branch(unit.registry, unit.repository, "u", expected_tip=tip, reason="discarded")
 
 
 # ---------------------------------------------------------------------------

@@ -18,7 +18,8 @@ States (:class:`UnitState`). ``acquire_unit`` moves a new, ``parked`` or
 ``removed`` unit to ``active``; ``finalize_unit`` moves ``active`` to
 ``parked``, ``dirty_held`` or ``writer_held``, and a held unit back to
 ``parked`` once resolved; ``remove_unit_worktree`` moves ``parked`` to
-``removed``:
+``removed``; ``delete_unit_branch`` then deletes a ``removed`` unit's branch
+(merged or discarded) and records the evidence on the row:
 
 - ``active``: a run owns the unit (owner run, job, nonce and process identity).
   An active unit whose owner process died is recovered by :func:`finalize_unit`
@@ -35,14 +36,16 @@ States (:class:`UnitState`). ``acquire_unit`` moves a new, ``parked`` or
   shutdown that was not confirmed); the commit was not made. Re-finalizable
   once every recorded identity is re-checked gone.
 - ``removed``: the worktree was removed; the branch is kept, and a later
-  acquire rehydrates the worktree at the same path.
+  acquire rehydrates the worktree at the same path, until
+  :func:`delete_unit_branch` deletes the branch.
 
 Locking. Every operation that changes a unit, its worktree or its branch runs
 under an interprocess lock keyed by the repository identity
 (:func:`repository_lock`, a :func:`~llm_kit.storage.file_lock.file_lock` on
 ``<git common dir>/llm-kit/units.lock``), so ``git worktree add``, acquisition,
 rehydration, finalization and removal never interleave across processes or
-registries. The lock is not reentrant: never nest two of these calls.
+registries. The lock is not reentrant: never nest two of these calls, and
+never call one of them while holding :func:`repository_lock` yourself.
 
 Process liveness (owners, survivors) is checked by identity
 (``pid`` + creation time) and needs the package's ``local`` extra (psutil);
@@ -79,7 +82,7 @@ from . import _supervisor_process
 #: The registry file name inside a worktree root.
 REGISTRY_FILENAME = "units.sqlite3"
 #: The registry's own schema version (independent of the job ledger's).
-REGISTRY_SCHEMA = 1
+REGISTRY_SCHEMA = 2
 #: The JSON Schema file of :meth:`UnitRecord.to_mapping`, in ``llm_kit/jobs/schemas/``.
 UNIT_RECORD_SCHEMA_FILE = "unit_record.json"
 #: The version stamped as ``schema`` in :meth:`UnitRecord.to_mapping`.
@@ -90,6 +93,8 @@ DEFAULT_FINALIZE_S = SessionBounds().finalize_s
 WIP_MESSAGE = "WIP: {unit} run {run}"
 #: The repository configuration section that records which registry owns a unit.
 CLAIM_SECTION = "llm-kit-unit"
+#: The reasons :func:`delete_unit_branch` accepts for deleting a unit branch.
+BRANCH_DELETION_REASONS = ("merged", "discarded")
 
 _GIT_PROBE_TIMEOUT_S = 30.0
 _GIT_TREE_TIMEOUT_S = 900.0
@@ -111,6 +116,14 @@ class UnitOwnershipError(UnitError):
 
 class UnitRemovalRefused(UnitError):
     """:func:`remove_unit_worktree` refused; ``reason`` says why."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class UnitBranchDeletionRefused(UnitError):
+    """:func:`delete_unit_branch` refused; ``reason`` says why. The branch is unchanged."""
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -249,6 +262,12 @@ class UnitRecord:
       finalized and the branch tip it left.
     - ``merged_tip_sha`` / ``merge_target_sha`` / ``merged_at``: the last
       successful merge (design 7.2), recorded by :func:`record_unit_merge`.
+    - ``branch_deleted_reason`` / ``branch_deleted_tip_sha`` /
+      ``branch_deleted_target_sha`` / ``branch_deleted_at``: the deletion of the
+      unit branch by :func:`delete_unit_branch`: the reason (``merged`` or
+      ``discarded``), the tip that was deleted, the target commit it was found
+      reachable from (``merged`` only) and when; ``None`` while the branch was
+      never deleted.
     """
 
     repository: Path
@@ -270,6 +289,10 @@ class UnitRecord:
     merged_tip_sha: Optional[str] = None
     merge_target_sha: Optional[str] = None
     merged_at: Optional[float] = None
+    branch_deleted_reason: Optional[str] = None
+    branch_deleted_tip_sha: Optional[str] = None
+    branch_deleted_target_sha: Optional[str] = None
+    branch_deleted_at: Optional[float] = None
 
     @property
     def indeterminate(self) -> bool:
@@ -307,6 +330,10 @@ class UnitRecord:
             "merged_tip_sha": self.merged_tip_sha,
             "merge_target_sha": self.merge_target_sha,
             "merged_at": self.merged_at,
+            "branch_deleted_reason": self.branch_deleted_reason,
+            "branch_deleted_tip_sha": self.branch_deleted_tip_sha,
+            "branch_deleted_target_sha": self.branch_deleted_target_sha,
+            "branch_deleted_at": self.branch_deleted_at,
         }
 
 
@@ -368,6 +395,13 @@ _SCHEMA_STEPS: tuple[tuple[str, ...], ...] = (
         """,
         "INSERT INTO schema_version(version) VALUES (1)",
     ),
+    (
+        "ALTER TABLE units ADD COLUMN branch_deleted_reason TEXT"
+        " CHECK (branch_deleted_reason IN ('merged', 'discarded'))",
+        "ALTER TABLE units ADD COLUMN branch_deleted_tip_sha TEXT",
+        "ALTER TABLE units ADD COLUMN branch_deleted_target_sha TEXT",
+        "ALTER TABLE units ADD COLUMN branch_deleted_at REAL",
+    ),
 )
 
 if len(_SCHEMA_STEPS) != REGISTRY_SCHEMA:  # pragma: no cover - import-time consistency check
@@ -401,6 +435,10 @@ def _row_to_record(row: sqlite3.Row) -> UnitRecord:
         merged_tip_sha=row["merged_tip_sha"],
         merge_target_sha=row["merge_target_sha"],
         merged_at=row["merged_at"],
+        branch_deleted_reason=row["branch_deleted_reason"],
+        branch_deleted_tip_sha=row["branch_deleted_tip_sha"],
+        branch_deleted_target_sha=row["branch_deleted_target_sha"],
+        branch_deleted_at=row["branch_deleted_at"],
     )
 
 
@@ -1079,6 +1117,120 @@ def record_unit_merge(
         )
 
 
+def _commit_of(repository: Path, rev: str) -> Optional[str]:
+    """The full commit id ``rev`` names in ``repository``, or ``None`` when it names none."""
+    result = _git(("--git-dir", str(repository), "rev-parse", "-q", "--verify", f"{rev}^{{commit}}"),
+                  cwd=repository)
+    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else None
+
+
+def delete_unit_branch(
+    registry: UnitRegistry,
+    repository: Path,
+    unit: str,
+    *,
+    expected_tip: str,
+    reason: str,
+    target_ref: Optional[str] = None,
+) -> UnitRecord:
+    """Delete the branch of a ``removed`` unit and record the deletion on its row.
+
+    ``reason`` is ``"merged"`` or ``"discarded"`` (:data:`BRANCH_DELETION_REASONS`).
+    ``expected_tip`` is the branch tip the caller decided about; a branch at
+    any other commit is never deleted. For ``"merged"``, ``target_ref`` is
+    required: a ref the caller has already fetched (for example
+    ``origin/dev``) or a commit id; this function does not fetch. The
+    branch is deleted only when ``expected_tip`` is an ancestor of the
+    target (``git merge-base --is-ancestor``); a squash or cherry-pick of
+    the same changes is not proof and is refused. For ``"discarded"``,
+    ``target_ref`` must be ``None``.
+
+    Under :func:`repository_lock` (taken here; the lock is not reentrant,
+    so a caller must NOT hold it) it refuses, raising
+    :class:`UnitBranchDeletionRefused`, when the unit is not ``removed``,
+    when the branch is checked out in any worktree, when its tip is not
+    ``expected_tip``, or when a merged tip is not reachable from the target.
+    The deletion is ``git update-ref -d refs/heads/<branch> <expected_tip>``,
+    so a branch that moves at the last moment fails rather than being
+    deleted. The row then records the reason, the deleted tip, the target
+    commit (``merged`` only) and the time; the state stays ``removed``.
+
+    Idempotent: when the branch is already absent and the row records a
+    deletion with the same reason and tip, that record is returned unchanged
+    (the target is not re-resolved, so a target that has moved on since is
+    no obstacle). An absent branch without such a record is refused.
+
+    Returns the updated :class:`UnitRecord`. Raises :class:`ValueError` for
+    invalid arguments, :class:`UnitError` for an unknown unit or a Git
+    failure.
+    """
+    if reason not in BRANCH_DELETION_REASONS:
+        raise ValueError(f"reason must be one of {BRANCH_DELETION_REASONS}, not {reason!r}")
+    if not isinstance(expected_tip, str) or not expected_tip.strip():
+        raise ValueError("expected_tip must be a non-empty commit id")
+    if reason == "merged" and (not isinstance(target_ref, str) or not target_ref.strip()):
+        raise ValueError("a merged branch deletion needs a target_ref (a fetched ref or a commit id)")
+    if reason == "discarded" and target_ref is not None:
+        raise ValueError("a discarded branch deletion takes no target_ref")
+    expected_tip = expected_tip.strip()
+    repository = Path(repository).resolve()
+    with repository_lock(repository):
+        record = registry.get(repository, unit)
+        if record is None:
+            raise UnitError(f"unknown unit {unit!r} of repository {repository} in {registry.path}")
+        if record.state is not UnitState.REMOVED:
+            raise UnitBranchDeletionRefused(
+                f"unit {unit!r} is {record.state.value}, not removed; remove its worktree first"
+            )
+        ref = f"refs/heads/{record.branch}"
+        current = _commit_of(repository, ref)
+        if current is None:
+            recorded = record.branch_deleted_tip_sha
+            if (
+                record.branch_deleted_reason == reason
+                and recorded is not None
+                and (recorded == expected_tip or _commit_of(repository, expected_tip) == recorded)
+            ):
+                return record
+            raise UnitBranchDeletionRefused(
+                f"there is no branch {ref} and the unit records no {reason} deletion of tip "
+                f"{expected_tip}"
+            )
+        expected = _commit_of(repository, expected_tip)
+        if expected != current:
+            raise UnitBranchDeletionRefused(
+                f"{ref} moved: its tip is {current}, not the expected {expected_tip}"
+            )
+        for path, checked_out in _registered_worktrees(repository).items():
+            if checked_out == ref:
+                raise UnitBranchDeletionRefused(f"{ref} is checked out in {path}")
+        target_sha: Optional[str] = None
+        if reason == "merged":
+            assert target_ref is not None
+            target_ref = target_ref.strip()
+            target_sha = _commit_of(repository, target_ref)
+            if target_sha is None:
+                raise UnitBranchDeletionRefused(f"the target {target_ref} names no commit")
+            ancestor = _git(("--git-dir", str(repository), "merge-base", "--is-ancestor", current,
+                             target_sha), cwd=repository)
+            if ancestor.returncode == 1:
+                raise UnitBranchDeletionRefused(
+                    f"the tip {current} of {ref} is not an ancestor of {target_ref} ({target_sha})"
+                )
+            if ancestor.returncode != 0:
+                raise UnitError(f"could not compare {ref} with {target_ref}: {_detail(ancestor)}")
+        deleted = _git(("--git-dir", str(repository), "update-ref", "-d", ref, expected), cwd=repository)
+        if deleted.returncode != 0:
+            raise UnitBranchDeletionRefused(f"git update-ref -d {ref} failed: {_detail(deleted)}")
+        return registry._update(
+            record,
+            branch_deleted_reason=reason,
+            branch_deleted_tip_sha=current,
+            branch_deleted_target_sha=target_sha,
+            branch_deleted_at=time.time(),
+        )
+
+
 def list_units(root: Path) -> tuple[UnitRecord, ...]:
     """Every unit recorded under the worktree root ``root``; empty when it has no registry."""
     path = Path(root).expanduser().resolve() / REGISTRY_FILENAME
@@ -1088,6 +1240,7 @@ def list_units(root: Path) -> tuple[UnitRecord, ...]:
 
 
 __all__ = [
+    "BRANCH_DELETION_REASONS",
     "CLAIM_SECTION",
     "DEFAULT_FINALIZE_S",
     "REGISTRY_FILENAME",
@@ -1095,6 +1248,7 @@ __all__ = [
     "UNIT_RECORD_SCHEMA_FILE",
     "UNIT_RECORD_VERSION",
     "WIP_MESSAGE",
+    "UnitBranchDeletionRefused",
     "UnitBusyError",
     "UnitError",
     "UnitFinalizeResult",
@@ -1108,6 +1262,7 @@ __all__ = [
     "UnitState",
     "acquire_unit",
     "check_unit_id",
+    "delete_unit_branch",
     "finalize_unit",
     "list_units",
     "live_processes",
