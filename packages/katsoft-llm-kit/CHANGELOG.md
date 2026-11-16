@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased
+## 1.30.0
 
 A project model file whose rows name an endpoint this machine does not know now loads; a call to such a row refuses at the call. The endpoint is the consumer's name (the TypeScript reader `@katsoft/llm-kit-config` never resolved it), so a client may keep rows for its own endpoints (for example picture or video providers) in the same file.
 
@@ -18,8 +18,10 @@ Changed:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. The two new attributes have docstrings on their classes; no name is added to `public-surface.json`.
+2. Semver release with a changelog: pass. Version 1.30.0 in `pyproject.toml`; this entry.
 3. Tests for each public function: pass. `test_project_models.py` (an unbound row loads and is named; its effort and reserved-extras checks stay), `test_formats.py` (the shared case, portable and bound), `test_invoke_protocol.py` (the call refuses; another row of the file still calls), `test_runs_compare.py` (the dry run plans; the unbound selection refuses before any write), `test_model_catalog.py` (the note); the `models project show` and `validate` CLI goldens print `unbound`.
 4. No client names, prompts or data: pass. The tests use generic rows and endpoints.
+7. Gate before adoption: pass. Lines 1 to 4 pass for the pieces above, so a client may adopt them from this version on.
 
 ## 1.29.0
 
