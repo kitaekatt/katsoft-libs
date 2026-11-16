@@ -192,11 +192,11 @@ def test_openrouter_completion_result_shape(world, capsys):
     assert doc["output"] == {"text": "answer", "structured": None}
     assert doc["usage"]["input_tokens"] == 11 and doc["usage"]["output_tokens"] == 7
     assert doc["usage"]["cache_hit_tokens"] == 4 and isinstance(doc["usage"]["wall_ms"], int)
-    # an unmarked endpoint's native usage.cost is an ESTIMATE; the authoritative amount is unknown, not zero
+    # the shipped openrouter endpoint declares billing.mode provider-reported: its usage.cost is the charge
     assert doc["cost"] == {
         "class": "metered", "reason": "no registry entry: billing undeclared",
-        "usd": None, "source": None,
-        "estimated_usd": 0.0007, "estimated_source": "openrouter.usage.cost",
+        "usd": 0.0007, "source": "provider",
+        "estimated_usd": None, "estimated_source": None,
     }
     assert doc["consent"] == {"opted_in": False, "applied": False, "scope": None}
     assert "files" not in doc
@@ -240,6 +240,33 @@ def test_deepseek_effort_null_sends_none_and_medium_is_refused(world, capsys):
     code, doc, err = call(world, capsys, model="deepseek", effort="medium")  # the vendor lists no medium
     assert code == 4 and doc is None and err["error"]["kind"] == "effort"
     assert len(world.http) == before
+
+
+def test_an_endpoint_that_does_not_declare_provider_reported_billing_keeps_its_usage_cost_as_an_estimate(
+    world, capsys, tmp_path
+):
+    """Only the endpoint's configuration makes a native usage.cost authoritative, never the response."""
+    registry = write(tmp_path / "registry.yaml",
+                     "version: 1\nmodels:\n  self-hosted: {base_url: http://h.invalid/v1, model: m, key_env: null}\n")
+    world.monkeypatch.setenv("MODEL_ENDPOINTS_REGISTRY", str(registry))
+    doc = dict(_DOC, catalog=[*_DOC["catalog"], {"id": "own", "label": "Own", "endpoint": "self-hosted", "model": "m"}],
+               selections={**_DOC["selections"], "own": {"model": "own"}})
+    pm.write_project_models(doc, project_root=str(world.root))
+    allow()
+    code, out, err = call(world, capsys, selection="own")
+    assert code == 0 and err is None, (out, err)
+    assert (out["cost"]["usd"], out["cost"]["source"]) == (None, None)
+    assert (out["cost"]["estimated_usd"], out["cost"]["estimated_source"]) == (0.0007, "openrouter.usage.cost")
+
+
+def test_the_shipped_openrouter_endpoints_declare_provider_reported_billing():
+    from llm_kit.registry.models import DEFAULT_MODEL_CONFIG
+
+    openrouter = {name: ep for name, ep in DEFAULT_MODEL_CONFIG["endpoints"].items()
+                  if ep.get("base_url") == "https://openrouter.ai/api/v1"}
+    assert "openrouter" in openrouter and len(openrouter) > 1
+    for name, ep in openrouter.items():
+        assert ep.get("billing") == {"mode": "provider-reported"}, name
 
 
 def test_the_shipped_openrouter_endpoint_declares_the_style():

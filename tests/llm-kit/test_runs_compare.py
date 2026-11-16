@@ -494,7 +494,7 @@ def test_the_cli_compares_selections_of_the_project_model_file_and_sends_each_on
                                  "effort": "high", "registry_sha256": flash["resolved"]["registry_sha256"]}
     assert flash["request"]["max_output_tokens"] == 200 and other["request"]["max_output_tokens"] is None
     assert other["request"]["extras"] == {"provider": {"sort": "latency"}}
-    assert flash["cost"] == {"usd": 0.0002, "source": "estimated"}  # openrouter usage.cost is an estimate here
+    assert flash["cost"] == {"usd": 0.0002, "source": "reported"}  # openrouter's usage.cost is the charge
     assert flash["provenance"]["tool"]["name"] == "llm-kit runs compare"
     assert out["stopped"] is None and out["cases"][0]["answers"]["b"]["text"] == "answer of example/model-b"
     code, out, _ = compare_cli(capsys, cli_project)

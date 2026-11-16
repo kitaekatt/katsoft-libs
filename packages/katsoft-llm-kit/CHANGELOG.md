@@ -4,6 +4,10 @@ Each released version has one entry. The quality bar is in the repository's root
 
 ## Unreleased
 
+Changed:
+
+- The shipped OpenRouter endpoints (`openrouter`, `or-qwen`, `or-gpt-mini`, `or-gemini-lite` in `DEFAULT_MODEL_CONFIG`) declare `billing: {mode: provider-reported}`. OpenRouter's `usage.cost` is the amount it charged, so a call on them reports it as the authoritative cost (`cost.usd`, `cost.source` `provider`) instead of an estimate (`estimated_source` `openrouter.usage.cost`). `llm-kit runs compare` records it with `source: reported`, and a graph spend ledger settles on it. An endpoint that does not declare the billing mode keeps a native `usage.cost` as an estimate, as before; a user config layer that points `openrouter` at another base URL should drop the declaration.
+
 Fixed:
 
 - The project model reader (`parse_yaml_document`, so every read of the tracked file and the personal layer) raises `ProjectModelsError` (`invalid`, `where` `""`) for every bad YAML value. Before, text that PyYAML resolves or an explicit tag names but cannot build escaped as `ValueError`, `KeyError`, `AttributeError` or `IndexError`: `2026-02-30`, `2026-01-01 25:00:00`, a timestamp offset of a day or more, `0x_`, `!!bool foo`, `!!int abc`, `!!int ''`, `!!float abc`, `!!timestamp foo`. A decimal integer of more than 4300 digits is refused on every interpreter. A value that nests more than 100 levels of lists and mappings (aliases count as copies) is refused, and a far deeper file no longer escapes as `RecursionError`. Contract: `docs/reference/llm-kit-formats.md`, "Bytes and YAML"; 16 new shared cases in `tests/formats/project-models/cases.json`, which the TypeScript reader runs too.

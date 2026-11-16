@@ -98,6 +98,11 @@ DEFAULT_MODEL_CONFIG = {
             # direct seam drops every effort, so the exact-model menu in
             # model_profiles would be validated and then never sent.
             "effort_style": "top-level",
+            # OpenRouter's usage.cost is the amount it charged for the call, in
+            # USD (credits), so it is the authoritative cost, not an estimate.
+            # An endpoint that does not declare this keeps a native usage.cost
+            # as an estimate (adapters.backends._trusts_native_cost).
+            "billing": {"mode": "provider-reported"},
         },
         # HARNESS entries: no base_url, so nothing here calls them over HTTP.
         # They are shipped because they are codex SUBSCRIPTION models -- nothing
@@ -135,16 +140,19 @@ DEFAULT_MODEL_CONFIG = {
         "or-qwen": {
             "base_url": "https://openrouter.ai/api/v1",
             "key_env": "OPENROUTER_API_KEY", "account_check": "openrouter",
+            "billing": {"mode": "provider-reported"},
             "model": "qwen/qwen3-32b",
         },
         "or-gpt-mini": {
             "base_url": "https://openrouter.ai/api/v1",
             "key_env": "OPENROUTER_API_KEY", "account_check": "openrouter",
+            "billing": {"mode": "provider-reported"},
             "model": "openai/gpt-4o-mini",
         },
         "or-gemini-lite": {
             "base_url": "https://openrouter.ai/api/v1",
             "key_env": "OPENROUTER_API_KEY", "account_check": "openrouter",
+            "billing": {"mode": "provider-reported"},
             "model": "google/gemini-2.5-flash-lite",
         },
         # Claude subscription models, shipped for the same reason: the

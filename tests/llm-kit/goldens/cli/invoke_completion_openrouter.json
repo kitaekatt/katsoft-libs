@@ -16,11 +16,11 @@
       },
       "cost": {
         "class": "metered",
-        "estimated_source": "openrouter.usage.cost",
-        "estimated_usd": 0.0007,
+        "estimated_source": null,
+        "estimated_usd": null,
         "reason": "no registry entry: billing undeclared",
-        "source": null,
-        "usd": null
+        "source": "provider",
+        "usd": 0.0007
       },
       "mode": "completion",
       "output": {
