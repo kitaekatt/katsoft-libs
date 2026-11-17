@@ -2,6 +2,8 @@
 // needs for its own record (status, delivery, reported cost) or the raw response, so the caller decides what an answer
 // means. No retry and no fallback here: a chain of hosts is `runChain` (chain.ts).
 import { usageCost } from "./cost.js";
+import { capturedResponse, checkCached, commitStep, entryBytes, modelOf, openStep, parseJson, replayedResponse } from "./reply-cache.js";
+import type { CachedResponse, ParsedStepCache, StepCache } from "./reply-cache.js";
 
 /** The base URL of Venice's API; {@link postVenice} sends to `<base>/image/<endpoint>`. */
 export const VENICE_URL = "https://api.venice.ai/api/v1";
@@ -55,8 +57,10 @@ export type ImagesAnswer =
     readonly link: string | null;
     /** The answer's `usage`, or `null`. */
     readonly usage: unknown;
-    /** The cost the host reported ({@link usageCost}), or `null`. */
+    /** The cost the host reported ({@link usageCost}), or `null`; 0 for a replay. */
     readonly cost: number | null;
+    /** True for a stored answer of the reply cache: nothing was sent; `usage` is then `null`. */
+    readonly replayed: boolean;
   }
   | {
     readonly ok: false;
@@ -64,37 +68,61 @@ export type ImagesAnswer =
     readonly status: number | null;
     /** The parsed error body, or `{}`. */
     readonly failure: any;
+    /** True for a stored answer of the reply cache: nothing was sent. */
+    readonly replayed: boolean;
   };
 
 /**
  * One POST to an OpenAI-compatible images endpoint (`/images`, `/images/generations`). The body goes out as given.
  * A 2xx answer always counts as answered: the caller decides whether a picture came (`image`, `link`).
  *
+ * With `cache` ({@link ParsedStepCache}), the key is looked up before the send. Only a stored refusal replays (a
+ * picture is never deterministic, so a success is never stored): nothing is sent, the stored answer is read by the same
+ * code, `replayed` is true, `usage` null and `cost` 0. On a miss, `classify` reads the result of a complete answer
+ * that is not busy and whose body parsed as JSON (a body read as `{}` is never stored); a `refusal` is stored.
+ *
  * @param call - The URL, key, extra headers and body.
- * @param options - The transport and signal.
+ * @param options - The transport, signal and cache.
  * @returns The parsed answer, or the failure with its status (`null` with no answer). A body that is not JSON, or one
  *   whose read fails, reads as `{}`.
- * @throws The transport's error when the caller's `signal` was aborted; nothing else.
+ * @throws The transport's error when the caller's `signal` was aborted. With `cache`: {@link ReplyCacheError} when the
+ *   store fails, and `TypeError` before any send for a URL outside the cache's hosts.
  */
-export async function postImages(call: ImagesCall, options: MediaOptions = {}): Promise<ImagesAnswer> {
-  const { signal } = options;
+export async function postImages(call: ImagesCall, options: MediaOptions & { readonly cache?: ParsedStepCache<ImagesAnswer> | undefined } = {}): Promise<ImagesAnswer> {
+  const { signal, cache } = options;
+  const headers = { Authorization: `Bearer ${call.key}`, "Content-Type": "application/json", ...call.headers };
+  const bytes = JSON.stringify(call.body);
+  let opened: Awaited<ReturnType<typeof openStep>> | null = null;
+  if (cache) {
+    checkCached(cache, call.url, options.fetch);
+    opened = await openStep(cache, "postImages", { method: "POST", url: call.url, headers, body: bytes }, modelOf(bytes));
+    if (opened.entry) return imagesAnswer(opened.entry.status, parseJson(entryBytes(opened.entry)), true);
+  }
   let response: Response;
   try {
-    response = await send(options, call.url, {
-      method: "POST", signal,
-      headers: { Authorization: `Bearer ${call.key}`, "Content-Type": "application/json", ...call.headers },
-      body: JSON.stringify(call.body),
-    });
+    response = await send(options, call.url, { method: "POST", signal, headers, body: bytes });
   } catch (error) {
     if (signal?.aborted) throw error;
-    return { ok: false, status: null, failure: {} };
+    return { ok: false, status: null, failure: {}, replayed: false };
   }
-  if (!response.ok) return { ok: false, status: response.status, failure: await response.json().catch(() => ({})) };
-  const payload: any = await response.json().catch(() => ({}));
-  const first = payload?.data?.[0];
+  const read = await response.arrayBuffer().then((buffer) => new Uint8Array(buffer), () => null);
+  const parsed = read ? parseJson(read) : { ok: false as const };
+  const answer = imagesAnswer(response.status, parsed, false);
+  if (opened && read && parsed.ok) {
+    const context = { url: call.url, model: opened.step.model, transport: "postImages" };
+    await commitStep(opened.step, cache!.classify(answer, context), { status: response.status, headers: response.headers, bytes: read });
+  }
+  return answer;
+}
+
+/** The answer of a status and a parsed body (`{}` when the body was not JSON). */
+function imagesAnswer(status: number, parsed: { ok: true; value: any } | { ok: false }, replayed: boolean): ImagesAnswer {
+  const value: any = parsed.ok ? parsed.value : {};
+  if (status < 200 || status > 299) return { ok: false, status, failure: value, replayed };
+  const first = value?.data?.[0];
   return {
-    ok: true, status: response.status, payload, image: text(first?.b64_json), link: text(first?.url),
-    usage: payload?.usage ?? null, cost: usageCost(payload?.usage),
+    ok: true, status, payload: value, image: text(first?.b64_json), link: text(first?.url),
+    usage: replayed ? null : value?.usage ?? null, cost: replayed ? 0 : usageCost(value?.usage), replayed,
   };
 }
 
@@ -114,17 +142,32 @@ export interface VeniceCall {
  * One POST to a Venice image endpoint. The raw response comes back, so the caller can record delivery before it reads
  * the picture bytes (`response.arrayBuffer()`).
  *
+ * With `cache` ({@link StepCache}), the key is looked up before the send and the result is a {@link CachedResponse}:
+ * a stored refusal comes back rebuilt (`replayed: true`, nothing sent), else the response with its body passing through
+ * a bounded copy. The kept headers are `content-type` and `x-venice-is-content-violation`, so a refusal Venice states in
+ * its header can be stored with `settle("refusal", {headersOnly: true})`. A success is never stored.
+ *
  * @param call - The endpoint, key, body and base URL.
- * @param options - The transport and signal.
- * @returns The untouched response of any status.
- * @throws The transport's error (no answer, or the caller's abort), unchanged.
+ * @param options - The transport, signal and cache.
+ * @returns The untouched response of any status; with `cache`, the {@link CachedResponse}.
+ * @throws The transport's error (no answer, or the caller's abort), unchanged. With `cache`: {@link ReplyCacheError}
+ *   when the store cannot be read, and `TypeError` before any send for a URL outside the cache's hosts.
  */
-export function postVenice(call: VeniceCall, options: MediaOptions = {}): Promise<Response> {
-  return send(options, `${call.baseUrl ?? VENICE_URL}/image/${call.endpoint}`, {
-    method: "POST", headers: { Authorization: `Bearer ${call.key}`, "Content-Type": "application/json" },
-    signal: options.signal, body: JSON.stringify(call.body),
-  });
+export function postVenice(call: VeniceCall, options: MediaOptions & { readonly cache: StepCache }): Promise<CachedResponse>;
+export function postVenice(call: VeniceCall, options?: MediaOptions & { readonly cache?: undefined }): Promise<Response>;
+export async function postVenice(call: VeniceCall, options: MediaOptions & { readonly cache?: StepCache | undefined } = {}): Promise<Response | CachedResponse> {
+  const url = `${call.baseUrl ?? VENICE_URL}/image/${call.endpoint}`;
+  const headers = { Authorization: `Bearer ${call.key}`, "Content-Type": "application/json" };
+  const body = JSON.stringify(call.body);
+  const { cache } = options;
+  if (!cache) return send(options, url, { method: "POST", headers, signal: options.signal, body });
+  checkCached(cache, url, options.fetch);
+  const { step, entry } = await openStep(cache, "postVenice", { method: "POST", url, headers, body }, modelOf(body), [VENICE_VIOLATION]);
+  if (entry) return replayedResponse(entry);
+  return capturedResponse(step, await send(options, url, { method: "POST", headers, signal: options.signal, body }));
 }
+
+const VENICE_VIOLATION = "x-venice-is-content-violation";
 
 /**
  * Whether Venice flagged the answer as a content violation (its `x-venice-is-content-violation: true` header).
@@ -134,7 +177,7 @@ export function postVenice(call: VeniceCall, options: MediaOptions = {}): Promis
  * @throws Never.
  */
 export function isVeniceViolation(response: Response): boolean {
-  return response.headers.get("x-venice-is-content-violation") === "true";
+  return response.headers.get(VENICE_VIOLATION) === "true";
 }
 
 /** One Ideogram precise edit for {@link ideogramEdit}. */
@@ -158,34 +201,68 @@ export type IdeogramAnswer =
     readonly url: unknown;
     /** False only when the host marked the result `is_image_safe: false`. */
     readonly safe: boolean;
+    /** True for a stored answer of the reply cache: nothing was sent. */
+    readonly replayed: boolean;
   }
   | {
     readonly ok: false;
     readonly status: number;
     /** The host's `reject_reason`, or `null`. */
     readonly reason: string | null;
+    /** True for a stored answer of the reply cache: nothing was sent. */
+    readonly replayed: boolean;
   };
 
 /**
  * One POST of the caller's form to `<base>/v2/image/precise-edit/<model>`.
  *
+ * With `cache` ({@link ParsedStepCache}), the key (over the form's fields and file bytes, never the boundary) is looked
+ * up before the send. Only a stored refusal replays (`replayed: true`, nothing sent). On a miss, `classify` reads the
+ * result of a complete answer that is not busy and whose body parsed as JSON; a `refusal` is stored.
+ *
  * @param call - The key, model, form and base URL.
- * @param options - The transport and signal.
+ * @param options - The transport, signal and cache.
  * @returns The first result, or the refusal with its status and reject reason. An error body that is not JSON gives
  *   reason `null`.
  * @throws The transport's error (no answer, or the caller's abort), and the parse error of a 2xx body that is not JSON.
+ *   With `cache`: {@link ReplyCacheError} when the store fails, and `TypeError` before any send for a URL outside the
+ *   cache's hosts.
  */
-export async function ideogramEdit(call: IdeogramCall, options: MediaOptions = {}): Promise<IdeogramAnswer> {
-  const response = await send(options, `${call.baseUrl ?? IDEOGRAM_URL}/v2/image/precise-edit/${call.model}`, {
-    method: "POST", headers: { "Api-Key": call.key }, body: call.form, signal: options.signal,
-  });
-  if (!response.ok) {
-    const failure: any = await response.json().catch(() => ({}));
-    return { ok: false, status: response.status, reason: typeof failure?.reject_reason === "string" ? failure.reject_reason : null };
+export async function ideogramEdit(call: IdeogramCall, options: MediaOptions & { readonly cache?: ParsedStepCache<IdeogramAnswer> | undefined } = {}): Promise<IdeogramAnswer> {
+  const url = `${call.baseUrl ?? IDEOGRAM_URL}/v2/image/precise-edit/${call.model}`;
+  const headers = { "Api-Key": call.key };
+  const { cache } = options;
+  let opened: Awaited<ReturnType<typeof openStep>> | null = null;
+  if (cache) {
+    checkCached(cache, url, options.fetch);
+    opened = await openStep(cache, "ideogramEdit", { method: "POST", url, headers, body: call.form }, call.model);
+    if (opened.entry) {
+      const parsed = parseJson(entryBytes(opened.entry));
+      if (!parsed.ok && opened.entry.status >= 200 && opened.entry.status < 300) throw new SyntaxError("The stored answer is not JSON.");
+      return ideogramAnswer(opened.entry.status, parsed.ok ? parsed.value : {}, true);
+    }
   }
-  const payload: any = await response.json();
-  const result = payload?.data?.[0];
-  return { ok: true, status: response.status, url: result?.url ?? null, safe: result?.is_image_safe !== false };
+  const response = await send(options, url, { method: "POST", headers, body: call.form, signal: options.signal });
+  if (!opened) {
+    if (!response.ok) return ideogramAnswer(response.status, await response.json().catch(() => ({})), false);
+    return ideogramAnswer(response.status, await response.json(), false);
+  }
+  const read = new Uint8Array(await response.arrayBuffer());
+  const parsed = parseJson(read);
+  if (!parsed.ok && response.ok) throw new SyntaxError("The answer is not JSON.");
+  const answer = ideogramAnswer(response.status, parsed.ok ? parsed.value : {}, false);
+  if (parsed.ok) {
+    const context = { url, model: opened.step.model, transport: "ideogramEdit" };
+    await commitStep(opened.step, cache!.classify(answer, context), { status: response.status, headers: response.headers, bytes: read });
+  }
+  return answer;
+}
+
+/** The answer of a status and its parsed body. */
+function ideogramAnswer(status: number, value: any, replayed: boolean): IdeogramAnswer {
+  if (status < 200 || status > 299) return { ok: false, status, reason: typeof value?.reject_reason === "string" ? value.reject_reason : null, replayed };
+  const result = value?.data?.[0];
+  return { ok: true, status, url: result?.url ?? null, safe: result?.is_image_safe !== false, replayed };
 }
 
 /** One synchronous fal run for {@link postFal}. */

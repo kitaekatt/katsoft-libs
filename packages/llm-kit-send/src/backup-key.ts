@@ -1,4 +1,5 @@
 // A backup key for a host that refuses the main key for a spend limit or for credits.
+import { BACKUP_KEY_FETCH } from "./reply-cache.js";
 
 /**
  * True when a host refused a key for its limit: 402 (no credits), or a 403 whose body names a limit or credit.
@@ -36,7 +37,8 @@ const replayable = (body: unknown) => body == null || typeof body === "string" |
  * Wraps a fetch so that a request to one of `hosts` with the primary key that the host refuses for a key limit
  * ({@link isKeyLimit}) goes again once with the backup key, and the backup key is used for the next `windowMs`. Other
  * hosts, other keys and other errors pass through unchanged. A body that cannot be sent twice (a stream) is not resent.
- * The resend is part of one request for the caller.
+ * The resend is part of one request for the caller. A cached call (the `cache` option) through the wrapped fetch throws
+ * `TypeError`: the key it sends can differ from the account in the cache key.
  *
  * @param fetchImpl - The transport to wrap.
  * @param options - The keys, the hosts, the window, the clock and the switch report.
@@ -53,7 +55,7 @@ export function withBackupKey(fetchImpl: typeof fetch, options: BackupKeyOptions
     return { ...init, headers };
   };
   const usesPrimary = (init: RequestInit | undefined) => new Headers(init?.headers).get("Authorization") === `Bearer ${primary}`;
-  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+  const wrapped = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const url = urlOf(input);
     if (!hosts.some((host) => url.startsWith(host)) || !usesPrimary(init)) return fetchImpl(input, init);
     if (now() < backupUntil) return fetchImpl(input, withKey(init, backup));
@@ -65,4 +67,6 @@ export function withBackupKey(fetchImpl: typeof fetch, options: BackupKeyOptions
     onSwitch?.(response.status);
     return fetchImpl(input, withKey(init, backup));
   }) as typeof fetch;
+  Object.defineProperty(wrapped, BACKUP_KEY_FETCH, { value: true });
+  return wrapped;
 }

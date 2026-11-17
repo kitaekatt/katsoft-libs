@@ -1,4 +1,5 @@
 // One fallback before the first token.
+import { ReplyCacheError } from "./reply-cache.js";
 
 /** The options of {@link withFallback}. */
 export interface FallbackOptions {
@@ -12,7 +13,9 @@ export interface FallbackOptions {
 
 /**
  * Runs `primary`; when it fails before any output was emitted, the failure is not an abort, and it is eligible, runs
- * `fallback` once with that failure. The fallback's own failure propagates; there is no second fallback.
+ * `fallback` once with that failure. The fallback's own failure propagates; there is no second fallback. A
+ * {@link ReplyCacheError} is a store failure, not a provider failure: it propagates at once, before `eligible` or
+ * `onFailure` is asked.
  *
  * @param primary - The first call.
  * @param fallback - The one fallback call, given the primary failure; `null` for none.
@@ -24,6 +27,7 @@ export async function withFallback<T>(primary: () => Promise<T>, fallback: ((err
   try {
     return await primary();
   } catch (error: any) {
+    if (error instanceof ReplyCacheError) throw error;
     const aborted = error?.name === "AbortError" || error?.kind === "aborted";
     const eligible = options.eligible ? options.eligible(error) : error?.fallback === true;
     const next = Boolean(fallback) && !options.emitted() && !aborted && eligible;

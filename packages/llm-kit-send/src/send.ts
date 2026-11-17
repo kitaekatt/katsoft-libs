@@ -1,6 +1,8 @@
 // One OpenAI-compatible chat-completions call: the raw POST (postChat) and the parsed, plain or streamed call
 // (sendChat) with the stream limits and the reasoning-off retry.
-import { SendError, httpError } from "./errors.js";
+import { SendError, httpError, httpErrorOf } from "./errors.js";
+import { capturedResponse, checkCached, commitStep, deterministic, modelOf, openStep, parseJson, replayResponse, replayedResponse } from "./reply-cache.js";
+import type { CachedResponse, ParsedStepCache, StepCache } from "./reply-cache.js";
 import { inTime, limitError, readStream } from "./stream.js";
 import type { StreamLimits, ToolCall } from "./stream.js";
 
@@ -77,28 +79,57 @@ export interface ChatAnswer {
   readonly streamed: boolean;
   /** The time from the call to the end of the answer, in milliseconds. */
   readonly ms: number;
+  /** True when the answer is a stored one (the `cache` option): nothing was sent; `usage` is then `null`. */
+  readonly replayed: boolean;
 }
 
 /**
  * Sends one chat request and returns the provider's response untouched, of any status. `beforeSend` runs first; its
  * exception propagates unchanged and nothing is sent.
  *
+ * With `cache` ({@link StepCache}; a plain request only), the key is computed after `beforeSend` and looked up before
+ * the send. A hit sends nothing and gives the stored answer rebuilt as a response; a miss gives the response with its
+ * body passing through a bounded copy. Either way the result is a {@link CachedResponse}: the caller reads the response,
+ * then calls `settle` with its verdict.
+ *
  * @param call - The URL, key, headers and body.
- * @param options - The transport, the signal and the check before sending.
- * @returns The response.
+ * @param options - The transport, the signal, the check before sending and the cache.
+ * @returns The response; with `cache`, the {@link CachedResponse}.
  * @throws {SendError} Kind `network` when the transport gave no response (`cause` is its error), or `aborted` when the
- *   signal ended it. An exception of `beforeSend` or of `encode` propagates unchanged.
+ *   signal ended it. An exception of `beforeSend` or of `encode` propagates unchanged. {@link ReplyCacheError} when the
+ *   store cannot be read. `TypeError` before any send for a cache on a URL outside its hosts, a streamed body
+ *   (`stream: true`) or a {@link withBackupKey} fetch.
  */
-export async function postChat(call: ChatCall, options: PostOptions = {}): Promise<Response> {
+export function postChat(call: ChatCall, options: PostOptions & { readonly cache: StepCache }): Promise<CachedResponse>;
+export function postChat(call: ChatCall, options?: PostOptions & { readonly cache?: undefined }): Promise<Response>;
+export async function postChat(call: ChatCall, options: PostOptions & { readonly cache?: StepCache | undefined } = {}): Promise<Response | CachedResponse> {
+  const { cache } = options;
+  if (cache) {
+    checkCached(cache, call.url, options.fetch);
+    if (call.body.stream === true) throw new TypeError("A cached chat call cannot be a stream.");
+  }
   const bytes = (call.encode ?? JSON.stringify)(call.body);
   options.beforeSend?.(call.url, bytes);
+  if (!cache) return postBytes(call, bytes, options);
+  const { step, entry } = await openStep(cache, "postChat", wireOf(call, bytes), modelOf(bytes));
+  if (entry) return replayedResponse(entry);
+  return capturedResponse(step, await postBytes(call, bytes, options));
+}
+
+const headersOf = (call: ChatCall): Record<string, string> =>
+  ({ ...(call.key == null ? {} : { Authorization: `Bearer ${call.key}` }), "Content-Type": "application/json", ...call.headers });
+
+const wireOf = (call: ChatCall, bytes: string) => ({ method: "POST", url: call.url, headers: headersOf(call), body: bytes });
+
+/** The POST of bytes already encoded and checked. */
+async function postBytes(call: ChatCall, bytes: string, options: PostOptions): Promise<Response> {
   const transport = options.fetch ?? globalThis.fetch;
   const { signal } = options;
   try {
     return await transport(call.url, {
       ...(signal ? { signal } : {}),
       method: "POST",
-      headers: { ...(call.key == null ? {} : { Authorization: `Bearer ${call.key}` }), "Content-Type": "application/json", ...call.headers },
+      headers: headersOf(call),
       body: bytes,
     });
   } catch (error) {
@@ -130,38 +161,96 @@ async function headersInTime(request: Promise<Response>, ms: number, stop: Abort
  * before the error is thrown, so two models never run at once. With `reasoningRetry`, a host that refuses to turn
  * reasoning off gets one more request with a bounded budget.
  *
+ * With `cache` ({@link ParsedStepCache}; a plain call only: no `stream: true`, `onDelta` or `limits`), the key of the
+ * first send is looked up after `beforeSend`. A stored refusal, or a stored success of a deterministic request, is
+ * replayed: nothing is sent, the stored answer is read by the same code, `replayed` is true and `usage` null (a stored
+ * HTTP failure throws its {@link SendError} with `replayed: true`). On a miss, `classify` reads the answer (or the HTTP
+ * error) of a complete answer whose body parsed, and its verdict is stored under the first send's key. The temperature
+ * test reads the bytes of the send that answered.
+ *
  * @param call - The URL, key, headers and body; see {@link ChatCall}.
- * @param options - The transport, signal, limits, callbacks and retry; see {@link SendOptions}.
+ * @param options - The transport, signal, limits, callbacks, retry and cache; see {@link SendOptions}.
  * @returns The answer; see {@link ChatAnswer}.
  * @throws {SendError} On every failure: `http`, `network`, `body`, `no_first_token`, `stalled`, `slow`,
- *   `stream_error`, `incomplete` or `aborted`. An exception of `beforeSend` propagates unchanged.
+ *   `stream_error`, `incomplete` or `aborted`. An exception of `beforeSend` propagates unchanged. With `cache`:
+ *   {@link ReplyCacheError} when the store fails (never a `SendError`), and `TypeError` before any send for a streamed
+ *   call, a URL outside the cache's hosts or a {@link withBackupKey} fetch.
  */
-export async function sendChat(call: ChatCall, options: SendOptions = {}): Promise<ChatAnswer> {
+export async function sendChat(call: ChatCall, options: SendOptions & { readonly cache?: ParsedStepCache<ChatAnswer | SendError> | undefined } = {}): Promise<ChatAnswer> {
   const started = Date.now();
+  const { cache } = options;
+  if (cache) {
+    if (call.body.stream === true || options.onDelta || options.limits) throw new TypeError("A cached chat call cannot be a stream.");
+    checkCached(cache, call.url, options.fetch);
+  }
   const limits = options.limits ?? null;
   const stop = limits ? new AbortController() : null;
   const signal = stop ? (options.signal ? AbortSignal.any([stop.signal, options.signal]) : stop.signal) : options.signal;
-  const post = () => postChat(call, {
+  const postOptions = {
     ...(options.fetch ? { fetch: options.fetch } : {}),
     ...(signal ? { signal } : {}),
     ...(options.beforeSend ? { beforeSend: options.beforeSend } : {}),
-  }).catch((error: unknown) => {
+  };
+  const post = (checked?: string) => (checked === undefined ? postChat(call, postOptions) : postBytes(call, checked, postOptions)).catch((error: unknown) => {
     // A limit abort is ours, not the caller's: report it as no response.
     if (error instanceof SendError && error.kind === "aborted" && !options.signal?.aborted) {
       throw new SendError("network", error.message, { cause: error.cause });
     }
     throw error;
   });
-  const send = () => (limits && stop ? headersInTime(post(), limits.firstMs, stop) : post());
+  const send = (checked?: string) => (limits && stop ? headersInTime(post(checked), limits.firstMs, stop) : post(checked));
   const model = String(call.body.model ?? "");
 
-  let response = await send();
+  let opened: Awaited<ReturnType<typeof openStep>> | null = null;
+  let firstBytes: string | undefined;
+  if (cache) {
+    firstBytes = (call.encode ?? JSON.stringify)(call.body);
+    options.beforeSend?.(call.url, firstBytes);
+    opened = await openStep(cache, "sendChat", wireOf(call, firstBytes), modelOf(firstBytes, model));
+    if (opened.entry) {
+      const stored = replayResponse(opened.entry);
+      const parsed = parseJson(new Uint8Array(await stored.arrayBuffer()));
+      if (!stored.ok) throw httpErrorOf(stored.status, parsed.ok ? parsed.value : null, true);
+      if (!parsed.ok) throw new SendError("body", "The stored answer is not JSON.", { status: stored.status, replayed: true });
+      return answerOf(parsed.value, model, started, true);
+    }
+  }
+
+  let response = await send(firstBytes);
+  let retried = false;
   const retry = options.reasoningRetry;
   if (retry && response.status === 400 && reasoningOff(call.body) && /reasoning is mandatory/i.test(await response.clone().text().catch(() => ""))) {
     retry.onRequired?.(model);
     call.body.reasoning = { max_tokens: retry.budget };
     if (call.body.max_tokens != null) call.body.max_tokens = (call.body.max_tokens as number) + retry.budget;
+    retried = true;
     response = await send();
+  }
+  if (opened) {
+    // The step of the send that answered: the first send's key, the answering bytes' temperature.
+    const step = retried
+      ? { ...opened.step, deterministic: deterministic("sendChat", (call.encode ?? JSON.stringify)(call.body), cache!) }
+      : opened.step;
+    const context = { url: call.url, model: step.model, transport: "sendChat" };
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await response.arrayBuffer());
+    } catch (error) {
+      if (!response.ok) throw httpErrorOf(response.status, null);
+      if (options.signal?.aborted) throw new SendError("aborted", "The caller aborted the call.", { status: response.status, cause: error });
+      throw new SendError("body", "The answer is not JSON.", { status: response.status, cause: error });
+    }
+    const parsed = parseJson(bytes);
+    const answered = { status: response.status, headers: response.headers, bytes };
+    if (!response.ok) {
+      const error = httpErrorOf(response.status, parsed.ok ? parsed.value : null);
+      if (parsed.ok) await commitStep(step, cache!.classify(error, context), answered);
+      throw error;
+    }
+    if (!parsed.ok) throw new SendError("body", "The answer is not JSON.", { status: response.status });
+    const answer = answerOf(parsed.value, model, started, false);
+    await commitStep(step, cache!.classify(answer, context), answered);
+    return answer;
   }
   if (!response.ok) throw await httpError(response);
 
@@ -173,7 +262,7 @@ export async function sendChat(call: ChatCall, options: SendOptions = {}): Promi
       requireFinish: options.requireFinish ?? false, stopOnErrorFinish: options.stopOnErrorFinish ?? true,
       signal: options.signal,
     });
-    return { ...read, streamed: true, ms: Date.now() - started };
+    return { ...read, streamed: true, ms: Date.now() - started, replayed: false };
   }
   let payload: any;
   try {
@@ -182,18 +271,24 @@ export async function sendChat(call: ChatCall, options: SendOptions = {}): Promi
     if (options.signal?.aborted) throw new SendError("aborted", "The caller aborted the call.", { status: response.status, cause: error });
     throw new SendError("body", "The answer is not JSON.", { status: response.status, cause: error });
   }
+  return answerOf(payload, model, started, false);
+}
+
+/** The answer of a parsed plain body. A replay reports no usage: the stored body's usage was billed once already. */
+function answerOf(payload: any, model: string, started: number, replayed: boolean): ChatAnswer {
   const choice = payload?.choices?.[0];
   const content = choice?.message?.content;
   return {
     payload,
     text: typeof content === "string" ? content : "",
     toolCalls: Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls : [],
-    usage: payload?.usage ?? null,
+    usage: replayed ? null : payload?.usage ?? null,
     model: typeof payload?.model === "string" ? payload.model : model,
     provider: typeof payload?.provider === "string" ? payload.provider : null,
     finishReason: choice?.finish_reason ?? null,
     nativeFinishReason: choice?.native_finish_reason ?? null,
     streamed: false,
     ms: Date.now() - started,
+    replayed,
   };
 }

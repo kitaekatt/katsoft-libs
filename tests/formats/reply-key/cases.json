@@ -1,0 +1,374 @@
+{
+ "format": "llm-kit.reply-key/v1",
+ "description": "Shared cases for the reply cache key. `parts`: requestKey over the parts (a part is `text`, UTF-8, or `base64`, the exact bytes) gives `key`. `requests`: stepKey(account, request, scope) gives `key`; a body is null, `text` (the string as sent), `base64` (bytes) or `form` (FormData entries in order: a text field `{name, text}` or a file `{name, filename, type, base64}`). `same` lists case names that must give one key, `different` pairs that must differ. The contract is docs/reference/llm-kit-formats.md.",
+ "parts": [
+  {
+   "name": "empty",
+   "parts": [],
+   "key": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+   "name": "framing-1",
+   "parts": [
+    {
+     "text": "ab"
+    },
+    {
+     "text": "c"
+    }
+   ],
+   "key": "e45c872a8561b073078255341cbfc8e35b3ac2f363fc6f34d7b962b2734b42fe"
+  },
+  {
+   "name": "framing-2",
+   "parts": [
+    {
+     "text": "a"
+    },
+    {
+     "text": "bc"
+    }
+   ],
+   "key": "521a337ff312f6c3b52afe6962698e7921d82fa579831cf806ec7f1439198fa5"
+  },
+  {
+   "name": "empty-part",
+   "parts": [
+    {
+     "text": ""
+    }
+   ],
+   "key": "52e4dc27d67a123b63862d6e5b1fa6485485020debb018c6589f8e70a400c6e4"
+  },
+  {
+   "name": "bytes-and-utf8",
+   "parts": [
+    {
+     "text": "é"
+    },
+    {
+     "base64": "w6k="
+    }
+   ],
+   "key": "5e1b2aad1457d802ecd3c6399e0010c4f7103a3725dea4990fd7216e11eaed89"
+  }
+ ],
+ "requests": [
+  {
+   "name": "base",
+   "account": "router:primary",
+   "request": {
+    "method": "POST",
+    "url": "https://router.example/api/v1/chat/completions",
+    "headers": {
+     "Content-Type": "application/json"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":\"A red door.\"}]}"
+    }
+   },
+   "key": "2d41b10aa218eed53c0fec8221de60543e9395c82c0f1df3a15762b23d970b3f"
+  },
+  {
+   "name": "one-added-space",
+   "account": "router:primary",
+   "request": {
+    "method": "POST",
+    "url": "https://router.example/api/v1/chat/completions",
+    "headers": {
+     "Content-Type": "application/json"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":\"A red door. \"}]}"
+    }
+   },
+   "key": "82e1d9a69df7a62258f2298e22d286ad2771e60b9c89089df620d2ee15101d1d"
+  },
+  {
+   "name": "header-case-and-order",
+   "account": "router:primary",
+   "request": {
+    "method": "POST",
+    "url": "https://router.example/api/v1/chat/completions",
+    "headers": {
+     "accept": "application/json",
+     "content-type": "application/json"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":\"A red door.\"}]}"
+    }
+   },
+   "key": "a675a44b671a13dce2d7038e341259d898690a7511ce599c1e690b8f8db54694"
+  },
+  {
+   "name": "header-case-and-order-2",
+   "account": "router:primary",
+   "request": {
+    "method": "POST",
+    "url": "https://router.example/api/v1/chat/completions",
+    "headers": {
+     "Content-Type": "application/json",
+     "Accept": "application/json"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":\"A red door.\"}]}"
+    }
+   },
+   "key": "a675a44b671a13dce2d7038e341259d898690a7511ce599c1e690b8f8db54694"
+  },
+  {
+   "name": "secrets-and-labels-out",
+   "account": "router:primary",
+   "request": {
+    "method": "POST",
+    "url": "https://router.example/api/v1/chat/completions",
+    "headers": {
+     "Authorization": "Bearer SECRET",
+     "Content-Type": "application/json",
+     "X-App-Feature": "art",
+     "x-api-key": "SECRET",
+     "api-key": "SECRET",
+     "xi-api-key": "SECRET",
+     "User-Agent": "u/1",
+     "Content-Length": "99"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":\"A red door.\"}]}"
+    }
+   },
+   "key": "2d41b10aa218eed53c0fec8221de60543e9395c82c0f1df3a15762b23d970b3f"
+  },
+  {
+   "name": "method-lowercase",
+   "account": "router:primary",
+   "request": {
+    "method": "post",
+    "url": "https://router.example/api/v1/chat/completions",
+    "headers": {
+     "Content-Type": "application/json"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":\"A red door.\"}]}"
+    }
+   },
+   "key": "2d41b10aa218eed53c0fec8221de60543e9395c82c0f1df3a15762b23d970b3f"
+  },
+  {
+   "name": "query-change",
+   "account": "router:primary",
+   "request": {
+    "method": "POST",
+    "url": "https://router.example/api/v1/chat/completions?v=2",
+    "headers": {
+     "Content-Type": "application/json"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":\"A red door.\"}]}"
+    }
+   },
+   "key": "e0ce850b8f865eb38a878d04467b43fba02f30c4a22c9df21b3fea3ae92891e6"
+  },
+  {
+   "name": "other-account",
+   "account": "router:backup",
+   "request": {
+    "method": "POST",
+    "url": "https://router.example/api/v1/chat/completions",
+    "headers": {
+     "Content-Type": "application/json"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":\"A red door.\"}]}"
+    }
+   },
+   "key": "fe7016aa83c5a6a0608b492b9b8d4e1870e95db1bea56b3641230415c295a077"
+  },
+  {
+   "name": "scoped",
+   "account": "router:primary",
+   "scope": [
+    "operation-1"
+   ],
+   "request": {
+    "method": "POST",
+    "url": "https://router.example/api/v1/chat/completions",
+    "headers": {
+     "Content-Type": "application/json"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":\"A red door.\"}]}"
+    }
+   },
+   "key": "f5b606c0c5f5ecd828049d6879e4b8a5080a179a01ab680241e2d91a0f7c9d11"
+  },
+  {
+   "name": "scoped-other",
+   "account": "router:primary",
+   "scope": [
+    "operation-2"
+   ],
+   "request": {
+    "method": "POST",
+    "url": "https://router.example/api/v1/chat/completions",
+    "headers": {
+     "Content-Type": "application/json"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":\"A red door.\"}]}"
+    }
+   },
+   "key": "cbee8a16a511b01ec7b215e88dd182463bea26282e3dc0e236374e724cd83bb6"
+  },
+  {
+   "name": "empty-scope",
+   "account": "router:primary",
+   "scope": [],
+   "request": {
+    "method": "POST",
+    "url": "https://router.example/api/v1/chat/completions",
+    "headers": {
+     "Content-Type": "application/json"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"temperature\":0,\"messages\":[{\"role\":\"user\",\"content\":\"A red door.\"}]}"
+    }
+   },
+   "key": "2d41b10aa218eed53c0fec8221de60543e9395c82c0f1df3a15762b23d970b3f"
+  },
+  {
+   "name": "no-body",
+   "account": "media:main",
+   "request": {
+    "method": "GET",
+    "url": "https://media.example/v1/item",
+    "headers": {},
+    "body": null
+   },
+   "key": "4345463ab03220e7db190f41d6d56263c06fa5cbd7f70c6933d9e6685c68a2ed"
+  },
+  {
+   "name": "bytes-body",
+   "account": "media:main",
+   "request": {
+    "method": "POST",
+    "url": "https://media.example/v1/raw",
+    "headers": {},
+    "body": {
+     "base64": "AP8KDQ=="
+    }
+   },
+   "key": "1bee704c318bc8503675e52773e8bd44c7f2c6efad777829cdcfc6fb8f1ea926"
+  },
+  {
+   "name": "form",
+   "account": "media:main",
+   "request": {
+    "method": "POST",
+    "url": "https://media.example/v1/edit",
+    "headers": {
+     "Api-Key": "SECRET"
+    },
+    "body": {
+     "form": [
+      {
+       "name": "prompt",
+       "text": "short hair"
+      },
+      {
+       "name": "image",
+       "filename": "image.png",
+       "type": "image/png",
+       "base64": "iVBORw=="
+      }
+     ]
+    }
+   },
+   "key": "81ba29352d774ee156f70b86a42357f4568fb31cbd7d1240267ffa7051955674"
+  },
+  {
+   "name": "form-one-added-space",
+   "account": "media:main",
+   "request": {
+    "method": "POST",
+    "url": "https://media.example/v1/edit",
+    "headers": {},
+    "body": {
+     "form": [
+      {
+       "name": "prompt",
+       "text": "short hair "
+      },
+      {
+       "name": "image",
+       "filename": "image.png",
+       "type": "image/png",
+       "base64": "iVBORw=="
+      }
+     ]
+    }
+   },
+   "key": "dd5ea3e7e1ad940d1e4913bc7a0aba46b7609bc19492586d1986709b65254b3f"
+  },
+  {
+   "name": "unicode",
+   "account": "router:primary",
+   "request": {
+    "method": "POST",
+    "url": "https://router.example/api/v1/chat/completions",
+    "headers": {
+     "Content-Type": "application/json"
+    },
+    "body": {
+     "text": "{\"model\":\"vendor/m\",\"prompt\":\"café 😀\"}"
+    }
+   },
+   "key": "8e09c756f62e948cc11380bc2362c2cdaed5adb356bb24a5b49e4b475d74d4f8"
+  }
+ ],
+ "same": [
+  [
+   "base",
+   "secrets-and-labels-out",
+   "method-lowercase",
+   "empty-scope"
+  ],
+  [
+   "header-case-and-order",
+   "header-case-and-order-2"
+  ]
+ ],
+ "different": [
+  [
+   "base",
+   "one-added-space"
+  ],
+  [
+   "base",
+   "query-change"
+  ],
+  [
+   "base",
+   "other-account"
+  ],
+  [
+   "base",
+   "scoped"
+  ],
+  [
+   "scoped",
+   "scoped-other"
+  ],
+  [
+   "form",
+   "form-one-added-space"
+  ],
+  [
+   "framing-1",
+   "framing-2"
+  ],
+  [
+   "base",
+   "header-case-and-order"
+  ]
+ ]
+}

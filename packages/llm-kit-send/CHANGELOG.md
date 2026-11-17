@@ -2,6 +2,28 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
+## 0.3.0
+
+Added (no 0.2.0 name or request byte changes; results gain one field, below):
+
+- The reply cache, the `cache` option on every non-stream call: `sendChat` (plain only), `sendWithRetries`, `postImages` and `ideogramEdit` with the caller's `classify`; `postChat` and `postVenice` give a `CachedResponse` with `settle(verdict, {headersOnly})`. The key is computed after `beforeSend` and looked up before the send; a hit sends nothing. A stored refusal always replays; a success is stored and replayed only for a chat call whose sent body has `temperature` exactly 0 and that is not a `freshCheck`. Only complete, parsed, non-busy answers up to `maxBytes` (default 65536) are stored. The store is the caller's (`ReplyStore`, bound to one owner). A store failure is `ReplyCacheError` (op `get` or `put`): `sendWithRetries` rethrows it before its deadline result, `withFallback` before it asks `eligible`, and it is never a `SendError`; `onPutError` reports a failed write and keeps the answer. A cached call through a `withBackupKey` fetch, to a URL outside `hosts`, or with a streamed body throws `TypeError` before any send.
+- `requestKey`, `stepKey` (format `llm-kit.reply-key/v1`, `REPLY_KEY_FORMAT`), `readEntry` and `ReplyEntryError` (format `llm-kit.reply-entry/v1`, `REPLY_ENTRY_FORMAT`); types `ReplyVerdict`, `ReplyLayer`, `ReplyStore`, `StepCache`, `ParsedStepCache`, `StepContext`, `ReplyEntry`, `WireRequest`, `CachedResponse`.
+
+Changed:
+
+- `replayed: boolean` on `ChatAnswer`, `SendError`, both arms of `RetryResult`, `ImagesAnswer` and `IdeogramAnswer`; `false` without the cache. A replay has cost 0 and no usage.
+- `CallRecord` has `replayed` and is now `llm-kit.call-record/v2` (v1 plus the required `replayed`); v1 stays for older records. A hit of `sendWithRetries` gives one record with `replayed: true`, tokens null and cost 0.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. Each new export has a JSDoc block with `@param`, `@returns` and `@throws`; `public-surface.json` lists them; `test/surface.test.mjs` checks the list against the runtime and `.d.ts` exports.
+2. Semver release with a changelog: pass. Version 0.3.0 (minor: an added option and an added result field) in `package.json` and `package-lock.json`; this entry.
+3. Tests for each public function: pass. `test/reply-cache.test.mjs` runs the shared key and entry cases (`tests/formats/reply-key/cases.json`, `tests/formats/reply-entry/cases.json`, the same files the Python reader runs) and each cached transport with a counting stub: a hit sends nothing, one added space sends, a success above or without temperature 0 and a second look send again, busy, unparsed, oversize and aborted answers store nothing, the headers arrive before the body, `ReplyCacheError` is not retried, not a fallback and not `network`; `test/call-record.test.mjs` validates every emitted record, a replayed one included, against `call-record.v2.schema.json`. `npm test` passes.
+4. No client names, prompts or data: pass. Hosts, accounts, verdicts and the store are caller data.
+5. Examples run without a client app: pass. `examples/reply-cache.mjs` runs against a local stub server; `npm run check-pack` runs every example from the packed tarball and compiles `scripts/consumer.ts` (the cache types included) against the shipped types.
+6. JSON Schema for each file format: pass. `llm-kit.reply-entry/v1` (`reply-entry.v1.schema.json`) and `llm-kit.call-record/v2` (`call-record.v2.schema.json`) in `packages/katsoft-llm-kit/src/llm_kit/schema/formats/`, with shared cases the TypeScript and Python tests both run; the reply key has shared cases (`tests/formats/reply-key/cases.json`) and no schema (a key, not a file).
+7. Gate before adoption: pass. Lines 1 to 6 pass.
+
 ## 0.2.0
 
 Added (no 0.1.0 name, signature or behavior changes):

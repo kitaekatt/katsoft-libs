@@ -12,7 +12,10 @@ Some llm-kit files have readers in more than one language. Each of these formats
 | `llm-kit.run-store/v1` | `run-store.v1.schema.json` | `llm_kit.runs.store` | `tests/formats/run-record/cases.json` (`stores`) |
 | `llm-kit.compare-case/v1` | `compare-case.v1.schema.json` | `llm_kit.runs.compare` | `tests/formats/compare-case/cases.json` |
 | `llm-kit.fallback-chain/v1` | `fallback-chain.v1.schema.json` | `llm_kit.registry.fallback_chains` | `tests/formats/fallback-chain/cases.json` (`documents`, `mappings`) |
-| `llm-kit.call-record/v1` | `call-record.v1.schema.json` | none (the TypeScript `@katsoft/llm-kit-send` writes it) | `tests/formats/call-record/cases.json` (`records`) |
+| `llm-kit.call-record/v1` | `call-record.v1.schema.json` | none (the TypeScript `@katsoft/llm-kit-send` 0.2.0 writes it) | `tests/formats/call-record/cases.json` (`records`) |
+| `llm-kit.call-record/v2` | `call-record.v2.schema.json` | none (the TypeScript `@katsoft/llm-kit-send` 0.3.0 and later writes it) | `tests/formats/call-record/cases.v2.json` (`records`) |
+| `llm-kit.reply-entry/v1` | `reply-entry.v1.schema.json` | `llm_kit.registry.reply_cache` | `tests/formats/reply-entry/cases.json` (`entries`, `reader_rules`) |
+| `llm-kit.reply-key/v1` | none (a key, not a file) | `llm_kit.registry.reply_cache` | `tests/formats/reply-key/cases.json` (`parts`, `requests`, `same`, `different`) |
 
 `llm_kit.schema.formats.load_schema(format_id)` returns a schema. `llm_kit.schema.formats.SCHEMA_FILES` maps each format id to its file. The file's `$id` is the format id.
 
@@ -271,6 +274,29 @@ A JSON file that says which hosts serve a request in which order, and the same m
 ## llm-kit.call-record/v1
 
 One sent try of a model call: `attempt`, `model`, `provider`, `ok`, `status`, `aborted`, `ms`, `inputTokens`, `cachedTokens`, `outputTokens`, `cost`, `providerMessage`. Every field is present (null when unknown); no prompt or reply text, and no other field. `@katsoft/llm-kit-send` gives one to `onCall` per try of `sendWithRetries`; its tests validate the records against this schema. A consumer that stores records adds its own fields in its own store, beside the record.
+
+## llm-kit.call-record/v2
+
+Version 1 plus the required `replayed` (boolean). `@katsoft/llm-kit-send` 0.3.0 and later gives one to `onCall` per try of `sendWithRetries`, and one record with `replayed: true` when the reply cache answered (nothing sent: tokens null, cost 0, `ms` the lookup time, `ok` and `status` read from the stored answer). Version 1 stays for records written before.
+
+## llm-kit.reply-key/v1
+
+The key of one request in the reply cache. Not a file: a hex string that both readers must compute the same way.
+
+1. `requestKey(parts)` is the lowercase hex SHA-256 of each part written as `<byte length>:<bytes>\n`, in order. A text part is its UTF-8 bytes.
+2. `stepKey(account, request, scope)` is `requestKey` over: the format id `llm-kit.reply-key/v1`; the account label (non-secret; it names the account of the key actually sent); one part `scope:<requestKey(scope)>` only when the scope is not empty; the method in upper case; the URL exactly as sent; the kept request headers as one part (only `accept` and `content-type`, names lowercased, sorted by name, one `name:value` line each, joined by LF); then the body.
+3. The body: a string or bytes is one part; no body is one empty part; a multipart form is four parts per entry, in form order: `name`, `filename`, `type`, bytes (a text field has an empty file name and type). The multipart boundary is not an input.
+4. Never inputs: `authorization`, `api-key`, `x-api-key`, `xi-api-key` and every other header outside the allowlist (attribution labels, `content-length`, `user-agent`, request ids).
+
+TypeScript: `requestKey`, `stepKey` in `@katsoft/llm-kit-send`. Python: `llm_kit.registry.reply_cache.request_key`, `step_key`.
+
+## llm-kit.reply-entry/v1
+
+One stored answer of the reply cache, kept by the consumer's `ReplyStore`. Layer `step` is one provider request's answer: `outcome` (`refusal`, or `success` of a deterministic request), `status`, `headers` (the kept response headers: `content-type` and the transport's named ones, never `set-cookie` or account headers), `body` (the bytes, base64; empty for a headers-only entry) and `at`. Layer `operation` is the final refusal of a consumer's whole operation: `outcome` `refusal`, `status`, `note` (`code` and the consumer's fixed text, never a prompt or a picture) and `at`. No other field.
+
+Reader rules beyond the schema: `body` is canonical base64 with padding; response header names are lowercase and not empty. A reader reports the path of the first rule an entry breaks (`entries[].path`).
+
+TypeScript: `readEntry` in `@katsoft/llm-kit-send` (throws `ReplyEntryError`). Python: `llm_kit.registry.reply_cache.read_entry` (raises `ReplyEntryError`).
 
 ## Change a format
 

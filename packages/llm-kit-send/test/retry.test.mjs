@@ -44,19 +44,19 @@ test("sendWithRetries: busy answers and a lost request are tried again; one reco
   assert.equal(result.text, "done");
   assert.equal(result.model, "served/m");
   assert.deepEqual(records.map(({ ms, ...rest }) => (assert.equal(typeof ms, "number"), rest)), [
-    { attempt: 1, model: "asked/m", provider: null, ok: false, status: 429, aborted: false, inputTokens: null, cachedTokens: null, outputTokens: null, cost: null, providerMessage: "rate-limited upstream" },
-    { attempt: 2, model: "asked/m", provider: null, ok: false, status: null, aborted: false, inputTokens: null, cachedTokens: null, outputTokens: null, cost: null, providerMessage: null },
-    { attempt: 3, model: "served/m", provider: "Host A", ok: true, status: 200, aborted: false, inputTokens: 7, cachedTokens: 2, outputTokens: 3, cost: 0.0004, providerMessage: null },
+    { attempt: 1, model: "asked/m", provider: null, ok: false, status: 429, aborted: false, inputTokens: null, cachedTokens: null, outputTokens: null, cost: null, providerMessage: "rate-limited upstream", replayed: false },
+    { attempt: 2, model: "asked/m", provider: null, ok: false, status: null, aborted: false, inputTokens: null, cachedTokens: null, outputTokens: null, cost: null, providerMessage: null, replayed: false },
+    { attempt: 3, model: "served/m", provider: "Host A", ok: true, status: 200, aborted: false, inputTokens: 7, cachedTokens: 2, outputTokens: 3, cost: 0.0004, providerMessage: null, replayed: false },
   ]);
   assert.ok(!JSON.stringify(records).includes("SECRET"));
 });
 
 test("sendWithRetries: a request error ends at once; all tries busy gives the last status and body", async () => {
   const bad = recorder(() => json({ error: { message: "bad" } }, 400));
-  assert.deepEqual(await sendWithRetries(call, { ...base, fetch: bad.fetchImpl }), { ok: false, status: 400, body: { error: { message: "bad" } } });
+  assert.deepEqual(await sendWithRetries(call, { ...base, fetch: bad.fetchImpl }), { ok: false, status: 400, body: { error: { message: "bad" } }, replayed: false });
   assert.equal(bad.calls.length, 1);
   const busy = recorder(() => json({ error: { message: "busy" } }, 503));
-  assert.deepEqual(await sendWithRetries(call, { ...base, fetch: busy.fetchImpl }), { ok: false, status: 503, body: { error: { message: "busy" } } });
+  assert.deepEqual(await sendWithRetries(call, { ...base, fetch: busy.fetchImpl }), { ok: false, status: 503, body: { error: { message: "busy" } }, replayed: false });
   assert.equal(busy.calls.length, 3);
   const once = recorder(() => json({}, 503));
   await sendWithRetries(call, { waits: [], budgetMs: 0, fetch: once.fetchImpl });
@@ -66,7 +66,7 @@ test("sendWithRetries: a request error ends at once; all tries busy gives the la
 test("sendWithRetries: the deadline gives {deadline: true}; the caller's abort rethrows; both record the cut try", async () => {
   const hang = async (_url, init) => new Promise((_resolve, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));
   const records = [];
-  assert.deepEqual(await sendWithRetries(call, { ...base, deadlineMs: 20, fetch: hang, onCall: (r) => records.push(r) }), { ok: false, status: null, body: { deadline: true } });
+  assert.deepEqual(await sendWithRetries(call, { ...base, deadlineMs: 20, fetch: hang, onCall: (r) => records.push(r) }), { ok: false, status: null, body: { deadline: true }, replayed: false });
   const controller = new AbortController();
   const running = sendWithRetries(call, { ...base, signal: controller.signal, fetch: hang, onCall: (r) => records.push(r) });
   setTimeout(() => controller.abort(new Error("caller stop")), 10);

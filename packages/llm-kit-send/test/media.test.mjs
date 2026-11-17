@@ -23,7 +23,7 @@ test("postImages sends the body as given with Authorization, Content-Type, then 
   const body = { prompt: "A lake.", model: "vendor/image", n: 1 };
   const answer = await postImages({ url: "https://images.example/v1/images", key: "k", headers: { "X-Label": "art" }, body }, { fetch: fetchImpl, signal });
   assert.deepEqual(answer, { ok: true, status: 200, payload: { data: [{ b64_json: "aW1n", url: "https://cdn.example/x.png" }], usage: { cost: 0.04 } },
-    image: "aW1n", link: "https://cdn.example/x.png", usage: { cost: 0.04 }, cost: 0.04 });
+    image: "aW1n", link: "https://cdn.example/x.png", usage: { cost: 0.04 }, cost: 0.04, replayed: false });
   assert.equal(calls[0].url, "https://images.example/v1/images");
   assert.deepEqual(Object.keys(calls[0].init), ["method", "signal", "headers", "body"]);
   assert.deepEqual(Object.entries(calls[0].init.headers), [["Authorization", "Bearer k"], ["Content-Type", "application/json"], ["X-Label", "art"]]);
@@ -32,11 +32,11 @@ test("postImages sends the body as given with Authorization, Content-Type, then 
 });
 
 test("postImages: an error status, a lost connection and bodies that are not JSON; an abort throws", async () => {
-  assert.deepEqual(await postImages({ url: "u", key: "k", body: {} }, { fetch: async () => json({ error: "no" }, 400) }), { ok: false, status: 400, failure: { error: "no" } });
-  assert.deepEqual(await postImages({ url: "u", key: "k", body: {} }, { fetch: async () => new Response("bad", { status: 502 }) }), { ok: false, status: 502, failure: {} });
-  assert.deepEqual(await postImages({ url: "u", key: "k", body: {} }, { fetch: async () => { throw new TypeError("fetch failed"); } }), { ok: false, status: null, failure: {} });
+  assert.deepEqual(await postImages({ url: "u", key: "k", body: {} }, { fetch: async () => json({ error: "no" }, 400) }), { ok: false, status: 400, failure: { error: "no" }, replayed: false });
+  assert.deepEqual(await postImages({ url: "u", key: "k", body: {} }, { fetch: async () => new Response("bad", { status: 502 }) }), { ok: false, status: 502, failure: {}, replayed: false });
+  assert.deepEqual(await postImages({ url: "u", key: "k", body: {} }, { fetch: async () => { throw new TypeError("fetch failed"); } }), { ok: false, status: null, failure: {}, replayed: false });
   const empty = await postImages({ url: "u", key: "k", body: {} }, { fetch: async () => new Response("<html>") });
-  assert.deepEqual(empty, { ok: true, status: 200, payload: {}, image: null, link: null, usage: null, cost: null });
+  assert.deepEqual(empty, { ok: true, status: 200, payload: {}, image: null, link: null, usage: null, cost: null, replayed: false });
   const signal = aborted();
   await assert.rejects(postImages({ url: "u", key: "k", body: {} }, { fetch: async () => { throw signal.reason; }, signal }), /caller left/);
 });
@@ -57,14 +57,14 @@ test("ideogramEdit posts the caller's form with only Api-Key and reads the first
   const form = new FormData();
   form.append("prompt", "short hair");
   const { calls, fetchImpl } = host(() => json({ data: [{ url: "https://i.test/out.png", is_image_safe: false }] }));
-  assert.deepEqual(await ideogramEdit({ key: "i", model: "edit-4", form }, { fetch: fetchImpl }), { ok: true, status: 200, url: "https://i.test/out.png", safe: false });
+  assert.deepEqual(await ideogramEdit({ key: "i", model: "edit-4", form }, { fetch: fetchImpl }), { ok: true, status: 200, url: "https://i.test/out.png", safe: false, replayed: false });
   assert.equal(calls[0].url, `${IDEOGRAM_URL}/v2/image/precise-edit/edit-4`);
   assert.deepEqual(Object.keys(calls[0].init), ["method", "headers", "body", "signal"]);
   assert.deepEqual(calls[0].init.headers, { "Api-Key": "i" });
   assert.equal(calls[0].init.body, form);
-  assert.deepEqual(await ideogramEdit({ key: "i", model: "m", form }, { fetch: async () => json({ reject_reason: "unsafe" }, 422) }), { ok: false, status: 422, reason: "unsafe" });
-  assert.deepEqual(await ideogramEdit({ key: "i", model: "m", form }, { fetch: async () => new Response("x", { status: 500 }) }), { ok: false, status: 500, reason: null });
-  assert.deepEqual(await ideogramEdit({ key: "i", model: "m", form }, { fetch: async () => json({ data: [] }) }), { ok: true, status: 200, url: null, safe: true });
+  assert.deepEqual(await ideogramEdit({ key: "i", model: "m", form }, { fetch: async () => json({ reject_reason: "unsafe" }, 422) }), { ok: false, status: 422, reason: "unsafe", replayed: false });
+  assert.deepEqual(await ideogramEdit({ key: "i", model: "m", form }, { fetch: async () => new Response("x", { status: 500 }) }), { ok: false, status: 500, reason: null, replayed: false });
+  assert.deepEqual(await ideogramEdit({ key: "i", model: "m", form }, { fetch: async () => json({ data: [] }) }), { ok: true, status: 200, url: null, safe: true, replayed: false });
   await assert.rejects(ideogramEdit({ key: "i", model: "m", form }, { fetch: async () => new Response("<html>") }), SyntaxError);
   await assert.rejects(ideogramEdit({ key: "i", model: "m", form }, { fetch: async () => { throw new TypeError("fetch failed"); } }), /fetch failed/);
 });

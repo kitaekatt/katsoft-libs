@@ -26,7 +26,8 @@
     "llm_kit.runs.index",
     "llm_kit.runs.compare",
     "llm_kit.cli.runs",
-    "llm_kit.registry.fallback_chains"
+    "llm_kit.registry.fallback_chains",
+    "llm_kit.registry.reply_cache"
   ],
   "entries": [
     {
@@ -4073,6 +4074,42 @@
     },
     {
       "name": "llm_kit.registry.fallback_chains.read_fallback_chains",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.CALL_RECORD_V2",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.REPLY_ENTRY_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.FormPart",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.REPLY_ENTRY_FORMAT",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.REPLY_KEY_FORMAT",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.ReplyEntryError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.read_entry",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.request_key",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.step_key",
       "status": "public"
     }
   ]

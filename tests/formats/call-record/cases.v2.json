@@ -1,0 +1,255 @@
+{
+ "format": "llm-kit.call-record/v2",
+ "schema": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/call-record.v2.schema.json",
+ "description": "Shared cases for the call record, version 2 (version 1 plus the required `replayed`). 'expect' is 'valid' or 'invalid' against the schema. The contract is docs/reference/llm-kit-formats.md.",
+ "records": [
+  {
+   "name": "answered",
+   "record": {
+    "attempt": 1,
+    "model": "vendor/model",
+    "provider": "Host A",
+    "ok": true,
+    "status": 200,
+    "aborted": false,
+    "ms": 812,
+    "inputTokens": 7,
+    "cachedTokens": 2,
+    "outputTokens": 3,
+    "cost": 0.0004,
+    "providerMessage": null,
+    "replayed": false
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "no-answer",
+   "record": {
+    "attempt": 1,
+    "model": "vendor/model",
+    "provider": null,
+    "ok": false,
+    "status": null,
+    "aborted": false,
+    "ms": 30001.5,
+    "inputTokens": null,
+    "cachedTokens": null,
+    "outputTokens": null,
+    "cost": null,
+    "providerMessage": null,
+    "replayed": false
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "aborted",
+   "record": {
+    "attempt": 2,
+    "model": "vendor/model",
+    "provider": "Host A",
+    "ok": false,
+    "status": null,
+    "aborted": true,
+    "ms": 812,
+    "inputTokens": 7,
+    "cachedTokens": 2,
+    "outputTokens": 3,
+    "cost": 0.0004,
+    "providerMessage": null,
+    "replayed": false
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "refused",
+   "record": {
+    "attempt": 1,
+    "model": "vendor/model",
+    "provider": "Host A",
+    "ok": false,
+    "status": 429,
+    "aborted": false,
+    "ms": 812,
+    "inputTokens": 7,
+    "cachedTokens": 2,
+    "outputTokens": 3,
+    "cost": 0.0004,
+    "providerMessage": "Rate limited.",
+    "replayed": false
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "missing-field",
+   "record": {
+    "attempt": 1,
+    "model": "vendor/model",
+    "provider": "Host A",
+    "ok": true,
+    "status": 200,
+    "aborted": false,
+    "ms": 812,
+    "inputTokens": 7,
+    "cachedTokens": 2,
+    "outputTokens": 3,
+    "cost": 0.0004,
+    "replayed": false
+   },
+   "expect": "invalid",
+   "note": "Every field is present, null when unknown."
+  },
+  {
+   "name": "extra-field",
+   "record": {
+    "attempt": 1,
+    "model": "vendor/model",
+    "provider": "Host A",
+    "ok": true,
+    "status": 200,
+    "aborted": false,
+    "ms": 812,
+    "inputTokens": 7,
+    "cachedTokens": 2,
+    "outputTokens": 3,
+    "cost": 0.0004,
+    "providerMessage": null,
+    "prompt": "text",
+    "replayed": false
+   },
+   "expect": "invalid",
+   "note": "No text field, no other field."
+  },
+  {
+   "name": "attempt-zero",
+   "record": {
+    "attempt": 0,
+    "model": "vendor/model",
+    "provider": "Host A",
+    "ok": true,
+    "status": 200,
+    "aborted": false,
+    "ms": 812,
+    "inputTokens": 7,
+    "cachedTokens": 2,
+    "outputTokens": 3,
+    "cost": 0.0004,
+    "providerMessage": null,
+    "replayed": false
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "status-text",
+   "record": {
+    "attempt": 1,
+    "model": "vendor/model",
+    "provider": "Host A",
+    "ok": true,
+    "status": "200",
+    "aborted": false,
+    "ms": 812,
+    "inputTokens": 7,
+    "cachedTokens": 2,
+    "outputTokens": 3,
+    "cost": 0.0004,
+    "providerMessage": null,
+    "replayed": false
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "negative-tokens",
+   "record": {
+    "attempt": 1,
+    "model": "vendor/model",
+    "provider": "Host A",
+    "ok": true,
+    "status": 200,
+    "aborted": false,
+    "ms": 812,
+    "inputTokens": -1,
+    "cachedTokens": 2,
+    "outputTokens": 3,
+    "cost": 0.0004,
+    "providerMessage": null,
+    "replayed": false
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "long-message",
+   "record": {
+    "attempt": 1,
+    "model": "vendor/model",
+    "provider": "Host A",
+    "ok": true,
+    "status": 200,
+    "aborted": false,
+    "ms": 812,
+    "inputTokens": 7,
+    "cachedTokens": 2,
+    "outputTokens": 3,
+    "cost": 0.0004,
+    "providerMessage": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "replayed": false
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "replayed",
+   "record": {
+    "attempt": 1,
+    "model": "vendor/model",
+    "provider": null,
+    "ok": true,
+    "status": 200,
+    "aborted": false,
+    "ms": 1,
+    "inputTokens": null,
+    "cachedTokens": null,
+    "outputTokens": null,
+    "cost": 0,
+    "providerMessage": null,
+    "replayed": true
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "v1-record-without-replayed",
+   "record": {
+    "attempt": 1,
+    "model": "vendor/model",
+    "provider": "Host A",
+    "ok": true,
+    "status": 200,
+    "aborted": false,
+    "ms": 812,
+    "inputTokens": 7,
+    "cachedTokens": 2,
+    "outputTokens": 3,
+    "cost": 0.0004,
+    "providerMessage": null
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "replayed-not-boolean",
+   "record": {
+    "attempt": 1,
+    "model": "vendor/model",
+    "provider": "Host A",
+    "ok": true,
+    "status": 200,
+    "aborted": false,
+    "ms": 812,
+    "inputTokens": 7,
+    "cachedTokens": 2,
+    "outputTokens": 3,
+    "cost": 0.0004,
+    "providerMessage": null,
+    "replayed": 1
+   },
+   "expect": "invalid"
+  }
+ ]
+}

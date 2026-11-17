@@ -1,5 +1,5 @@
-// The call records sendWithRetries emits, validated against llm-kit.call-record/v1 (the schema file itself, read from
-// the Python package) with a small checker for the keywords that schema uses.
+// The call records sendWithRetries emits, validated against llm-kit.call-record/v2 (the schema file itself, read from
+// the Python package) with a small checker for the keywords the call-record schemas use. v1 keeps its own cases.
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -7,17 +7,20 @@ import { test } from "node:test";
 import { sendWithRetries } from "../dist/index.js";
 import { PACKAGE, URL_, json, readJson, reply } from "./support.mjs";
 
-const SCHEMA = readJson(join(PACKAGE, "..", "katsoft-llm-kit", "src", "llm_kit", "schema", "formats", "call-record.v1.schema.json"));
-const CASES = readJson(join(PACKAGE, "..", "..", "tests", "formats", "call-record", "cases.json"));
+const FORMATS = join(PACKAGE, "..", "katsoft-llm-kit", "src", "llm_kit", "schema", "formats");
+const SCHEMA_V1 = readJson(join(FORMATS, "call-record.v1.schema.json"));
+const SCHEMA = readJson(join(FORMATS, "call-record.v2.schema.json"));
+const CASES_V1 = readJson(join(PACKAGE, "..", "..", "tests", "formats", "call-record", "cases.json"));
+const CASES = readJson(join(PACKAGE, "..", "..", "tests", "formats", "call-record", "cases.v2.json"));
 const KEYWORDS = new Set(["type", "minimum", "maximum", "maxLength", "description"]);
 
 const typeOf = (value) => value === null ? "null" : Number.isInteger(value) ? "integer" : typeof value;
-/** The errors of `record` against the call-record schema: [field, keyword] pairs. */
-function errors(record) {
+/** The errors of `record` against a call-record schema: [field, keyword] pairs. */
+function errors(record, schema = SCHEMA) {
   const found = [];
-  for (const name of SCHEMA.required) if (!(name in record)) found.push([name, "required"]);
-  for (const name of Object.keys(record)) if (!(name in SCHEMA.properties)) found.push([name, "additionalProperties"]);
-  for (const [name, rule] of Object.entries(SCHEMA.properties)) {
+  for (const name of schema.required) if (!(name in record)) found.push([name, "required"]);
+  for (const name of Object.keys(record)) if (!(name in schema.properties)) found.push([name, "additionalProperties"]);
+  for (const [name, rule] of Object.entries(schema.properties)) {
     if (!(name in record)) continue;
     for (const keyword of Object.keys(rule)) assert.ok(KEYWORDS.has(keyword), `the checker knows ${keyword}`);
     const value = record[name];
@@ -31,12 +34,14 @@ function errors(record) {
   return found;
 }
 
-test("the checker agrees with the shared call-record cases", () => {
+test("the checker agrees with the shared call-record cases of v1 and v2", () => {
   assert.equal(SCHEMA.$id, CASES.format);
+  assert.equal(SCHEMA_V1.$id, CASES_V1.format);
   for (const item of CASES.records) assert.equal(errors(item.record).length === 0, item.expect === "valid", item.name);
+  for (const item of CASES_V1.records) assert.equal(errors(item.record, SCHEMA_V1).length === 0, item.expect === "valid", item.name);
 });
 
-test("every record sendWithRetries emits is a valid llm-kit.call-record/v1", async () => {
+test("every record sendWithRetries emits is a valid llm-kit.call-record/v2", async () => {
   const records = [];
   const controller = new AbortController();
   const steps = [() => json({ error: { message: "busy" } }, 429), () => { throw new Error("reset"); },
@@ -50,6 +55,13 @@ test("every record sendWithRetries emits is a valid llm-kit.call-record/v1", asy
   setTimeout(() => controller.abort(new Error("caller stop")), 5);
   await assert.rejects(sendWithRetries({ url: URL_, key: "k", body: { model: "asked/m", messages: [] } },
     { waits: [], budgetMs: 100, signal: controller.signal, fetch: hang, onCall: (record) => records.push(record) }), /caller stop/);
-  assert.ok(records.length >= 4, `records: ${records.length}`);
+  const store = { rows: new Map(), async get(_layer, key) { return this.rows.get(key) ?? null; }, async put(_layer, key, entry) { this.rows.set(key, entry); } };
+  const cache = { store, account: "a", hosts: [URL_], classify: () => "success" };
+  for (let i = 0; i < 2; i++) {
+    await sendWithRetries({ url: URL_, key: "k", body: { model: "asked/m", temperature: 0, messages: [] } },
+      { waits: [], budgetMs: 100, fetch: async () => reply("same"), onCall: (record) => records.push(record), cache });
+  }
+  assert.equal(records.at(-1).replayed, true, "the last record is a replay");
+  assert.ok(records.length >= 6, `records: ${records.length}`);
   for (const record of records) assert.deepEqual(errors(record), [], JSON.stringify(record));
 });

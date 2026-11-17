@@ -26,6 +26,8 @@ export interface SendErrorFields {
   readonly payload?: unknown;
   /** The original error: the transport error, the body read error, or the callback error. */
   readonly cause?: unknown;
+  /** True when the error is a stored answer of the reply cache: nothing was sent. */
+  readonly replayed?: boolean;
 }
 
 const LIMIT_KINDS: ReadonlySet<SendErrorKind> = new Set(["no_first_token", "stalled", "slow"]);
@@ -49,7 +51,7 @@ function providerSide(status: number, message: string | null): boolean {
  *
  * @param kind - What failed.
  * @param message - A short description for logs; never prompt text.
- * @param fields - The status, provider code and message, host, upstream reason, error body and cause.
+ * @param fields - The status, provider code and message, host, upstream reason, error body, cause and `replayed`.
  * @returns A new error.
  * @throws Never.
  */
@@ -70,6 +72,8 @@ export class SendError extends Error {
   readonly payload: unknown;
   /** True when one try on another model is worth it. */
   readonly fallback: boolean;
+  /** True when the error is a stored answer of the reply cache: nothing was sent. */
+  readonly replayed: boolean;
 
   constructor(kind: SendErrorKind, message: string, fields: SendErrorFields = {}) {
     super(message, fields.cause === undefined ? undefined : { cause: fields.cause });
@@ -82,6 +86,7 @@ export class SendError extends Error {
     this.reason = fields.reason ?? null;
     this.payload = fields.payload ?? null;
     this.fallback = kind === "http" ? providerSide(this.status ?? 0, this.providerMessage) : kind !== "aborted";
+    this.replayed = fields.replayed ?? false;
   }
 }
 
@@ -113,13 +118,19 @@ export function upstreamReason(raw: unknown): string | null {
 export async function httpError(response: Response): Promise<SendError> {
   let payload: any = null;
   try { payload = JSON.parse(await response.text()); } catch { /* not JSON */ }
+  return httpErrorOf(response.status, payload);
+}
+
+/** The {@link SendError} of a non-2xx status and its parsed error body (`null` when it was not JSON). */
+export function httpErrorOf(status: number, payload: any, replayed = false): SendError {
   const error = payload?.error;
-  return new SendError("http", `The provider answered HTTP ${response.status}.`, {
-    status: response.status,
+  return new SendError("http", `The provider answered HTTP ${status}.`, {
+    status,
     code: error?.code ?? null,
     providerMessage: clip(error?.message),
     provider: clip(error?.metadata?.provider_name),
     reason: upstreamReason(error?.metadata?.raw),
     payload,
+    ...(replayed ? { replayed } : {}),
   });
 }

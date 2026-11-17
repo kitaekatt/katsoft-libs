@@ -4,7 +4,9 @@ Sends OpenAI-compatible chat-completions calls (OpenRouter, Moonshot, a local ll
 the same wire): plain or streamed, with stream limits, one fallback before the first output, a reasoning-off retry,
 retries while the host is busy, a backup key and call records with costs. Sends picture, voice and video requests to
 media hosts (OpenAI-compatible images, Venice, Ideogram, fal, Sunra, ElevenLabs), downloads their result links, and
-runs a fallback chain of hosts read from a `llm-kit.fallback-chain/v1` file.
+runs a fallback chain of hosts read from a `llm-kit.fallback-chain/v1` file. Keeps an optional reply cache on the
+non-stream calls: a stored refusal, or a stored success of a temperature-0 chat call, answers the same wire request
+again with no send.
 
 The package sends the body you give it, byte for byte (through your `encode`). It does not choose models or build
 prompts. To build a body from an llm-kit model file, use `@katsoft/llm-kit-config`.
@@ -104,6 +106,33 @@ const result = await runChain(chains.chains.speech.steps, {
   hasKey: (host) => Boolean(keys[host]),
   attempt: async (step, { previous }) => trySpeech(step.host, previous),   // {ok: true, value} or {ok: false, failure}
 });
+```
+
+## The reply cache
+
+Every non-stream call takes a `cache` option: your store (bound to one owner), a non-secret account label, the hosts
+that may be cached, and, on the parsed transports (`sendChat`, `sendWithRetries`, `postImages`, `ideogramEdit`),
+`classify`, your reading of the parsed result as `"refusal"`, `"success"` or `null`. The key (`stepKey`,
+`llm-kit.reply-key/v1`) is the request as sent: one added space is a new request; secrets, attribution headers and the
+multipart boundary are not part of it. The rules:
+
+- A stored refusal always replays: nothing is sent, the stored answer is read by the same code, and the result says
+  `replayed: true` (cost 0, no usage). `freshCheck: true` (a deliberate second look) still replays a refusal.
+- A success is stored and replayed only for a deterministic request: a chat transport whose sent body has
+  `temperature` exactly 0, and not `freshCheck`. A picture is never deterministic.
+- Only complete answers whose body parsed are stored, never a busy answer (408, 429, 5xx), a network failure, an abort
+  or a body over `maxBytes`.
+- A store failure is `ReplyCacheError`: never retried, never a fallback, never read as no answer. `onPutError` turns a
+  failed write into a report and the normal answer.
+
+The raw transports (`postChat`, `postVenice`) give a `CachedResponse`: read the response as usual, then call
+`settle(verdict)` (`{headersOnly: true}` for a refusal stated in the headers). Stored entries have the format
+`llm-kit.reply-entry/v1` (`readEntry`); the Python reader is `llm_kit.registry.reply_cache` in katsoft-llm-kit.
+
+```js
+const cache = { store, account: "router:main", hosts: ["https://openrouter.ai/api/v1/"],
+  classify: (answer) => (answer.ok === false && answer.status === 400 ? "refusal" : null) };
+const answer = await postImages({ url, key, body }, { cache });   // the same refused body again sends nothing
 ```
 
 ## Other parts

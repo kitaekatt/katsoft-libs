@@ -2,6 +2,23 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## Unreleased
+
+Not on PyPI yet (a release needs the user's approval). Added for `@katsoft/llm-kit-send` 0.3.0 (the reply cache):
+
+- `llm_kit.registry.reply_cache`: `request_key`, `step_key` and `FormPart` (format `llm-kit.reply-key/v1`, the same keys as the TypeScript `requestKey` and `stepKey`), `read_entry` and `ReplyEntryError` (format `llm-kit.reply-entry/v1`), `REPLY_KEY_FORMAT`, `REPLY_ENTRY_FORMAT`. It reads the formats only: no Python cache, no send.
+- Schemas `reply-entry.v1.schema.json` and `call-record.v2.schema.json` (`llm_kit.schema.formats.REPLY_ENTRY_V1`, `CALL_RECORD_V2`); `call-record.v1.schema.json` stays. Shared cases `tests/formats/reply-key/cases.json`, `tests/formats/reply-entry/cases.json`, `tests/formats/call-record/cases.v2.json`.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. Each name has a docstring and is in `__all__` and `public-surface.json`.
+2. Semver release with a changelog: pending. This entry gets its version at the next PyPI release.
+3. Tests for each public function: pass. `tests/llm-kit/test_reply_cache.py` runs every shared key and entry case (the files the TypeScript tests run) and the v2 call-record cases against the schemas.
+4. No client names, prompts or data: pass. Generic hosts and labels.
+5. Examples run without a client app: pass. No example changed.
+6. JSON Schema for each file format: pass. Both new formats have a schema; the shared cases validate against them. The reply key is a key, not a file: shared cases, no schema.
+7. Gate before adoption: pass for lines 1, 3 to 6; line 2 at release.
+
 ## 1.34.0
 
 Added:

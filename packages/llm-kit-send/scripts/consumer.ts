@@ -29,3 +29,20 @@ export async function media(): Promise<string | null> {
   const job = await falQueue({ model: "vendor/video", key: "k", input: {}, pollMs: 1_000 });
   return result.ok && file.ok && job.ok ? result.value : null;
 }
+
+import { ReplyCacheError, isVeniceViolation, postChat, postVenice, readEntry, stepKey } from "@katsoft/llm-kit-send";
+import type { CachedResponse, ParsedStepCache, ReplyEntry, ReplyStore, RetryResult, StepCache } from "@katsoft/llm-kit-send";
+
+export async function cached(store: ReplyStore): Promise<boolean> {
+  const step: StepCache = { store, account: "router:main", hosts: ["https://llm.example/v1/"], onPutError: (error: ReplyCacheError) => void error.op };
+  const raw: Response = await postChat(call);
+  const kept: CachedResponse = await postChat(call, { cache: step });
+  await kept.settle(kept.response.ok ? null : "refusal");
+  const venice: CachedResponse = await postVenice({ endpoint: "generate", key: "k", body: {} }, { cache: step });
+  await venice.settle(isVeniceViolation(venice.response) ? "refusal" : null, { headersOnly: true });
+  const retried: ParsedStepCache<RetryResult> = { ...step, classify: (result) => (result.ok ? "success" : null) };
+  const answer = await sendWithRetries(call, { waits: [], budgetMs: 0, cache: retried });
+  const entry: ReplyEntry = readEntry(JSON.parse("{}"));
+  const key: string = await stepKey("router:main", { method: "POST", url: call.url, headers: {}, body: "{}" });
+  return raw.ok && answer.replayed && entry.layer === "step" && key.length === 64;
+}

@@ -491,7 +491,7 @@ def test_compare_case(name):
 def test_public_surface_lists_the_format_names():
     surface = json.loads((PACKAGE / "public-surface.json").read_text(encoding="utf-8"))
     names = {e["name"] for e in surface["entries"] if e["status"] == "public"}
-    for module_name in ("llm_kit.schema.formats", "llm_kit.registry.project_models", "llm_kit.registry.fallback_chains"):
+    for module_name in ("llm_kit.schema.formats", "llm_kit.registry.project_models", "llm_kit.registry.fallback_chains", "llm_kit.registry.reply_cache"):
         assert module_name in surface["covers"]
         module = __import__(module_name, fromlist=["__all__"])
         for name in module.__all__:

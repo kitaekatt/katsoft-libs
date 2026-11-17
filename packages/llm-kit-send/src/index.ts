@@ -3,7 +3,9 @@
  * one fallback before the first token, the reasoning-off retry, retries with jitter and Retry-After, a backup key, call
  * records and costs. Sends picture, voice and video requests to media hosts (OpenAI-compatible images, Venice,
  * Ideogram, fal, Sunra, ElevenLabs) and downloads their result links. Reads fallback chain files
- * (`llm-kit.fallback-chain/v1`) and runs a chain of hosts. The caller builds each request body (for example from
+ * (`llm-kit.fallback-chain/v1`) and runs a chain of hosts. Keeps a reply cache on the non-stream calls (the `cache`
+ * option): a stored refusal, or a stored success of a temperature-0 chat call, is answered with no send, under keys of
+ * the exact wire request (`llm-kit.reply-key/v1`, entries `llm-kit.reply-entry/v1`). The caller builds each request body (for example from
  * `@katsoft/llm-kit-config` `chatFields`); this package sends it as given.
  *
  * @packageDocumentation
@@ -32,6 +34,10 @@ export type {
 } from "./media.js";
 export { falQueue, sunraQueue } from "./queue.js";
 export type { FalQueueCall, FalQueueResult, QueueStage, SunraQueueCall, SunraQueueResult } from "./queue.js";
+export { REPLY_ENTRY_FORMAT, REPLY_KEY_FORMAT, ReplyCacheError, ReplyEntryError, readEntry, requestKey, stepKey } from "./reply-cache.js";
+export type {
+  CachedResponse, ParsedStepCache, ReplyEntry, ReplyLayer, ReplyStore, ReplyVerdict, StepCache, StepContext, WireRequest,
+} from "./reply-cache.js";
 export { ChainFormatError, FALLBACK_CHAIN_FORMAT, mapInput, readFallbackChains, runChain } from "./chain.js";
 export type {
   AttemptResult, ChainContext, ChainFailure, ChainOptions, ChainResult, ChainStep, FallbackChains, InputRule, ModelHost,

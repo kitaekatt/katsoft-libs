@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.reply-entry/v1",
+  "title": "llm-kit reply entry, version 1",
+  "description": "One stored answer of the reply cache (@katsoft/llm-kit-send ReplyStore). Layer `step`: one provider request's answer (status, kept response headers, body bytes as base64). Layer `operation`: the final refusal of a consumer's whole operation (status and a note of a code and the consumer's fixed text, never a prompt or a picture). Reader rules the subset cannot state: `body` is canonical base64 (RFC 4648, with padding); response header names are lowercase and not empty; `note.code` is not empty. Written in llm-scripting-kit.json-schema-subset/v1. Contract and shared cases: docs/reference/llm-kit-formats.md.",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "llm-kit.reply-entry/v1"
+        },
+        "layer": {
+          "const": "step"
+        },
+        "outcome": {
+          "description": "What the answer meant: a refusal, or a success of a deterministic request.",
+          "enum": [
+            "refusal",
+            "success"
+          ]
+        },
+        "status": {
+          "description": "The HTTP status of the stored answer.",
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "headers": {
+          "description": "The kept response headers: content-type and the transport's named ones. Never set-cookie or account headers.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "body": {
+          "description": "The body bytes, base64; empty for a headers-only entry.",
+          "type": "string"
+        },
+        "at": {
+          "description": "When it was stored, in milliseconds since the epoch.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "format",
+        "layer",
+        "outcome",
+        "status",
+        "headers",
+        "body",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "llm-kit.reply-entry/v1"
+        },
+        "layer": {
+          "const": "operation"
+        },
+        "outcome": {
+          "const": "refusal"
+        },
+        "status": {
+          "description": "The HTTP status the caller got.",
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "note": {
+          "description": "What the caller got: a code and the consumer's fixed text.",
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        },
+        "at": {
+          "description": "When it was stored, in milliseconds since the epoch.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "format",
+        "layer",
+        "outcome",
+        "status",
+        "note",
+        "at"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

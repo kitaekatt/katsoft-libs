@@ -380,6 +380,86 @@
       "name": "ChainResult",
       "kind": "type",
       "status": "public"
+    },
+    {
+      "name": "requestKey",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "stepKey",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "readEntry",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "ReplyCacheError",
+      "kind": "class",
+      "status": "public"
+    },
+    {
+      "name": "ReplyEntryError",
+      "kind": "class",
+      "status": "public"
+    },
+    {
+      "name": "REPLY_KEY_FORMAT",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "REPLY_ENTRY_FORMAT",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "ReplyVerdict",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ReplyLayer",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ReplyStore",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "StepCache",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ParsedStepCache",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "StepContext",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ReplyEntry",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "WireRequest",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "CachedResponse",
+      "kind": "type",
+      "status": "public"
     }
   ]
 }
