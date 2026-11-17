@@ -1,0 +1,50 @@
+{
+  "name": "@katsoft/llm-kit-send",
+  "version": "0.1.0",
+  "description": "Sends OpenAI-compatible chat calls: plain or streamed, with stream limits, one fallback, retries, a backup key and call records.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kitaekatt/katsoft-libs.git",
+    "directory": "packages/llm-kit-send"
+  },
+  "homepage": "https://github.com/kitaekatt/katsoft-libs/tree/dev/packages/llm-kit-send#readme",
+  "keywords": [
+    "llm",
+    "chat",
+    "streaming",
+    "openai-compatible",
+    "openrouter",
+    "llm-kit"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test --test-reporter=dot \"test/*.test.mjs\"",
+    "prepack": "npm run build",
+    "check-pack": "node scripts/check-pack.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "5.8.3"
+  }
+}

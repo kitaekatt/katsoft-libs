@@ -1,0 +1,160 @@
+{
+  "schema": 1,
+  "purpose": "Public names of @katsoft/llm-kit-send, the package's only export (\".\"). Values are runtime exports; types are TypeScript-only names in dist/index.d.ts. test/surface.test.mjs compares both lists with the built package.",
+  "package": "@katsoft/llm-kit-send",
+  "covers": [
+    "."
+  ],
+  "entries": [
+    {
+      "name": "postChat",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "sendChat",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "withFallback",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "sendWithRetries",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "retryWait",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "pause",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "isTransient",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "withBackupKey",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "isKeyLimit",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "usageCost",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "tokenCost",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "upstreamReason",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "SendError",
+      "kind": "class",
+      "status": "public"
+    },
+    {
+      "name": "SendErrorKind",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SendErrorFields",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ChatCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PostOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SendOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ReasoningRetry",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ChatAnswer",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "StreamLimits",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "StreamPace",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ToolCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "FallbackOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "CallRecord",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "RetryOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "RetryResult",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "RetryWaitOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "BackupKeyOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "TokenPrice",
+      "kind": "type",
+      "status": "public"
+    }
+  ]
+}

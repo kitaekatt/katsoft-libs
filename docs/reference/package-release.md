@@ -82,6 +82,10 @@ It downloads the published tarball and compares its files with the packed files.
 On both paths, the registry's `dist.integrity` must equal the packed tarball's integrity, or the job fails.
 The job summary records the commit, the result and the integrity.
 
+`packages/llm-kit-send` is the npm package `@katsoft/llm-kit-send`, released the same way with its own tag `@katsoft/llm-kit-send@<version>`.
+Its first version is published by hand ("First publish by hand" below, in `packages/llm-kit-send`).
+`release-npm.yml` builds only `@katsoft/llm-kit-config` today; extend its tag filter and package directory before the second release of `@katsoft/llm-kit-send`.
+
 ### Prepare an npm release
 
 1. Change the version in `package.json` and `package-lock.json` (`npm version <new> --no-git-tag-version` in `packages/llm-kit-config`).

@@ -1,0 +1,199 @@
+// One OpenAI-compatible chat-completions call: the raw POST (postChat) and the parsed, plain or streamed call
+// (sendChat) with the stream limits and the reasoning-off retry.
+import { SendError, httpError } from "./errors.js";
+import { inTime, limitError, readStream } from "./stream.js";
+import type { StreamLimits, ToolCall } from "./stream.js";
+
+/** One request: where it goes, its key, extra headers and the body object. */
+export interface ChatCall {
+  /** The chat-completions URL of the endpoint. */
+  readonly url: string;
+  /** Sent as `Authorization: Bearer <key>`; `null` sends no Authorization header. */
+  readonly key: string | null;
+  /** Extra headers, such as an app label. */
+  readonly headers?: Readonly<Record<string, string>>;
+  /** The request object. The package reads `stream`, `model`, `reasoning` and `max_tokens`; it changes only the
+   * reasoning-off retry fields. */
+  readonly body: Record<string, unknown>;
+  /** The wire bytes of the body; `JSON.stringify` when not given. A consumer rewrites the body for its endpoint here. */
+  readonly encode?: (body: Record<string, unknown>) => string;
+}
+
+/** The options of {@link postChat}. */
+export interface PostOptions {
+  /** The transport; the global `fetch` at call time when not given. */
+  readonly fetch?: typeof fetch;
+  /** The signal of the request. */
+  readonly signal?: AbortSignal;
+  /** A check of the URL and the wire bytes before anything is sent; it may throw to refuse the call. */
+  readonly beforeSend?: (url: string, bytes: string) => void;
+}
+
+/** The reasoning-off retry: see {@link SendOptions.reasoningRetry}. */
+export interface ReasoningRetry {
+  /** The reasoning token budget of the second try; it is added to `max_tokens`. */
+  readonly budget: number;
+  /** Called with the body's model before the second try, so the consumer can remember the model. */
+  readonly onRequired?: (model: string) => void;
+}
+
+/** The options of {@link sendChat}. */
+export interface SendOptions extends PostOptions {
+  /** The stream limits; the call is watched only when they are given (the body should then ask for a stream). */
+  readonly limits?: StreamLimits | null;
+  /** Each content delta of a streamed call, as it arrives. With it, the body must be a server-sent event stream. */
+  readonly onDelta?: (text: string) => void;
+  /** The arguments so far of a streamed tool call, each time they grow. */
+  readonly onToolArguments?: (name: string, raw: string) => void;
+  /** A stream that ends with no finish reason is the kind `incomplete`. */
+  readonly requireFinish?: boolean;
+  /** A chunk with the finish reason `error` ends the stream as `stream_error` (default true). */
+  readonly stopOnErrorFinish?: boolean;
+  /** When the body turns reasoning off (`reasoning.enabled === false` or `reasoning.effort === "none"`) and the host
+   * answers 400 "reasoning is mandatory", send once more with `reasoning: {max_tokens: budget}`. Off when not given. */
+  readonly reasoningRetry?: ReasoningRetry | null;
+}
+
+/** The answer of {@link sendChat}, the same shape for a plain and a streamed call. */
+export interface ChatAnswer {
+  /** The provider JSON; for a stream, the assembled `{model, provider, usage, choices: [{finish_reason,
+   * native_finish_reason, message: {content, tool_calls?}}]}`. */
+  readonly payload: any;
+  /** The reply text, or `""` when the answer has no text. */
+  readonly text: string;
+  /** The tool calls as the provider sent them; the caller validates them. */
+  readonly toolCalls: readonly ToolCall[];
+  /** The usage the provider reported, as sent (the caller validates it), or `null`. */
+  readonly usage: any;
+  /** The model the provider reported, else the body's model. */
+  readonly model: string;
+  /** The host that served the call, when the provider named it, or `null`. */
+  readonly provider: string | null;
+  /** The finish reason, or `null`. */
+  readonly finishReason: unknown;
+  /** The host's own finish reason, or `null`. */
+  readonly nativeFinishReason: unknown;
+  /** True when the answer was read from an event stream. */
+  readonly streamed: boolean;
+  /** The time from the call to the end of the answer, in milliseconds. */
+  readonly ms: number;
+}
+
+/**
+ * Sends one chat request and returns the provider's response untouched, of any status. `beforeSend` runs first; its
+ * exception propagates unchanged and nothing is sent.
+ *
+ * @param call - The URL, key, headers and body.
+ * @param options - The transport, the signal and the check before sending.
+ * @returns The response.
+ * @throws {SendError} Kind `network` when the transport gave no response (`cause` is its error), or `aborted` when the
+ *   signal ended it. An exception of `beforeSend` or of `encode` propagates unchanged.
+ */
+export async function postChat(call: ChatCall, options: PostOptions = {}): Promise<Response> {
+  const bytes = (call.encode ?? JSON.stringify)(call.body);
+  options.beforeSend?.(call.url, bytes);
+  const transport = options.fetch ?? globalThis.fetch;
+  const { signal } = options;
+  try {
+    return await transport(call.url, {
+      ...(signal ? { signal } : {}),
+      method: "POST",
+      headers: { ...(call.key == null ? {} : { Authorization: `Bearer ${call.key}` }), "Content-Type": "application/json", ...call.headers },
+      body: bytes,
+    });
+  } catch (error) {
+    throw new SendError(signal?.aborted ? "aborted" : "network", "The provider gave no response.", { cause: error });
+  }
+}
+
+const reasoningOff = (body: Record<string, unknown>) => {
+  const reasoning = body.reasoning as { enabled?: unknown; effort?: unknown } | undefined;
+  return reasoning?.enabled === false || reasoning?.effort === "none";
+};
+
+/** The wait for the response headers counts against the first output: a stalled provider may send nothing at all. */
+async function headersInTime(request: Promise<Response>, ms: number, stop: AbortController): Promise<Response> {
+  const response = await inTime(request, ms);
+  if (response) return response;
+  // Stop the stalled call before the caller moves on, so two models never run and bill at once.
+  stop.abort();
+  void request.then((late) => late.body?.cancel()).catch(() => {});
+  throw limitError("no_first_token", null);
+}
+
+/**
+ * Sends one OpenAI-compatible chat call and reads its answer: a plain JSON answer, or a server-sent event stream with
+ * the stream limits, the content deltas and the tool calls put together. A JSON body answered to a streamed request is
+ * read as a plain answer when there is no `onDelta`.
+ *
+ * With `limits`, the wait for the headers counts against the first output, and on a limit the request is aborted
+ * before the error is thrown, so two models never run at once. With `reasoningRetry`, a host that refuses to turn
+ * reasoning off gets one more request with a bounded budget.
+ *
+ * @param call - The URL, key, headers and body; see {@link ChatCall}.
+ * @param options - The transport, signal, limits, callbacks and retry; see {@link SendOptions}.
+ * @returns The answer; see {@link ChatAnswer}.
+ * @throws {SendError} On every failure: `http`, `network`, `body`, `no_first_token`, `stalled`, `slow`,
+ *   `stream_error`, `incomplete` or `aborted`. An exception of `beforeSend` propagates unchanged.
+ */
+export async function sendChat(call: ChatCall, options: SendOptions = {}): Promise<ChatAnswer> {
+  const started = Date.now();
+  const limits = options.limits ?? null;
+  const stop = limits ? new AbortController() : null;
+  const signal = stop ? (options.signal ? AbortSignal.any([stop.signal, options.signal]) : stop.signal) : options.signal;
+  const post = () => postChat(call, {
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+    ...(signal ? { signal } : {}),
+    ...(options.beforeSend ? { beforeSend: options.beforeSend } : {}),
+  }).catch((error: unknown) => {
+    // A limit abort is ours, not the caller's: report it as no response.
+    if (error instanceof SendError && error.kind === "aborted" && !options.signal?.aborted) {
+      throw new SendError("network", error.message, { cause: error.cause });
+    }
+    throw error;
+  });
+  const send = () => (limits && stop ? headersInTime(post(), limits.firstMs, stop) : post());
+  const model = String(call.body.model ?? "");
+
+  let response = await send();
+  const retry = options.reasoningRetry;
+  if (retry && response.status === 400 && reasoningOff(call.body) && /reasoning is mandatory/i.test(await response.clone().text().catch(() => ""))) {
+    retry.onRequired?.(model);
+    call.body.reasoning = { max_tokens: retry.budget };
+    if (call.body.max_tokens != null) call.body.max_tokens = (call.body.max_tokens as number) + retry.budget;
+    response = await send();
+  }
+  if (!response.ok) throw await httpError(response);
+
+  const asStream = Boolean(options.onDelta) || (call.body.stream === true && !/application\/json/i.test(response.headers.get("content-type") ?? ""));
+  if (asStream) {
+    const read = await readStream(response, {
+      model, limits, started, stop,
+      onDelta: options.onDelta, onToolArguments: options.onToolArguments,
+      requireFinish: options.requireFinish ?? false, stopOnErrorFinish: options.stopOnErrorFinish ?? true,
+      signal: options.signal,
+    });
+    return { ...read, streamed: true, ms: Date.now() - started };
+  }
+  let payload: any;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    if (options.signal?.aborted) throw new SendError("aborted", "The caller aborted the call.", { status: response.status, cause: error });
+    throw new SendError("body", "The answer is not JSON.", { status: response.status, cause: error });
+  }
+  const choice = payload?.choices?.[0];
+  const content = choice?.message?.content;
+  return {
+    payload,
+    text: typeof content === "string" ? content : "",
+    toolCalls: Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls : [],
+    usage: payload?.usage ?? null,
+    model: typeof payload?.model === "string" ? payload.model : model,
+    provider: typeof payload?.provider === "string" ? payload.provider : null,
+    finishReason: choice?.finish_reason ?? null,
+    nativeFinishReason: choice?.native_finish_reason ?? null,
+    streamed: false,
+    ms: Date.now() - started,
+  };
+}
