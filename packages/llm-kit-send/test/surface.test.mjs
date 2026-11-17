@@ -33,7 +33,7 @@ test("the package exports only the entry point and package.json, has no runtime 
   assert.equal(manifest.dependencies, undefined);
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
   const changelog = readFileSync(join(PACKAGE, "CHANGELOG.md"), "utf8");
-  assert.ok(changelog.includes(`## ${manifest.version}`) || changelog.includes("## Unreleased"), "CHANGELOG.md has an entry for the version or Unreleased");
+  assert.ok(changelog.includes(`## ${manifest.version}`), "CHANGELOG.md has an entry for the version");
 });
 
 /** The JSDoc block right before `export ... <name>` in the sources, or undefined. */

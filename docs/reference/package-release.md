@@ -68,7 +68,7 @@ Applications install the libraries directly from PyPI and need neither repositor
 Its version is in `packages/llm-kit-config/package.json`.
 Each version has an entry in `packages/llm-kit-config/CHANGELOG.md` that records which quality bar lines pass.
 
-The release tag is `@katsoft/llm-kit-config@<version>`, for example `@katsoft/llm-kit-config@1.0.0`.
+The release tag is `@katsoft/<package>@<version>`, for example `@katsoft/llm-kit-config@1.0.0`.
 A push of this tag starts `.github/workflows/release-npm.yml`.
 The tag contains `/`, and `*` in a GitHub filter pattern does not match `/`.
 Thus the `*-v*` trigger of `release-packages.yml` does not match an npm tag, and the npm trigger does not match a PyPI tag.
@@ -83,8 +83,9 @@ On both paths, the registry's `dist.integrity` must equal the packed tarball's i
 The job summary records the commit, the result and the integrity.
 
 `packages/llm-kit-send` is the npm package `@katsoft/llm-kit-send`, released the same way with its own tag `@katsoft/llm-kit-send@<version>`.
-Its first version is published by hand ("First publish by hand" below, in `packages/llm-kit-send`).
-`release-npm.yml` builds only `@katsoft/llm-kit-config` today; extend its tag filter and package directory before the second release of `@katsoft/llm-kit-send`.
+`release-npm.yml` maps each tag to its package in its first step; a new npm package adds its tag to the `tags` list and one line to that map.
+`@katsoft/llm-kit-send` 0.1.0 was published by hand on 2026-11-17 and has no release tag: its tarball's `CHANGELOG.md` heading reads "Unreleased", so the workflow's check of an existing release would fail. Its first tagged release is the next version.
+Before that release, set its trusted publisher (step 6 of "First publish by hand", with `@katsoft/llm-kit-send`).
 
 ### Prepare an npm release
 
