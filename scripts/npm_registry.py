@@ -30,8 +30,13 @@ class ReleaseError(Exception):
 
 
 def npm_view(spec: str) -> str | None:
-    """Return dist.integrity of `spec` from the registry, or None when it is not listed."""
+    """Return dist.integrity of `spec` from the registry, or None when it is not listed (E404).
+
+    Raises ReleaseError, with npm's stderr, on any other failure.
+    """
     done = subprocess.run(["npm", "view", spec, "dist.integrity"], capture_output=True, text=True)
+    if done.returncode != 0 and "E404" not in done.stderr:
+        raise ReleaseError(f"npm view {spec} failed:\n{done.stderr}")
     return done.stdout.strip() or None
 
 

@@ -85,11 +85,12 @@ jobs:
           node scripts/pack-release.mjs "$RUNNER_TEMP/release" >> "$GITHUB_ENV"
 
       - name: Publish once, wait for the registry, compare its integrity with the packed tarball
+        working-directory: ${{ env.PACKAGE_DIR }}
         run: |
           # The registry lists a new version only minutes after a successful publish.
           # The script skips a version that is already listed, treats a 409 as published,
           # waits up to 10 minutes, and fails when the integrity differs.
-          python3 scripts/npm_registry.py "$PACKAGE_NAME" "$VERSION" "$TARBALL" "$INTEGRITY" >> "$GITHUB_ENV"
+          python3 ../../scripts/npm_registry.py "$PACKAGE_NAME" "$VERSION" "$TARBALL" "$INTEGRITY" >> "$GITHUB_ENV"
 
       - name: Record the release in the job summary
         run: |

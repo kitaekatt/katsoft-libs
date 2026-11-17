@@ -5,9 +5,11 @@ No test calls npm or sleeps: `view`, `publish`, the clock and `sleep` are fakes.
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import sys
 
 import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import npm_registry as reg
@@ -86,3 +88,37 @@ def test_permission_error_or_incidental_409_is_not_already_published(output):
     fake = Fake(listed=SUM, lag=1, publish_result=(1, output))
     with pytest.raises(reg.ReleaseError, match="publish of"):
         fake.run()
+
+
+def _fake_npm(monkeypatch, code, out="", err=""):
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, code, out, err))
+
+
+def test_npm_view_returns_integrity_and_none_for_404(monkeypatch):
+    _fake_npm(monkeypatch, 0, "sha512-aaa\n")
+    assert reg.npm_view("x@1") == "sha512-aaa"
+    _fake_npm(monkeypatch, 1, "", "npm error code E404\nnpm error 404 Not Found")
+    assert reg.npm_view("x@1") is None
+
+
+def test_npm_view_surfaces_other_failures(monkeypatch):
+    _fake_npm(monkeypatch, 1, "", "npm error code ENOTFOUND\nnpm error network request failed")
+    with pytest.raises(reg.ReleaseError, match="ENOTFOUND"):
+        reg.npm_view("x@1")
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("package", ["llm-kit-config", "llm-kit-send"])
+def test_workflow_runs_the_script_from_the_package_directory(package):
+    """The release step runs in $PACKAGE_DIR; its script path must resolve from there for each package."""
+    wf = yaml.safe_load((ROOT / ".github/workflows/release-npm.yml").read_text())
+    steps = wf["jobs"]["publish"]["steps"]
+    step = next(s for s in steps if "npm_registry.py" in s.get("run", ""))
+    assert step["working-directory"] == "${{ env.PACKAGE_DIR }}"
+    command = next(l for l in step["run"].splitlines() if "npm_registry.py" in l and not l.lstrip().startswith("#"))
+    script = command.split()[1]
+    assert (ROOT / "packages" / package / script).resolve() == ROOT / "scripts" / "npm_registry.py"
+    mapped = f'dir="packages/{package}"'
+    assert mapped in "\n".join(s.get("run", "") for s in steps)
