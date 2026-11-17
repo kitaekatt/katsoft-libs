@@ -14,6 +14,31 @@ import { PACKAGE, URL_, json, readJson, reply } from "./support.mjs";
 const FORMATS = join(PACKAGE, "..", "..", "tests", "formats");
 const KEY_CASES = readJson(join(FORMATS, "reply-key", "cases.json"));
 const ENTRY_CASES = readJson(join(FORMATS, "reply-entry", "cases.json"));
+const ENTRY_SCHEMA = readJson(join(PACKAGE, "..", "katsoft-llm-kit", "src", "llm_kit", "schema", "formats", "reply-entry.v1.schema.json"));
+
+/** True when `value` is valid against `schema`, for the keywords the reply-entry schema uses (an unknown keyword fails). */
+function valid(schema, value) {
+  const known = new Set(["$schema", "$id", "title", "description", "type", "properties", "required", "additionalProperties", "anyOf", "const", "enum", "minLength", "minimum", "maximum"]);
+  for (const keyword of Object.keys(schema)) assert.ok(known.has(keyword), `the checker knows ${keyword}`);
+  if (schema.anyOf && !schema.anyOf.some((branch) => valid(branch, value))) return false;
+  if ("const" in schema && value !== schema.const) return false;
+  if (schema.enum && !schema.enum.includes(value)) return false;
+  if (schema.type) {
+    const kind = value === null ? "null" : Array.isArray(value) ? "array" : Number.isInteger(value) ? "integer" : typeof value;
+    if (![schema.type].flat().some((type) => type === kind || (type === "number" && kind === "integer"))) return false;
+  }
+  if (typeof value === "string" && schema.minLength !== undefined && value.length < schema.minLength) return false;
+  if (typeof value === "number" && ((schema.minimum !== undefined && value < schema.minimum) || (schema.maximum !== undefined && value > schema.maximum))) return false;
+  if (schema.properties || schema.required || schema.additionalProperties !== undefined) {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+    for (const name of schema.required ?? []) if (!(name in value)) return false;
+    for (const [name, item] of Object.entries(value)) {
+      const rule = schema.properties?.[name] ?? schema.additionalProperties;
+      if (rule === false || (rule && rule !== true && !valid(rule, item))) return false;
+    }
+  }
+  return true;
+}
 
 const fromBase64 = (value) => new Uint8Array(Buffer.from(value, "base64"));
 const partOf = (part) => ("text" in part ? part.text : fromBase64(part.base64));
@@ -53,8 +78,11 @@ test("stepKey: two forms of the same parts give one key whatever their boundarie
   await assert.rejects(stepKey("m", request(new ReadableStream())), TypeError);
 });
 
-test("readEntry accepts and refuses each shared entry with its path", () => {
+test("readEntry accepts and refuses each shared entry with its path, as the schema does", () => {
   assert.equal(ENTRY_CASES.format, REPLY_ENTRY_FORMAT);
+  assert.equal(ENTRY_SCHEMA.$id, REPLY_ENTRY_FORMAT);
+  for (const item of ENTRY_CASES.entries) assert.equal(valid(ENTRY_SCHEMA, item.entry), item.expect === "valid", `schema: ${item.name}`);
+  for (const item of ENTRY_CASES.reader_rules) assert.ok(valid(ENTRY_SCHEMA, item.entry), `schema accepts the reader rule case ${item.name}`);
   for (const item of ENTRY_CASES.entries) {
     if (item.expect === "valid") assert.deepEqual(readEntry(item.entry), item.entry, item.name);
     else assert.throws(() => readEntry(item.entry), (error) => error instanceof ReplyEntryError && error.path === item.path && error.message.startsWith(item.path), item.name);
@@ -74,6 +102,7 @@ function memoryStore({ failGet = null, failPut = null } = {}) {
     async put(layer, key, entry) {
       if (failPut) throw failPut;
       readEntry(entry);
+      assert.ok(valid(ENTRY_SCHEMA, entry), "every written entry is a valid llm-kit.reply-entry/v1");
       puts.push({ layer, key, entry });
       const live = rows.get(`${layer}:${key}`);
       if (!live || (live.outcome === "success" && entry.outcome === "refusal")) rows.set(`${layer}:${key}`, entry);
@@ -350,4 +379,12 @@ test("a stored entry the store gives back is a valid llm-kit.reply-entry/v1 of t
   assert.deepEqual(readEntry(entry), entry);
   assert.deepEqual(Object.keys(entry.headers), ["content-type"], "only the kept headers");
   assert.deepEqual(JSON.parse(Buffer.from(entry.body, "base64").toString("utf8")), { error: "no" });
+});
+
+test("without a cache, a transport that answers with only json() reads as in 0.2.0", async () => {
+  const minimal = (value, status = 200) => ({ ok: status < 300, status, headers: new Headers(), json: async () => value });
+  assert.deepEqual(await postImages({ url: IMAGES, key: "k", body: {} }, { fetch: async () => minimal({ data: [{ b64_json: "aW1n" }] }) }),
+    { ok: true, status: 200, payload: { data: [{ b64_json: "aW1n" }] }, image: "aW1n", link: null, usage: null, cost: null, replayed: false });
+  const retried = await sendWithRetries({ url: URL_, key: "k", body: chatBody(0) }, { waits: [], budgetMs: 0, fetch: async () => minimal({ model: "m", choices: [{ message: { content: "ok" } }] }) });
+  assert.deepEqual([retried.ok, retried.text], [true, "ok"]);
 });

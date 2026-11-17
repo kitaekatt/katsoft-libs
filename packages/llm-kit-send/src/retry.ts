@@ -213,7 +213,12 @@ export async function sendWithRetries(call: ChatCall, options: RetryOptions): Pr
       last = null;
       try {
         response = await within(send(), joined);
-        if (response) {
+        if (response && !opened) {
+          // Without a cache the body is read as in 0.2.0 (`json()`), so a transport that gives a minimal response still works.
+          const value = await within(response.json().catch(() => null), joined);
+          if (response.ok) payload = value;
+          else failure = value;
+        } else if (response) {
           const bytes = await within(response.arrayBuffer().then((buffer) => new Uint8Array(buffer), () => null), joined);
           const parsed = bytes ? parseJson(bytes) : { ok: false as const };
           if (bytes) last = { bytes, parsed: parsed.ok };

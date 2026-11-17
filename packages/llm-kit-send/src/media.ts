@@ -105,10 +105,15 @@ export async function postImages(call: ImagesCall, options: MediaOptions & { rea
     if (signal?.aborted) throw error;
     return { ok: false, status: null, failure: {}, replayed: false };
   }
+  // Without a cache the body is read as in 0.2.0 (`json()`), so a transport that gives a minimal response still works.
+  if (!opened) {
+    const value = await response.json().then((json: unknown) => ({ ok: true as const, value: json }), () => ({ ok: false as const }));
+    return imagesAnswer(response.status, value, false);
+  }
   const read = await response.arrayBuffer().then((buffer) => new Uint8Array(buffer), () => null);
   const parsed = read ? parseJson(read) : { ok: false as const };
   const answer = imagesAnswer(response.status, parsed, false);
-  if (opened && read && parsed.ok) {
+  if (read && parsed.ok) {
     const context = { url: call.url, model: opened.step.model, transport: "postImages" };
     await commitStep(opened.step, cache!.classify(answer, context), { status: response.status, headers: response.headers, bytes: read });
   }
