@@ -17,7 +17,9 @@ const ALL = PUBLIC.map((entry) => entry.name).sort();
 
 test("the runtime exports are the listed values", () => {
   assert.deepEqual(Object.keys(api).sort(), VALUES);
-  for (const entry of PUBLIC.filter((item) => item.kind !== "type")) assert.equal(typeof api[entry.name], "function", entry.name);
+  for (const entry of PUBLIC.filter((item) => item.kind !== "type")) {
+    assert.equal(typeof api[entry.name], entry.kind === "constant" ? "string" : "function", entry.name);
+  }
 });
 
 test("the .d.ts exports are the listed names, types included", () => {

@@ -14,3 +14,18 @@ export async function run(): Promise<number | null> {
   try { await sendChat(call); } catch (error) { if (error instanceof SendError && error.kind === "stalled") return null; }
   return plain.ok ? price.input * answer.text.length : null;
 }
+
+import { fetchFile, falQueue, mapInput, postImages, readFallbackChains, runChain } from "@katsoft/llm-kit-send";
+import type { ChainResult, FallbackChains, FileResult, ImagesAnswer } from "@katsoft/llm-kit-send";
+
+export async function media(): Promise<string | null> {
+  const picture: ImagesAnswer = await postImages({ url: "https://images.example/v1/images", key: "k", body: { prompt: "x" } });
+  const file: FileResult = picture.ok && picture.link ? await fetchFile(picture.link, { maxBytes: 1_000 }) : { ok: false, status: null, reason: "network" };
+  const chains: FallbackChains = readFallbackChains(JSON.parse("{}"));
+  const result: ChainResult<string> = await runChain(chains.chains["voice"]?.steps ?? [], {
+    hasKey: () => true,
+    attempt: async () => ({ ok: true, value: JSON.stringify(mapInput([{ key: "text" }], { text: "Hi." })) }),
+  });
+  const job = await falQueue({ model: "vendor/video", key: "k", input: {}, pollMs: 1_000 });
+  return result.ok && file.ok && job.ok ? result.value : null;
+}

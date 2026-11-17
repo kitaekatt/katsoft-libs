@@ -11,6 +11,8 @@ Some llm-kit files have readers in more than one language. Each of these formats
 | `llm-kit.run-import/v1` | `run-import.v1.schema.json` | `llm_kit.runs.store` | `tests/formats/run-record/cases.json` (`import_lines`) |
 | `llm-kit.run-store/v1` | `run-store.v1.schema.json` | `llm_kit.runs.store` | `tests/formats/run-record/cases.json` (`stores`) |
 | `llm-kit.compare-case/v1` | `compare-case.v1.schema.json` | `llm_kit.runs.compare` | `tests/formats/compare-case/cases.json` |
+| `llm-kit.fallback-chain/v1` | `fallback-chain.v1.schema.json` | `llm_kit.registry.fallback_chains` | `tests/formats/fallback-chain/cases.json` (`documents`, `mappings`) |
+| `llm-kit.call-record/v1` | `call-record.v1.schema.json` | none (the TypeScript `@katsoft/llm-kit-send` writes it) | `tests/formats/call-record/cases.json` (`records`) |
 
 `llm_kit.schema.formats.load_schema(format_id)` returns a schema. `llm_kit.schema.formats.SCHEMA_FILES` maps each format id to its file. The file's `$id` is the format id.
 
@@ -248,6 +250,27 @@ One line of a comparison case file (JSON Lines, UTF-8): `{"id": "c1", "slots": {
 5. The comparison checks each case against the prompt it fills: a slot with no value and a value with no slot are refused before any call.
 
 Python: `llm_kit.runs.compare.read_cases(path_or_bytes)`.
+
+## llm-kit.fallback-chain/v1
+
+A JSON file that says which hosts serve a request in which order, and the same model's endpoint and input on each host. Readers: Python `llm_kit.registry.fallback_chains` (`read_fallback_chains`, `check_fallback_chains`, `map_input`); TypeScript `@katsoft/llm-kit-send` (`readFallbackChains`, `mapInput`, `runChain`).
+
+```json
+{"format": "llm-kit.fallback-chain/v1",
+ "chains": {"speech": {"steps": [{"host": "primary", "next_on": ["no_key", "account"]}, {"host": "backup", "next_on": []}]}},
+ "models": {"tts-1": {"hosts": {"primary": {"endpoint": "tts-1"},
+   "backup": {"endpoint": "vendor/tts-1", "from": "primary", "input": [{"key": "text"}, {"key": "speed", "number": true, "max": 2}]}}}}}
+```
+
+1. `chains.<name>.steps` lists hosts in order. `next_on` lists the failure classes that move on to the next step. `no_key` skips a step whose host has no key; a step with no key and no `no_key` stops the chain. Any other class is the caller's (for example `account`: the host refused the account for credits, quota or the key).
+2. Host ids match `^[a-z0-9][a-z0-9_.-]*$`, class ids `^[a-z][a-z0-9_]*$`. The hosts of one chain and the classes of one step are unique.
+3. `models.<id>.hosts.<host>.endpoint` is the model's endpoint on that host. `from` names the one host whose input the caller gives; `input` maps it. `from` names another host of the same model, and that host has no `from`: mappings do not compose. `input` needs `from`; `from` without `input` means the same input.
+4. An input rule has `key` and either `value` (a scalar constant) or a field source `from` (default `key`). A field rule may add `number: true` (copy only a number, never a boolean; with `max`, the smaller value) or `id_key` with `id_match: {"charset": "alnum", "length": n}` (a string of exactly n ASCII letters and digits goes under `id_key`, any other value under `key`). `max` needs `number`; `id_key` and `id_match` go together and not with `number`. The output fields (`key` and `id_key`) of one rule list are unique.
+5. Mapping: rules apply in order and the output keys are in rule order. A missing input field is left out; null is copied.
+
+## llm-kit.call-record/v1
+
+One sent try of a model call: `attempt`, `model`, `provider`, `ok`, `status`, `aborted`, `ms`, `inputTokens`, `cachedTokens`, `outputTokens`, `cost`, `providerMessage`. Every field is present (null when unknown); no prompt or reply text, and no other field. `@katsoft/llm-kit-send` gives one to `onCall` per try of `sendWithRetries`; its tests validate the records against this schema. A consumer that stores records adds its own fields in its own store, beside the record.
 
 ## Change a format
 

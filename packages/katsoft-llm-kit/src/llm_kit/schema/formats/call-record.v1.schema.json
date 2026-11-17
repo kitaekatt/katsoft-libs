@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.call-record/v1",
+  "title": "llm-kit call record, version 1",
+  "description": "One sent try of a model call: tokens, cost and time, never prompt or reply text (@katsoft/llm-kit-send CallRecord). A consumer that stores records keeps this shape and may add its own fields beside it in its own store. Written in llm-scripting-kit.json-schema-subset/v1. Contract and shared cases: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "attempt": {"description": "The try number, from 1.", "type": "integer", "minimum": 1},
+    "model": {"description": "The model the provider reported, else the body's model.", "type": "string"},
+    "provider": {"description": "The host that served the try, when the provider named it.", "type": ["string", "null"]},
+    "ok": {"description": "True when the try gave a parsed 2xx answer.", "type": "boolean"},
+    "status": {"description": "The HTTP status, or null with no response.", "type": ["integer", "null"], "minimum": 100, "maximum": 599},
+    "aborted": {"description": "True when the caller's signal or the deadline cut the try after it was sent.", "type": "boolean"},
+    "ms": {"description": "The try's time in milliseconds.", "type": "number", "minimum": 0},
+    "inputTokens": {"type": ["integer", "null"], "minimum": 0},
+    "cachedTokens": {"type": ["integer", "null"], "minimum": 0},
+    "outputTokens": {"type": ["integer", "null"], "minimum": 0},
+    "cost": {"description": "The cost the host reported, in US dollars.", "type": ["number", "null"], "minimum": 0},
+    "providerMessage": {"description": "The provider's error message, at most 200 characters.", "type": ["string", "null"], "maxLength": 200}
+  },
+  "required": ["attempt", "model", "provider", "ok", "status", "aborted", "ms", "inputTokens", "cachedTokens", "outputTokens", "cost", "providerMessage"],
+  "additionalProperties": false
+}

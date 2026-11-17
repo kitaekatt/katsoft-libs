@@ -2,6 +2,24 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
+## 0.2.0
+
+Added (no 0.1.0 name, signature or behavior changes):
+
+- Media transports: `postImages` (OpenAI-compatible images), `postVenice` and `isVeniceViolation`, `ideogramEdit`, `postFal`, `falQueue` (with the caller's `refusal` rule), `sunraQueue`, `elevenLabsRequest` and `elevenLabsError`, and `fetchFile` (a keyless download with an optional size limit). Each sends the body as given and keeps the request's header and init order. The base URLs `VENICE_URL`, `IDEOGRAM_URL`, `FAL_RUN_URL`, `FAL_QUEUE_URL`, `SUNRA_QUEUE_URL`, `ELEVENLABS_URL`.
+- Fallback chains as data, format `llm-kit.fallback-chain/v1` (`FALLBACK_CHAIN_FORMAT`): `readFallbackChains` (throws `ChainFormatError` with the path), `mapInput` and `runChain` (stop host and cause, the last failure, attempts told the previous failure and the skipped hosts).
+- The `CallRecord` of `sendWithRetries` has a JSON Schema, `llm-kit.call-record/v1`, in katsoft-llm-kit; the tests validate the emitted records against it. The record's shape does not change.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. Each new export has a JSDoc block; `public-surface.json` lists them (kind `constant` for the base URLs and the format id); `test/surface.test.mjs` checks the list against the runtime and `.d.ts` exports and the `@param`, `@returns` and `@throws` tags of each function and class.
+2. Semver release with a changelog: pass. Version 0.2.0 (minor: additions only) in `package.json` and `package-lock.json`; this entry.
+3. Tests for each public function: pass. `test/media.test.mjs` (each transport's URL, init keys, headers and body exactly, each failure, abort and body that is not JSON), `test/queue.test.mjs` (each stage, code, `completed` and abort), `test/chain.test.mjs` (the shared cases of `tests/formats/fallback-chain/cases.json`, the same file the Python reader runs, and `runChain`), `test/call-record.test.mjs`; `npm test` passes.
+4. No client names, prompts or data: pass. Hosts are named by their public APIs; endpoints, models, keys, rules and chains are caller data.
+5. Examples run without a client app: pass. `examples/media-chain.mjs` runs against a local stub server; `npm run check-pack` installs the packed tarball in a new directory, runs every example with plain `node` and compiles `scripts/consumer.ts` against the shipped types.
+6. JSON Schema for each file format: pass. `llm-kit.fallback-chain/v1` (`fallback-chain.v1.schema.json`) and `llm-kit.call-record/v1` (`call-record.v1.schema.json`) in `packages/katsoft-llm-kit/src/llm_kit/schema/formats/`, with shared cases that the TypeScript and Python tests both run.
+7. Gate before adoption: pass. Lines 1 to 6 pass.
+
 ## 0.1.0
 
 The first version, published by hand on 2026-11-17 from katsoft-libs `5527d9c4` (integrity `sha512-0MZBtA8i4L/I1WZP4a6M2b/vyqx9fR3+p96JQMWUH6eG8zkCgOx5oEN4ANQ34oZhxGTAiTr3Mj31kcfVY1q/wg==`). The tarball's copy of this file has the heading "Unreleased". It has no release tag (`docs/reference/package-release.md`, "npm packages").

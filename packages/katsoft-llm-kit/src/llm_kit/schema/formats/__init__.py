@@ -13,6 +13,10 @@ Each format has one id and one JSON Schema file in this package:
 - ``llm-kit.run-import/v1``: one line of a run import file.
 - ``llm-kit.compare-case/v1``: one line of a comparison case file
   (:mod:`llm_kit.runs.compare`).
+- ``llm-kit.fallback-chain/v1``: a fallback chain file: hosts in order and a
+  model's copy on each host (:mod:`llm_kit.registry.fallback_chains`).
+- ``llm-kit.call-record/v1``: one sent try of a model call, as the npm package
+  ``@katsoft/llm-kit-send`` reports it.
 
 The schemas are written in ``llm-scripting-kit.json-schema-subset/v1``, so
 :mod:`llm_kit.schema.json_schema` checks and validates them with no third-party
@@ -36,6 +40,8 @@ __all__ = [
     "RUN_STORE_V1",
     "RUN_IMPORT_V1",
     "COMPARE_CASE_V1",
+    "FALLBACK_CHAIN_V1",
+    "CALL_RECORD_V1",
     "SCHEMA_FILES",
     "load_schema",
 ]
@@ -54,6 +60,10 @@ RUN_STORE_V1 = "llm-kit.run-store/v1"
 RUN_IMPORT_V1 = "llm-kit.run-import/v1"
 #: One line of a comparison case file (JSON Lines): a case id and its slot values.
 COMPARE_CASE_V1 = "llm-kit.compare-case/v1"
+#: A fallback chain file: hosts in order and a model's copy on each host.
+FALLBACK_CHAIN_V1 = "llm-kit.fallback-chain/v1"
+#: One sent try of a model call (tokens, cost, time; never text).
+CALL_RECORD_V1 = "llm-kit.call-record/v1"
 
 #: Format id -> the schema file name in this package. The file's ``$id`` is the format id.
 SCHEMA_FILES = {
@@ -64,6 +74,8 @@ SCHEMA_FILES = {
     RUN_STORE_V1: "run-store.v1.schema.json",
     RUN_IMPORT_V1: "run-import.v1.schema.json",
     COMPARE_CASE_V1: "compare-case.v1.schema.json",
+    FALLBACK_CHAIN_V1: "fallback-chain.v1.schema.json",
+    CALL_RECORD_V1: "call-record.v1.schema.json",
 }
 
 

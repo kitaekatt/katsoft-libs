@@ -1,6 +1,6 @@
 {
   "name": "@katsoft/llm-kit-send",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Sends OpenAI-compatible chat calls: plain or streamed, with stream limits, one fallback, retries, a backup key and call records.",
   "license": "MIT",
   "repository": {
