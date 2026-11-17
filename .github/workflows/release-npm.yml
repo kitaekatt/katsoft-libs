@@ -9,10 +9,11 @@
 # Publishing uses npm trusted publishing (OIDC) from environment `npm`, with
 # provenance. The job builds from the locked tree (npm ci), runs the tests and
 # the tarball check, packs once, and publishes that exact tarball. When the
-# version is already on npm (the first release is published by hand), it
-# publishes nothing and checks that the published files equal the packed files.
-# On both paths it then checks that the registry's integrity equals the packed
-# tarball's integrity, and fails on a mismatch, before it records the release.
+# version is already on npm (a rerun, or the first release published by hand), it
+# publishes nothing. scripts/npm_registry.py waits up to 10 minutes for the
+# registry to list the version, checks that the registry's integrity equals the
+# packed tarball's integrity, and fails on a mismatch or a timeout, before the
+# job records the release.
 # Procedure: docs/reference/package-release.md, "npm packages".
 name: release-npm
 run-name: release ${{ github.ref_name }}
@@ -83,30 +84,12 @@ jobs:
           mkdir -p "$RUNNER_TEMP/release"
           node scripts/pack-release.mjs "$RUNNER_TEMP/release" >> "$GITHUB_ENV"
 
-      - name: Publish (trusted publishing, provenance), or verify an existing release
-        working-directory: ${{ env.PACKAGE_DIR }}
+      - name: Publish once, wait for the registry, compare its integrity with the packed tarball
         run: |
-          if published="$(npm view "$PACKAGE_NAME@$VERSION" dist.integrity 2>/dev/null)" && test -n "$published"; then
-            echo "$PACKAGE_NAME@$VERSION is already on npm; comparing its files with the packed tarball"
-            mkdir -p "$RUNNER_TEMP/published"
-            npm pack "$PACKAGE_NAME@$VERSION" --pack-destination "$RUNNER_TEMP/published" > /dev/null
-            node scripts/compare-tarballs.mjs "$TARBALL" "$RUNNER_TEMP"/published/*.tgz
-            echo "MODE=verified existing release ($published)" >> "$GITHUB_ENV"
-          else
-            npm publish "$TARBALL" --provenance --access public
-            echo "MODE=published" >> "$GITHUB_ENV"
-          fi
-
-      - name: Check the registry's integrity against the packed tarball
-        run: |
-          for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            published="$(npm view "$PACKAGE_NAME@$VERSION" dist.integrity 2>/dev/null || true)"
-            if test -n "$published"; then break; fi
-            echo "the registry does not list $VERSION yet (attempt $attempt); waiting 15 s"
-            sleep 15
-          done
-          test -n "$published" || { echo "the registry does not list $PACKAGE_NAME@$VERSION"; exit 1; }
-          test "$published" = "$INTEGRITY" || { echo "published integrity $published differs from packed $INTEGRITY"; exit 1; }
+          # The registry lists a new version only minutes after a successful publish.
+          # The script skips a version that is already listed, treats a 409 as published,
+          # waits up to 10 minutes, and fails when the integrity differs.
+          python3 scripts/npm_registry.py "$PACKAGE_NAME" "$VERSION" "$TARBALL" "$INTEGRITY" >> "$GITHUB_ENV"
 
       - name: Record the release in the job summary
         run: |

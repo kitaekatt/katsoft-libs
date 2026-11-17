@@ -76,10 +76,10 @@ Thus the `*-v*` trigger of `release-packages.yml` does not match an npm tag, and
 The workflow uses npm trusted publishing (OIDC) from the GitHub environment `npm`, with provenance.
 It installs from the lockfile (`npm ci`), runs `npm test` and `npm run check-pack`, and packs one tarball.
 It publishes that tarball with `npm publish <tarball> --provenance --access public`.
-Then it compares the registry's `dist.integrity` with the integrity of the packed tarball, and fails when they differ.
+Then `scripts/npm_registry.py` (tested in `tests/repo-scripts/test_npm_registry.py`) polls `npm view <name>@<version> dist.integrity` for up to 10 minutes, because the registry lists a new version only minutes after a successful publish.
+It fails with the last answer when the version never appears, and fails when the registry's integrity differs from the packed tarball's integrity.
 When the version is already on npm, the workflow does not publish.
-It downloads the published tarball and compares its files with the packed files.
-On both paths, the registry's `dist.integrity` must equal the packed tarball's integrity, or the job fails.
+A `409` or "previously published" answer from `npm publish` counts as already published: the script goes on to the poll and the integrity check.
 The job summary records the commit, the result and the integrity.
 
 `packages/llm-kit-send` is the npm package `@katsoft/llm-kit-send`, released the same way with its own tag `@katsoft/llm-kit-send@<version>`.
@@ -143,5 +143,5 @@ git push origin @katsoft/llm-kit-config@<version>
 ```
 
 If the workflow fails, read `gh run view <id> --log-failed`, correct the cause, and run `gh run rerun <id>`.
-A rerun is safe: when the version is already on npm, the workflow only compares the files.
+A rerun is safe: when the version is already on npm, even if the registry listed it late, the workflow only compares the integrity.
 Never move or delete a pushed release tag.
