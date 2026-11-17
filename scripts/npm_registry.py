@@ -6,7 +6,7 @@ release-npm.yml). The registry lists a new version only minutes after `npm
 publish` succeeds. So the command:
 
 1. skips the publish when the registry already lists the version;
-2. publishes otherwise, and treats a "previously published" refusal (409/403) as
+2. publishes otherwise, and treats a "previously published" refusal (409 Conflict) as
    "already published", so a rerun after a slow listing is safe;
 3. polls `npm view <name>@<version> dist.integrity` up to --timeout seconds,
    and fails with the last answer when the registry never lists it;
@@ -22,7 +22,7 @@ import sys
 import time
 from typing import Callable
 
-ALREADY_PUBLISHED = ("previously published", "409", "E403")
+ALREADY_PUBLISHED = ("previously published", "E409", "409 Conflict")
 
 
 class ReleaseError(Exception):
@@ -60,7 +60,7 @@ def release(name: str, version: str, tarball: str, integrity: str, *,
         if code == 0:
             mode = "published"
         elif any(marker in output for marker in ALREADY_PUBLISHED):
-            log(f"{spec} was already published; waiting for the registry listing")
+            log(f"{spec} was already published; waiting for the registry listing. npm said:\n{output}")
         else:
             raise ReleaseError(f"npm publish of {spec} failed:\n{output}")
     deadline = clock() + timeout

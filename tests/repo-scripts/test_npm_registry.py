@@ -79,3 +79,10 @@ def test_timeout_reports_the_last_answer():
     with pytest.raises(reg.ReleaseError, match="does not list.*after 600 s"):
         fake.run(timeout=600, interval=15)
     assert fake.now >= 600
+
+
+@pytest.mark.parametrize("output", ["npm error code E403\nnpm error 403 Forbidden", "npm error A complete log: _logs/2026-11-17T10_40_09.409Z-debug-0.log"])
+def test_permission_error_or_incidental_409_is_not_already_published(output):
+    fake = Fake(listed=SUM, lag=1, publish_result=(1, output))
+    with pytest.raises(reg.ReleaseError, match="publish of"):
+        fake.run()
