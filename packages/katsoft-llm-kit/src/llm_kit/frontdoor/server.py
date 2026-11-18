@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from ..adapters.account import probe_entry
 from ..completion.halt import FRONTDOOR_DEPLOYMENT_HEADER
@@ -27,6 +27,7 @@ from ..registry.model_endpoints import (
     load_endpoint_registry,
     tiers_for_size,
 )
+from ._guard import GuardMiddleware, check_options, error_body, is_loopback_bind
 
 
 @dataclass
@@ -180,7 +181,7 @@ def _check_text(registry: EndpointRegistry) -> str:
 
 
 def _error(message: str) -> dict[str, Any]:
-    return {"error": {"message": message, "type": "invalid_request_error"}}
+    return error_body(message)
 
 
 def _header_value(entry: EndpointEntry) -> dict[str, str]:
@@ -295,8 +296,38 @@ def create_app(
     *,
     spill_after: float = 0.0,
     access_log: Optional[Path] = None,
+    bind_host: Optional[str] = None,
+    port: Optional[int] = None,
+    allowed_hosts: Iterable[str] = (),
+    token: Optional[str] = None,
 ) -> Any:
-    """Create the FastAPI app for one loaded registry."""
+    """Create the FastAPI app for one loaded registry.
+
+    Every app rejects a POST under ``/v1/`` whose Content-Type is not
+    ``application/json`` (415). The other guards are opt-in here and always
+    supplied by :func:`main`; see :mod:`llm_kit.frontdoor._guard`.
+
+    Args:
+        registry: the loaded endpoint registry.
+        spill_after: seconds a full tier waits for a slot before spilling.
+        access_log: JSONL access log path; defaults to the plugin data directory.
+        bind_host: the host the server binds. With ``port``, turns Host validation
+            on (421 for a Host the bind does not own): a loopback bind answers
+            only loopback names on ``port`` plus ``allowed_hosts``; any other
+            bind answers every Host unless ``allowed_hosts`` is non-empty.
+            ``None`` leaves Host unchecked, for an embedder that fronts the app.
+        port: the port the server binds; required with ``bind_host``.
+        allowed_hosts: extra permitted Host names (``name`` for any port,
+            ``name:port`` exact); requires ``bind_host``.
+        token: when set, every route requires ``Authorization: Bearer <token>``
+            (401 otherwise, constant-time comparison). ``None`` disables it.
+
+    Raises:
+        RuntimeError: the ``frontdoor`` extra is not installed.
+        ValueError: ``bind_host`` and ``port`` are not given together,
+            ``allowed_hosts`` is given without ``bind_host``, or ``token`` is empty.
+    """
+    allowed = check_options(bind_host, port, allowed_hosts, token)
     try:
         from fastapi import FastAPI, Request
         from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -375,6 +406,7 @@ def create_app(
             raise
 
     app = FastAPI()
+    app.add_middleware(GuardMiddleware, bind_host=bind_host, port=port, allowed_hosts=allowed, token=token)
 
     @app.post("/v1/chat/completions")
     async def completions(request: Request) -> Any:
@@ -568,6 +600,13 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m llm_kit.frontdoor")
     parser.add_argument("--host", default=os.environ.get("FRONTDOOR_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("FRONTDOOR_PORT", "4000")))
+    parser.add_argument(
+        "--allowed-hosts",
+        default=os.environ.get("FRONTDOOR_ALLOWED_HOSTS", ""),
+        help="comma-separated Host names to accept (name for any port, name:port exact); "
+        "default $FRONTDOOR_ALLOWED_HOSTS. A non-loopback bind accepts every Host unless this is set. "
+        "$FRONTDOOR_TOKEN, when set, requires 'Authorization: Bearer <token>' on every route.",
+    )
     parser.add_argument("--spill-after", type=float, default=0.0)
     parser.add_argument("--registry")
     parser.add_argument("--access-log")
@@ -578,6 +617,11 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = _parser().parse_args(argv)
+    token = os.environ.get("FRONTDOOR_TOKEN")
+    if token is not None and not token.strip():
+        print("FRONTDOOR_TOKEN is set but empty; unset it to disable authentication", file=os.sys.stderr)
+        return 2
+    allowed_hosts = tuple(item.strip() for item in args.allowed_hosts.split(",") if item.strip())
     try:
         registry = _load(args.registry)
     except EndpointRegistryError as exc:
@@ -587,13 +631,28 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(_check_text(registry))
         return 0
     if args.print_config:
-        print(json.dumps({"host": args.host, "port": args.port, "spill_after_s": args.spill_after, "registry": str(registry.path) if registry.path else None, "access_log": args.access_log}, sort_keys=True))
+        print(json.dumps({"host": args.host, "port": args.port, "spill_after_s": args.spill_after, "registry": str(registry.path) if registry.path else None, "access_log": args.access_log, "allowed_hosts": list(allowed_hosts), "token_set": token is not None}, sort_keys=True))
         return 0
     try:
         import uvicorn
     except ImportError as exc:  # pragma: no cover
         raise SystemExit("frontdoor requires the 'frontdoor' extra") from exc
-    app = create_app(registry, spill_after=args.spill_after, access_log=Path(args.access_log) if args.access_log else None)
+    app = create_app(
+        registry,
+        spill_after=args.spill_after,
+        access_log=Path(args.access_log) if args.access_log else None,
+        bind_host=args.host,
+        port=args.port,
+        allowed_hosts=allowed_hosts,
+        token=token,
+    )
+    if not is_loopback_bind(args.host) and not allowed_hosts and token is None:
+        print(
+            f"warning: bound to {args.host} with no Host allow-list and no token, so any web page can reach this "
+            "server by DNS rebinding and spend its provider keys; set --allowed-hosts (FRONTDOOR_ALLOWED_HOSTS) "
+            "or FRONTDOOR_TOKEN",
+            file=os.sys.stderr,
+        )
     uvicorn.run(app, host=args.host, port=args.port, workers=1)
     return 0
 
