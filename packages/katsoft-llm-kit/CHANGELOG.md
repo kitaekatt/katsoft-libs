@@ -2,6 +2,32 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## 1.33.0
+
+An agent session can be given exactly the MCP servers it may load. A headless Claude worker started by a client otherwise loaded every MCP server its user and project settings named, and a client had no way to give it one server of its own.
+
+Added:
+
+- Job option `mcp_config` (`llm_kit.completion.session_types.OPTION_MCP_CONFIG`), agent sessions only: a mapping `{"mcpServers": {<name>: {"command": <str>, "args": [<str>, ...], "env": {<str>: <str>}}}}` (`args` and `env` optional). When set, the agent argv carries `--strict-mcp-config --mcp-config <compact JSON>` after the other option flags and before the session id, so the session loads exactly those servers and none from any settings source. When absent (or `null`), no MCP flag is emitted and the argv is unchanged. It is job-level only: a `model_options` entry refuses it.
+- `llm_kit.completion.session_types.check_mcp_config(value)`: validates that shape at the boundary and returns a deep plain copy. It refuses, with `ValueError`, a value that is not a mapping, a top-level key other than `mcpServers`, a blank or non-string server name, a server without a nonempty string `command`, a server key other than `command`, `args` and `env`, `args` that are not a list of strings, and `env` that is not a mapping of nonempty string names to string values. An empty `mcpServers` is accepted: the session loads no MCP server.
+- `SessionOptions.mcp_config` and `SessionRequest.mcp_config` (default `None`) carry the validated copy; `jobs run` passes it from the job to the session.
+- Execution control `mcp-servers` in `CLAUDE_AGENT_CAPABILITIES` (`emits` `--strict-mcp-config --mcp-config`, effect `confine`, source `request`, parameter `session.mcp_config`). `ClaudeAgentSession.applied_controls` reports it only when the request sets `mcp_config`, so the attempt's `execution_controls_applied` records it. The server names and commands are in the job mapping the ledger stores.
+
+Changed:
+
+- A completion job (`session` absent or `completion`) with `mcp_config` is refused when the job is built ("mcp_config requires session: agent"), as a bound or `resume_session` already is. The completion record does not advertise `mcp-servers`.
+- `SESSION_OPTION_KEYS` has eight keys.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. `OPTION_MCP_CONFIG` and `check_mcp_config` have a comment or docstring and are in `__all__` and `public-surface.json`; `test_jobs_agent_session.py` checks the list. The `SessionOptions` and `SessionRequest` docstrings name the new field.
+2. Semver release with a changelog: pass. Version 1.33.0 in `pyproject.toml`; this entry.
+3. Tests for each public function: pass. `test_session_types.py` (accepted shapes, every refused shape, the copy, the completion refusal, `SessionRequest` validation), `test_claude_session.py` (`test_agent_argv_strict_mcp_config`: the full argv and the applied controls through the fake CLI; `test_mcp_config_absent_emits_nothing`), `test_jobs_agent_session.py` (an agent job's argv and attempt controls end to end, no flags without it, `test_completion_refuses_mcp_config`, bad shapes and the `model_options` refusal at the job, the job's copy, the agent record). Removing the emission, emitting it always, dropping the applied control, the completion refusal, the top-level and unknown-key checks, the job's copy or the option key each turns its test red.
+4. No client names, prompts or data: pass.
+5. Examples run without a client app: pass. No example changed.
+6. JSON Schema for each file format: pass. No file format changed: job options have no schema, and the session files are unchanged.
+7. Gate before adoption: pass. Lines 1 to 6 pass for the pieces above, so a client may adopt them from this version on.
+
 ## 1.32.0
 
 Deletion of a unit branch. A unit whose worktree is removed kept its branch with no supported way to delete it; a client deleting it by hand had no guard against deleting work that was never merged or that moved after the decision.

@@ -522,7 +522,8 @@ CLAUDE_CAPABILITIES = Capabilities(
 # stream-json agent session: ``claude -p --input-format stream-json
 # --output-format stream-json --verbose --model <m> <system flag> <system>
 # --permission-mode bypassPermissions [--allowedTools <a>] [--disallowedTools
-# <d>] [--effort <e>] [--json-schema <s>] (--session-id <id> | --resume <id>)``.
+# <d>] [--effort <e>] [--json-schema <s>] [--strict-mcp-config --mcp-config
+# <document>] (--session-id <id> | --resume <id>)``.
 # It keeps the session (no --no-session-persistence), has no text-only mode,
 # emits --allowedTools only when the caller names tools, and defaults
 # system_prompt_mode to append. Same adapter name as the completion record: it
@@ -584,6 +585,21 @@ CLAUDE_AGENT_CAPABILITIES = Capabilities(
             effect=BYPASS,
             source=FIXED,
             note="every agent session; its init event must report it",
+        ),
+        ExecutionControl(
+            id="mcp-servers",
+            emits="--strict-mcp-config --mcp-config",
+            effect=CONFINE,
+            source=REQUEST,
+            parameter="session.mcp_config",
+            note=(
+                "emitted only when the job sets the mcp_config session option: "
+                "the document names the MCP servers the session may load, and "
+                "--strict-mcp-config asks the CLI to load no server from any "
+                "settings source. Absent, no MCP flag is emitted and the CLI's "
+                "own MCP settings apply. The record claims the emission, not "
+                "that the CLI honors it"
+            ),
         ),
     ),
     structured_output=StructuredOutputCapability(

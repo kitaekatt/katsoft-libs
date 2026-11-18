@@ -5,6 +5,7 @@
     claude -p --input-format stream-json --output-format stream-json --verbose
       --model <m> --append-system-prompt <system> --permission-mode bypassPermissions
       [--allowedTools <a>] [--disallowedTools <d>] [--effort <e>] [--json-schema <s>]
+      [--strict-mcp-config --mcp-config <document>]
       (--session-id <uuid> | --resume <uuid>)
 
 The session is persisted (no ``--no-session-persistence``), so it can be
@@ -248,9 +249,10 @@ class ClaudeAgentSession:
         """The execution controls the argv for ``request`` carries.
 
         ``permission-bypass`` always; ``allowed-tools`` and ``disallowed-tools``
-        only when the request sets them. Never ``no-session-persistence``: the
-        agent session keeps its session. Raises ``ValueError`` when an id is
-        not advertised by :attr:`capabilities`.
+        only when the request sets them; ``mcp-servers`` only when the request
+        sets ``mcp_config``. Never ``no-session-persistence``: the agent
+        session keeps its session. Raises ``ValueError`` when an id is not
+        advertised by :attr:`capabilities`.
         """
         options = request.options
         applied = ["permission-bypass"]
@@ -258,6 +260,8 @@ class ClaudeAgentSession:
             applied.append("allowed-tools")
         if options.disallowed_tools is not None:
             applied.append("disallowed-tools")
+        if request.mcp_config is not None:
+            applied.append("mcp-servers")
         return check_applied_controls(self.capabilities, tuple(applied))
 
     def _prepare(self, request: SessionRequest) -> tuple[list[str], Any, tuple[str, ...]]:
@@ -288,6 +292,14 @@ class ClaudeAgentSession:
         if options.allowed_tools is not None:
             argv.extend(["--allowedTools", options.allowed_tools])
         argv.extend(_claude_option_args(options, contract_plan))
+        if request.mcp_config is not None:
+            # Strict: only the job's servers load, none from any settings
+            # source. The document is the validated copy, compact.
+            argv.extend([
+                "--strict-mcp-config",
+                "--mcp-config",
+                json.dumps(request.mcp_config, separators=(",", ":"), ensure_ascii=True),
+            ])
         argv.extend(["--resume" if request.resume else "--session-id", request.session_id])
         return argv, contract_plan, self.applied_controls(request)
 

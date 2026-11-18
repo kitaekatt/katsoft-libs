@@ -1763,6 +1763,7 @@ def _run_job_attempt(
             paths=session_paths,
             bounds=session.bounds,
             channel=FileSessionChannel(session_paths),
+            mcp_config=session.mcp_config,
         )
         unstarted = _session_fields(None, session_id=session_id, cwd=session_cwd, paths=session_paths)
         try:

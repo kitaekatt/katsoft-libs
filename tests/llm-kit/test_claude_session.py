@@ -165,6 +165,36 @@ def test_argv_is_the_stream_json_agent_shape(tmp_path, monkeypatch):
     assert h.argv()["tag"] == h.tag and h.argv()["claudecode"] is False
 
 
+MCP = {"mcpServers": {"tools": {"command": "/bin/tools-mcp", "args": ["--unit", "u1"], "env": {"K": "v"}}}}
+
+
+def test_agent_argv_strict_mcp_config(tmp_path, monkeypatch):
+    h = Harness(tmp_path, monkeypatch, "basic")
+    base = h.request(disallowed_tools="Agent")
+    request = SessionRequest(**{**base.__dict__, "mcp_config": MCP})
+    expected = [
+        str(h.cli), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--model", "haiku", "--append-system-prompt", "SYSTEM TEXT", "--permission-mode", "bypassPermissions",
+        "--disallowedTools", "Agent", "--strict-mcp-config", "--mcp-config",
+        '{"mcpServers":{"tools":{"command":"/bin/tools-mcp","args":["--unit","u1"],"env":{"K":"v"}}}}',
+        "--session-id", SESSION_ID,
+    ]
+    assert ClaudeAgentSession(executable=str(h.cli)).build_argv(request) == expected
+    assert json.loads(expected[expected.index("--mcp-config") + 1]) == MCP
+    outcome = h.run(request)
+    assert h.argv()["argv"] == expected[1:]
+    assert outcome.response.execution_controls_applied == ("permission-bypass", "disallowed-tools", "mcp-servers")
+
+
+def test_mcp_config_absent_emits_nothing(tmp_path, monkeypatch):
+    h = Harness(tmp_path, monkeypatch, "basic")
+    request = h.request()
+    backend = ClaudeAgentSession(executable=str(h.cli))
+    argv = backend.build_argv(request)
+    assert "--strict-mcp-config" not in argv and "--mcp-config" not in argv
+    assert "mcp-servers" not in backend.applied_controls(request)
+
+
 def test_a_resumed_session_uses_resume_and_replace_mode_uses_system_prompt(tmp_path, monkeypatch):
     h = Harness(tmp_path, monkeypatch, "basic")
     request = h.request(resume=True, allowed_tools="Read")

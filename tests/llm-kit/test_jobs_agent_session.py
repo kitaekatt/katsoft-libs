@@ -321,6 +321,76 @@ def test_a_job_with_only_non_claude_entries_is_unroutable_not_run_as_a_completio
 
 
 # ---------------------------------------------------------------------------
+# mcp_config: agent jobs only
+# ---------------------------------------------------------------------------
+
+MCP = {"mcpServers": {"tools": {"command": "/bin/tools-mcp", "args": ["--unit", "u1"]}}}
+
+
+@pytest.mark.usefixtures("isolated")
+def test_an_agent_job_mcp_config_reaches_the_argv_and_the_applied_controls(tmp_path, monkeypatch):
+    world = World(tmp_path, monkeypatch)
+    snapshot = world.run([world.job(options={**FAST, "mcp_config": MCP})])
+    assert snapshot.jobs[0].state is JobState.ACCEPTED
+    argv = world.argv()
+    at = argv.index("--mcp-config")
+    assert argv[at - 1] == "--strict-mcp-config" and json.loads(argv[at + 1]) == MCP
+    (attempt,) = snapshot.attempts
+    assert "mcp-servers" in (attempt.execution_controls_applied or ())
+
+
+@pytest.mark.usefixtures("isolated")
+def test_an_agent_job_without_mcp_config_emits_no_mcp_flags(tmp_path, monkeypatch):
+    world = World(tmp_path, monkeypatch)
+    snapshot = world.run([world.job()])
+    argv = world.argv()
+    assert "--mcp-config" not in argv and "--strict-mcp-config" not in argv
+    assert "mcp-servers" not in (snapshot.attempts[0].execution_controls_applied or ())
+
+
+def _bare_job(directory: Path, options: dict, **kwargs: Any) -> Job:
+    return Job(id="j", prompt=Prompt(user="u"), models=("h-claude",), directory=directory, options=options,
+               contract=Contract(command=("true",), directory=directory), **kwargs)
+
+
+def test_completion_refuses_mcp_config(tmp_path):
+    for options in ({"mcp_config": MCP}, {"session": "completion", "mcp_config": MCP}):
+        with pytest.raises(ValueError, match="mcp_config requires session: agent"):
+            _bare_job(tmp_path, options)
+
+
+@pytest.mark.parametrize(
+    "value, match",
+    [
+        ({"servers": {}}, "exactly one key, mcpServers"),
+        ({"mcpServers": {"a": {"command": "x", "url": "http://h"}}}, "server .a. has unknown keys"),
+        ({"mcpServers": {"a": {"args": ["x"]}}}, "command"),
+    ],
+)
+def test_a_job_with_a_bad_mcp_config_shape_is_refused(tmp_path, value, match):
+    with pytest.raises(ValueError, match=match):
+        _bare_job(tmp_path, {"session": "agent", "mcp_config": value})
+
+
+def test_a_job_holds_a_copy_of_its_mcp_config(tmp_path):
+    given = {"mcpServers": {"tools": {"command": "/bin/tools-mcp", "args": ["--unit", "u1"]}}}
+    job = _bare_job(tmp_path, {"session": "agent", "mcp_config": given})
+    given["mcpServers"]["tools"]["args"].append("--late")
+    assert job.options["mcp_config"] == MCP
+
+
+def test_mcp_config_is_refused_in_a_model_options_entry(tmp_path):
+    with pytest.raises(ValueError, match="job-level only key.*mcp_config"):
+        _bare_job(tmp_path, {"session": "agent"}, model_options={"h-claude": {"mcp_config": MCP}})
+
+
+def test_the_agent_record_advertises_the_mcp_servers_control():
+    (control,) = [c for c in CLAUDE_AGENT_CAPABILITIES.execution_controls if c.id == "mcp-servers"]
+    assert control.emits == "--strict-mcp-config --mcp-config" and control.source == "request"
+    assert "mcp-servers" not in {c.id for c in CLAUDE_CAPABILITIES.execution_controls}
+
+
+# ---------------------------------------------------------------------------
 # completion jobs are unchanged
 # ---------------------------------------------------------------------------
 

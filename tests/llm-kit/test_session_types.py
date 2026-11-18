@@ -120,6 +120,9 @@ def test_session_options_default_to_completion_with_replace():
         ({st.OPTION_SESSION: "agent", st.OPTION_RESUME_SESSION: "--fork-session"}, "UUID"),
         ({st.OPTION_SESSION: "agent", st.OPTION_RESUME_SESSION: SID.upper()}, "canonical"),
         ({st.OPTION_SESSION: "agent", st.OPTION_QUIESCENCE_S: -1}, "quiescence_s"),
+        ({st.OPTION_MCP_CONFIG: {"mcpServers": {}}}, "mcp_config requires session: agent"),
+        ({st.OPTION_SESSION: "completion", st.OPTION_MCP_CONFIG: {"mcpServers": {}}}, "requires session: agent"),
+        ({st.OPTION_SESSION: "agent", st.OPTION_MCP_CONFIG: {"servers": {}}}, "mcpServers"),
     ],
 )
 def test_session_options_reject(options, match):
@@ -127,11 +130,55 @@ def test_session_options_reject(options, match):
         st.SessionOptions.from_job_options(options)
 
 
-def test_session_option_keys_are_the_seven_job_level_keys():
+def test_session_option_keys_are_the_eight_job_level_keys():
     assert st.SESSION_OPTION_KEYS == {
         "session", "resume_session", "session_quiescence_s", "session_result_wait_s",
-        "session_eof_wait_s", "session_sigint_wait_s", "session_finalize_s",
+        "session_eof_wait_s", "session_sigint_wait_s", "session_finalize_s", "mcp_config",
     }
+
+
+MCP = {"mcpServers": {"tools": {"command": "/bin/tools-mcp", "args": ["--unit", "u1"], "env": {"K": "v"}}}}
+
+
+def test_agent_session_options_carry_a_validated_mcp_config_copy():
+    given = {"mcpServers": {"tools": {"command": "/bin/tools-mcp", "args": ["--unit", "u1"], "env": {"K": "v"}}}}
+    options = st.SessionOptions.from_job_options({st.OPTION_SESSION: "agent", st.OPTION_MCP_CONFIG: given})
+    assert options.mcp_config == MCP
+    given["mcpServers"]["tools"]["args"].append("--late")
+    assert options.mcp_config == MCP
+    assert st.SessionOptions.from_job_options({st.OPTION_SESSION: "agent"}).mcp_config is None
+
+
+def test_check_mcp_config_accepts_the_minimal_and_the_empty_shape():
+    assert st.check_mcp_config({"mcpServers": {"a": {"command": "x"}}}) == {"mcpServers": {"a": {"command": "x"}}}
+    assert st.check_mcp_config({"mcpServers": {}}) == {"mcpServers": {}}
+
+
+@pytest.mark.parametrize(
+    "value, match",
+    [
+        (None, "must be a mapping"),
+        ([], "must be a mapping"),
+        ({}, "exactly one key, mcpServers"),
+        ({"mcpServers": {}, "extra": 1}, "exactly one key, mcpServers"),
+        ({"mcpServers": []}, "mcpServers must be a mapping"),
+        ({"mcpServers": {"": {"command": "x"}}}, "server name"),
+        ({"mcpServers": {1: {"command": "x"}}}, "server name"),
+        ({"mcpServers": {"a": "x"}}, "server 'a' must be a mapping"),
+        ({"mcpServers": {"a": {}}}, "command"),
+        ({"mcpServers": {"a": {"command": ""}}}, "command"),
+        ({"mcpServers": {"a": {"command": ["x"]}}}, "command"),
+        ({"mcpServers": {"a": {"command": "x", "type": "stdio"}}}, "server .a. has unknown keys"),
+        ({"mcpServers": {"a": {"command": "x", "args": "--flag"}}}, "args must be a list of strings"),
+        ({"mcpServers": {"a": {"command": "x", "args": [1]}}}, "args must be a list of strings"),
+        ({"mcpServers": {"a": {"command": "x", "env": ["K=v"]}}}, "env must be a mapping"),
+        ({"mcpServers": {"a": {"command": "x", "env": {"K": 1}}}}, "env must be a mapping"),
+        ({"mcpServers": {"a": {"command": "x", "env": {"": "v"}}}}, "env must be a mapping"),
+    ],
+)
+def test_check_mcp_config_rejects_every_other_shape(value, match):
+    with pytest.raises(ValueError, match=match):
+        st.check_mcp_config(value)
 
 
 # -- layout -----------------------------------------------------------------
@@ -250,6 +297,10 @@ def test_session_request_validation():
         _request(user="")
     with pytest.raises(ValueError, match="process tag"):
         _request(process_tag="has space in it")
+    assert _request().mcp_config is None
+    assert _request(mcp_config=MCP).mcp_config == MCP
+    with pytest.raises(ValueError, match="mcpServers"):
+        _request(mcp_config={"servers": {}})
 
 
 def _failure(kind, **extra):

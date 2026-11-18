@@ -77,6 +77,13 @@ OPTION_EOF_WAIT_S = "session_eof_wait_s"
 OPTION_SIGINT_WAIT_S = "session_sigint_wait_s"
 #: Job option for the finalization budget: the end-of-run commit (design 6.1).
 OPTION_FINALIZE_S = "session_finalize_s"
+#: Job option naming the MCP servers an agent session loads, as the Claude
+#: CLI's ``--mcp-config`` document: ``{"mcpServers": {<name>: {"command": ...,
+#: "args": [...], "env": {...}}}}``. Agent mode only. When set, the session
+#: runs with ``--strict-mcp-config`` and loads exactly these servers and none
+#: from any settings source; when absent, no MCP flag is emitted. Validated by
+#: :func:`check_mcp_config`.
+OPTION_MCP_CONFIG = "mcp_config"
 
 #: The five bound option keys, in Q, B_res, B_eof, B_int, finalize order.
 BOUND_OPTION_KEYS: tuple[str, ...] = (
@@ -90,8 +97,70 @@ BOUND_OPTION_KEYS: tuple[str, ...] = (
 #: Every job option this module owns. All are job-level only: none may appear
 #: in a per-model options mapping.
 SESSION_OPTION_KEYS = frozenset(
-    {OPTION_SESSION, OPTION_RESUME_SESSION, *BOUND_OPTION_KEYS}
+    {OPTION_SESSION, OPTION_RESUME_SESSION, OPTION_MCP_CONFIG, *BOUND_OPTION_KEYS}
 )
+
+#: The keys one ``mcpServers`` server object may carry. ``command`` is required.
+_MCP_SERVER_KEYS = frozenset({"command", "args", "env"})
+
+
+def check_mcp_config(value: object) -> dict[str, object]:
+    """Return a validated plain-``dict`` copy of an ``mcp_config`` job option.
+
+    The accepted shape is exactly ``{"mcpServers": {<name>: <server>}}``:
+    one top-level key ``mcpServers`` mapping each nonempty string server name
+    to a server object. A server object has a nonempty string ``command`` and
+    optionally ``args`` (a list of strings) and ``env`` (a mapping of
+    nonempty string names to string values); no other key is accepted, so a
+    server type the session cannot start is refused instead of passed on. An
+    empty ``mcpServers`` mapping is accepted: the session then loads no MCP
+    server at all. The copy is deep, so a later change to ``value`` does not
+    reach it, and key order is kept. Raises ``ValueError`` naming the first
+    part that does not conform.
+    """
+    where = f"job option {OPTION_MCP_CONFIG}"
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{where} must be a mapping, got {type(value).__name__}")
+    if list(value) != ["mcpServers"]:
+        raise ValueError(
+            f"{where} must have exactly one key, mcpServers; got {sorted(map(str, value))!r}"
+        )
+    servers = value["mcpServers"]
+    if not isinstance(servers, Mapping):
+        raise ValueError(f"{where} mcpServers must be a mapping of server name -> server")
+    checked: dict[str, object] = {}
+    for name, server in servers.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"{where}: server name must be a nonempty string, got {name!r}")
+        if not isinstance(server, Mapping):
+            raise ValueError(f"{where}: server {name!r} must be a mapping")
+        unknown = sorted(str(key) for key in server if key not in _MCP_SERVER_KEYS)
+        if unknown:
+            raise ValueError(
+                f"{where}: server {name!r} has unknown keys {unknown!r}; "
+                f"allowed: {sorted(_MCP_SERVER_KEYS)!r}"
+            )
+        command = server.get("command")
+        if not isinstance(command, str) or not command.strip():
+            raise ValueError(f"{where}: server {name!r} command must be a nonempty string")
+        entry: dict[str, object] = {"command": command}
+        if "args" in server:
+            args = server["args"]
+            if not isinstance(args, (list, tuple)) or not all(isinstance(arg, str) for arg in args):
+                raise ValueError(f"{where}: server {name!r} args must be a list of strings")
+            entry["args"] = list(args)
+        if "env" in server:
+            env = server["env"]
+            if not isinstance(env, Mapping) or not all(
+                isinstance(key, str) and key and isinstance(item, str) for key, item in env.items()
+            ):
+                raise ValueError(
+                    f"{where}: server {name!r} env must be a mapping of nonempty string "
+                    "names to string values"
+                )
+            entry["env"] = dict(env)
+        checked[name] = entry
+    return {"mcpServers": checked}
 
 #: Q default, seconds (design 11.3).
 DEFAULT_QUIESCENCE_S = 5.0
@@ -223,12 +292,14 @@ class SessionOptions:
     Invariants: ``resume_session`` is set only in agent mode and is a
     canonical UUID; ``bounds`` is the defaults in completion mode, because a
     bound option given with completion mode is refused by
-    :meth:`from_job_options`.
+    :meth:`from_job_options`; ``mcp_config`` is set only in agent mode and is
+    the validated copy :func:`check_mcp_config` returns.
     """
 
     mode: SessionMode = SessionMode.COMPLETION
     resume_session: Optional[str] = None
     bounds: SessionBounds = SessionBounds()
+    mcp_config: Optional[Mapping[str, object]] = field(default=None, hash=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "mode", SessionMode(self.mode))
@@ -238,6 +309,13 @@ class SessionOptions:
             check_session_id(self.resume_session, name=OPTION_RESUME_SESSION)
         if not isinstance(self.bounds, SessionBounds):
             raise ValueError("bounds must be a SessionBounds")
+        if self.mcp_config is not None:
+            if self.mode is not SessionMode.AGENT:
+                raise ValueError(
+                    f"{OPTION_MCP_CONFIG} requires {OPTION_SESSION}: agent; a completion "
+                    "runs without tools and loads no MCP server"
+                )
+            object.__setattr__(self, "mcp_config", check_mcp_config(self.mcp_config))
 
     @property
     def default_system_prompt_mode(self) -> str:
@@ -250,8 +328,10 @@ class SessionOptions:
 
         Other keys are ignored (the job model validates them). Raises
         ``ValueError`` for an unknown session mode, a resume id outside agent
-        mode or not a UUID, a bound option outside agent mode, or an invalid
-        bound.
+        mode or not a UUID, a bound option outside agent mode, an invalid
+        bound, or an ``mcp_config`` outside agent mode or not of the shape
+        :func:`check_mcp_config` accepts. An ``mcp_config`` of ``None`` is
+        the same as no ``mcp_config``.
         """
         raw_mode = options.get(OPTION_SESSION, SessionMode.COMPLETION.value)
         try:
@@ -267,6 +347,7 @@ class SessionOptions:
             mode=mode,
             resume_session=options.get(OPTION_RESUME_SESSION),  # type: ignore[arg-type]
             bounds=SessionBounds.from_options(options),
+            mcp_config=options.get(OPTION_MCP_CONFIG),  # type: ignore[arg-type]
         )
 
 
@@ -928,6 +1009,10 @@ class SessionRequest:
       and the shutdown it then performs is bounded by
       ``bounds.shutdown_allowance_s`` on top of it (design 11.3).
     - ``channel``: the mailbox, session record and cleanup record port.
+    - ``mcp_config``: the job's validated ``mcp_config``
+      (:func:`check_mcp_config`), or ``None``. When set, the session runs
+      with ``--strict-mcp-config --mcp-config <document>`` and loads exactly
+      those MCP servers; ``None`` emits no MCP flag.
 
     Validation raises ``ValueError``; it does not check that paths exist.
     """
@@ -943,6 +1028,7 @@ class SessionRequest:
     paths: SessionPaths
     bounds: SessionBounds
     channel: SessionChannel
+    mcp_config: Optional[Mapping[str, object]] = field(default=None, hash=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.system, str):
@@ -968,6 +1054,8 @@ class SessionRequest:
             raise ValueError("bounds must be SessionBounds")
         if not isinstance(self.channel, SessionChannel):
             raise ValueError("channel must implement SessionChannel")
+        if self.mcp_config is not None:
+            object.__setattr__(self, "mcp_config", check_mcp_config(self.mcp_config))
 
 
 class SessionFailureKind(str, Enum):
@@ -1519,6 +1607,7 @@ __all__ = [
     "ATTEMPT_DIR_PREFIX",
     "AttemptBudget",
     "BOUND_OPTION_KEYS",
+    "check_mcp_config",
     "check_process_tag",
     "check_session_id",
     "check_supervisor_budget",
@@ -1549,6 +1638,7 @@ __all__ = [
     "MessageDelivery",
     "OPTION_EOF_WAIT_S",
     "OPTION_FINALIZE_S",
+    "OPTION_MCP_CONFIG",
     "OPTION_QUIESCENCE_S",
     "OPTION_RESULT_WAIT_S",
     "OPTION_RESUME_SESSION",

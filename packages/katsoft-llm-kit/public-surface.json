@@ -3139,6 +3139,10 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.completion.session_types.OPTION_MCP_CONFIG",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.completion.session_types.OPTION_QUIESCENCE_S",
       "status": "public"
     },
@@ -3280,6 +3284,10 @@
     },
     {
       "name": "llm_kit.completion.session_types.WorkspaceFinalizeStatus",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.session_types.check_mcp_config",
       "status": "public"
     },
     {

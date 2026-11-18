@@ -92,6 +92,7 @@ from typing import Mapping, Optional, Sequence
 
 from llm_kit import _runtime
 from llm_kit.completion.session_types import (
+    OPTION_MCP_CONFIG,
     SESSION_OPTION_KEYS,
     SessionMode,
     SessionOptions,
@@ -182,9 +183,13 @@ def _normalize_job_options(value: object) -> dict[str, object]:
         raise ValueError("job option extras must be a mapping")
     if extras is not None:
         options["extras"] = dict(extras)
-    # Validates the session keys (mode, resume id, bounds) and refuses a bound
-    # or resume id given outside agent mode; other keys are ignored.
-    SessionOptions.from_job_options(options)
+    # Validates the session keys (mode, resume id, bounds, mcp_config) and
+    # refuses a bound, resume id or mcp_config given outside agent mode; other
+    # keys are ignored. The validated mcp_config replaces the given one, so the
+    # job holds a plain copy the caller can no longer change.
+    session = SessionOptions.from_job_options(options)
+    if session.mcp_config is not None:
+        options[OPTION_MCP_CONFIG] = session.mcp_config
     return options
 
 
