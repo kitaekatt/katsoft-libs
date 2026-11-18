@@ -31,7 +31,7 @@ const { row, effort, source } = select(registry, "summary.write");
 
 ## Requests
 
-A selection can describe the whole request: the row's defaults, a named request profile (`requests`) that the selection's `request` names, and the call, in that order. `endpoints` in the file says where an endpoint takes the effort, and may name its connection: `base_url` and `key_env`, the name of the environment variable that holds the key (never a key). A caller whose own configuration knows the endpoint uses its own connection. `traits` are your labels for a row; they are never sent. A row's optional `wire_model` is the model id its endpoint is sent when it differs from `model`; `request.wire_model` is always set (`model` when the row names none).
+A selection can describe the whole request: the row's defaults, a named request profile (`requests`) that the selection's `request` names, and the call, in that order. `endpoints` in the file says where an endpoint takes the effort, and may name its connection: `base_url` and `key_env`, the name of the environment variable that holds the key (never a key). A caller whose own configuration knows the endpoint uses its own connection. Read "The file is untrusted" below before a caller sends a key to a connection. `traits` are your labels for a row; they are never sent. A row's optional `wire_model` is the model id its endpoint is sent when it differs from `model`; `request.wire_model` is always set (`model` when the row names none).
 
 ```js
 import { chatFields, resolveRequest } from "@katsoft/llm-kit-config";
@@ -48,6 +48,13 @@ const body = { model: request.wire_model, messages, ...chatFields(request, { eff
 The package does not know environment names, endpoints or credentials. The caller selects which overlay files to apply and maps `endpoint` to a provider. The package does not bind endpoints or check efforts against a provider's menu. The Python reader calls these checks "binding".
 
 All the load functions are synchronous, so a program can read its configuration when it starts.
+
+### The file is untrusted
+
+The project model file is repository content: anyone who can change it can name any host in `base_url` and any environment variable in `key_env`, and any wire field in `extras`. This package validates the shape of the file and nothing more. It never reads an environment variable, never sends a request and does not approve a connection.
+
+- **Connections.** The Python library uses a connection from the file that has a `key_env` only after the machine owner approves it. All of these must hold: the host is plain https (or http to a literal loopback address), no endpoint of the machine already sends that key variable to another host, and the user-level consent file approves that exact endpoint name, host and key variable. The owner approves with `llm-kit consent connection on --endpoint NAME --host HOST --key-env VAR`. A keyless connection (`key_env: null`) needs no approval. This reader applies none of these rules, so a caller must not send the value of `process.env[endpoint.key_env]` to `endpoint.base_url` unless it applies the same rule itself. Take the approval from the machine owner's own configuration, never from the project tree. The rules are in `docs/reference/llm-kit-formats.md`, "Approval of a connection that sends a key".
+- **Extras.** The Python binding refuses these keys in a row's `request_defaults.extras` and in a profile's `extras`: `add_dirs`, `scratch_dir`, `output_schema`, any key that starts with `__llm_kit_`, and `network` with any value but `false`. They widen a Codex sandbox. This reader accepts all of them as syntax, `resolveRequest` merges them into `extras`, and `chatFields` puts them in the body. A caller that gives extras to a Codex-style backend, or that does not want these wire fields, must refuse them itself.
 
 ## Prompts
 

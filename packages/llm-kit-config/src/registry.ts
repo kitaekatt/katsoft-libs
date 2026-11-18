@@ -6,7 +6,9 @@
  * (`llm_kit.registry.project_models.validate_portable_document`); the shared
  * cases in `tests/formats/project-models/cases.json` fix them. Binding (the
  * machine's endpoint registry, the library effort menu, reserved extras) is
- * not part of this package.
+ * not part of this package. Nor are the two checks that the Python binding and call apply to this
+ * untrusted tracked file: the approval of a connection that sends a key, and the refusal of the
+ * Codex sandbox extras (see {@link Endpoint} and {@link RequestDefaults}).
  *
  * @module
  */
@@ -29,6 +31,16 @@ export type EffortStyle = "top-level" | "ninfer" | "chat_template_kwargs" | "rea
  * `base_url` and `key_env` (both or neither) are its OpenAI-compatible connection: the base URL and
  * the name of the environment variable that holds its key (`null`: keyless). The file never holds a
  * key. A consumer whose own configuration knows the endpoint uses its own connection.
+ *
+ * The file is repository content and untrusted: anyone who can change it can name any host and any
+ * environment variable. The Python library uses a keyed project connection only after machine
+ * approval: the host is plain https (or http to a literal loopback address), no machine endpoint
+ * already sends that key variable to another host, and the user-level consent file approves that
+ * exact endpoint, host and key variable (`llm-kit consent connection on --endpoint NAME --host HOST
+ * --key-env VAR`). This reader checks only the shape of `base_url` and `key_env`, performs no
+ * approval and never reads the variable, so a caller must not send a credential to a connection
+ * read from the file unless it applies the same rule (`docs/reference/llm-kit-formats.md`,
+ * "Approval of a connection that sends a key").
  */
 export interface Endpoint {
   /** Where a request puts the effort on the wire; wins over the consumer's own style. */
@@ -47,7 +59,13 @@ export interface RequestDefaults {
   readonly top_p?: number;
   /** A reasoning token budget, 1 or more. */
   readonly reasoning_budget?: number;
-  /** Wire fields of the endpoint, sent as given. */
+  /**
+   * Wire fields of the endpoint, sent as given. The Python binding refuses, in these extras and in a
+   * request profile's, the keys `add_dirs`, `scratch_dir`, `output_schema`, any key that starts with
+   * `__llm_kit_`, and `network` with any value but `false`, because the tracked file is untrusted
+   * and they widen a Codex sandbox. This reader accepts all of them as syntax and `chatFields`
+   * passes them on; a caller that hands extras to a Codex-style backend must refuse them too.
+   */
   readonly extras?: { readonly [key: string]: JsonValue };
 }
 
@@ -61,7 +79,7 @@ export interface RequestProfile {
   readonly max_output_tokens?: number;
   /** A reasoning token budget, 1 or more. */
   readonly reasoning_budget?: number;
-  /** Wire fields; no name a typed setting or the effort owns. */
+  /** Wire fields; no name a typed setting or the effort owns. The sandbox keys that {@link RequestDefaults}`.extras` lists are accepted here too, and the Python binding refuses them. */
   readonly extras?: { readonly [key: string]: JsonValue };
 }
 
@@ -336,7 +354,11 @@ function endpointsBlock(value: PyValue): { names: string[]; entries: { [name: st
   return { names, entries };
 }
 
-/** An endpoint's `base_url` and `key_env`: both or neither; `key_env` null is keyless. */
+/**
+ * An endpoint's `base_url` and `key_env`: both or neither; `key_env` null is keyless. Shape checks
+ * only: it reads no environment variable, sends nothing and does not approve the connection (see
+ * {@link Endpoint}).
+ */
 function connection(entry: Map<string, PyValue>, where: string): { base_url?: string; key_env?: string | null } {
   if (!entry.has("base_url")) {
     if (entry.has("key_env")) throw invalid(`${where}.key_env`, "names the key of a connection; declare base_url with it");

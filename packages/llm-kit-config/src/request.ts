@@ -261,7 +261,10 @@ function placeEffort(fields: Mutable, effort: string, style: EffortStyle): void 
  * The OpenAI-compatible chat body fields of a resolved request: `max_tokens`, `temperature`,
  * `top_p`, the effort placed in its style, the reasoning budget and the extras. A sender adds
  * `model`, `messages` and its own transport fields. The Python reader's protocol 2 call sends
- * exactly these fields for the same request.
+ * exactly these fields for the same request. The extras come from the tracked file and are passed on
+ * as given: this function does not refuse the keys the Python binding refuses (`add_dirs`,
+ * `scratch_dir`, `output_schema`, `__llm_kit_` names, `network` other than `false`; see
+ * {@link RequestDefaults}`.extras`).
  *
  * Effort placement: `top-level` sends `reasoning_effort`; `ninfer` the same with `high` sent as
  * `xhigh`; `chat_template_kwargs` adds `reasoning_effort` to that object; `reasoning-object` sends
