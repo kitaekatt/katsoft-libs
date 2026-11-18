@@ -11,6 +11,8 @@ backend set all three as before.
 
 from __future__ import annotations
 
+import json
+
 import copy
 from pathlib import Path
 from typing import Any
@@ -201,3 +203,49 @@ def test_the_calling_code_still_sets_the_internal_extras(tmp_path):
     argv = calls[0]
     assert _flag_values(argv, "-i") == [str(image)]
     assert "shell_environment_policy.inherit=\"core\"" in _flag_values(argv, "-c")
+
+
+@pytest.mark.parametrize("make", [_row_document, _profile_document])
+def test_output_schema_in_the_tracked_file_is_refused(world, make):
+    """A tracked ``output_schema`` would name any file Codex reads as the schema."""
+    with pytest.raises(pm.ProjectModelsError) as caught:
+        pm.validate_document(make("output_schema", ABSOLUTE), project_root=str(world.root))
+    assert caught.value.code == pm.CODE_INVALID and caught.value.where.endswith("extras.output_schema")
+    assert "'output_schema'" in str(caught.value) and "tracked project file" in str(caught.value)
+    assert "output contract" in str(caught.value) and "BackendOptions.extras" in str(caught.value)
+
+
+@pytest.mark.parametrize("make", [_row_document, _profile_document])
+def test_a_call_over_a_tracked_file_with_output_schema_dispatches_nothing(world, capsys, make):
+    allow()
+    (world.root / "work").mkdir()
+    _write_tracked(world, make("output_schema", ABSOLUTE))
+    code, _doc, err = call(world, capsys, model="luna", mode="workspace", working_dir="work")
+    assert code != 0 and err["error"]["kind"] == "project-file", (code, err)
+    assert "'output_schema'" in err["error"]["message"]
+    assert world.runner_calls == 0
+
+
+def test_the_calling_code_and_an_output_contract_still_set_the_schema(world, capsys, tmp_path):
+    schema_file = (tmp_path / "schema.json").resolve()
+    schema_file.write_text("{}", encoding="utf-8")
+    calls: list = []
+
+    def runner(argv, request, cwd, **kwargs):
+        calls.append(list(argv))
+        Path(argv[argv.index("-o") + 1]).write_text("receipt", encoding="utf-8")
+        return "", "", 0
+
+    CodexCliBackend(argv_prefix=("codex",), runner=runner).complete(
+        "System", "Work", model="gpt-6-luna",
+        options=BackendOptions(cwd=tmp_path.resolve(), extras={"output_schema": str(schema_file)}),
+    )
+    assert _flag_values(calls[0], "--output-schema") == [str(schema_file)]
+    allow()
+    schema = {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"],
+              "additionalProperties": False}
+    world.codex_answer = json.dumps({"summary": "done"})
+    code, doc, err = call(world, capsys, model="luna", output_schema=schema)
+    assert code == 0, err
+    assert doc["output"]["structured"] == {"summary": "done"}
+    assert "--output-schema" in world.codex[-1]

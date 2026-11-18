@@ -52,7 +52,7 @@ Other non-null values refuse before dispatch.
 With `sandbox: "workspace-write"`, `network: false` emits an explicit `sandbox_workspace_write.network_access=false` override.
 This override prevents a user configuration from silently enabling workspace network access.
 `add_dirs`, `scratch_dir` and `network: true` widen the sandbox, so they are the calling code's to set.
-The tracked project model file may not carry them in a row's or a profile's `extras` (it is refused at validation); `network: false` is allowed there.
+The tracked project model file may not carry them in a row's or a profile's `extras` (it is refused at validation); `network: false` is allowed there. `output_schema` and `__llm_kit_` names are refused there too.
 Capabilities report these emitted controls. Callers still need version-specific harness evidence for their permission policy.
 
 ## Scoped job denials

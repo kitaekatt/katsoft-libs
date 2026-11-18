@@ -971,8 +971,16 @@ def _check_sandbox_extras(extras: Mapping, where: str) -> None:
     it, and any ``add_dirs`` or ``scratch_dir``, is refused at ``where.<key>``.
     A key that starts with ``__llm_kit_`` is refused too: those names carry the
     library's own per-call values (image paths, the Codex config) that its code
-    sets after the file is read, so a file may not supply them.
+    sets after the file is read, so a file may not supply them. So is
+    ``output_schema``: it names a file Codex reads as the answer schema, so only
+    the calling code or the request's output contract sets it.
     """
+    if "output_schema" in extras:
+        raise _invalid(
+            f"{where}.output_schema",
+            "'output_schema' names a file Codex reads as the answer schema, so the tracked project file may not "
+            "set it; the code that calls the backend sets it (BackendOptions.extras), or the request's output contract",
+        )
     for key in extras:
         if isinstance(key, str) and key.startswith(_INTERNAL_EXTRAS_PREFIX):
             raise _invalid(
