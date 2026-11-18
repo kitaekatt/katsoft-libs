@@ -50,13 +50,22 @@ console.log(answer.usage);
 import { chatFields, loadRegistry, resolveRequest } from "@katsoft/llm-kit-config";
 import { sendChat } from "@katsoft/llm-kit-send";
 
+// Your application owns the host and the key. The model file does not.
+const url = "https://llm.example.com/v1/chat/completions";
+const key = process.env.LLM_API_KEY;
+
 const registry = loadRegistry(".llm-kit/models.yaml");
 const request = resolveRequest(registry, "summary.write");
-const endpoint = registry.document.endpoints[request.endpoint];
 const messages = [{ role: "user", content: "Summarize this text." }];
 const body = { model: request.wire_model, messages, ...chatFields(request) };
-const answer = await sendChat({ url: `${endpoint.base_url}/chat/completions`, key: process.env[endpoint.key_env], body });
+const answer = await sendChat({ url, key, body });
 ```
+
+The model file is untrusted repository content. It can name any host in `base_url`, any environment variable in
+`key_env` and any wire field in `extras`. Do not send a credential to a `base_url` read from it, or read a key from a
+`key_env` named in it, unless your own approval rule allows that exact host and variable. The rules are in
+[The file is untrusted](../llm-kit-config/README.md#the-file-is-untrusted) in the `@katsoft/llm-kit-config` README (on
+npm the link may not resolve; find that section in the package's own README).
 
 ## Errors
 
