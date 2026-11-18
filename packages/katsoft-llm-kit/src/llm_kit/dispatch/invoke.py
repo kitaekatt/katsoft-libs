@@ -16,7 +16,10 @@ spawned:
    effort overrides the selection's and is revalidated) and refuse an effort the
    endpoint cannot put on the wire;
 4. build the backend and refuse a mode its adapter does not honor
-   (:func:`~llm_kit.completion.capabilities.require_call_mode`);
+   (:func:`~llm_kit.completion.capabilities.require_call_mode`); a connection the
+   project file declares with a key variable is refused first, before any key is
+   read, unless the machine owner approved it
+   (:func:`llm_kit.registry.project_models.endpoint_connection`);
 5. confine ``working_dir`` and refuse a contract the adapter cannot deliver;
 6. classify the cost of the entry (always reported with its reason) and, when
    the request opted in to the optional consent layer (``consent``), refuse it
@@ -370,12 +373,22 @@ def invoke(
         raise InvokeRefusal(KIND_CONFIGURATION, f"{exc.code}: {exc}") from None
 
     # 4. backend and mode -----------------------------------------------------
+    # An endpoint this machine does not know, which the file connects: the call uses that
+    # connection, and one that sends a key only once the machine owner approves it.
+    connection = None
+    if info.kind == project_models.PROJECT_ENDPOINT:
+        try:
+            connection = project_models.endpoint_connection(document, row["endpoint"])
+        except project_models.ProjectModelsError as exc:
+            raise InvokeRefusal(KIND_CONFIGURATION, f"{exc.code}: {exc}") from None
+        except consent_store.ConsentConfigError as exc:
+            raise InvokeRefusal(
+                KIND_CONFIGURATION,
+                f"the consent file holds this machine's connection approvals, and it is misconfigured: {exc}",
+            ) from None
+        except EndpointRegistryError as exc:
+            raise InvokeRefusal(KIND_CONFIGURATION, str(exc)) from None
     try:
-        # An endpoint this machine does not know, which the file connects: the call uses that connection.
-        connection = (
-            project_models.endpoint_connection(document, row["endpoint"])
-            if info.kind == project_models.PROJECT_ENDPOINT else None
-        )
         extra = {"connection": connection} if connection is not None else {}
         selection = backend_factory(row["endpoint"], model=wire_model, project_root=str(root), **extra)
     except (EndpointResolveError, ModelResolveError, EndpointRegistryError) as exc:

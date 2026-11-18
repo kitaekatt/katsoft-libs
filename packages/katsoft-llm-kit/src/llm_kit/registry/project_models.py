@@ -38,14 +38,21 @@ The request settings (``temperature``, ``top_p``, ``max_output_tokens``,
 ``reasoning_budget``, ``extras``) layer row < selection < call; the resolved
 request and its rules are in :mod:`llm_kit.registry.request_settings`.
 
-The file holds no keys, key files, consent, billing or vendor capability
+The file holds no key values, key files, consent, billing or vendor capability
 claims: endpoints, credentials and billing resolve through the endpoint
 registry. An ``endpoints`` entry may name a connection (``base_url`` and
-``key_env``, the name of the environment variable that holds the key); it binds
-a row only on a machine whose registry and model config do not know that
-endpoint, and its calls take no billing mode, so a native ``usage.cost`` stays an
-estimate. A machine that knows the endpoint uses its own connection; the
-file's ``effort_style`` wins either way. The effort menu is the library's, measured per exact model
+``key_env``, the NAME of the environment variable that holds the key, never the
+key); it binds a row only on a machine whose registry and model config do not
+know that endpoint, and its calls take no billing mode, so a native
+``usage.cost`` stays an estimate. A machine that knows the endpoint uses its own
+connection; the file's ``effort_style`` wins either way. The file is repository
+content, so it never decides alone that this machine sends a key: a connection
+that names a ``key_env`` is used only when its ``base_url`` names a plain host
+over https (or plain http to a literal loopback address), no endpoint of the
+machine sends that key variable to another host, and the machine owner approved
+that exact endpoint name, host and key variable in the user-level consent file
+(``llm-kit consent connection on``; :func:`endpoint_connection`). A keyless
+connection (``key_env: null``) sends no key and needs no approval. The effort menu is the library's, measured per exact model
 (``model_profiles``). A project may narrow a menu and never widen it; a harness
 model the library has not measured has no menu, so its row declares no
 ``efforts`` and its selections carry a null effort. ``efforts: []`` declares that a
@@ -126,6 +133,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import ipaddress
 import json
 import math
 import os
@@ -157,7 +165,7 @@ from .model_profiles import (
 __all__ = [
     "SCHEMA", "FILE_VERSION", "DEFAULT_FILE",
     "CODE_INVALID", "CODE_STALE", "CODE_PATH", "CODE_SYMLINK", "CODE_MISSING", "CODE_DEPENDENCY",
-    "CODE_UNKNOWN_SELECTION", "REQUEST_SETTINGS", "PROFILE_RESERVED_EXTRAS", "LEGACY_ROW_EXTRAS",
+    "CODE_UNKNOWN_SELECTION", "CODE_UNAPPROVED", "REQUEST_SETTINGS", "PROFILE_RESERVED_EXTRAS", "LEGACY_ROW_EXTRAS",
     "endpoint_styles", "endpoint_connection", "PROJECT_ENDPOINT", "check_setting", "validate_profile", "KEEP_REQUEST",
     "LOCAL_SUFFIX", "LAYER_TRACKED", "LAYER_LOCAL", "SOURCE_DEFAULT", "SOURCE_OVERRIDE",
     "ProjectModelsError", "EndpointInfo", "EffortMenuResolver",
@@ -191,6 +199,8 @@ CODE_SYMLINK = "symlink"
 CODE_MISSING = "missing"
 CODE_DEPENDENCY = "dependency"
 CODE_UNKNOWN_SELECTION = "unknown-selection"
+#: This machine does not approve a connection the file declares with a key variable (:func:`endpoint_connection`).
+CODE_UNAPPROVED = "unapproved"
 
 #: The personal layer: ``<file-stem>.local.yaml`` beside the project file.
 LOCAL_SUFFIX = ".local.yaml"
@@ -254,7 +264,9 @@ class ProjectModelsError(ValueError):
     escapes the project root), ``symlink`` (a path component is a symlink),
     ``missing`` (the file or root does not exist), ``dependency`` (PyYAML is
     not installed), ``unknown-selection`` (no layer names the selection key a
-    request was resolved for, :mod:`llm_kit.registry.request_settings`).
+    request was resolved for, :mod:`llm_kit.registry.request_settings`),
+    ``unapproved`` (this machine does not approve a connection the file declares
+    with a key variable, :func:`endpoint_connection`).
 
     ``where`` is the path of the first problem in the document, such as
     ``catalog[1].efforts[0]`` or ``selections['draft'].effort``; it is ``""``
@@ -385,23 +397,121 @@ def _route_of(base_url: Optional[str]) -> Optional[str]:
 
 
 def endpoint_connection(document: Mapping, name: str) -> Optional[dict]:
-    """The connection the project file declares for endpoint ``name``, or None.
+    """The connection the project file declares for endpoint ``name``, once this machine approves it; else None.
 
-    ``document`` is a normalized project model document. Returns a
+    ``document`` is a normalized project model document. Returns None when
+    ``endpoints[name]`` has no ``base_url``; otherwise a
     :func:`llm_kit.registry.models.connection_endpoint` result (``base_url``,
-    ``key_env``, the file's effort style) when ``endpoints[name]`` has a
-    ``base_url``, else None. The file names the key's environment variable,
-    never a key. A machine whose endpoint registry or model config knows
-    ``name`` uses its own connection instead (binding resolves the machine
-    first; see :data:`PROJECT_ENDPOINT`). Raises nothing.
+    ``key_env``, the file's effort style). The file names the key's environment
+    variable, never a key.
+
+    The file is repository content, so it alone never decides that this machine
+    sends a key. A KEYLESS connection (``key_env`` null) sends none and is returned
+    as declared, with no file read. A connection that names a key variable is
+    returned only when all of these hold:
+
+    1. its ``base_url`` names a plain host (:func:`llm_kit.registry.consent.connection_host`);
+    2. it is ``https``, or plain ``http`` to a literal loopback address
+       (``127.0.0.0/8``, ``::1``; ``localhost`` is a name a hosts file can repoint);
+    3. no endpoint of this machine (the model config's machine layers, the
+       shipped defaults included, and the endpoint registry's; never a layer in
+       the project tree) sends the same key variable to another host. Key
+       variables compare as the environment reads them
+       (:func:`llm_kit.registry.consent.env_name_key`): on Windows
+       ``openrouter_api_key`` is OPENROUTER_API_KEY;
+    4. the user-level consent file holds a
+       :class:`~llm_kit.registry.consent.ConnectionApproval` of exactly this
+       endpoint name, host and key variable (``llm-kit consent connection on``;
+       the key variable compares as in rule 3).
+
+    An approval cannot lift rules 1 to 3. Otherwise raises
+    :class:`ProjectModelsError` with code :data:`CODE_UNAPPROVED` and ``where``
+    ``endpoints['<name>']``; the message names the endpoint, the host and the key
+    variable, and for rule 4 the exact command that approves it. Also raises
+    :class:`~llm_kit.registry.consent.ConsentConfigError` for a consent file that
+    cannot be read or is malformed, and
+    :class:`~llm_kit.registry.model_endpoints.EndpointRegistryError` for an
+    endpoint registry that cannot be read. A machine whose endpoint registry or
+    model config knows ``name`` uses its own connection instead, with no approval
+    (binding resolves the machine first; see :data:`PROJECT_ENDPOINT`).
     """
     entry = (document.get("endpoints") or {}).get(name)
     if not entry or "base_url" not in entry:
         return None
+    if entry["key_env"] is not None:
+        from .consent import load_config  # noqa: PLC0415
+
+        refusal = _connection_refusal(
+            name, entry["base_url"], entry["key_env"],
+            approvals=load_config().connections,
+            machine_keys=_Endpoints(None).key_hosts(),  # machine layers only: no project-tree config
+        )
+        if refusal is not None:
+            raise ProjectModelsError(CODE_UNAPPROVED, refusal, where=f"endpoints[{name!r}]")
     from .models import connection_endpoint  # noqa: PLC0415
 
     return connection_endpoint(name, base_url=entry["base_url"], key_env=entry["key_env"],
                                effort_style=entry["effort_style"])
+
+
+def _is_loopback(host: str) -> bool:
+    """Whether ``host`` (a :func:`~llm_kit.registry.consent.connection_host` value) is a literal loopback address."""
+    name = host[1:host.index("]")] if host.startswith("[") else host.rsplit(":", 1)[0]
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:  # a DNS name, localhost included: not a literal address
+        return False
+
+
+def _connection_refusal(
+    name: str,
+    base_url: str,
+    key_env: str,
+    *,
+    approvals: "tuple[Any, ...]",
+    machine_keys: "Mapping[str, frozenset[tuple[str, Optional[str]]]]",
+) -> Optional[str]:
+    """Why this machine refuses the file's connection ``name`` that sends ``key_env``; None when it approves it.
+
+    Pure. ``approvals`` are the consent file's :class:`~llm_kit.registry.consent.ConnectionApproval`
+    values; ``machine_keys`` maps a key variable, folded by
+    :func:`~llm_kit.registry.consent.env_name_key`, to the ``(endpoint, host)`` pairs of
+    this machine's endpoints that send it (:meth:`_Endpoints.key_hosts`). The rules are
+    :func:`endpoint_connection`'s, checked in its order.
+    """
+    from .consent import ConnectionApproval, connection_command, connection_host, env_name_key  # noqa: PLC0415
+
+    where = f"endpoints[{name!r}]"
+    host = connection_host(base_url)
+    if host is None:
+        return (
+            f"{where}: base_url {base_url!r} names no plain host (a DNS name or IP address with an optional port, "
+            f"and no user info, escape or backslash), so this machine does not send it the key in {key_env}; "
+            "no approval lifts this"
+        )
+    if base_url.startswith("http://") and not _is_loopback(host):
+        return (
+            f"{where}: base_url {base_url!r} is plain http to {host}; this machine sends the key in {key_env} "
+            "only over https, or over plain http to a literal loopback address (127.0.0.0/8, ::1); "
+            "no approval lifts this"
+        )
+    bound = machine_keys.get(env_name_key(key_env), frozenset())
+    if bound and host not in {bound_host for _endpoint, bound_host in bound}:
+        owners = ", ".join(
+            f"{endpoint!r} ({bound_host or 'no plain host'})" for endpoint, bound_host in sorted(bound, key=str)
+        )
+        return (
+            f"{where}: {key_env} is the key this machine's own endpoints send to another host ({owners}); "
+            f"the project file may not send it to {host} for endpoint {name!r}; no approval lifts this"
+        )
+    approval = ConnectionApproval(name, host, key_env)
+    if not any(held.matches(name, host, key_env) for held in approvals):
+        return (
+            f"{where}: this machine has not approved sending the key in {key_env} to {host} for endpoint "
+            f"{name!r}. The project file names them, and only the machine owner can approve them; "
+            f"if you trust this project with that key, run `{connection_command(approval)}`"
+        )
+    return None
 
 
 def endpoint_styles(document: Mapping) -> "dict[str, str]":
@@ -496,6 +606,35 @@ class _Endpoints:
     def entry(self, name: str) -> Any:
         """The discovered registry entry for ``name``, or None (a wrapper endpoint has none)."""
         return self._load()[1].get(name)
+
+    def key_hosts(self) -> "dict[str, frozenset[tuple[str, Optional[str]]]]":
+        """Key variable -> the ``(endpoint, host)`` pairs of this machine's endpoints that send it.
+
+        The key is :func:`llm_kit.registry.consent.env_name_key` of the variable name (upper
+        case on Windows, where the environment ignores case). Rule 3 of
+        :func:`endpoint_connection` builds it with no project root, from machine layers only.
+
+        From every discovered entry (endpoint registry and model config) and every
+        model config endpoint, the shipped defaults included (``openrouter`` sends
+        ``OPENROUTER_API_KEY`` to ``openrouter.ai``). ``host`` is
+        :func:`llm_kit.registry.consent.connection_host` of the endpoint's base URL,
+        None when it names no plain host. A keyless endpoint or a harness sends no key.
+        """
+        from .consent import connection_host, env_name_key  # noqa: PLC0415
+
+        config, discovery = self._load()
+        senders = [(entry.id, entry.key_env, entry.base_url) for entry in discovery.entries.values()]
+        endpoints = config.get("endpoints") or {}
+        if isinstance(endpoints, Mapping):
+            senders += [
+                (str(endpoint), raw.get("key_env"), raw.get("base_url"))
+                for endpoint, raw in endpoints.items() if isinstance(raw, Mapping)
+            ]
+        found: "dict[str, set[tuple[str, Optional[str]]]]" = {}
+        for endpoint, key_env, base_url in senders:
+            if isinstance(key_env, str) and key_env and isinstance(base_url, str):
+                found.setdefault(env_name_key(key_env), set()).add((endpoint, connection_host(base_url)))
+        return {key_env: frozenset(pairs) for key_env, pairs in found.items()}
 
     def notes(self) -> "list[str]":
         """The registry's non-fatal loader notes (skipped declarations)."""

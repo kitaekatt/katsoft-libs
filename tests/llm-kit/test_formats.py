@@ -484,6 +484,43 @@ def test_compare_case(name):
 
 
 # ---------------------------------------------------------------------------
+# the consent file: shared cases
+# ---------------------------------------------------------------------------
+
+CONSENT_CASES = json.loads((CASES / "consent" / "cases.json").read_text(encoding="utf-8"))
+
+
+def test_the_consent_cases_name_the_shipped_schema():
+    assert CONSENT_CASES["format"] == formats.CONSENT_V2 == "llm-kit.consent/v2"
+    assert (CASES / "consent" / CONSENT_CASES["schema"]).resolve() == \
+        PACKAGE / "src" / "llm_kit" / "schema" / "formats" / formats.SCHEMA_FILES[formats.CONSENT_V2]
+
+
+@pytest.mark.parametrize("name", sorted(by_name(CONSENT_CASES["cases"])))
+def test_consent_case(tmp_path, name):
+    from llm_kit.registry.consent import ConsentConfigError, load_config  # noqa: PLC0415
+
+    case = by_name(CONSENT_CASES["cases"])[name]
+    expect = case["expect"]
+    data = input_bytes(case["input"])
+    target = tmp_path / "consent.json"
+    target.write_bytes(data)
+    if "config" in expect:
+        config = load_config(target)
+        got = {
+            "globals": dict(config.globals_),
+            "scopes": {scope: dict(classes) for scope, classes in config.scopes.items()},
+            "connections": [approval.to_json() for approval in config.connections],
+        }
+        assert got == expect["config"]
+        assert validate(formats.load_schema(formats.CONSENT_V2), json.loads(data)) == ()
+        return
+    assert expect == {"error": "invalid"}
+    with pytest.raises(ConsentConfigError):
+        load_config(target)
+
+
+# ---------------------------------------------------------------------------
 # the public surface and the example
 # ---------------------------------------------------------------------------
 

@@ -2733,6 +2733,10 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.schema.formats.CONSENT_V2",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.registry.project_models.SCHEMA",
       "status": "public"
     },
@@ -2938,6 +2942,10 @@
     },
     {
       "name": "llm_kit.registry.project_models.CODE_UNKNOWN_SELECTION",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.CODE_UNAPPROVED",
       "status": "public"
     },
     {

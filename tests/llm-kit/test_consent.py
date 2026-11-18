@@ -7,6 +7,7 @@ policy (scopes, provenance) and the opt-in surfaces live in test_consent_layer.p
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -375,3 +376,159 @@ def test_save_rejects_non_bool_or_incomplete_globals(tmp_path, globals_):
     with pytest.raises(TypeError):
         save_config(globals_=globals_, scopes={}, path=target)
     assert not target.exists()
+
+
+# ---- connection approvals ------------------------------------------------------------------------
+#
+# The machine owner's approvals of project connections that send a key
+# (llm_kit.registry.project_models.endpoint_connection). They live in the same user-level
+# file, under ``connections``, and every read and write of them conforms to the schema.
+
+VENDOR = ("direct", "api.vendor.example", "VENDOR_API_KEY")
+
+
+def _consent_schema() -> dict:
+    from llm_kit.schema.formats import CONSENT_V2, load_schema
+
+    return load_schema(CONSENT_V2)
+
+
+def _conforms(data) -> None:
+    from llm_kit.schema.json_schema import validate
+
+    assert validate(_consent_schema(), data) == (), data
+
+
+def test_an_approval_is_written_read_back_and_conforms_to_the_schema(tmp_path):
+    from llm_kit.registry.consent import ConnectionApproval, approve_connection
+
+    target = tmp_path / "consent.json"
+    written, config = approve_connection(ConnectionApproval(*VENDOR), path=target)
+    assert written == target
+    assert config.connections == (ConnectionApproval(*VENDOR),)
+    data = json.loads(target.read_text(encoding="utf-8"))
+    _conforms(data)
+    assert data["connections"] == [{"endpoint": "direct", "host": "api.vendor.example", "key_env": "VENDOR_API_KEY"}]
+    assert load_config(target).connections == (ConnectionApproval(*VENDOR),)
+    assert [c.to_json() for c in load_config(target).connections] == data["connections"]
+
+
+def test_approve_and_revoke_are_idempotent_and_keep_the_other_approvals(tmp_path):
+    from llm_kit.registry.consent import ConnectionApproval, approve_connection, revoke_connection
+
+    target = tmp_path / "consent.json"
+    other = ConnectionApproval("lab", "127.0.0.1:8080", "LAB_KEY")
+    approve_connection(ConnectionApproval(*VENDOR), path=target)
+    approve_connection(other, path=target)
+    _, again = approve_connection(ConnectionApproval(*VENDOR), path=target)
+    assert again.connections == (ConnectionApproval(*VENDOR), other)  # sorted, one of each
+    _, revoked = revoke_connection(ConnectionApproval(*VENDOR), path=target)
+    assert revoked.connections == (other,)
+    _, revoked = revoke_connection(ConnectionApproval(*VENDOR), path=target)
+    assert revoked.connections == (other,)
+    _conforms(json.loads(target.read_text(encoding="utf-8")))
+    _, empty = revoke_connection(other, path=target)
+    assert empty.connections == ()
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert "connections" not in data  # a file with no approval reads in every earlier release
+    _conforms(data)
+
+
+def test_a_class_change_keeps_the_approvals_and_an_approval_keeps_the_classes(tmp_path):
+    from llm_kit.registry.consent import ConnectionApproval, approve_connection
+
+    target = tmp_path / "consent.json"
+    save_config(globals_=DEFAULT, scopes={"a": {"metered": True}}, path=target)
+    approve_connection(ConnectionApproval(*VENDOR), path=target)
+    _, config = update_config({"metered": True}, path=target)
+    assert config.connections == (ConnectionApproval(*VENDOR),)
+    assert _globals(config)["metered"] is True and dict(config.scopes["a"]) == {"metered": True}
+    _conforms(json.loads(target.read_text(encoding="utf-8")))
+
+
+def test_the_command_that_approves_is_exact_and_quotes_an_endpoint_name_with_a_space():
+    from llm_kit.registry.consent import ConnectionApproval, connection_command
+
+    assert connection_command(ConnectionApproval(*VENDOR)) == (
+        "llm-kit consent connection on --endpoint direct --host api.vendor.example --key-env VENDOR_API_KEY")
+    assert connection_command(ConnectionApproval("my vendor", "[::1]:8080", "K"), value="off") == (
+        "llm-kit consent connection off --endpoint 'my vendor' --host '[::1]:8080' --key-env K")
+
+
+@pytest.mark.parametrize(("base_url", "host"), [
+    ("https://api.vendor.example/v1", "api.vendor.example"),
+    ("https://API.Vendor.Example:8443/v1?x=1", "api.vendor.example:8443"),
+    ("http://127.0.0.1:8080", "127.0.0.1:8080"),
+    ("http://[::1]:8080/v1", "[::1]:8080"),
+    ("https://api.vendor.example#frag", "api.vendor.example"),
+    ("https://api.vendor.example@collector.example/v1", None),
+    ("https://collector.example\\@api.vendor.example/v1", None),
+    ("https://api.vendor.example%2ecollector.example/v1", None),
+    ("https://-bad.example/v1", None),
+    ("https://[not-an-address]/v1", None),
+    ("https:///v1", None),
+    ("ftp://api.vendor.example/v1", None),
+])
+def test_the_host_of_a_base_url(base_url, host):
+    from llm_kit.registry.consent import connection_host
+
+    assert connection_host(base_url) == host
+
+
+@pytest.mark.parametrize(
+    ("connections", "match"),
+    [
+        ({"direct": {}}, "'connections' must be a list"),
+        (["direct"], r"connections\[0\] must be an object"),
+        ([{"endpoint": "direct", "host": "api.vendor.example"}], r"connections\[0\].*key_env"),
+        ([{"endpoint": "direct", "host": "api.vendor.example", "key_env": "K", "base_url": "x"}], "base_url"),
+        ([{"endpoint": "", "host": "api.vendor.example", "key_env": "K"}], "endpoint"),
+        ([{"endpoint": " direct", "host": "api.vendor.example", "key_env": "K"}], "endpoint"),
+        ([{"endpoint": "direct", "host": "API.vendor.example", "key_env": "K"}], "host"),
+        ([{"endpoint": "direct", "host": "https://api.vendor.example", "key_env": "K"}], "host"),
+        ([{"endpoint": "direct", "host": "user@api.vendor.example", "key_env": "K"}], "host"),
+        ([{"endpoint": "direct", "host": "api.vendor.example", "key_env": "1K"}], "key_env"),
+        ([{"endpoint": "direct", "host": "api.vendor.example", "key_env": None}], "key_env"),
+    ],
+)
+def test_a_malformed_approval_is_a_configuration_error(tmp_path, connections, match):
+    target = _write(tmp_path / "c.json", _valid(connections=connections))
+    with pytest.raises(ConsentConfigError, match=match):
+        load_config(target)
+
+
+def test_an_approval_with_a_value_it_cannot_hold_is_refused_before_anything_is_written(tmp_path):
+    from llm_kit.registry.consent import ConnectionApproval, approve_connection
+
+    target = tmp_path / "consent.json"
+    with pytest.raises(ValueError, match="host"):
+        approve_connection(ConnectionApproval("direct", "api.vendor.example/v1", "K"), path=target)
+    with pytest.raises(ValueError, match="key_env"):
+        approve_connection(ConnectionApproval("direct", "api.vendor.example", "NOT A NAME"), path=target)
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("ignore_case", [True, False])
+def test_key_variables_compare_as_the_environment_reads_them(monkeypatch, ignore_case):
+    from llm_kit.registry.consent import ConnectionApproval, env_name_key
+
+    monkeypatch.setattr(consent_mod, "ENV_NAMES_IGNORE_CASE", ignore_case)
+    approval = ConnectionApproval(*VENDOR)
+    assert (env_name_key("vendor_api_key") == env_name_key("VENDOR_API_KEY")) is ignore_case
+    assert approval.matches("direct", "api.vendor.example", "vendor_api_key") is ignore_case
+    assert approval.matches("direct", "api.vendor.example", "VENDOR_API_KEY")
+    assert not approval.matches("other", "api.vendor.example", "VENDOR_API_KEY")
+    assert not approval.matches("direct", "collector.example", "VENDOR_API_KEY")
+
+
+def test_the_platform_default_follows_os_environ():
+    assert consent_mod.ENV_NAMES_IGNORE_CASE is (os.name == "nt")
+
+
+def test_every_shape_the_writer_stores_conforms_to_the_schema(tmp_path):
+    """The writer's output for each shape it writes: classes only, a scope, and approvals (above)."""
+    target = tmp_path / "consent.json"
+    save_config(globals_=DEFAULT, scopes={}, path=target)
+    _conforms(json.loads(target.read_text(encoding="utf-8")))
+    update_config({"metered": True}, scope="databench", path=target)
+    _conforms(json.loads(target.read_text(encoding="utf-8")))

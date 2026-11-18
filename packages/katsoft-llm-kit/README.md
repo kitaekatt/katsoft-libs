@@ -129,6 +129,20 @@ llm-kit consent show [--scope NAME] [--json]
 llm-kit consent set [--scope NAME] --local|--subscription|--metered on|off
 ```
 
+The same file holds the connection approvals, which always apply. A project model file
+(`.llm-kit/models.yaml`) may connect an endpoint this machine does not know, with the name of
+the environment variable that holds its key. Because that file is repository content, a call
+sends the key only when the base URL is https (or plain http to a literal loopback address),
+no endpoint of this machine sends that key variable to another host, and you have approved
+exactly that endpoint name, host and key variable. The refusal prints the command:
+
+```
+llm-kit consent connection on|off --endpoint NAME --host HOST --key-env VAR
+```
+
+A keyless connection (`key_env: null`) needs no approval. The rules are in
+`docs/reference/llm-kit-formats.md`, "Approval of a connection that sends a key".
+
 ## Adapter names
 
 The adapter for every non-harness entry is the OpenAI-compatible HTTP completion, and its name

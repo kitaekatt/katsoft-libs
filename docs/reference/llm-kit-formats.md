@@ -16,6 +16,7 @@ Some llm-kit files have readers in more than one language. Each of these formats
 | `llm-kit.call-record/v2` | `call-record.v2.schema.json` | none (the TypeScript `@katsoft/llm-kit-send` 0.3.0 and later writes it) | `tests/formats/call-record/cases.v2.json` (`records`) |
 | `llm-kit.reply-entry/v1` | `reply-entry.v1.schema.json` | `llm_kit.registry.reply_cache` | `tests/formats/reply-entry/cases.json` (`entries`, `reader_rules`) |
 | `llm-kit.reply-key/v1` | none (a key, not a file) | `llm_kit.registry.reply_cache` | `tests/formats/reply-key/cases.json` (`parts`, `requests`, `same`, `different`) |
+| `llm-kit.consent/v2` | `consent.v2.schema.json` | `llm_kit.registry.consent` | `tests/formats/consent/cases.json` |
 
 `llm_kit.schema.formats.load_schema(format_id)` returns a schema. `llm_kit.schema.formats.SCHEMA_FILES` maps each format id to its file. The file's `$id` is the format id.
 
@@ -55,7 +56,7 @@ The tracked project model file, by default `.llm-kit/models.yaml`. The module do
 | `version` | Required. The integer 1. |
 | `endpoints` | Optional mapping. A key is the endpoint of a catalog row (text with no leading or trailing whitespace). A value is `{effort_style, base_url, key_env}`. `effort_style` is required, one of `top-level`, `ninfer`, `chat_template_kwargs`, `reasoning-object`, `unsupported`; see "Request settings". `base_url` and `key_env` are optional and come together: the endpoint's OpenAI-compatible connection (see "Connections"). |
 | endpoint `base_url` | `http://` or `https://`, then a host, then printable ASCII (U+0021 to U+007E) with no space. |
-| endpoint `key_env` | Required with `base_url` and refused without it. The name of the environment variable that holds the key (an ASCII letter or `_`, then ASCII letters, digits and `_`), or null for a keyless endpoint. The file never holds a key. |
+| endpoint `key_env` | Required with `base_url` and refused without it. The name of the environment variable that holds the key (an ASCII letter or `_`, then ASCII letters, digits and `_`), or null for a keyless endpoint. The file never holds a key, and a machine sends the key only after its owner approves the connection (see "Connections"). |
 | `catalog` | Optional list of rows, default empty. Order is kept. |
 | row `id`, `label`, `endpoint`, `model` | Required text: not empty, no leading or trailing whitespace. Ids are unique. `model` is the consumer's name for the model. |
 | row `wire_model` | Optional text, as `model` (null is refused; omit the key). The model id the endpoint is sent, when it differs from `model`: for example the vendor's own id beside the name the consumer routes on. Omitted: the wire model is `model`. Calls send the wire model, binding reads the effort menu for it, a price is looked up by it and a run record names it (`resolved.model`). |
@@ -86,10 +87,21 @@ Validation has two parts.
 An `endpoints` entry with `base_url` and `key_env` is a connection: it says how to reach the endpoint on a machine that does not know it. Precedence, per endpoint name:
 
 1. The machine wins. When the machine's own configuration knows the name (Python: the model config layers, then the endpoint registry), a call uses the machine's connection whole: its base URL, its key, its billing mode. The file's `base_url` and `key_env` are not used on that machine.
-2. Otherwise the file's connection binds the rows on that endpoint. A call sends the row's wire model (`wire_model`, else `model`) as written (no alias map), with the key from the variable `key_env` names (Python: the environment, then the `.env` layers). The file declares no billing, so a native `usage.cost` is an estimate and the cost class is `metered`.
+2. Otherwise the file's connection binds the rows on that endpoint. A call sends the row's wire model (`wire_model`, else `model`) as written (no alias map), with the key from the variable `key_env` names (Python: the environment, then the `.env` layers), when the machine approves the connection (see "Approval of a connection that sends a key"). The file declares no billing, so a native `usage.cost` is an estimate and the cost class is `metered`.
 3. Either way, the file's `effort_style` wins over the machine's style (see above).
 
-A reader that does not call endpoints (the TypeScript package) returns the connection in the normalized document and leaves the precedence to its caller. Python: `endpoint_connection(document, name)`; protocol 2 calls (and so `llm-kit runs compare`) use it. Cases `endpoint-connection` and `endpoint-connection-keyless`.
+A reader that does not call endpoints (the TypeScript package) returns the connection in the normalized document and leaves the precedence and the approval to its caller. Python: `endpoint_connection(document, name)`; protocol 2 calls (and so `llm-kit runs compare`) use it. Cases `endpoint-connection` and `endpoint-connection-keyless`.
+
+#### Approval of a connection that sends a key
+
+The file is repository content: anyone who can change it can name any host and any environment variable. So the file alone never makes a machine send a key. A caller that calls a connection uses one with a `key_env` only when all of these are true. A keyless connection (`key_env` null) sends no key and needs none of them.
+
+1. The base URL names a plain host. The host is the text between `://` and the first `/`, `?` or `#`, in lower case. It must be a DNS name or an IPv4 address, or an IPv6 address in brackets, with an optional `:port`. A URL with user info (`https://a.example@b.example/`), a percent escape or a backslash there is refused, because a client can read it as a host that the text does not show.
+2. The scheme is `https`, or `http` to a literal loopback address (`127.0.0.0/8` or `[::1]`). `localhost` is a name that a hosts file can point anywhere, so plain http to it is refused.
+3. No endpoint of the machine sends the same key variable to another host. Python reads the endpoint registry entries and the model config endpoints of the machine layers (the shipped defaults too), never a config layer in the project tree. For example, the shipped `openrouter` endpoints send `OPENROUTER_API_KEY` to `openrouter.ai`, so a project file cannot send that key to another host. Key variables compare as the environment reads them: on Windows, where environment names ignore case, `openrouter_api_key` is `OPENROUTER_API_KEY`; elsewhere the name is exact.
+4. The machine owner approved exactly this endpoint name, host (with its port when the URL names one) and key variable (compared as in rule 3). The approval is in the user-level consent file (`llm-kit.consent/v2`, `connections`), never in the project tree. Add an approval with `llm-kit consent connection on --endpoint NAME --host HOST --key-env VAR`. `off` removes it, and on Windows also removes an approval of the same variable in another case.
+
+An approval cannot lift rules 1 to 3. A refusal names the endpoint, the host and the key variable. For rule 4 it also gives the exact command. Python raises `ProjectModelsError` with code `unapproved` (path `endpoints['<name>']`). A protocol 2 call refuses with kind `configuration` before it builds a backend or reads the key. Portable validation and binding do not apply these rules: a file with an unapproved connection still reads, validates and binds, and only the call refuses. Python tests: `tests/llm-kit/test_project_connection_approval.py`.
 
 Binding never accepts a file that portable validation refuses. When the file has no binding problem, full validation refuses it at the same path as portable validation.
 
@@ -298,9 +310,23 @@ Reader rules beyond the schema: `body` is canonical base64 with padding; respons
 
 TypeScript: `readEntry` in `@katsoft/llm-kit-send` (throws `ReplyEntryError`). Python: `llm_kit.registry.reply_cache.read_entry` (raises `ReplyEntryError`).
 
+## llm-kit.consent/v2
+
+The user-level consent file: `$LLM_KIT_CONSENT_FILE`, else `$XDG_CONFIG_HOME/llm-kit/consent.json` (fallback `$HOME/.config/llm-kit/consent.json`). An earlier release's file under `~/.claude` is read only when the neutral file does not exist. No reader takes this file from a project tree. It holds the machine owner's decisions: the cost-class policy, which applies only when a caller opts in, and the connection approvals, which always apply (see "Approval of a connection that sends a key"). The module docstring of `llm_kit.registry.consent` explains the policy.
+
+1. The file is one JSON object in UTF-8. `schema` is required and is the integer 2. The other allowed keys are `local`, `subscription`, `metered`, `scopes`, `connections` and `updated_at`. Any other key is refused.
+2. `local`, `subscription` and `metered` are booleans. A class that the file omits takes the built-in default: local and subscription on, metered off.
+3. `scopes` maps a scope name (text with no leading or trailing whitespace) to an object of those classes.
+4. `connections` is a list of approvals. Each approval has exactly the keys `endpoint`, `host` and `key_env`. `endpoint` is text with no leading or trailing whitespace. `host` is a host as rule 1 of the approval defines it, in lower case, with the port its base URL names. `key_env` is an ASCII letter or `_`, then ASCII letters, digits and `_`. It is never null, because a keyless connection needs no approval.
+5. `updated_at` is the time of the last write. The reader does not check it.
+6. A file that breaks a rule is refused as a whole. A missing file is the default policy with no approval.
+7. A writer writes `connections` only when it holds an approval, sorted and with no repeats. Thus a release before approvals reads a file without one, and refuses a file with one (an unknown key).
+
+Python: `llm_kit.registry.consent.load_config(path)`, `save_config`, `update_config`, `approve_connection` and `revoke_connection`.
+
 ## Change a format
 
 - A change that a v1 reader would read in a different way is a new format version: a new id, a new schema file and new cases. Keep the v1 files.
-- An optional key that a v1 reader refuses as unknown can be added to v1: every file without it reads as before, and an older reader refuses a file that uses it, so no reader misreads one. The request settings (`endpoints`, `requests`, row `traits`, typed `request_defaults`, selection `request`) and the endpoint connection (`base_url`, `key_env`) were added this way.
+- An optional key that a v1 reader refuses as unknown can be added to v1: every file without it reads as before, and an older reader refuses a file that uses it, so no reader misreads one. The request settings (`endpoints`, `requests`, row `traits`, typed `request_defaults`, selection `request`) and the endpoint connection (`base_url`, `key_env`) were added this way, and so were the consent file's `connections`.
 - Before you change a reader rule, add the case that shows it.
 - Every Python writer of a format checks its output against the schema in its tests (`tests/llm-kit/test_formats.py`, `tests/llm-kit/test_project_models*.py`).

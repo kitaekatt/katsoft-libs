@@ -399,13 +399,22 @@ def test_a_call_to_a_row_on_an_unknown_endpoint_refuses_naming_the_row_and_endpo
 _DIRECT = {"effort_style": "top-level", "base_url": "https://api.vendor.example/v1", "key_env": "VENDOR_API_KEY"}
 
 
-def _with_direct_row(world: World, model: str, *, effort: str = "high", **row: Any) -> None:
-    """A row on endpoint ``direct``, which the file connects (base URL and key variable)."""
-    document = {**_DOC, "endpoints": {"direct": _DIRECT},
+def _with_direct_row(world: World, model: str, *, effort: str = "high", connection: Optional[dict] = None,
+                     approve: bool = True, **row: Any) -> None:
+    """A row on endpoint ``direct``, which the file connects (base URL and key variable).
+
+    ``approve`` writes the machine owner's approval of that connection to the user-level
+    consent file under the throwaway HOME, as ``llm-kit consent connection on`` does.
+    """
+    declared = {**_DIRECT, **(connection or {})}
+    document = {**_DOC, "endpoints": {"direct": declared},
                 "catalog": [*_DOC["catalog"], {"id": "direct", "label": "Direct", "endpoint": "direct",
                                                "model": model, **row}],
                 "selections": {**_DOC["selections"], "direct": {"model": "direct", "effort": effort}}}
     pm.write_project_models(document, project_root=str(world.root))
+    if approve:
+        host = declared["base_url"].split("/")[2].lower()
+        consent_mod.approve_connection(consent_mod.ConnectionApproval("direct", host, declared["key_env"]))
 
 
 def test_a_row_is_sent_as_its_wire_model_with_the_none_it_declares(world, capsys):
@@ -427,7 +436,11 @@ def test_a_row_is_sent_as_its_wire_model_with_the_none_it_declares(world, capsys
 
 
 def test_a_row_on_an_endpoint_the_file_connects_is_called_on_that_connection(world, capsys):
-    """Red on revert: without the file's connection the row is unbound and the call refuses."""
+    """Red on revert: without the file's connection the row is unbound and the call refuses.
+
+    ``_with_direct_row`` writes the machine owner's approval of the connection; without it
+    the call refuses (see the test below).
+    """
     _with_direct_row(world, "vendor-model-1")
     stored = pm.read_project_models(project_root=str(world.root))
     assert stored.unbound == ()
@@ -448,13 +461,80 @@ def test_a_row_on_an_endpoint_the_file_connects_is_called_on_that_connection(wor
     assert (doc["cost"]["usd"], doc["cost"]["estimated_usd"]) == (None, 0.0007)
 
 
+@pytest.mark.parametrize(("connection", "approval", "needle"), [
+    # a tracked file names a collector and a key variable the machine holds for something else
+    ({"base_url": "https://collector.example/v1", "key_env": "GITHUB_TOKEN"}, None,
+     "llm-kit consent connection on --endpoint direct --host collector.example --key-env GITHUB_TOKEN"),
+    # an approval never lifts these three
+    ({"base_url": "http://collector.example/v1", "key_env": "GITHUB_TOKEN"}, ("collector.example", "GITHUB_TOKEN"),
+     "plain http"),
+    ({"base_url": "https://collector.example/v1", "key_env": "OPENROUTER_API_KEY"},
+     ("collector.example", "OPENROUTER_API_KEY"), "openrouter.ai"),
+    ({"base_url": "https://api.vendor.example@collector.example/v1", "key_env": "VENDOR_API_KEY"},
+     ("api.vendor.example", "VENDOR_API_KEY"), "plain host"),
+])
+def test_a_connection_this_machine_does_not_approve_builds_no_backend_and_sends_nothing(
+    world, capsys, connection, approval, needle
+):
+    """The exfiltration path: before the fix each of these went out with the variable's value as its key.
+
+    Red on revert: the call completes and the fake transport records a request to the file's host.
+    """
+    world.monkeypatch.setenv("GITHUB_TOKEN", "ghp-not-for-this-host")
+    world.monkeypatch.setenv("OPENROUTER_API_KEY", "or-not-for-this-host")
+    world.monkeypatch.setenv("VENDOR_API_KEY", "vendor-key")
+    _with_direct_row(world, "vendor-model-1", connection=connection, approve=False)
+    if approval is not None:
+        consent_mod.approve_connection(consent_mod.ConnectionApproval("direct", *approval))
+    allow()
+    for request in ({"selection": "direct"}, {"model": "direct"}):
+        code, doc, err = call(world, capsys, **request)
+        assert code == 4 and doc is None and err["error"]["kind"] == "configuration", (doc, err)
+        assert "'direct'" in err["error"]["message"] and needle in err["error"]["message"]
+    assert world.selections == [] and world.runner_calls == 0  # no backend holds the connection; nothing was sent
+    code, _doc, err = call(world, capsys, model="deepseek")  # the file's other rows still call
+    assert code == 0 and err is None and world.runner_calls == 1
+
+
+def test_the_key_hosts_of_rule_3_come_from_machine_layers_only(world, capsys):
+    """Repository content cannot reshape which host a machine key belongs to.
+
+    A model config layer read from the project tree (``<root>/.local-data/...``) is
+    simulated: it points the shipped ``or-qwen`` endpoint, which sends OPENROUTER_API_KEY,
+    at the collector. Red on revert (the map built with the project root):
+    OPENROUTER_API_KEY counts as bound to collector.example too, the approval lifts the
+    connection, and the request goes out.
+    """
+    from llm_kit.registry import models as models_mod
+
+    real = models_mod.load_model_config
+
+    def with_project_layer(*, project_root=None):
+        config = real(project_root=project_root)
+        if project_root is not None:
+            config["endpoints"]["or-qwen"] = {**config["endpoints"]["or-qwen"],
+                                              "base_url": "https://collector.example/v1"}
+        return config
+
+    world.monkeypatch.setattr(models_mod, "load_model_config", with_project_layer)
+    world.monkeypatch.setenv("OPENROUTER_API_KEY", "or-not-for-this-host")
+    _with_direct_row(world, "vendor-model-1", approve=False,
+                     connection={"base_url": "https://collector.example/v1", "key_env": "OPENROUTER_API_KEY"})
+    consent_mod.approve_connection(consent_mod.ConnectionApproval("direct", "collector.example", "OPENROUTER_API_KEY"))
+    allow()
+    code, doc, err = call(world, capsys, selection="direct")
+    assert code == 4 and doc is None and err["error"]["kind"] == "configuration", (doc, err)
+    assert "openrouter.ai" in err["error"]["message"] and "no approval lifts this" in err["error"]["message"]
+    assert world.selections == [] and world.runner_calls == 0
+
+
 def test_the_machine_endpoint_registry_wins_over_the_files_connection(world, capsys, tmp_path):
     from llm_kit.registry.models import resolve_endpoint
 
     registry = write(tmp_path / "registry.yaml",
                      "version: 1\nmodels:\n  direct: {base_url: http://machine.invalid/v1, model: m, key_env: null}\n")
     world.monkeypatch.setenv("MODEL_ENDPOINTS_REGISTRY", str(registry))
-    _with_direct_row(world, "vendor/model-1")
+    _with_direct_row(world, "vendor/model-1", approve=False)  # the machine's own connection needs no approval
     allow()
     code, doc, err = call(world, capsys, selection="direct")
     assert code == 0 and err is None, (doc, err)

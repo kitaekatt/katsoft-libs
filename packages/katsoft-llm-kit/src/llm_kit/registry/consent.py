@@ -1,4 +1,12 @@
-"""The optional consent layer for cost classes (registry layer).
+"""The user-level consent file: the optional cost-class layer and the connection approvals (registry layer).
+
+The file holds two kinds of decision, both the machine owner's:
+
+* the COST-CLASS POLICY, an optional layer that applies only when a caller opts in
+  (below, up to "Connection approvals");
+* the CONNECTION APPROVALS, which always apply: a connection that a project model file
+  declares with a key variable is used only when an approval names its endpoint, host
+  and key variable (see "Connection approvals").
 
 Principle: consent governs caller-selected execution policy. The library makes no
 LLM calls on its own; whoever uses it makes them. A cost class is INFORMATION that
@@ -26,9 +34,35 @@ omits inherits the global value (else the built-in default). So
 the global policy are unchanged. A global change preserves every scope entry.
 
 Without a file the policy is ``{local: true, subscription: true, metered: false}``
-with provenance ``default``; reading it creates nothing. A file that cannot be read
-or is malformed raises :class:`ConsentConfigError` -- when a caller opts in. Nothing
-reads the file otherwise.
+with provenance ``default``, with no connection approval; reading it creates nothing.
+A file that cannot be read or is malformed raises :class:`ConsentConfigError` when it
+is read. The policy is read only when a caller opts in; the approvals only when a call
+would use a project connection that sends a key. Nothing reads the file otherwise.
+
+Connection approvals
+--------------------
+A tracked project model file (``.llm-kit/models.yaml``) may connect an endpoint the
+machine does not know: ``endpoints.<name>: {base_url, key_env}``. That file is
+repository content, so anyone who can change it could name any host and any
+environment variable; it alone never decides that this machine sends a key.
+:func:`llm_kit.registry.project_models.endpoint_connection` returns such a connection
+only when this file holds a :class:`ConnectionApproval` of exactly that endpoint name,
+host (:func:`connection_host` of the base URL) and key variable, and the connection
+passes the rules no approval lifts (https or loopback, a plain host, a key variable the
+machine's own endpoints do not send to another host). A keyless connection
+(``key_env`` null) sends no key and needs no approval::
+
+    {"schema": 2, ..., "connections": [
+        {"endpoint": "vendor", "host": "api.vendor.example", "key_env": "VENDOR_API_KEY"}]}
+
+``llm-kit consent connection on --endpoint NAME --host HOST --key-env VAR`` adds one
+(:func:`approve_connection`) and ``off`` removes it (:func:`revoke_connection`); a
+refusal prints the exact command (:func:`connection_command`). A writer stores
+``connections`` only when it holds an approval, sorted and with no repeats, so a file
+without one reads in a release before approvals; such a release refuses a file that
+holds one (an unknown key), so no reader misreads it. The format id is
+``llm-kit.consent/v2`` (``llm_kit.schema.formats.CONSENT_V2``); the contract and shared
+cases are in ``docs/reference/llm-kit-formats.md``.
 
 Location, highest precedence first (:func:`consent_read_path`):
 
@@ -45,13 +79,16 @@ are resolved on each call (never at import).
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import re
+import shlex
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from .user_paths import ENV_CONSENT_FILE, neutral_consent_file, override_path
 
@@ -74,7 +111,18 @@ FROM_SCOPE = "scope"
 SOURCE_DEFAULT = "default"
 SOURCE_FILE = "file"
 
-_FILE_KEYS = ("schema", "updated_at", "scopes") + CLASSES
+_FILE_KEYS = ("schema", "updated_at", "scopes", "connections") + CLASSES
+
+#: The keys of one connection approval, in stored order.
+_APPROVAL_KEYS = ("endpoint", "host", "key_env")
+# The name of an environment variable (the project file's key_env rule).
+_KEY_ENV = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# A lower-case DNS label; a host is labels joined by dots (an IPv4 address is one too).
+_LABEL = r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+# A host as an approval records it: a DNS name or IPv4 address, or an IPv6 address in brackets, then an optional port.
+_HOST = re.compile(rf"(?:{_LABEL}(?:\.{_LABEL})*|\[(?P<ipv6>[0-9a-f:.]+)\])(?::[0-9]{{1,5}})?")
+# The authority of an http(s) URL: everything up to the first /, ? or #.
+_AUTHORITY = re.compile(r"https?://([^/?#]*)")
 
 
 class ConsentConfigError(ValueError):
@@ -133,6 +181,153 @@ def set_command(cost_class: str, *, scope: Optional[str] = None, value: str = "o
 
 
 # ---------------------------------------------------------------------------
+# Connection approvals
+# ---------------------------------------------------------------------------
+
+
+#: Whether this platform reads environment variable names without regard to case. True on
+#: Windows, where ``os.environ.get("openrouter_api_key")`` returns OPENROUTER_API_KEY.
+ENV_NAMES_IGNORE_CASE = os.name == "nt"
+
+
+def env_name_key(name: str) -> str:
+    """The form in which this platform compares environment variable ``name``.
+
+    Upper case where names ignore case (:data:`ENV_NAMES_IGNORE_CASE`, Windows, as
+    ``os.environ`` folds them), else ``name`` as written. Two names read the same
+    variable exactly when their keys are equal, so a key variable's machine binding
+    and its approvals compare by this key. Raises nothing for a string.
+    """
+    return name.upper() if ENV_NAMES_IGNORE_CASE else name
+
+
+def _is_host(host: str) -> bool:
+    """Whether ``host`` is a host as an approval records it (see :func:`connection_host`)."""
+    match = _HOST.fullmatch(host)
+    if match is None:
+        return False
+    if match.group("ipv6") is None:
+        return True
+    try:
+        ipaddress.IPv6Address(match.group("ipv6"))
+    except ValueError:  # bracketed text that is not an IPv6 address
+        return False
+    return True
+
+
+def connection_host(base_url: str) -> Optional[str]:
+    """The host a connection's ``base_url`` names, as an approval records it; None when it names no plain host.
+
+    ``base_url`` is a URL string. The result is the text between ``http://`` or
+    ``https://`` and the first ``/``, ``?`` or ``#``, in lower case, when that text is
+    a DNS name or IPv4 address, or an IPv6 address in brackets, with an optional
+    ``:port`` (``api.vendor.example``, ``api.vendor.example:8443``,
+    ``127.0.0.1:8080``, ``[::1]:8080``). It is None for another scheme and for any
+    other text there (user info such as ``a.example@b.example``, a percent escape, a
+    backslash, an empty host): an HTTP client could read such a URL as a host the
+    text does not show, so a key is never sent to it. Raises nothing.
+    """
+    match = _AUTHORITY.match(base_url)
+    if match is None:
+        return None
+    host = match.group(1).lower()
+    return host if _is_host(host) else None
+
+
+@dataclass(frozen=True, order=True)
+class ConnectionApproval:
+    """The machine owner's approval of one project connection that sends a key.
+
+    A project model file may connect an endpoint this machine does not know
+    (``endpoints.<name>: {base_url, key_env}``). When the connection names a key
+    variable, :func:`llm_kit.registry.project_models.endpoint_connection` uses it only
+    when an approval names the same ``endpoint`` (the endpoint name in the file),
+    ``host`` (:func:`connection_host` of its ``base_url``: lower case, with the port
+    the URL names) and ``key_env`` (the name of the environment variable that holds
+    the key). The approval states that this machine may send that key to that host
+    for that endpoint name, from any project that declares all three.
+
+    Construction validates the values and raises :class:`ValueError` for an
+    ``endpoint`` that is not a non-empty string without surrounding whitespace, a
+    ``host`` that is not a host as above, or a ``key_env`` that is not an ASCII
+    letter or ``_`` followed by ASCII letters, digits and ``_``.
+    """
+
+    endpoint: str
+    host: str
+    key_env: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.endpoint, str) or not self.endpoint or self.endpoint != self.endpoint.strip():
+            raise ValueError(
+                "a connection approval's endpoint must be a non-empty name with no leading or trailing "
+                f"whitespace, got {self.endpoint!r}"
+            )
+        if not isinstance(self.host, str) or not _is_host(self.host):
+            raise ValueError(
+                "a connection approval's host must be a lower-case DNS name or IPv4 address, or an IPv6 "
+                f"address in brackets, with an optional :port (no scheme, path or user info), got {self.host!r}"
+            )
+        if not isinstance(self.key_env, str) or not _KEY_ENV.fullmatch(self.key_env):
+            raise ValueError(
+                "a connection approval's key_env must be the name of an environment variable (an ASCII "
+                f"letter or _, then ASCII letters, digits and _), got {self.key_env!r}"
+            )
+
+    def to_json(self) -> Dict[str, str]:
+        """``{"endpoint", "host", "key_env"}``: the approval as the file stores it."""
+        return {"endpoint": self.endpoint, "host": self.host, "key_env": self.key_env}
+
+    def matches(self, endpoint: str, host: str, key_env: str) -> bool:
+        """Whether this approval covers a connection of ``endpoint`` to ``host`` that sends ``key_env``.
+
+        The endpoint name and host must be equal; the key variables must read the same
+        variable (:func:`env_name_key`: any case on Windows, the exact name elsewhere).
+        """
+        return (
+            self.endpoint == endpoint and self.host == host
+            and env_name_key(self.key_env) == env_name_key(key_env)
+        )
+
+
+def connection_command(approval: ConnectionApproval, *, value: str = "on") -> str:
+    """The exact ``llm-kit consent connection`` command that approves (``on``) or revokes (``off``) ``approval``.
+
+    The endpoint name and host are shell-quoted when they need it. Raises
+    :class:`ValueError` for a ``value`` other than ``on`` or ``off``.
+    """
+    if value not in ("on", "off"):
+        raise ValueError(f"value must be 'on' or 'off', got {value!r}")
+    return (
+        f"llm-kit consent connection {value} --endpoint {shlex.quote(approval.endpoint)} "
+        f"--host {shlex.quote(approval.host)} --key-env {approval.key_env}"
+    )
+
+
+def _approvals(raw: Any, path: Path) -> Tuple[ConnectionApproval, ...]:
+    """The stored ``connections`` list as approvals, in file order; :class:`ConsentConfigError` when malformed."""
+    if not isinstance(raw, list):
+        raise ConsentConfigError(f"consent file {path}: 'connections' must be a list of approvals")
+    approvals = []
+    for index, item in enumerate(raw):
+        where = f"connections[{index}]"
+        if not isinstance(item, dict):
+            raise ConsentConfigError(
+                f"consent file {path}: {where} must be an object with {', '.join(_APPROVAL_KEYS)}"
+            )
+        if set(item) != set(_APPROVAL_KEYS):
+            raise ConsentConfigError(
+                f"consent file {path}: {where} must hold exactly {', '.join(_APPROVAL_KEYS)}; "
+                f"it holds {', '.join(sorted(str(key) for key in item)) or 'nothing'}"
+            )
+        try:
+            approvals.append(ConnectionApproval(item["endpoint"], item["host"], item["key_env"]))
+        except ValueError as exc:
+            raise ConsentConfigError(f"consent file {path}: {where}: {exc}") from None
+    return tuple(approvals)
+
+
+# ---------------------------------------------------------------------------
 # The stored file
 # ---------------------------------------------------------------------------
 
@@ -143,13 +338,15 @@ class ConsentConfig:
 
     ``globals_`` holds only the global classes the file states (absent keys fall
     back to :data:`DEFAULT_CLASSES`); ``scopes`` maps a scope name to the classes it
-    states. ``source`` is ``default`` (no file) or ``file``.
+    states. ``source`` is ``default`` (no file) or ``file``. ``connections`` are the
+    connection approvals the file holds, in file order (empty without a file).
     """
 
     globals_: Mapping[str, bool]
     scopes: Mapping[str, Mapping[str, bool]]
     source: str
     path: Path
+    connections: Tuple[ConnectionApproval, ...] = ()
 
 
 def _bool_map(data: Any, where: str, path: Path, *, allowed: Tuple[str, ...] = CLASSES) -> Dict[str, bool]:
@@ -166,10 +363,12 @@ def _bool_map(data: Any, where: str, path: Path, *, allowed: Tuple[str, ...] = C
 
 
 def load_config(path: Optional[Path] = None) -> ConsentConfig:
-    """Read the consent file; a missing file is the default policy and creates nothing.
+    """Read the consent file; a missing file is the default policy with no approval and creates nothing.
 
+    ``path`` defaults to :func:`consent_read_path`. Returns a :class:`ConsentConfig`.
     Raises :class:`ConsentConfigError` for a file that cannot be read, is not valid
-    JSON, or breaks the format (wrong ``schema``, an unknown key, a non-boolean).
+    JSON, or breaks the format (wrong ``schema``, an unknown key, a non-boolean, a
+    malformed ``connections`` approval).
     """
     target = Path(path) if path is not None else consent_read_path()
     try:
@@ -217,18 +416,26 @@ def load_config(path: Optional[Path] = None) -> ConsentConfig:
         if not isinstance(classes, dict):
             raise ConsentConfigError(f"consent file {target}: scope {name!r} must be an object of classes")
         scopes[name] = _bool_map(classes, f"scope {name!r}", target)
-    return ConsentConfig(globals_=globals_, scopes=scopes, source=SOURCE_FILE, path=target)
+    connections = _approvals(data["connections"], target) if "connections" in data else ()
+    return ConsentConfig(
+        globals_=globals_, scopes=scopes, source=SOURCE_FILE, path=target, connections=connections
+    )
 
 
 def save_config(
     *,
     globals_: Mapping[str, bool],
     scopes: Mapping[str, Mapping[str, bool]],
+    connections: Sequence[ConnectionApproval] = (),
     path: Optional[Path] = None,
 ) -> Path:
     """Atomically write the consent file (tmp file in the same directory, then replace).
 
-    All three global classes are written. Errors propagate. Returns the path written.
+    All three global classes are written. ``connections`` are written sorted and
+    with no repeats, and only when there is one, so a file without an approval
+    reads in a release before approvals. Raises :class:`TypeError` for a global or
+    scope value that is not a bool or a connection that is not a
+    :class:`ConnectionApproval`; write errors propagate. Returns the path written.
     """
     if set(globals_) != set(CLASSES) or any(type(v) is not bool for v in globals_.values()):
         raise TypeError(f"globals_ must give each of {', '.join(CLASSES)} as a bool")
@@ -238,11 +445,16 @@ def save_config(
         if any(k not in CLASSES or type(v) is not bool for k, v in classes.items()):
             raise TypeError(f"scope {name!r} must map cost classes to bool")
         clean_scopes[name] = dict(classes)
+    if any(not isinstance(approval, ConnectionApproval) for approval in connections):
+        raise TypeError("connections must be ConnectionApproval values")
     target = Path(path) if path is not None else default_consent_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     payload: Dict[str, Any] = {"schema": SCHEMA}
     payload.update({cls: globals_[cls] for cls in CLASSES})
     payload["scopes"] = clean_scopes
+    stored = sorted(set(connections))
+    if stored:
+        payload["connections"] = [approval.to_json() for approval in stored]
     payload["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=".consent.", suffix=".tmp")
     tmp = Path(tmp_name)
@@ -264,8 +476,9 @@ def update_config(
 ) -> Tuple[Path, ConsentConfig]:
     """Apply ``changes`` (class -> bool) to the global policy, or to ``scope``, and write the file.
 
-    The rest of the file is preserved: a global change keeps every scope entry and a
-    scope change keeps the global policy and the other scopes. The write target is
+    The rest of the file is preserved: a global change keeps every scope entry, a
+    scope change keeps the global policy and the other scopes, and either keeps the
+    connection approvals. The write target is
     ``path`` or :func:`default_consent_path`; the content it starts from is what
     :func:`load_config` reads (the legacy file, when that is the only one, is read
     but never written). Raises :class:`ConsentConfigError` when the existing file is
@@ -284,8 +497,52 @@ def update_config(
         globals_.update(changes)
     else:
         scopes.setdefault(scope, {}).update(changes)
-    written = save_config(globals_=globals_, scopes=scopes, path=target)
+    written = save_config(globals_=globals_, scopes=scopes, connections=current.connections, path=target)
     return written, load_config(written)
+
+
+def _change_connection(
+    approval: ConnectionApproval, *, keep: bool, path: Optional[Path]
+) -> Tuple[Path, ConsentConfig]:
+    """Write the file with ``approval`` present (``keep``) or absent; everything else is preserved."""
+    if not isinstance(approval, ConnectionApproval):
+        raise TypeError(f"approval must be a ConnectionApproval, got {type(approval).__name__}")
+    target = Path(path) if path is not None else default_consent_path()
+    current = load_config(path if path is not None else consent_read_path())
+    globals_ = {cls: current.globals_.get(cls, DEFAULT_CLASSES[cls]) for cls in CLASSES}
+    # An approval of the same variable in another case (Windows) is the same approval: replaced or removed.
+    connections = [
+        held for held in current.connections
+        if not held.matches(approval.endpoint, approval.host, approval.key_env)
+    ] + ([approval] if keep else [])
+    written = save_config(globals_=globals_, scopes=current.scopes, connections=connections, path=target)
+    return written, load_config(written)
+
+
+def approve_connection(approval: ConnectionApproval, *, path: Optional[Path] = None) -> Tuple[Path, ConsentConfig]:
+    """Add ``approval`` to the file and write it; a repeat leaves the same approvals (idempotent).
+
+    An approval it :meth:`~ConnectionApproval.matches` (the same variable in another
+    case, on Windows) is replaced, so the file holds one.
+
+    The cost-class policy, the scopes and the other approvals are preserved, as in
+    :func:`update_config` (which also says which file is read and which written).
+    Returns ``(path written, the config read back)``. Raises :class:`TypeError` for
+    a value that is not a :class:`ConnectionApproval` and :class:`ConsentConfigError`
+    when the existing file is malformed (it is never overwritten silently).
+    """
+    return _change_connection(approval, keep=True, path=path)
+
+
+def revoke_connection(approval: ConnectionApproval, *, path: Optional[Path] = None) -> Tuple[Path, ConsentConfig]:
+    """Remove ``approval`` (and any approval it :meth:`~ConnectionApproval.matches`) from the file and write it.
+
+    Revoking one the file does not hold changes no approval.
+
+    Everything else is preserved, as in :func:`approve_connection`. Returns
+    ``(path written, the config read back)``; raises as :func:`approve_connection`.
+    """
+    return _change_connection(approval, keep=False, path=path)
 
 
 # ---------------------------------------------------------------------------

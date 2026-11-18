@@ -24,6 +24,7 @@ import pytest
 from llm_kit import cli
 from llm_kit.cli import _runs_compare
 from llm_kit.dispatch import factory
+from llm_kit.registry import consent
 from llm_kit.registry import project_models as pm
 from llm_kit.runs import compare as cmp
 from llm_kit.runs import record as rec
@@ -539,8 +540,14 @@ def test_the_cli_loads_a_file_with_an_unknown_endpoint_and_refuses_only_its_sele
     assert cli_project.wire.requests == [] and list(cli_project.store.event_files()) == []
 
 
+def _approve_vendor_connection() -> None:
+    """The machine owner's approval of the ``direct`` connection, in the user-level consent file (throwaway HOME)."""
+    consent.approve_connection(consent.ConnectionApproval("direct", "api.vendor.example", "VENDOR_API_KEY"))
+
+
 def test_the_cli_compares_a_row_on_an_endpoint_the_file_connects(cli_project, capsys, monkeypatch):
-    """A machine that does not know the endpoint calls it on the file's connection, like any other row."""
+    """A machine that does not know the endpoint calls it on the file's connection, like any other row,
+    once the machine owner approves that connection (without it the call is refused; test_invoke_protocol.py)."""
     models = {**_MODELS, "endpoints": {"direct": {"effort_style": "top-level",
                                                   "base_url": "https://api.vendor.example/v1",
                                                   "key_env": "VENDOR_API_KEY"}},
@@ -548,6 +555,7 @@ def test_the_cli_compares_a_row_on_an_endpoint_the_file_connects(cli_project, ca
                                                 "model": "vendor-model-1"}],
               "selections": {**_MODELS["selections"], "d": {"model": "direct", "effort": "high"}}}
     pm.write_project_models(models, project_root=str(cli_project.root))
+    _approve_vendor_connection()
     pricing = json.loads((cli_project.root / "pricing.json").read_text(encoding="utf-8"))
     (cli_project.root / "pricing.json").write_text(
         json.dumps({**pricing, "vendor-model-1": {"input": 1.0, "output": 2.0, "context_window": 4000}}), encoding="utf-8")
@@ -570,6 +578,7 @@ def test_the_cli_plans_prices_and_records_a_rows_wire_model(cli_project, capsys)
                                                 "efforts": ["none", "low"]}],
               "selections": {**_MODELS["selections"], "k": {"model": "swift", "effort": "none"}}}
     pm.write_project_models(models, project_root=str(cli_project.root))
+    _approve_vendor_connection()
     pricing = json.loads((cli_project.root / "pricing.json").read_text(encoding="utf-8"))
     (cli_project.root / "pricing.json").write_text(  # priced by the wire model only: the row's model has no entry
         json.dumps({**pricing, "swift-1": {"input": 1.0, "output": 2.0, "context_window": 4000}}), encoding="utf-8")

@@ -20,7 +20,8 @@ Groups, and where each legacy command now lives:
 ``frontdoor``   llm-scripting-kit ``frontdoor`` (every argument is the front
                 door's own)
 ``local``       llm-scripting-kit ``swapper`` and ``acceptance``
-``consent``     the optional consent layer for the local, subscription and metered cost classes
+``consent``     the optional cost-class consent layer (local, subscription, metered) and
+                the approvals of project connections that send a key
 ``graph``       generation graphs (``llm_kit.graph``): validate, run and inspect
 ``relay``       this machine's harness-messaging relay (``llm_kit.relay``): serve,
                 pause, resume, status and the ``/direct`` client verbs
@@ -57,7 +58,7 @@ GROUPS = {
     "pipeline": "Drive a leased pipeline run's execution ledger.",
     "frontdoor": "Run the OpenAI-compatible fill-first front door.",
     "local": "The local llama-swap model swapper and acceptance runs.",
-    "consent": "Show or change the optional consent layer for cost classes.",
+    "consent": "Show or change the cost-class consent layer and the connection approvals.",
     "graph": "Validate, run and inspect generation graphs.",
     "relay": "Serve this machine's relay, pause or resume it, or call it as a /direct client.",
     "runs": "Create a run store, import run records, list and show them, compare models.",

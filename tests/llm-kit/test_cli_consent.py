@@ -37,7 +37,8 @@ class TestShow:
         out = run(final_mods.cli.main, ["consent", "show", "--json"], capsys)
         assert out.code == 0
         payload = json.loads(out.out)
-        assert set(payload) == {"scope", "source", "path", "write_path", "classes", "layer"}
+        assert set(payload) == {"scope", "source", "path", "write_path", "classes", "layer", "connections"}
+        assert payload["connections"] == []
         assert payload["scope"] is None and payload["source"] == "default"
         assert payload["write_path"] == payload["path"] == str(_consent_file(home))
         assert {k: v["allowed"] for k, v in payload["classes"].items()} == {
@@ -172,13 +173,54 @@ class TestSet:
         assert json.loads(out.err)["error"]["kind"] == "configuration"
 
 
+class TestConnection:
+    """``consent connection on|off``: the machine owner's approval of a project connection that sends a key."""
+
+    FLAGS = ["--endpoint", "direct", "--host", "api.vendor.example", "--key-env", "VENDOR_API_KEY"]
+    STORED = [{"endpoint": "direct", "host": "api.vendor.example", "key_env": "VENDOR_API_KEY"}]
+    LINE = "connection: direct -> api.vendor.example (VENDOR_API_KEY)"
+
+    def test_on_writes_the_approval_show_lists_it_and_off_removes_it(self, final_mods, home, capsys):
+        out = run(final_mods.cli.main, ["consent", "connection", "on", *self.FLAGS], capsys)
+        assert out.code == 0, out.err
+        assert f"Consent written to {_consent_file(home)}" in out.out and self.LINE in out.out
+        assert _stored(home)["connections"] == self.STORED
+        assert _classes(home) == (True, True, False)  # the cost-class defaults, unchanged
+        assert run(final_mods.cli.main, ["consent", "connection", "on", *self.FLAGS], capsys).code == 0
+        assert _stored(home)["connections"] == self.STORED  # idempotent
+        payload = json.loads(run(final_mods.cli.main, ["consent", "show", "--json"], capsys).out)
+        assert payload["connections"] == self.STORED
+        assert self.LINE in run(final_mods.cli.main, ["consent", "show"], capsys).out.splitlines()
+        out = run(final_mods.cli.main, ["consent", "connection", "off", *self.FLAGS], capsys)
+        assert out.code == 0 and "connections" not in _stored(home) and self.LINE not in out.out
+
+    def test_a_class_change_keeps_the_approval(self, final_mods, home, capsys):
+        run(final_mods.cli.main, ["consent", "connection", "on", *self.FLAGS], capsys)
+        assert run(final_mods.cli.main, ["consent", "set", "--metered", "on"], capsys).code == 0
+        assert _stored(home)["connections"] == self.STORED and _classes(home) == (True, True, True)
+
+    def test_a_value_an_approval_cannot_hold_is_a_configuration_error_and_writes_nothing(self, final_mods, home, capsys):
+        out = run(final_mods.cli.main, ["consent", "connection", "on", "--endpoint", "direct",
+                                        "--host", "https://api.vendor.example", "--key-env", "VENDOR_API_KEY"], capsys)
+        assert out.code == 2 and out.out == ""
+        error = json.loads(out.err)["error"]
+        assert error["kind"] == "configuration" and "host" in error["message"]
+        assert not _consent_file(home).exists()
+
+    def test_every_flag_is_required(self, final_mods, home, capsys):
+        out = run(final_mods.cli.main, ["consent", "connection", "on", "--endpoint", "direct",
+                                        "--host", "api.vendor.example"], capsys)
+        assert out.code == 2 and "--key-env" in out.err
+        assert not _consent_file(home).exists()
+
+
 class TestWiring:
     def test_the_consent_group_is_routed(self, final_mods, capsys):
         out = run(final_mods.cli.main, ["consent", "--help"], capsys)
         assert out.code == 0 and "usage: llm-kit consent" in out.out
 
     def test_the_verbs_parse_their_help(self, final_mods, capsys):
-        for verb in ("show", "set"):
+        for verb in ("show", "set", "connection"):
             assert run(final_mods.cli.main, ["consent", verb, "--help"], capsys).code == 0, verb
 
     def test_the_group_is_listed_in_the_top_level_help(self, final_mods, capsys):

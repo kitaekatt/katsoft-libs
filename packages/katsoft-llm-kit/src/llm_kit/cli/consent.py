@@ -1,18 +1,27 @@
-"""``llm-kit consent``: show and change the optional consent layer for cost classes.
+"""``llm-kit consent``: show and change the consent file: the cost-class layer and the connection approvals.
 
-The layer is OPTIONAL. The library makes no LLM calls on its own and never
-consults this file unless a caller opts in: protocol 2 request field ``consent``,
+The cost-class layer is OPTIONAL. The library makes no LLM calls on its own and never
+consults the policy unless a caller opts in: protocol 2 request field ``consent``,
 ``llm-kit models describe --consent [--consent-scope X]``, or the API call
 :func:`llm_kit.registry.consent.policy`. A caller may build its own layer instead.
 The cost class of an entry is information that is always reported; this layer is
 the policy a caller may apply to it.
+
+The connection approvals ALWAYS apply: a connection that a project model file
+declares with a key variable is used only when an approval names its endpoint, host
+and key variable (:func:`llm_kit.registry.project_models.endpoint_connection`).
+``consent connection on|off --endpoint NAME --host HOST --key-env VAR`` adds or
+removes one; a refusal prints the exact command. ``off`` for an approval the file
+does not hold, and ``on`` for one it holds, change no approval.
 
 ``consent show [--scope X] [--json]`` prints the effective policy: per class
 (``local``, ``subscription``, ``metered``) whether it is allowed and which layer
 decided it (``default``, ``global`` or ``scope``). With ``--scope X``, a class the
 scope states takes the scope's value, and a class it omits shows the global value.
 ``path`` is the file read, ``write_path`` the file ``consent set`` writes (the
-``LLM_KIT_CONSENT_FILE`` override, else the neutral ``consent.json``).
+``LLM_KIT_CONSENT_FILE`` override, else the neutral ``consent.json``). It then lists
+each connection approval (``connection: <endpoint> -> <host> (<key_env>)``; JSON
+``connections``).
 
 ``consent set [--scope X] [--local on|off] [--subscription on|off] [--metered on|off]``
 is a partial update: a flag that is not given keeps its value, scopes are
@@ -40,14 +49,25 @@ UNREDACTED_NOTICE = (
 )
 
 OPTIONAL_NOTICE = (
-    "The consent layer is optional: nothing applies it unless a caller opts in "
+    "The cost-class layer is optional: nothing applies it unless a caller opts in "
     "(protocol 2 \"consent\", `llm-kit models describe --consent`, "
     "llm_kit.registry.consent.policy())."
+)
+
+#: Printed by ``consent connection`` every time, so the reach of an approval is never left implicit.
+APPROVAL_NOTICE = (
+    "Connection approvals always apply: a project model file's connection that sends a key is used only "
+    "when an approval names its endpoint, host and key variable, and an approval lets every project that "
+    "declares all three send that key to that host."
 )
 
 
 def _flag(value: bool) -> str:
     return "on" if value else "off"
+
+
+def _connection_line(approval: consent_store.ConnectionApproval) -> str:
+    return f"connection: {approval.endpoint} -> {approval.host} ({approval.key_env})"
 
 
 def _class_line(policy: consent_store.Policy, cost_class: str) -> str:
@@ -69,15 +89,30 @@ def _print_policy(policy: consent_store.Policy) -> None:
 
 
 def _cmd_show(scope: Optional[str], as_json: bool) -> int:
-    policy = consent_store.policy(scope)
+    config = consent_store.load_config()
+    policy = consent_store.effective(config, scope)
     if as_json:
         document = policy.to_json()
         document["write_path"] = str(consent_store.default_consent_path())
         document["layer"] = consent_store.layer_description()
+        document["connections"] = [approval.to_json() for approval in config.connections]
         _json(document)
         return EXIT_OK
     _print_policy(policy)
+    for approval in config.connections:
+        print(_connection_line(approval))
     print(OPTIONAL_NOTICE)
+    return EXIT_OK
+
+
+def _cmd_connection(state: str, endpoint: str, host: str, key_env: str) -> int:
+    approval = consent_store.ConnectionApproval(endpoint, host, key_env)
+    change = consent_store.approve_connection if state == "on" else consent_store.revoke_connection
+    written, config = change(approval)
+    print(f"Consent written to {written}")
+    for held in config.connections:
+        print(_connection_line(held))
+    print(APPROVAL_NOTICE)
     return EXIT_OK
 
 
@@ -100,9 +135,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="llm-kit consent",
         description=(
-            "Show or change the optional consent layer: which cost classes (local, subscription, "
-            "metered) callers that opt in may use on this machine. Nothing applies it unless a "
-            "caller opts in."
+            "Show or change the consent file: the optional cost-class layer (which cost classes -- "
+            "local, subscription, metered -- callers that opt in may use on this machine; nothing applies "
+            "it unless a caller opts in) and the connection approvals (which project connections that "
+            "send a key this machine may use; they always apply)."
         ),
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -114,6 +150,19 @@ def _parser() -> argparse.ArgumentParser:
     setter.add_argument("--local", choices=("on", "off"), help="Allow local (declared unmetered and self-owned endpoint) operations.")
     setter.add_argument("--subscription", choices=("on", "off"), help="Allow subscription (claude or codex session pool) operations.")
     setter.add_argument("--metered", choices=("on", "off"), help="Allow metered (paid or unverified billing) operations.")
+    connection = sub.add_parser(
+        "connection",
+        help="Approve (on) or revoke (off) a project model file's connection that sends a key.",
+    )
+    connection.add_argument("state", choices=("on", "off"), help="on: approve; off: revoke.")
+    connection.add_argument("--endpoint", required=True, help="The endpoint name the project file connects.")
+    connection.add_argument(
+        "--host", required=True,
+        help="The host of the connection's base_url, in lower case, with the port the URL names (the refusal prints it).",
+    )
+    connection.add_argument(
+        "--key-env", required=True, help="The name of the environment variable that holds the key (never the key)."
+    )
     return parser
 
 
@@ -131,6 +180,8 @@ def run(argv: Sequence[str]) -> int:
                 if getattr(args, name) is not None
             }
             return _cmd_set(args.scope, changes)
+        if args.cmd == "connection":
+            return _cmd_connection(args.state, args.endpoint, args.host, args.key_env)
         return EXIT_USAGE
 
     return guarded(dispatch)

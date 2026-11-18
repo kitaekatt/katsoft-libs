@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.consent/v2",
+  "title": "llm-kit consent file, schema 2",
+  "description": "The user-level consent file: LLM_KIT_CONSENT_FILE, else $XDG_CONFIG_HOME/llm-kit/consent.json (fallback $HOME/.config/llm-kit/consent.json); never a file in a project tree. Written in llm-scripting-kit.json-schema-subset/v1. It holds the machine owner's cost-class policy (the global classes and named scopes; applied only when a caller opts in) and connection approvals (always applied: a project connection that sends a key is used only when an approval names its endpoint, host and key variable). Reader rules the subset cannot state: a scope name has no leading or trailing whitespace; an approval's endpoint has no leading or trailing whitespace; its host is a lower-case DNS name or IPv4 address, or an IPv6 address in brackets, with an optional :port; its key_env is an ASCII letter or _, then ASCII letters, digits and _. Contract and shared cases: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "schema": {"type": "integer", "const": 2},
+    "local": {"type": "boolean"},
+    "subscription": {"type": "boolean"},
+    "metered": {"type": "boolean"},
+    "scopes": {"type": "object", "additionalProperties": {"$ref": "#/$defs/classes"}},
+    "connections": {"type": "array", "items": {"$ref": "#/$defs/approval"}},
+    "updated_at": {"description": "When the file was last written (ISO 8601, UTC). The reader does not check it."}
+  },
+  "required": ["schema"],
+  "additionalProperties": false,
+  "$defs": {
+    "classes": {
+      "description": "The cost classes a scope states; a class it omits takes the global value.",
+      "type": "object",
+      "properties": {
+        "local": {"type": "boolean"},
+        "subscription": {"type": "boolean"},
+        "metered": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "approval": {
+      "description": "The machine owner's approval of a project connection that sends a key: this machine may send the key that environment variable key_env holds to host, for a project model file endpoint named endpoint. host is the host of the connection's base_url in lower case, with the port the URL names.",
+      "type": "object",
+      "properties": {
+        "endpoint": {"type": "string", "minLength": 1},
+        "host": {"type": "string", "minLength": 1},
+        "key_env": {"type": "string", "minLength": 1}
+      },
+      "required": ["endpoint", "host", "key_env"],
+      "additionalProperties": false
+    }
+  }
+}
