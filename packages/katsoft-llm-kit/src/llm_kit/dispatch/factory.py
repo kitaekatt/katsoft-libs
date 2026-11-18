@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Mapping, Optional
 
 from llm_kit.adapters.backends import ClaudeCliBackend, OpenAICompatBackend
 from llm_kit.adapters.capabilities import CLAUDE_AGENT_CAPABILITIES, OPENAI_COMPAT_CAPABILITIES
@@ -85,6 +85,7 @@ def create_backend(
     model: Optional[str] = None,
     cheap: bool = False,
     project_root: Optional[str | Path] = None,
+    connection: Optional[Mapping[str, Any]] = None,
 ) -> BackendSelection:
     """Create the backend selected by a configured transport or harness entry.
 
@@ -92,8 +93,27 @@ def create_backend(
     resolver.  This factory classifies discovery entries before crossing that
     boundary, preserving that invariant while providing one host-neutral
     dispatch API.
+
+    ``connection`` (a :func:`llm_kit.registry.models.connection_endpoint`
+    result, such as a connection a project model file declares for an endpoint
+    this machine does not know) selects an OpenAI-compatible transport on that
+    connection instead of looking ``endpoint`` up: ``model`` is required and is
+    sent as given. Raises ``EndpointResolveError`` when ``model`` is missing.
     """
     root = str(project_root) if project_root is not None else None
+    if connection is not None:
+        if not model:
+            raise EndpointResolveError(f"endpoint '{endpoint}' is a connection: name the model to call")
+        backend = OpenAICompatBackend(endpoint=endpoint, project_root=Path(root) if root else None,
+                                      connection=dict(connection))
+        return BackendSelection(
+            endpoint=endpoint or connection["name"],
+            kind="transport",
+            backend=backend,
+            model=model,
+            effort=None,
+            capabilities=endpoint_capabilities(OPENAI_COMPAT_CAPABILITIES, backend.endpoint_profile()),
+        )
     config = load_model_config(project_root=root)
     name = endpoint or default_endpoint_name(config)
     entry = _harness_entry(name, config=config, project_root=root)

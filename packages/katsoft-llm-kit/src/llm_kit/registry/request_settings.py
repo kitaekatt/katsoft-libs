@@ -22,8 +22,11 @@ are returned and never sent.
 The result of :func:`resolve_request` is provider-neutral JSON with every key
 present (null when unset)::
 
-    {"row", "endpoint", "model", "effort", "effort_style", "temperature", "top_p",
-     "max_output_tokens", "reasoning_budget", "extras", "traits"}
+    {"row", "endpoint", "model", "wire_model", "effort", "effort_style", "temperature",
+     "top_p", "max_output_tokens", "reasoning_budget", "extras", "traits"}
+
+``model`` is the row's model and ``wire_model`` the model id its endpoint is sent
+(the row's ``wire_model``, else ``model``); a sender puts ``wire_model`` in the body.
 
 ``effort_style`` is the style the project file declares for the row's endpoint
 (``endpoints``), else null: the caller then uses its own (Python: the endpoint
@@ -46,13 +49,14 @@ from .project_models import (
     _invalid,
     check_setting,
     validate_profile,
+    wire_model_of,
 )
 
 __all__ = ["REQUEST_KEYS", "request_for", "resolve_request"]
 
 #: The keys of a resolved request, in order.
 REQUEST_KEYS = (
-    "row", "endpoint", "model", "effort", "effort_style", "temperature", "top_p",
+    "row", "endpoint", "model", "wire_model", "effort", "effort_style", "temperature", "top_p",
     "max_output_tokens", "reasoning_budget", "extras", "traits",
 )
 
@@ -127,6 +131,7 @@ def request_for(document: Mapping, selection: Mapping, *, call: Optional[Mapping
         "row": row["id"],
         "endpoint": row["endpoint"],
         "model": row["model"],
+        "wire_model": wire_model_of(row),
         "effort": effort,
         "effort_style": ((document.get("endpoints") or {}).get(row["endpoint"]) or {}).get("effort_style"),
     }

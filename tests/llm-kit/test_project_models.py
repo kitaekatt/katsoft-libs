@@ -581,6 +581,90 @@ def test_library_menu_is_the_exact_model_menu(project):
     assert pm.library_effort_menu(router, "deepseek/unmeasured") == ()
 
 
+# --- an explicit `none` the row declares --------------------------------------------------------
+
+_OPENROUTER = "https://openrouter.ai/api/v1"
+
+
+def _declaring(style, efforts, effort, *, row=None, base_url=None):
+    """Row ``mid`` on endpoint ``plain`` (or on ``direct``, a connection at ``base_url``) with the file's style."""
+    d = doc()
+    endpoint = "plain" if base_url is None else "direct"
+    entry = {"effort_style": style}
+    if base_url is not None:
+        entry.update(base_url=base_url, key_env="VENDOR_API_KEY")
+    d["endpoints"] = {endpoint: entry}
+    d["catalog"][2].update(endpoint=endpoint, **(row or {}))
+    if efforts is not None:
+        d["catalog"][2]["efforts"] = efforts
+    d["selections"]["build"] = {"model": "mid", "effort": effort}
+    return d
+
+
+@pytest.mark.parametrize("style", ["top-level", "chat_template_kwargs"])
+def test_a_row_may_declare_none_where_its_style_sends_the_effort_as_written(project, style):
+    """A provider that takes ``reasoning_effort: none``: the row says so; the menu is not remapped."""
+    document = _declaring(style, ["none", "low", "medium", "high"], "none")
+    got = pm.validate_document(document, project_root=str(project))
+    assert got["catalog"][2]["efforts"] == ["none", "low", "medium", "high"]
+    assert got["selections"]["build"] == {"model": "mid", "effort": "none"}
+    assert pm.validate_project_models(_declaring(style, ["none"], "none"), project_root=str(project))
+
+
+@pytest.mark.parametrize(("efforts", "effort", "where", "needle"), [
+    (None, "none", "selections['build'].effort", "is not accepted"),  # undeclared: the library menu refuses it
+    (["low", "high"], "none", "selections['build'].effort", "is not accepted"),
+    (["low", "none"], "low", "catalog[2].efforts[1]", "library order"),  # none is the bottom of the menu
+    (["none", "none"], "none", "catalog[2].efforts[1]", "library order"),
+    (["none", "xhigh"], "none", "catalog[2].efforts[1]", "not in the library menu"),  # only none is added
+])
+def test_none_is_accepted_only_where_the_row_declares_it_first(project, efforts, effort, where, needle):
+    with pytest.raises(pm.ProjectModelsError) as caught:
+        pm.validate_project_models(_declaring("top-level", efforts, effort), project_root=str(project))
+    assert caught.value.where == where and needle in str(caught.value)
+
+
+def test_a_declared_none_does_not_widen_a_measured_menu(project):
+    """gemini-3.8-flash on openrouter.ai is measured with mandatory reasoning: no row can add none to it."""
+    document = _declaring("top-level", ["none", "low"], "low", base_url=_OPENROUTER,
+                          row={"model": "google/gemini-3.8-flash"})
+    with pytest.raises(pm.ProjectModelsError) as caught:
+        pm.validate_project_models(document, project_root=str(project))
+    assert caught.value.where == "catalog[2].efforts[0]" and "not in the library menu" in str(caught.value)
+    # the measured menu itself still binds
+    assert pm.validate_project_models(_declaring("top-level", ["low"], "low", base_url=_OPENROUTER,
+                                                 row={"model": "google/gemini-3.8-flash"}),
+                                      project_root=str(project))
+
+
+# --- the wire model --------------------------------------------------------------------------------
+
+
+def test_a_row_names_the_model_its_endpoint_takes_in_wire_model(project):
+    """``model`` stays the consumer's name; ``wire_model`` is what the endpoint is sent, and it round-trips."""
+    document = doc()
+    document["catalog"][2]["wire_model"] = "x"
+    pm.write_project_models(document, project_root=str(project))
+    text = stored(project).decode("utf-8")
+    assert "    model: deepseek/x\n    wire_model: x\n" in text  # canonical place: after model
+    got = pm.read_project_models(project_root=str(project)).document
+    assert got["catalog"][2] == {"id": "mid", "label": "Mid", "endpoint": "plain", "model": "deepseek/x",
+                                 "wire_model": "x"}
+    assert validate(load_schema(PROJECT_MODELS_V1), got) == ()
+    assert pm.validate_portable_document(document) == got
+
+
+def test_the_effort_menu_is_the_wire_models_menu(project):
+    """The menu is measured for what the endpoint receives, so binding reads it for the wire model."""
+    measured = _declaring("top-level", ["none", "low"], "low", base_url=_OPENROUTER,
+                          row={"model": "consumer/flash", "wire_model": "google/gemini-3.8-flash"})
+    with pytest.raises(pm.ProjectModelsError, match="not in the library menu"):
+        pm.validate_project_models(measured, project_root=str(project))
+    unmeasured = _declaring("top-level", ["none", "low"], "low", base_url=_OPENROUTER,
+                            row={"model": "google/gemini-3.8-flash", "wire_model": "vendor/unmeasured"})
+    assert pm.validate_project_models(unmeasured, project_root=str(project))
+
+
 def test_missing_pyyaml_is_a_named_dependency_error(project, monkeypatch):
     monkeypatch.setitem(sys.modules, "yaml", None)
     with pytest.raises(pm.ProjectModelsError) as caught:
@@ -680,3 +764,16 @@ def test_the_module_imports_no_harness_or_plugin_code():
     assert not {n for n in names if n.split(".")[0] in {"bootstrap_lib", "katsoft_contracts", "llm_kit"}}
     source = Path(pm.__file__).read_text(encoding="utf-8")
     assert ".claude" not in source
+
+
+def test_a_decimal_integer_over_4300_digits_is_refused_on_an_interpreter_without_that_limit():
+    """The format's digit limit is the reader's own rule, not the interpreter's (sys.set_int_max_str_digits)."""
+    text = ("version: 1\ncatalog:\n  - id: a\n    label: " + "1" * 4301 + "\n    endpoint: api\n    model: m\n").encode()
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(0)  # no limit
+    try:
+        with pytest.raises(pm.ProjectModelsError) as caught:
+            pm.parse_yaml_document(text)
+    finally:
+        sys.set_int_max_str_digits(previous)
+    assert caught.value.where == "" and "4300 digits" in str(caught.value)

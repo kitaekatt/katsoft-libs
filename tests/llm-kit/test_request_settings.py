@@ -76,6 +76,8 @@ def test_protocol_2_sends_the_wire_of_each_case(world, capsys, name):  # noqa: F
         return
     assert code == 0, (doc, err)
     assert _sent_fields(world.http[0]) == expect["fields"]
+    if "request" in case["expect"]:  # the body names the wire model, not the row's own name
+        assert world.http[0]["model"] == case["expect"]["request"]["wire_model"]
 
 
 def test_a_harness_row_refuses_a_temperature_it_cannot_send(world, capsys):  # noqa: F811

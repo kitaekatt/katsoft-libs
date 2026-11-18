@@ -7,7 +7,7 @@ it (the CLI is the composition root, :mod:`llm_kit.cli._compose`):
   personal layer (:func:`llm_kit.registry.project_models.read_resolved_models`)
   and its request settings (:func:`llm_kit.registry.request_settings.request_for`)
   to a :class:`~llm_kit.runs.compare.Candidate`: the catalogue row, endpoint,
-  wire model, effort, output cap and request parameters that
+  wire model (the row's ``wire_model``, else its ``model``), effort, output cap and request parameters that
   ``llm_kit.dispatch.invoke`` will send (``temperature``, ``top_p`` and a reasoning
   budget are in the candidate's extras under their wire names, so they are part of
   the reuse key);
@@ -146,8 +146,9 @@ def candidates(
         if classify(entry, entries=entries).cost_class == LOCAL:
             price: Optional[Price] = Price(0, 0)
         else:
-            price = pricing.get(row["model"])
-        out.append(Candidate(selection=name, row=row["id"], model=row["model"], endpoint=row["endpoint"],
+            price = pricing.get(project_models.wire_model_of(row))
+        out.append(Candidate(selection=name, row=row["id"], model=project_models.wire_model_of(row),
+                             endpoint=row["endpoint"],
                              effort=chosen.get("effort"), max_output_tokens=cap, extras=extras, price=price,
                              registry_sha256=resolved.project.sha256, prompt_only=not harness))
     return out

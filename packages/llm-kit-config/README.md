@@ -31,14 +31,14 @@ const { row, effort, source } = select(registry, "summary.write");
 
 ## Requests
 
-A selection can describe the whole request: the row's defaults, a named request profile (`requests`) that the selection's `request` names, and the call, in that order. `endpoints` in the file says where an endpoint takes the effort. `traits` are your labels for a row; they are never sent.
+A selection can describe the whole request: the row's defaults, a named request profile (`requests`) that the selection's `request` names, and the call, in that order. `endpoints` in the file says where an endpoint takes the effort, and may name its connection: `base_url` and `key_env`, the name of the environment variable that holds the key (never a key). A caller whose own configuration knows the endpoint uses its own connection. `traits` are your labels for a row; they are never sent. A row's optional `wire_model` is the model id its endpoint is sent when it differs from `model`; `request.wire_model` is always set (`model` when the row names none).
 
 ```js
 import { chatFields, resolveRequest } from "@katsoft/llm-kit-config";
 
 const request = resolveRequest(registry, "summary.write", { max_output_tokens: 300 });
-// {row, endpoint, model, effort, effort_style, temperature, top_p, max_output_tokens, reasoning_budget, extras, traits}
-const body = { model: request.model, messages, ...chatFields(request, { effortStyle: "top-level" }) };
+// {row, endpoint, model, wire_model, effort, effort_style, temperature, top_p, max_output_tokens, reasoning_budget, extras, traits}
+const body = { model: request.wire_model, messages, ...chatFields(request, { effortStyle: "top-level" }) };
 ```
 
 - `resolveRequest(registry, key, call)` layers the settings. Per setting the highest layer wins; `extras` merge per key. `effort` and `reasoning_budget` are one reasoning control: the highest layer that sets either wins. A call `effort: null` sends no reasoning control.

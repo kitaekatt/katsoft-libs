@@ -11,7 +11,7 @@ export { LlmKitConfigError } from "./errors.js";
 export type { LlmKitConfigErrorCode } from "./errors.js";
 export { applyOverlay, findSelection, loadOverlay, loadRegistry, parseOverlay, parseRegistry, select } from "./registry.js";
 export type {
-  CatalogRow, EffortStyle, JsonValue, Overlay, OverlayDocument, ParseOptions, ProjectModelsDocument, Registry,
+  CatalogRow, EffortStyle, Endpoint, JsonValue, Overlay, OverlayDocument, ParseOptions, ProjectModelsDocument, Registry,
   RequestDefaults, RequestProfile, Resolved, ResolvedSelection, Selection, SelectionSource,
 } from "./registry.js";
 export { chatFields, resolveRequest } from "./request.js";

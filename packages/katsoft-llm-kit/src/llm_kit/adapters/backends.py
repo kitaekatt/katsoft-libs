@@ -39,7 +39,7 @@ import time
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, ClassVar, Dict, Optional
+from typing import Any, Callable, ClassVar, Dict, Mapping, Optional
 
 from llm_kit.completion import halt
 from .claude_runner import (
@@ -154,6 +154,11 @@ class OpenAICompatBackend:
     lazy client build is guarded by double-checked locking -- see
     :meth:`_ensure_client`.
 
+    CONNECTION: ``connection`` (a ``models.connection_endpoint`` result, such
+    as a connection a project model file declares) replaces the lookup of
+    ``endpoint`` by name: the client uses its base URL and key, and a request
+    ``model`` is sent as given (no alias map).
+
     EFFORT: ``options.effort`` reaches the wire only when the endpoint resolves
     a delivering effort style (``model_endpoints.resolve_effort_style``);
     :func:`llm_kit.registry.effort.plan_effort` decides the extra body, and an
@@ -164,6 +169,7 @@ class OpenAICompatBackend:
     endpoint: Optional[str] = None
     project_root: Optional[Path] = None
     client: Any = None
+    connection: Optional[Mapping[str, Any]] = None
     name: str = field(default=ADAPTER_OPENAI_COMPAT, init=False)
     capabilities: ClassVar[Capabilities] = OPENAI_COMPAT_CAPABILITIES
     _build_lock: "threading.Lock" = field(
@@ -184,6 +190,8 @@ class OpenAICompatBackend:
         pays no config read. A concurrent first read may resolve twice; both
         reads agree, so no lock is taken.
         """
+        if self.connection is not None:
+            return dict(self.connection)
         if self._resolved_cache is None:
             from llm_kit.registry.models import resolve_endpoint  # noqa: PLC0415
 
@@ -324,7 +332,7 @@ class OpenAICompatBackend:
             if self.client is None:
                 from .client import make_openai_client  # noqa: PLC0415
                 self.client = make_openai_client(
-                    project_root=self.project_root, endpoint=self.endpoint
+                    project_root=self.project_root, endpoint=self.endpoint, resolved=self.connection
                 )
         return self.client
 
@@ -339,6 +347,8 @@ class OpenAICompatBackend:
         package, and both should propagate the same way here rather than
         dispatch the raw string and surface downstream as a provider 404.
         """
+        if self.connection is not None:
+            return model  # a connection has no alias map: the model is the exact wire model
         from llm_kit.registry.models import resolve_model  # noqa: PLC0415
         return resolve_model(
             model,

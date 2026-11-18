@@ -494,7 +494,7 @@ def test_the_cli_compares_selections_of_the_project_model_file_and_sends_each_on
                                  "effort": "high", "registry_sha256": flash["resolved"]["registry_sha256"]}
     assert flash["request"]["max_output_tokens"] == 200 and other["request"]["max_output_tokens"] is None
     assert other["request"]["extras"] == {"provider": {"sort": "latency"}}
-    assert flash["cost"] == {"usd": 0.0002, "source": "estimated"}  # openrouter usage.cost is an estimate here
+    assert flash["cost"] == {"usd": 0.0002, "source": "reported"}  # openrouter's usage.cost is the charge
     assert flash["provenance"]["tool"]["name"] == "llm-kit runs compare"
     assert out["stopped"] is None and out["cases"][0]["answers"]["b"]["text"] == "answer of example/model-b"
     code, out, _ = compare_cli(capsys, cli_project)
@@ -537,6 +537,55 @@ def test_the_cli_loads_a_file_with_an_unknown_endpoint_and_refuses_only_its_sele
     assert code == 1 and err["error"]["code"] == "invalid"
     assert "'f'" in err["error"]["message"] and "'nowhere'" in err["error"]["message"]
     assert cli_project.wire.requests == [] and list(cli_project.store.event_files()) == []
+
+
+def test_the_cli_compares_a_row_on_an_endpoint_the_file_connects(cli_project, capsys, monkeypatch):
+    """A machine that does not know the endpoint calls it on the file's connection, like any other row."""
+    models = {**_MODELS, "endpoints": {"direct": {"effort_style": "top-level",
+                                                  "base_url": "https://api.vendor.example/v1",
+                                                  "key_env": "VENDOR_API_KEY"}},
+              "catalog": [*_MODELS["catalog"], {"id": "direct", "label": "Direct", "endpoint": "direct",
+                                                "model": "vendor-model-1"}],
+              "selections": {**_MODELS["selections"], "d": {"model": "direct", "effort": "high"}}}
+    pm.write_project_models(models, project_root=str(cli_project.root))
+    pricing = json.loads((cli_project.root / "pricing.json").read_text(encoding="utf-8"))
+    (cli_project.root / "pricing.json").write_text(
+        json.dumps({**pricing, "vendor-model-1": {"input": 1.0, "output": 2.0, "context_window": 4000}}), encoding="utf-8")
+    code, out, err = compare_cli(capsys, cli_project, "--select", "d")  # with a and b
+    assert code == 0 and err is None, err
+    sent = [r for r in cli_project.wire.requests if r["model"] == "vendor-model-1"]
+    assert len(sent) == 2 and sent[0]["extra_body"] == {"reasoning_effort": "high"}
+    direct = next(r for r in cli_project.store.records() if r["selection"]["name"] == "d")
+    assert direct["resolved"]["endpoint"] == "direct" and direct["status"] == "ok"
+    assert direct["cost"]["source"] == "estimated"  # the file declares no billing: usage.cost is an estimate
+
+
+def test_the_cli_plans_prices_and_records_a_rows_wire_model(cli_project, capsys):
+    """The wire model is what is sent, priced and recorded, so it is in the reuse key; the row id stays the selection's."""
+    models = {**_MODELS, "endpoints": {"direct": {"effort_style": "top-level",
+                                                  "base_url": "https://api.vendor.example/v1",
+                                                  "key_env": "VENDOR_API_KEY"}},
+              "catalog": [*_MODELS["catalog"], {"id": "swift", "label": "Swift", "endpoint": "direct",
+                                                "model": "vendor/swift-1", "wire_model": "swift-1",
+                                                "efforts": ["none", "low"]}],
+              "selections": {**_MODELS["selections"], "k": {"model": "swift", "effort": "none"}}}
+    pm.write_project_models(models, project_root=str(cli_project.root))
+    pricing = json.loads((cli_project.root / "pricing.json").read_text(encoding="utf-8"))
+    (cli_project.root / "pricing.json").write_text(  # priced by the wire model only: the row's model has no entry
+        json.dumps({**pricing, "swift-1": {"input": 1.0, "output": 2.0, "context_window": 4000}}), encoding="utf-8")
+    code, out, err = compare_cli(capsys, cli_project, "--select", "k", "--dry-run")
+    assert code == 0 and err is None, err
+    assert {a["model"] for a in out["attempts"] if a["selection"] == "k"} == {"swift-1"}
+    code, out, err = compare_cli(capsys, cli_project, "--select", "k")
+    assert code == 0 and err is None, err
+    sent = [r for r in cli_project.wire.requests if r["model"] == "swift-1"]
+    assert len(sent) == 2 and sent[0]["extra_body"] == {"reasoning_effort": "none"}
+    assert not [r for r in cli_project.wire.requests if r["model"] == "vendor/swift-1"]
+    record = next(r for r in cli_project.store.records() if r["selection"]["name"] == "k")
+    assert record["selection"] == {"name": "k", "model": "swift", "effort": "none"}
+    assert record["resolved"]["model"] == "swift-1" and record["resolved"]["row"] == "swift"
+    renamed = {**record, "resolved": {**record["resolved"], "model": "vendor/swift-1"}}
+    assert rec.reuse_key(renamed) != rec.reuse_key(record)  # the key names the model that answered
 
 
 def test_the_cli_reports_a_budget_stop_with_the_partial_result(cli_project, capsys):

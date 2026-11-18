@@ -754,6 +754,9 @@
         "or-gemini-lite": {
           "adapter": "openai-compat",
           "base_url": "https://openrouter.ai/api/v1",
+          "billing": {
+            "mode": "provider-reported"
+          },
           "effort_delivery": {
             "deliverable": false,
             "emits": null,
@@ -770,6 +773,9 @@
         "or-gpt-mini": {
           "adapter": "openai-compat",
           "base_url": "https://openrouter.ai/api/v1",
+          "billing": {
+            "mode": "provider-reported"
+          },
           "effort_delivery": {
             "deliverable": false,
             "emits": null,
@@ -786,6 +792,9 @@
         "or-qwen": {
           "adapter": "openai-compat",
           "base_url": "https://openrouter.ai/api/v1",
+          "billing": {
+            "mode": "provider-reported"
+          },
           "effort_delivery": {
             "deliverable": false,
             "emits": null,

@@ -110,7 +110,7 @@ llm-kit runs compare --store STORE --prompt prompts/summary.md --cases cases.jso
 - `--select` names two or more selection keys of the project model file (`.llm-kit/models.yaml`, or `--models-file`). The personal layer (`models.local.yaml`) applies, so a candidate model can be a local selection. Two keys that resolve to the same model, effort and request are refused.
 - `--flow` is the writer's name for the work. It is part of the reuse key. `--content` is the content class of every record, and the store must accept it.
 - `--max-usd` is the budget of the group, failed and pending attempts included (see "Budget").
-- `--pricing` is a pricing table in the format of `llm_kit.pipeline.runtime.platform.load_pricing` (YAML or JSON): wire model -> `{input, output, cache_hit, context_window}`, in USD per one million tokens. An endpoint that the registry classifies `local` (unmetered and owned by self) costs 0 with no entry. Every other selection needs an entry; `{input: 0, output: 0}` declares it free (for example a harness on a subscription).
+- `--pricing` is a pricing table in the format of `llm_kit.pipeline.runtime.platform.load_pricing` (YAML or JSON): wire model (the row's `wire_model`, else its `model`) -> `{input, output, cache_hit, context_window}`, in USD per one million tokens. An endpoint that the registry classifies `local` (unmetered and owned by self) costs 0 with no entry. Every other selection needs an entry; `{input: 0, output: 0}` declares it free (for example a harness on a subscription).
 - `--max-output-tokens` sets the output cap of every transport call. Without it, a call uses the row's `max_output_tokens`, else its `request_defaults.extras.max_tokens`, else no cap. A harness takes no cap.
 - `--dry-run` prints the plan (each attempt with its action and cost bound, the spend so far, the total bound and whether it fits) and calls nothing. It writes no record.
 - `--scorer COMMAND...` takes every word after it, so give it last. `--group` and `--label` name the group; the default group id comes from the flow, the prompt hash, the cases and the selection names, so the same command run again continues the same group.
@@ -123,7 +123,7 @@ For each attempt that needs a call, the comparison writes the started event befo
 
 ### Reuse
 
-Two attempts with the same reuse key (`llm-kit.run-key/v1`) asked the same question of the same model. The key covers the flow, the case input, the prompt hash, the slot hash, the resolved endpoint, model and effort, and the whole request (output cap, request extras, the hash of the prompt as sent). A score also depends on its scorer. So for each attempt:
+Two attempts with the same reuse key (`llm-kit.run-key/v1`) asked the same question of the same model. The key covers the flow, the case input, the prompt hash, the slot hash, the resolved endpoint, wire model and effort, and the whole request (output cap, request extras, the hash of the prompt as sent). A score also depends on its scorer. So for each attempt:
 
 | The store holds | Action |
 |---|---|
@@ -143,7 +143,7 @@ The budget covers the whole group, across runs. The spend of the group is the su
 
 Before each call, the comparison adds the attempt's cost bound to the spend. If the sum is more than `--max-usd`, the attempt is not started and the run stops (`stopped: budget`). A record in the group that has no known cost and no bound label refuses the plan (`conflict`); use another group.
 
-The bound is a worst case: the UTF-8 byte count of the prompt plus 64 input tokens (a token holds at least one byte), at the larger of the input and cache rates, and the output cap (else the price's `context_window`) at the output rate. A selection with no price, or with neither a cap nor a context window, is refused before any write (`unpriced`). A harness adds its own context to the prompt, so only a free price is accepted for a harness. The recorded cost of a call is the provider's authoritative cost (`reported`), else the larger of the backend's estimate and the price of the reported tokens (`estimated`), else unknown. After a call, a recorded cost that takes the spend over the budget stops the run (`stopped: over-budget`).
+The bound is a worst case: the UTF-8 byte count of the prompt plus 64 input tokens (a token holds at least one byte), at the larger of the input and cache rates, and the output cap (else the price's `context_window`) at the output rate. A selection with no price, or with neither a cap nor a context window, is refused before any write (`unpriced`). A harness adds its own context to the prompt, so only a free price is accepted for a harness. The recorded cost of a call is the provider's authoritative cost (`reported`: a native `usage.cost` from an endpoint that declares `billing.mode: provider-reported`, as the shipped OpenRouter endpoints do, or a front door), else the larger of the backend's estimate and the price of the reported tokens (`estimated`), else unknown. After a call, a recorded cost that takes the spend over the budget stops the run (`stopped: over-budget`).
 
 A scorer's own model calls are not in the budget.
 

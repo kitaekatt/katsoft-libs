@@ -11,6 +11,11 @@ Some llm-kit files have readers in more than one language. Each of these formats
 | `llm-kit.run-import/v1` | `run-import.v1.schema.json` | `llm_kit.runs.store` | `tests/formats/run-record/cases.json` (`import_lines`) |
 | `llm-kit.run-store/v1` | `run-store.v1.schema.json` | `llm_kit.runs.store` | `tests/formats/run-record/cases.json` (`stores`) |
 | `llm-kit.compare-case/v1` | `compare-case.v1.schema.json` | `llm_kit.runs.compare` | `tests/formats/compare-case/cases.json` |
+| `llm-kit.fallback-chain/v1` | `fallback-chain.v1.schema.json` | `llm_kit.registry.fallback_chains` | `tests/formats/fallback-chain/cases.json` (`documents`, `mappings`) |
+| `llm-kit.call-record/v1` | `call-record.v1.schema.json` | none (the TypeScript `@katsoft/llm-kit-send` 0.2.0 writes it) | `tests/formats/call-record/cases.json` (`records`) |
+| `llm-kit.call-record/v2` | `call-record.v2.schema.json` | none (the TypeScript `@katsoft/llm-kit-send` 0.3.0 and later writes it) | `tests/formats/call-record/cases.v2.json` (`records`) |
+| `llm-kit.reply-entry/v1` | `reply-entry.v1.schema.json` | `llm_kit.registry.reply_cache` | `tests/formats/reply-entry/cases.json` (`entries`, `reader_rules`) |
+| `llm-kit.reply-key/v1` | none (a key, not a file) | `llm_kit.registry.reply_cache` | `tests/formats/reply-key/cases.json` (`parts`, `requests`, `same`, `different`) |
 
 `llm_kit.schema.formats.load_schema(format_id)` returns a schema. `llm_kit.schema.formats.SCHEMA_FILES` maps each format id to its file. The file's `$id` is the format id.
 
@@ -37,7 +42,9 @@ The tracked project model file, by default `.llm-kit/models.yaml`. The module do
    - `0x10000` is 65536. `0100` is octal 64. `65_536` is 65536. `1:30` is base 60 (90). `019` and `0o17` are strings.
    - A float needs a dot, and its exponent needs a sign: `1.0e+3` is 1000.0, but `1.0e3` and `1e3` are strings. `.5` is 0.5.
    - `2026-11-13` is a date. `!!str 2026-11-13` is a string.
-5. Refuse a duplicate key at any depth, a merge key (`<<`), `!!omap`, `!!pairs`, a control character that YAML does not allow (such as U+0007), an empty document and more than one document.
+   - Text that resolves to a type, or that an explicit tag names, but cannot be built is refused at `""`: an impossible date or time (`2026-02-30`, `2026-01-01 25:00:00`), a timestamp offset of a day or more, an integer with no digit (`0x_`), `!!bool foo`, `!!int abc`, `!!int ''`, `!!float abc`, `!!timestamp foo`.
+   - A decimal integer of more than 4300 digits is refused at `""` (Python's default limit, held on every interpreter). A shorter one outside the exact range is refused at its path (rule 7).
+5. Refuse a duplicate key at any depth, a merge key (`<<`), `!!omap`, `!!pairs`, a control character that YAML does not allow (such as U+0007), an empty document, more than one document, and a value that nests more than 100 levels of lists and mappings. The top-level mapping is level 1; an alias counts as a copy of its anchored value; where a container that holds itself repeats, it adds no level. A reader does not fail with a stack overflow on a deeper file.
 6. Anchors and aliases are allowed. An alias is a copy of its anchored value. A value that holds itself through an alias is refused at the path of the alias.
 7. Every value must be JSON data. Refuse a date, a timestamp, binary data, a set, a key that is not a string, NaN, infinity (also a float that overflows, such as `1.0e+400`) and an integer outside -(2**53 - 1) to 2**53 - 1. A YAML decimal stays a decimal: `65536.0` is not an integer, although a JSON reader can see 65536.
 
@@ -46,9 +53,12 @@ The tracked project model file, by default `.llm-kit/models.yaml`. The module do
 | Key | Rule |
 |---|---|
 | `version` | Required. The integer 1. |
-| `endpoints` | Optional mapping. A key is the endpoint of a catalog row (text with no leading or trailing whitespace). A value is `{effort_style}`, required, one of `top-level`, `ninfer`, `chat_template_kwargs`, `reasoning-object`, `unsupported`. See "Request settings". |
+| `endpoints` | Optional mapping. A key is the endpoint of a catalog row (text with no leading or trailing whitespace). A value is `{effort_style, base_url, key_env}`. `effort_style` is required, one of `top-level`, `ninfer`, `chat_template_kwargs`, `reasoning-object`, `unsupported`; see "Request settings". `base_url` and `key_env` are optional and come together: the endpoint's OpenAI-compatible connection (see "Connections"). |
+| endpoint `base_url` | `http://` or `https://`, then a host, then printable ASCII (U+0021 to U+007E) with no space. |
+| endpoint `key_env` | Required with `base_url` and refused without it. The name of the environment variable that holds the key (an ASCII letter or `_`, then ASCII letters, digits and `_`), or null for a keyless endpoint. The file never holds a key. |
 | `catalog` | Optional list of rows, default empty. Order is kept. |
-| row `id`, `label`, `endpoint`, `model` | Required text: not empty, no leading or trailing whitespace. Ids are unique. |
+| row `id`, `label`, `endpoint`, `model` | Required text: not empty, no leading or trailing whitespace. Ids are unique. `model` is the consumer's name for the model. |
+| row `wire_model` | Optional text, as `model` (null is refused; omit the key). The model id the endpoint is sent, when it differs from `model`: for example the vendor's own id beside the name the consumer routes on. Omitted: the wire model is `model`. Calls send the wire model, binding reads the effort menu for it, a price is looked up by it and a run record names it (`resolved.model`). |
 | row `efforts` | Optional list of non-empty text with no repeats. Omitted: the row does not narrow the effort menu. `[]`: the row has no effort. |
 | row `max_output_tokens` | Optional integer from 1 to 2**53 - 1. The row's default output cap. |
 | row `traits` | Optional list of non-empty text with no repeats: the consumer's labels for the row. No reader puts a trait in a request. |
@@ -66,9 +76,20 @@ No other keys are allowed at any level. Checks run in this order, so the first p
 Validation has two parts.
 
 - Portable validation checks the bytes, the YAML, the structure and the references above. It needs only the file. Python: `validate_portable_document(data)`. Every reader does this part.
-- Binding needs the machine's endpoint registry. It checks that each `endpoint` resolves, that each effort is in the library effort menu for that endpoint and model, and that `extras` has no reserved key (`model`, `messages`, `stream`, `api_key`, `reasoning_effort`, and `reasoning` on a `reasoning-object` endpoint). Python: `validate_document`, and every read and write. A row that declares no `efforts` accepts any non-empty effort in portable validation; binding checks it against the menu.
+- Binding needs the machine's endpoint registry. It checks that each `endpoint` resolves, that each effort is in the library effort menu for that endpoint and wire model, and that `extras` has no reserved key (`model`, `messages`, `stream`, `api_key`, `reasoning_effort`, and `reasoning` on a `reasoning-object` endpoint). Python: `validate_document`, and every read and write. A row that declares no `efforts` accepts any non-empty effort in portable validation; binding checks it against the menu.
 - An effort style that the file's `endpoints` declares wins over the registry's style of that endpoint for this project: the menu, the reserved `reasoning` extra and the wire all use it. A model with no measured profile then takes that style's menu (`reasoning-object` lists `none`). Binding refuses a style on a harness endpoint (`endpoints['x'].effort_style`).
-- An `endpoint` is the consumer's name; no reader refuses a file because the machine's registry does not know it. Binding loads a row whose endpoint resolves to no registry endpoint as unbound: the row keeps the checks that need no endpoint (its declared `efforts`, and the reserved extras other than `reasoning`), and the result names it (Python: `ProjectModels.unbound`, `Validation.unbound`). A call or a plan that resolves to an unbound row refuses at that point and names the row and the endpoint. Case `endpoint-is-opaque-text`.
+- The explicit `none` (reasoning off). The menu of `top-level` and `chat_template_kwargs` is `low`, `medium`, `high`, because not every server takes `none`. A row on one of these styles whose wire model has no measured profile may declare `none` as the first item of its `efforts`: the project states that its provider takes `reasoning_effort: none`, and it is sent as written. No other effort is added, and no value is remapped. A selection or call of a row that does not declare `none` is still refused for it, and a measured menu or a harness menu is never widened. Python tests: `test_project_models.py`, "an explicit `none` the row declares".
+- An `endpoint` is the consumer's name; no reader refuses a file because the machine's registry does not know it. Binding loads a row whose endpoint resolves to no registry endpoint, and that the file does not connect (see "Connections"), as unbound: the row keeps the checks that need no endpoint (its declared `efforts`, and the reserved extras other than `reasoning`), and the result names it (Python: `ProjectModels.unbound`, `Validation.unbound`). A call or a plan that resolves to an unbound row refuses at that point and names the row and the endpoint. Case `endpoint-is-opaque-text`.
+
+### Connections
+
+An `endpoints` entry with `base_url` and `key_env` is a connection: it says how to reach the endpoint on a machine that does not know it. Precedence, per endpoint name:
+
+1. The machine wins. When the machine's own configuration knows the name (Python: the model config layers, then the endpoint registry), a call uses the machine's connection whole: its base URL, its key, its billing mode. The file's `base_url` and `key_env` are not used on that machine.
+2. Otherwise the file's connection binds the rows on that endpoint. A call sends the row's wire model (`wire_model`, else `model`) as written (no alias map), with the key from the variable `key_env` names (Python: the environment, then the `.env` layers). The file declares no billing, so a native `usage.cost` is an estimate and the cost class is `metered`.
+3. Either way, the file's `effort_style` wins over the machine's style (see above).
+
+A reader that does not call endpoints (the TypeScript package) returns the connection in the normalized document and leaves the precedence to its caller. Python: `endpoint_connection(document, name)`; protocol 2 calls (and so `llm-kit runs compare`) use it. Cases `endpoint-connection` and `endpoint-connection-keyless`.
 
 Binding never accepts a file that portable validation refuses. When the file has no binding problem, full validation refuses it at the same path as portable validation.
 
@@ -80,11 +101,11 @@ Portable validation returns the normalized document: `version` 1, `endpoints` an
 
 A refusal has a code and a path. Every refusal of the file content has the code `invalid`. The path names the first problem:
 
-- `""`: the bytes or the YAML (not UTF-8, a YAML error, a duplicate key, a merge key, an empty file).
+- `""`: the bytes or the YAML (not UTF-8, a YAML error, a value that cannot be built, a duplicate key, a merge key, an empty file, nesting past 100 levels).
 - `document`: the top level is not a mapping, or has an unknown key.
 - `version`, `catalog`, `selections`.
 - `catalog[1]`, `catalog[1].id`, `catalog[1].efforts[0]`, `catalog[0].request_defaults.extras.a.b[2]`.
-- `endpoints['api']`, `endpoints['api'].effort_style`, `requests['p']`, `requests['p'].temperature`, `requests['p'].extras`, `catalog[0].traits[1]`, `catalog[0].request_defaults.extras`.
+- `endpoints['api']`, `endpoints['api'].effort_style`, `endpoints['api'].base_url`, `endpoints['api'].key_env`, `requests['p']`, `requests['p'].temperature`, `requests['p'].extras`, `catalog[0].traits[1]`, `catalog[0].request_defaults.extras`.
 - `selections['draft.write']`, `selections['draft.write'].model`, `selections['draft.write'].effort`, `selections['draft.write'].request`. A selection key is shown in single quotes. The cases use only keys without quotes, backslashes or control characters; for other keys the quoting is the reader's own.
 - `selections`: a key that is not a string.
 
@@ -124,7 +145,7 @@ The `extras` of a profile or a call may not hold `model`, `messages`, `stream`, 
 
 ### The resolved request
 
-`{row, endpoint, model, effort, effort_style, temperature, top_p, max_output_tokens, reasoning_budget, extras, traits}`. Every key is present; an unset value is null, `extras` is `{}` and `traits` is `[]` when empty. `effort_style` is the style the file's `endpoints` declares for the row's endpoint, else null (the client uses its own: Python uses the endpoint registry). A key no layer names is refused with code `unknown-selection` at `selections['<key>']`.
+`{row, endpoint, model, wire_model, effort, effort_style, temperature, top_p, max_output_tokens, reasoning_budget, extras, traits}`. Every key is present; `model` is the row's model and `wire_model` the model id its endpoint is sent (the row's `wire_model`, else `model`), which a sender puts in the body; an unset value is null, `extras` is `{}` and `traits` is `[]` when empty. `effort_style` is the style the file's `endpoints` declares for the row's endpoint, else null (the client uses its own: Python uses the endpoint registry). A key no layer names is refused with code `unknown-selection` at `selections['<key>']`.
 
 ### The wire (OpenAI-compatible chat)
 
@@ -170,7 +191,7 @@ Each status is one branch of the schema (`$defs/started`, `$defs/ok`, `$defs/inv
 | `failed` | No usable answer (transport, provider or runner error). | object or `null` | required |
 | `refused` | The model or provider declined. | object or `null` | required |
 
-Fields of every record: `format`, `id`, `status`, `started_at`, `flow` (the writer's name for the work), `group` (`id`, `kind` `compare`, `eval` or `single`, `label`), `case` (`id`, `input_sha256`, `input`), `prompt` (`id`, `file`, `sha256`, `slots_sha256`, or `null`), `selection` (`name`, `model`, `effort`), `resolved` (`row`, `endpoint`, `model`, `effort`, `registry_sha256`, or `null`), `request` (`max_output_tokens`, `extras`, `sent_sha256`), `inputs`, `provenance` (`git_sha`, `git_dirty`, `tool`, `files`, `scorer`), `content` and `labels`. A result adds `ended_at`, `output` (`text`, `parsed`), `error` (`code`, `message`), `scores`, `usage`, `cost` and `timings`.
+Fields of every record: `format`, `id`, `status`, `started_at`, `flow` (the writer's name for the work), `group` (`id`, `kind` `compare`, `eval` or `single`, `label`), `case` (`id`, `input_sha256`, `input`), `prompt` (`id`, `file`, `sha256`, `slots_sha256`, or `null`), `selection` (`name`, `model`, `effort`), `resolved` (`row`, `endpoint`, `model`, `effort`, `registry_sha256`, or `null`; `model` is the model the call sent, for a project model file row its wire model), `request` (`max_output_tokens`, `extras`, `sent_sha256`), `inputs`, `provenance` (`git_sha`, `git_dirty`, `tool`, `files`, `scorer`), `content` and `labels`. A result adds `ended_at`, `output` (`text`, `parsed`), `error` (`code`, `message`), `scores`, `usage`, `cost` and `timings`.
 
 Text bodies are not in the record. `case.input`, `output.text` and `scores[].note` are blob references `blob:<64 lowercase hex>`, the SHA-256 of the bytes in the store.
 
@@ -233,9 +254,53 @@ One line of a comparison case file (JSON Lines, UTF-8): `{"id": "c1", "slots": {
 
 Python: `llm_kit.runs.compare.read_cases(path_or_bytes)`.
 
+## llm-kit.fallback-chain/v1
+
+A JSON file that says which hosts serve a request in which order, and the same model's endpoint and input on each host. Readers: Python `llm_kit.registry.fallback_chains` (`read_fallback_chains`, `check_fallback_chains`, `map_input`); TypeScript `@katsoft/llm-kit-send` (`readFallbackChains`, `mapInput`, `runChain`).
+
+```json
+{"format": "llm-kit.fallback-chain/v1",
+ "chains": {"speech": {"steps": [{"host": "primary", "next_on": ["no_key", "account"]}, {"host": "backup", "next_on": []}]}},
+ "models": {"tts-1": {"hosts": {"primary": {"endpoint": "tts-1"},
+   "backup": {"endpoint": "vendor/tts-1", "from": "primary", "input": [{"key": "text"}, {"key": "speed", "number": true, "max": 2}]}}}}}
+```
+
+1. `chains.<name>.steps` lists hosts in order. `next_on` lists the failure classes that move on to the next step. `no_key` skips a step whose host has no key; a step with no key and no `no_key` stops the chain. Any other class is the caller's (for example `account`: the host refused the account for credits, quota or the key).
+2. Host ids match `^[a-z0-9][a-z0-9_.-]*$`, class ids `^[a-z][a-z0-9_]*$`. The hosts of one chain and the classes of one step are unique.
+3. `models.<id>.hosts.<host>.endpoint` is the model's endpoint on that host. `from` names the one host whose input the caller gives; `input` maps it. `from` names another host of the same model, and that host has no `from`: mappings do not compose. `input` needs `from`; `from` without `input` means the same input.
+4. An input rule has `key` and either `value` (a scalar constant) or a field source `from` (default `key`). A field rule may add `number: true` (copy only a number, never a boolean; with `max`, the smaller value) or `id_key` with `id_match: {"charset": "alnum", "length": n}` (a string of exactly n ASCII letters and digits goes under `id_key`, any other value under `key`). `max` needs `number`; `id_key` and `id_match` go together and not with `number`. The output fields (`key` and `id_key`) of one rule list are unique.
+5. Mapping: rules apply in order and the output keys are in rule order. A missing input field is left out; null is copied.
+
+## llm-kit.call-record/v1
+
+One sent try of a model call: `attempt`, `model`, `provider`, `ok`, `status`, `aborted`, `ms`, `inputTokens`, `cachedTokens`, `outputTokens`, `cost`, `providerMessage`. Every field is present (null when unknown); no prompt or reply text, and no other field. `@katsoft/llm-kit-send` gives one to `onCall` per try of `sendWithRetries`; its tests validate the records against this schema. A consumer that stores records adds its own fields in its own store, beside the record.
+
+## llm-kit.call-record/v2
+
+Version 1 plus the required `replayed` (boolean). `@katsoft/llm-kit-send` 0.3.0 and later gives one to `onCall` per try of `sendWithRetries`, and one record with `replayed: true` when the reply cache answered (nothing sent: tokens null, cost 0, `ms` the lookup time, `ok` and `status` read from the stored answer). Version 1 stays for records written before.
+
+## llm-kit.reply-key/v1
+
+The key of one request in the reply cache. Not a file: a hex string that both readers must compute the same way.
+
+1. `requestKey(parts)` is the lowercase hex SHA-256 of each part written as `<byte length>:<bytes>\n`, in order. A text part is its UTF-8 bytes.
+2. `stepKey(account, request, scope)` is `requestKey` over: the format id `llm-kit.reply-key/v1`; the account label (non-secret; it names the account of the key actually sent); one part `scope:<requestKey(scope)>` only when the scope is not empty; the method in upper case; the URL exactly as sent; the kept request headers as one part (only `accept` and `content-type`, names lowercased, sorted by name, one `name:value` line each, joined by LF); then the body.
+3. The body: a string or bytes is one part; no body is one empty part; a multipart form is four parts per entry, in form order: `name`, `filename`, `type`, bytes (a text field has an empty file name and type). The multipart boundary is not an input.
+4. Never inputs: `authorization`, `api-key`, `x-api-key`, `xi-api-key` and every other header outside the allowlist (attribution labels, `content-length`, `user-agent`, request ids).
+
+TypeScript: `requestKey`, `stepKey` in `@katsoft/llm-kit-send`. Python: `llm_kit.registry.reply_cache.request_key`, `step_key`.
+
+## llm-kit.reply-entry/v1
+
+One stored answer of the reply cache, kept by the consumer's `ReplyStore`. Layer `step` is one provider request's answer: `outcome` (`refusal`, or `success` of a deterministic request), `status`, `headers` (the kept response headers: `content-type` and the transport's named ones, never `set-cookie` or account headers), `body` (the bytes, base64; empty for a headers-only entry) and `at`. Layer `operation` is the final refusal of a consumer's whole operation: `outcome` `refusal`, `status`, `note` (`code` and the consumer's fixed text, never a prompt or a picture) and `at`. No other field.
+
+Reader rules beyond the schema: `body` is canonical base64 with padding; response header names are lowercase and not empty. A reader reports the path of the first rule an entry breaks (`entries[].path`).
+
+TypeScript: `readEntry` in `@katsoft/llm-kit-send` (throws `ReplyEntryError`). Python: `llm_kit.registry.reply_cache.read_entry` (raises `ReplyEntryError`).
+
 ## Change a format
 
 - A change that a v1 reader would read in a different way is a new format version: a new id, a new schema file and new cases. Keep the v1 files.
-- An optional key that a v1 reader refuses as unknown can be added to v1: every file without it reads as before, and an older reader refuses a file that uses it, so no reader misreads one. The request settings (`endpoints`, `requests`, row `traits`, typed `request_defaults`, selection `request`) were added this way.
+- An optional key that a v1 reader refuses as unknown can be added to v1: every file without it reads as before, and an older reader refuses a file that uses it, so no reader misreads one. The request settings (`endpoints`, `requests`, row `traits`, typed `request_defaults`, selection `request`) and the endpoint connection (`base_url`, `key_env`) were added this way.
 - Before you change a reader rule, add the case that shows it.
 - Every Python writer of a format checks its output against the schema in its tests (`tests/llm-kit/test_formats.py`, `tests/llm-kit/test_project_models*.py`).

@@ -1,0 +1,361 @@
+{
+ "format": "llm-kit.reply-entry/v1",
+ "schema": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/reply-entry.v1.schema.json",
+ "description": "Shared cases for the reply cache entry. `entries`: 'expect' is 'valid' or 'invalid' against the schema, and every reader (TypeScript readEntry, Python read_entry) accepts or refuses it the same way; a refused case names the `path` the reader reports. `reader_rules`: entries the schema accepts and every reader refuses with `path` (rules the schema subset cannot state). The contract is docs/reference/llm-kit-formats.md.",
+ "entries": [
+  {
+   "name": "step-refusal",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 400,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "eyJlcnJvciI6eyJtZXNzYWdlIjoibm8ifX0=",
+    "at": 1763400000000
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "step-success",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "success",
+    "status": 200,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "e30=",
+    "at": 1763400000000
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "step-headers-only",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 200,
+    "headers": {
+     "content-type": "image/png",
+     "x-host-violation": "true"
+    },
+    "body": "",
+    "at": 1763400000000
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "operation-refusal",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "operation",
+    "outcome": "refusal",
+    "status": 422,
+    "note": {
+     "code": "provider_safety",
+     "message": "The image was declined."
+    },
+    "at": 1763400000000
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "operation-empty-message",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "operation",
+    "outcome": "refusal",
+    "status": 422,
+    "note": {
+     "code": "refused",
+     "message": ""
+    },
+    "at": 1763400000000
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "wrong-format",
+   "entry": {
+    "format": "llm-kit.reply-entry/v2",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 400,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "eyJlcnJvciI6eyJtZXNzYWdlIjoibm8ifX0=",
+    "at": 1763400000000
+   },
+   "expect": "invalid",
+   "path": "format"
+  },
+  {
+   "name": "unknown-layer",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "run",
+    "outcome": "refusal",
+    "status": 400,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "eyJlcnJvciI6eyJtZXNzYWdlIjoibm8ifX0=",
+    "at": 1763400000000
+   },
+   "expect": "invalid",
+   "path": "layer"
+  },
+  {
+   "name": "operation-success",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "operation",
+    "outcome": "success",
+    "status": 422,
+    "note": {
+     "code": "provider_safety",
+     "message": "The image was declined."
+    },
+    "at": 1763400000000
+   },
+   "expect": "invalid",
+   "path": "outcome"
+  },
+  {
+   "name": "step-error-outcome",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "error",
+    "status": 400,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "eyJlcnJvciI6eyJtZXNzYWdlIjoibm8ifX0=",
+    "at": 1763400000000
+   },
+   "expect": "invalid",
+   "path": "outcome"
+  },
+  {
+   "name": "status-out-of-range",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 99,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "eyJlcnJvciI6eyJtZXNzYWdlIjoibm8ifX0=",
+    "at": 1763400000000
+   },
+   "expect": "invalid",
+   "path": "status"
+  },
+  {
+   "name": "status-not-integer",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 200.5,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "eyJlcnJvciI6eyJtZXNzYWdlIjoibm8ifX0=",
+    "at": 1763400000000
+   },
+   "expect": "invalid",
+   "path": "status"
+  },
+  {
+   "name": "step-missing-body",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 400,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "at": 1763400000000
+   },
+   "expect": "invalid",
+   "path": "body"
+  },
+  {
+   "name": "step-with-note",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 400,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "eyJlcnJvciI6eyJtZXNzYWdlIjoibm8ifX0=",
+    "at": 1763400000000,
+    "note": {
+     "code": "x",
+     "message": "y"
+    }
+   },
+   "expect": "invalid",
+   "path": "note"
+  },
+  {
+   "name": "operation-with-body",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "operation",
+    "outcome": "refusal",
+    "status": 422,
+    "note": {
+     "code": "provider_safety",
+     "message": "The image was declined."
+    },
+    "at": 1763400000000,
+    "body": ""
+   },
+   "expect": "invalid",
+   "path": "body"
+  },
+  {
+   "name": "header-not-string",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 400,
+    "headers": {
+     "content-type": 1
+    },
+    "body": "eyJlcnJvciI6eyJtZXNzYWdlIjoibm8ifX0=",
+    "at": 1763400000000
+   },
+   "expect": "invalid",
+   "path": "headers.content-type"
+  },
+  {
+   "name": "note-extra-field",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "operation",
+    "outcome": "refusal",
+    "status": 422,
+    "note": {
+     "code": "x",
+     "message": "y",
+     "prompt": "secret"
+    },
+    "at": 1763400000000
+   },
+   "expect": "invalid",
+   "path": "note.prompt"
+  },
+  {
+   "name": "negative-time",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 400,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "eyJlcnJvciI6eyJtZXNzYWdlIjoibm8ifX0=",
+    "at": -1
+   },
+   "expect": "invalid",
+   "path": "at"
+  },
+  {
+   "name": "not-an-object",
+   "entry": [
+    {
+     "format": "llm-kit.reply-entry/v1",
+     "layer": "step",
+     "outcome": "refusal",
+     "status": 400,
+     "headers": {
+      "content-type": "application/json"
+     },
+     "body": "eyJlcnJvciI6eyJtZXNzYWdlIjoibm8ifX0=",
+     "at": 1763400000000
+    }
+   ],
+   "expect": "invalid",
+   "path": "$"
+  },
+  {
+   "name": "note-code-empty",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "operation",
+    "outcome": "refusal",
+    "status": 422,
+    "note": {
+     "code": "",
+     "message": "m"
+    },
+    "at": 1763400000000
+   },
+   "expect": "invalid",
+   "path": "note.code"
+  }
+ ],
+ "reader_rules": [
+  {
+   "name": "body-not-base64",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 400,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "not base64!",
+    "at": 1763400000000
+   },
+   "path": "body"
+  },
+  {
+   "name": "body-without-padding",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 400,
+    "headers": {
+     "content-type": "application/json"
+    },
+    "body": "e30",
+    "at": 1763400000000
+   },
+   "path": "body"
+  },
+  {
+   "name": "header-name-uppercase",
+   "entry": {
+    "format": "llm-kit.reply-entry/v1",
+    "layer": "step",
+    "outcome": "refusal",
+    "status": 400,
+    "headers": {
+     "Content-Type": "application/json"
+    },
+    "body": "eyJlcnJvciI6eyJtZXNzYWdlIjoibm8ifX0=",
+    "at": 1763400000000
+   },
+   "path": "headers.Content-Type"
+  }
+ ]
+}

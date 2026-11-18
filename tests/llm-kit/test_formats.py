@@ -181,7 +181,8 @@ def test_the_registry_cases_cover_the_ruling_list():
                    "duplicate-top-level-key", "yaml-1.1-integer-forms", "crlf-line-ends", "cr-line-ends",
                    "byte-order-mark", "malformed-utf-8", "omitted-versus-empty-efforts",
                    "omitted-versus-null-effort", "local-only-key", "local-equal-override",
-                   "anchors-and-aliases", "alias-cycle", "integer-above-exact-range", "yaml-1.1-float-forms"):
+                   "anchors-and-aliases", "alias-cycle", "integer-above-exact-range", "yaml-1.1-float-forms",
+                   "wire-model", "wire-model-empty", "declared-none-effort"):
         assert needed in names, needed
 
 
@@ -292,7 +293,7 @@ def test_the_request_cases_cover_every_rule():
                    "project-style-places-effort-none", "row-budget-when-no-effort",
                    "selection-effort-beats-row-budget", "call-effort-beats-profile-budget",
                    "call-null-effort-sends-no-reasoning", "call-effort-and-budget", "local-layer-selection",
-                   "unknown-selection"):
+                   "unknown-selection", "wire-model-is-resolved"):
         assert needed in names, needed
     assert REQUEST_CASES["format"] == formats.PROJECT_MODELS_V1
 
@@ -490,7 +491,7 @@ def test_compare_case(name):
 def test_public_surface_lists_the_format_names():
     surface = json.loads((PACKAGE / "public-surface.json").read_text(encoding="utf-8"))
     names = {e["name"] for e in surface["entries"] if e["status"] == "public"}
-    for module_name in ("llm_kit.schema.formats", "llm_kit.registry.project_models"):
+    for module_name in ("llm_kit.schema.formats", "llm_kit.registry.project_models", "llm_kit.registry.fallback_chains", "llm_kit.registry.reply_cache"):
         assert module_name in surface["covers"]
         module = __import__(module_name, fromlist=["__all__"])
         for name in module.__all__:

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0. The resolved request (llm_kit.registry.request_settings) is listed whole and is not yet released. The agent-session pieces (llm_kit.completion.session_types, llm_kit.adapters.claude_stream, llm_kit.adapters.claude_session, llm_kit.jobs.session, llm_kit.storage.file_lock) and the jobs runner (llm_kit.jobs.run) are listed whole from 1.26.0. The run records, run store, derived index and runs CLI (llm_kit.runs, llm_kit.runs.record, llm_kit.runs.store, llm_kit.runs.index, llm_kit.cli.runs) are listed whole from 1.26.0. The comparison (llm_kit.runs.compare) is listed whole and is not yet released. The branch-mode unit registry and workspaces (llm_kit.jobs.units, llm_kit.jobs.workspace) are listed whole and are not yet released.",
+  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0. The resolved request (llm_kit.registry.request_settings) is listed whole and is not yet released. The agent-session pieces (llm_kit.completion.session_types, llm_kit.adapters.claude_stream, llm_kit.adapters.claude_session, llm_kit.jobs.session, llm_kit.storage.file_lock) and the jobs runner (llm_kit.jobs.run) are listed whole from 1.26.0. The run records, run store, derived index and runs CLI (llm_kit.runs, llm_kit.runs.record, llm_kit.runs.store, llm_kit.runs.index, llm_kit.cli.runs) are listed whole from 1.26.0. The comparison (llm_kit.runs.compare) is listed whole and is not yet released. The branch-mode unit registry and workspaces (llm_kit.jobs.units, llm_kit.jobs.workspace) are listed whole and are not yet released. The fallback chain reader (llm_kit.registry.fallback_chains) and the reply cache reader (llm_kit.registry.reply_cache) are listed whole from 1.35.0.",
   "package": "llm_kit",
   "current_version_file": ".claude-plugin/plugin.json",
   "covers": [
@@ -25,7 +25,9 @@
     "llm_kit.runs.store",
     "llm_kit.runs.index",
     "llm_kit.runs.compare",
-    "llm_kit.cli.runs"
+    "llm_kit.cli.runs",
+    "llm_kit.registry.fallback_chains",
+    "llm_kit.registry.reply_cache"
   ],
   "entries": [
     {
@@ -2723,6 +2725,14 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.schema.formats.FALLBACK_CHAIN_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.CALL_RECORD_V1",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.registry.project_models.SCHEMA",
       "status": "public"
     },
@@ -2796,6 +2806,10 @@
     },
     {
       "name": "llm_kit.registry.project_models.library_effort_menu",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.wire_model_of",
       "status": "public"
     },
     {
@@ -2940,6 +2954,14 @@
     },
     {
       "name": "llm_kit.registry.project_models.endpoint_styles",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.endpoint_connection",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.project_models.PROJECT_ENDPOINT",
       "status": "public"
     },
     {
@@ -4044,6 +4066,58 @@
     },
     {
       "name": "llm_kit.cli.runs.run",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.fallback_chains.FallbackChainError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.fallback_chains.check_fallback_chains",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.fallback_chains.map_input",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.fallback_chains.read_fallback_chains",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.CALL_RECORD_V2",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.REPLY_ENTRY_V1",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.FormPart",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.REPLY_ENTRY_FORMAT",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.REPLY_KEY_FORMAT",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.ReplyEntryError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.read_entry",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.request_key",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.reply_cache.step_key",
       "status": "public"
     }
   ]

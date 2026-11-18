@@ -2,6 +2,44 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
+## 1.3.0
+
+Added:
+
+- `parseRegistry` reads a row's optional `wire_model`: the model id the row's endpoint is sent, when it differs from `model`. `CatalogRow.wire_model`.
+- `resolveRequest` returns `wire_model`, always set (the row's `wire_model`, else `model`); a sender puts it in the body. `ResolvedRequest.wire_model`. A caller that compares a whole resolved request sees the new key. 4 new shared cases in `tests/formats/project-models/cases.json` and 1 in `requests.json`; every request case states the new key.
+- A row may declare the explicit effort `none`; the reader accepts it as any declared effort, and `chatFields` sends it as written on `top-level` (Python binding holds it to the library rule: `docs/reference/llm-kit-formats.md`, "Portable validation and binding"). 1 new shared case.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. The JSDoc of `CatalogRow.wire_model` and `ResolvedRequest.wire_model` states them; no export is added, so `public-surface.json` is unchanged; `test/surface.test.mjs` passes.
+2. Semver release with a changelog: pass. Version 1.3.0 in `package.json` and `package-lock.json` (a minor release); this entry.
+3. Tests for each public function: pass. `test/cases.test.mjs` and `test/requests.test.mjs` run the new cases through `parseRegistry`, `resolveRequest` and `chatFields`; they fail before the change.
+4. No client names, prompts or data: pass.
+5. Examples run without a client app: pass. No example changed; the README example sends `request.wire_model`.
+6. JSON Schema for each file format: pass. The schema states `wire_model`; the cases validate with ajv.
+7. Gate before adoption: pass. Lines 1 to 6 pass.
+
+## 1.2.0
+
+Added:
+
+- `parseRegistry` reads an endpoint's connection: `endpoints.<name>.base_url` and `key_env` (both or neither; `key_env` is an environment variable name or null, never a key), returned in the normalized document. New type `Endpoint`. The reader does not call endpoints; a caller whose own configuration knows the endpoint uses its own connection (`docs/reference/llm-kit-formats.md`, "Connections"). 10 new shared cases.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. `Endpoint` has a JSDoc block and is in `public-surface.json`; `test/surface.test.mjs` passes.
+2. Semver release with a changelog: pass. Version 1.2.0 in `package.json` and `package-lock.json` (a minor release); this entry.
+3. Tests for each public function: pass. `test/cases.test.mjs` runs the new cases through `parseRegistry`.
+4. No client names, prompts or data: pass.
+5. Examples run without a client app: pass. No example changed.
+6. JSON Schema for each file format: pass. The schema states both endpoint shapes; the cases validate with ajv.
+7. Gate before adoption: pass. Lines 1 to 6 pass, so a client may adopt `Endpoint` and the connection keys from this version on.
+
+Fixed:
+
+- `parseRegistry` and `parseOverlay` refuse, at the path `""`, a decimal integer of more than 4300 digits (as the Python reader does) and a value that nests more than 100 levels of lists and mappings (aliases count as copies). A far deeper file threw a `RangeError` (stack overflow) instead of an `LlmKitConfigError`. 16 new shared cases in `tests/formats/project-models/cases.json`.
+
 ## 1.1.0
 
 The project model file can describe the whole request of a selection, so a client builds it from the file alone. The format stays `llm-kit.project-models/v1`: every key below is optional, and a file without them reads as before.

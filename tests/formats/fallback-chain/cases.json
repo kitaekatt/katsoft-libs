@@ -1,0 +1,1780 @@
+{
+ "format": "llm-kit.fallback-chain/v1",
+ "schema": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/fallback-chain.v1.schema.json",
+ "description": "Shared cases for every reader of llm-kit fallback chain files. 'documents': each 'document' is a parsed file; 'expect' is 'valid' or 'invalid' (the schema or a reader rule refuses it). 'mappings': apply 'rules' to 'input' with the reader's input mapping; 'json' is the result serialized with no spaces in key order. The contract is docs/reference/llm-kit-formats.md.",
+ "documents": [
+  {
+   "name": "voice-chain",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "tts-1": {
+      "hosts": {
+       "backup": {
+        "endpoint": "vendor/tts-1"
+       },
+       "last": {
+        "endpoint": "tts-1/speech",
+        "from": "backup",
+        "input": [
+         {
+          "key": "text"
+         },
+         {
+          "key": "voice",
+          "id_key": "custom_voice_id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 20
+          }
+         },
+         {
+          "key": "stability"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "empty-chains-and-models",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {},
+    "models": {}
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "from-without-input",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a"
+       }
+      }
+     }
+    }
+   },
+   "expect": "valid",
+   "note": "The b input is the a input unchanged."
+  },
+  {
+   "name": "constant-rule",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "loud",
+          "value": true
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "null-constant",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "seed",
+          "value": null
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "number-with-max",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "duration",
+          "from": "seconds",
+          "number": true,
+          "max": 22
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "dotted-host-id",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "api.v2": {
+        "endpoint": "e"
+       }
+      }
+     }
+    }
+   },
+   "expect": "valid"
+  },
+  {
+   "name": "wrong-format",
+   "note": "The format id is exact.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v2",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "tts-1": {
+      "hosts": {
+       "backup": {
+        "endpoint": "vendor/tts-1"
+       },
+       "last": {
+        "endpoint": "tts-1/speech",
+        "from": "backup",
+        "input": [
+         {
+          "key": "text"
+         },
+         {
+          "key": "voice",
+          "id_key": "custom_voice_id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 20
+          }
+         },
+         {
+          "key": "stability"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "missing-models",
+   "note": "chains and models are required.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {}
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "unknown-top-field",
+   "note": "No other field.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "tts-1": {
+      "hosts": {
+       "backup": {
+        "endpoint": "vendor/tts-1"
+       },
+       "last": {
+        "endpoint": "tts-1/speech",
+        "from": "backup",
+        "input": [
+         {
+          "key": "text"
+         },
+         {
+          "key": "voice",
+          "id_key": "custom_voice_id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 20
+          }
+         },
+         {
+          "key": "stability"
+         }
+        ]
+       }
+      }
+     }
+    },
+    "extra": 1
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "empty-steps",
+   "note": "A chain has a step.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "c": {
+      "steps": []
+     }
+    },
+    "models": {
+     "tts-1": {
+      "hosts": {
+       "backup": {
+        "endpoint": "vendor/tts-1"
+       },
+       "last": {
+        "endpoint": "tts-1/speech",
+        "from": "backup",
+        "input": [
+         {
+          "key": "text"
+         },
+         {
+          "key": "voice",
+          "id_key": "custom_voice_id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 20
+          }
+         },
+         {
+          "key": "stability"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "step-without-next-on",
+   "note": "next_on is required, [] included.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "c": {
+      "steps": [
+       {
+        "host": "a"
+       }
+      ]
+     }
+    },
+    "models": {
+     "tts-1": {
+      "hosts": {
+       "backup": {
+        "endpoint": "vendor/tts-1"
+       },
+       "last": {
+        "endpoint": "tts-1/speech",
+        "from": "backup",
+        "input": [
+         {
+          "key": "text"
+         },
+         {
+          "key": "voice",
+          "id_key": "custom_voice_id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 20
+          }
+         },
+         {
+          "key": "stability"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "uppercase-host",
+   "note": "Host ids are lowercase.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "c": {
+      "steps": [
+       {
+        "host": "Primary",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "tts-1": {
+      "hosts": {
+       "backup": {
+        "endpoint": "vendor/tts-1"
+       },
+       "last": {
+        "endpoint": "tts-1/speech",
+        "from": "backup",
+        "input": [
+         {
+          "key": "text"
+         },
+         {
+          "key": "voice",
+          "id_key": "custom_voice_id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 20
+          }
+         },
+         {
+          "key": "stability"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "host-twice-in-chain",
+   "note": "A host is one step of a chain.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "c": {
+      "steps": [
+       {
+        "host": "a",
+        "next_on": [
+         "x"
+        ]
+       },
+       {
+        "host": "a",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "tts-1": {
+      "hosts": {
+       "backup": {
+        "endpoint": "vendor/tts-1"
+       },
+       "last": {
+        "endpoint": "tts-1/speech",
+        "from": "backup",
+        "input": [
+         {
+          "key": "text"
+         },
+         {
+          "key": "voice",
+          "id_key": "custom_voice_id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 20
+          }
+         },
+         {
+          "key": "stability"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "class-twice",
+   "note": "A class once per step.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "c": {
+      "steps": [
+       {
+        "host": "a",
+        "next_on": [
+         "x",
+         "x"
+        ]
+       }
+      ]
+     }
+    },
+    "models": {
+     "tts-1": {
+      "hosts": {
+       "backup": {
+        "endpoint": "vendor/tts-1"
+       },
+       "last": {
+        "endpoint": "tts-1/speech",
+        "from": "backup",
+        "input": [
+         {
+          "key": "text"
+         },
+         {
+          "key": "voice",
+          "id_key": "custom_voice_id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 20
+          }
+         },
+         {
+          "key": "stability"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "bad-class-id",
+   "note": "Class ids are a-z, 0-9, _.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "c": {
+      "steps": [
+       {
+        "host": "a",
+        "next_on": [
+         "No-Key"
+        ]
+       }
+      ]
+     }
+    },
+    "models": {
+     "tts-1": {
+      "hosts": {
+       "backup": {
+        "endpoint": "vendor/tts-1"
+       },
+       "last": {
+        "endpoint": "tts-1/speech",
+        "from": "backup",
+        "input": [
+         {
+          "key": "text"
+         },
+         {
+          "key": "voice",
+          "id_key": "custom_voice_id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 20
+          }
+         },
+         {
+          "key": "stability"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "model-without-hosts",
+   "note": "A model has a host.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {}
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "empty-endpoint",
+   "note": "An endpoint is non-empty.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": ""
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "from-unknown-host",
+   "note": "from names another host of the model.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e",
+        "from": "z"
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "from-itself",
+   "note": "from names another host.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e",
+        "from": "a"
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "composed-mapping",
+   "note": "Mappings do not compose.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e",
+        "from": "a"
+       },
+       "c": {
+        "endpoint": "e",
+        "from": "b"
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "input-without-from",
+   "note": "input needs from.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e",
+        "input": [
+         {
+          "key": "x"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "value-and-from",
+   "note": "A constant has no source.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "x",
+          "value": 1,
+          "from": "y"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "value-is-object",
+   "note": "A constant is a scalar.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "x",
+          "value": {
+           "a": 1
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "max-without-number",
+   "note": "max needs number.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "x",
+          "max": 3
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "number-false",
+   "note": "number is only true.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "x",
+          "number": false
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "id-key-without-match",
+   "note": "id_key and id_match go together.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "voice",
+          "id_key": "voice_id"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "id-match-with-number",
+   "note": "Not with number.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "voice",
+          "number": true,
+          "id_key": "voice_id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 3
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "id-match-other-charset",
+   "note": "Only alnum.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "voice",
+          "id_key": "voice_id",
+          "id_match": {
+           "charset": "hex",
+           "length": 3
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "id-match-zero-length",
+   "note": "Length 1 or more.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "voice",
+          "id_key": "voice_id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 0
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "duplicate-output",
+   "note": "Output fields are unique.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e",
+        "from": "a",
+        "input": [
+         {
+          "key": "x"
+         },
+         {
+          "key": "y",
+          "from": "x"
+         },
+         {
+          "key": "x",
+          "value": 1
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "duplicate-output-id-key",
+   "note": "id_key counts as an output field.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e",
+        "from": "a",
+        "input": [
+         {
+          "key": "id"
+         },
+         {
+          "key": "voice",
+          "id_key": "id",
+          "id_match": {
+           "charset": "alnum",
+           "length": 2
+          }
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  },
+  {
+   "name": "unknown-rule-field",
+   "note": "No other rule field.",
+   "document": {
+    "format": "llm-kit.fallback-chain/v1",
+    "chains": {
+     "speech": {
+      "steps": [
+       {
+        "host": "primary",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "backup",
+        "next_on": [
+         "no_key",
+         "account"
+        ]
+       },
+       {
+        "host": "last",
+        "next_on": []
+       }
+      ]
+     }
+    },
+    "models": {
+     "m": {
+      "hosts": {
+       "a": {
+        "endpoint": "e"
+       },
+       "b": {
+        "endpoint": "e2",
+        "from": "a",
+        "input": [
+         {
+          "key": "x",
+          "regex": "a+"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "expect": "invalid"
+  }
+ ],
+ "mappings": [
+  {
+   "name": "id-voice",
+   "rules": [
+    {
+     "key": "text"
+    },
+    {
+     "key": "voice",
+     "id_key": "custom_voice_id",
+     "id_match": {
+      "charset": "alnum",
+      "length": 20
+     }
+    },
+    {
+     "key": "stability"
+    }
+   ],
+   "input": {
+    "text": "Hi.",
+    "voice": "EXAVITQu4vr4xnSDxMaL",
+    "stability": 0.5,
+    "similarity_boost": 0.75
+   },
+   "json": "{\"text\":\"Hi.\",\"custom_voice_id\":\"EXAVITQu4vr4xnSDxMaL\",\"stability\":0.5}",
+   "note": "A 20-letter alnum string goes under id_key; unlisted fields are dropped."
+  },
+  {
+   "name": "name-voice",
+   "rules": [
+    {
+     "key": "text"
+    },
+    {
+     "key": "voice",
+     "id_key": "custom_voice_id",
+     "id_match": {
+      "charset": "alnum",
+      "length": 20
+     }
+    },
+    {
+     "key": "stability"
+    }
+   ],
+   "input": {
+    "text": "Hi.",
+    "voice": "Sarah",
+    "stability": 0
+   },
+   "json": "{\"text\":\"Hi.\",\"voice\":\"Sarah\",\"stability\":0}"
+  },
+  {
+   "name": "id-wrong-length",
+   "rules": [
+    {
+     "key": "text"
+    },
+    {
+     "key": "voice",
+     "id_key": "custom_voice_id",
+     "id_match": {
+      "charset": "alnum",
+      "length": 20
+     }
+    },
+    {
+     "key": "stability"
+    }
+   ],
+   "input": {
+    "voice": "EXAVITQu4vr4xnSDxMaLx"
+   },
+   "json": "{\"voice\":\"EXAVITQu4vr4xnSDxMaLx\"}"
+  },
+  {
+   "name": "id-not-alnum",
+   "rules": [
+    {
+     "key": "text"
+    },
+    {
+     "key": "voice",
+     "id_key": "custom_voice_id",
+     "id_match": {
+      "charset": "alnum",
+      "length": 20
+     }
+    },
+    {
+     "key": "stability"
+    }
+   ],
+   "input": {
+    "voice": "EXAVITQu4vr4xnSDxMa-"
+   },
+   "json": "{\"voice\":\"EXAVITQu4vr4xnSDxMa-\"}"
+  },
+  {
+   "name": "missing-left-out-null-copied",
+   "rules": [
+    {
+     "key": "a"
+    },
+    {
+     "key": "b"
+    },
+    {
+     "key": "c"
+    }
+   ],
+   "input": {
+    "b": null
+   },
+   "json": "{\"b\":null}"
+  },
+  {
+   "name": "number-clamped-renamed",
+   "rules": [
+    {
+     "key": "text"
+    },
+    {
+     "key": "duration",
+     "from": "duration_seconds",
+     "number": true,
+     "max": 22
+    },
+    {
+     "key": "format"
+    }
+   ],
+   "input": {
+    "format": "mp3",
+    "duration_seconds": 30,
+    "text": "Rain."
+   },
+   "json": "{\"text\":\"Rain.\",\"duration\":22,\"format\":\"mp3\"}",
+   "note": "Output order is rule order, not input order."
+  },
+  {
+   "name": "number-under-max",
+   "rules": [
+    {
+     "key": "d",
+     "number": true,
+     "max": 22
+    }
+   ],
+   "input": {
+    "d": 4
+   },
+   "json": "{\"d\":4}"
+  },
+  {
+   "name": "number-not-a-number",
+   "rules": [
+    {
+     "key": "d",
+     "number": true,
+     "max": 22
+    }
+   ],
+   "input": {
+    "d": "30"
+   },
+   "json": "{}"
+  },
+  {
+   "name": "number-not-a-boolean",
+   "rules": [
+    {
+     "key": "d",
+     "number": true
+    }
+   ],
+   "input": {
+    "d": true
+   },
+   "json": "{}"
+  },
+  {
+   "name": "constant-last",
+   "rules": [
+    {
+     "key": "prompt"
+    },
+    {
+     "key": "instrumental",
+     "value": true
+    }
+   ],
+   "input": {
+    "prompt": "Piano.",
+    "instrumental": false
+   },
+   "json": "{\"prompt\":\"Piano.\",\"instrumental\":true}"
+  }
+ ]
+}

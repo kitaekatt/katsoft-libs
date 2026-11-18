@@ -97,13 +97,17 @@ def write_inputs(base: Path, project: Path, units: Path) -> tuple[Path, Path, Pa
     registry.write_text(f"version: 1\nmodels:\n  {ENDPOINT}:\n    harness: claude\n    model: haiku\n",
                         encoding="ascii")
 
-    # The launcher runs this file as the stand-in. The override needs one program path.
-    launcher = base / "fake-claude"
-    launcher.write_text(
-        f'#!/bin/sh\nexec "{sys.executable}" -I "{Path(__file__).resolve()}" --as-fake-claude "$@"\n',
-        encoding="ascii",
-    )
-    launcher.chmod(0o755)
+    # The launcher runs this file as the stand-in. The override needs one program path: a shell
+    # script on POSIX, a batch file on Windows (llm-kit starts a `.cmd` through `cmd /c`).
+    script = Path(__file__).resolve()
+    if os.name == "nt":
+        launcher = base / "fake-claude.cmd"
+        launcher.write_text(f'@"{sys.executable}" -I "{script}" --as-fake-claude %*\r\n', encoding="ascii")
+    else:
+        launcher = base / "fake-claude"
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" -I "{script}" --as-fake-claude "$@"\n',
+                            encoding="ascii")
+        launcher.chmod(0o755)
 
     # JSON scalars are valid YAML, so json.dumps quotes every value safely.
     contract = [sys.executable, "-I", "-c", "import sys; sys.exit(0 if sys.stdin.read().startswith('done') else 1)"]

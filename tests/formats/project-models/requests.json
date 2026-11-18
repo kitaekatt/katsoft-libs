@@ -29,6 +29,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": null,
           "effort_style": null,
           "temperature": 0.7,
@@ -88,6 +89,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": "low",
           "effort_style": null,
           "temperature": 0,
@@ -152,6 +154,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": "high",
           "effort_style": null,
           "temperature": 0,
@@ -218,6 +221,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": null,
           "effort_style": null,
           "temperature": 1.2,
@@ -266,6 +270,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": null,
           "effort_style": null,
           "temperature": null,
@@ -310,6 +315,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": null,
           "effort_style": null,
           "temperature": 0.5,
@@ -361,6 +367,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": null,
           "effort_style": null,
           "temperature": null,
@@ -450,6 +457,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": null,
           "effort_style": null,
           "temperature": null,
@@ -493,6 +501,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": "none",
           "effort_style": "reasoning-object",
           "temperature": null,
@@ -537,6 +546,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": "low",
           "effort_style": "reasoning-object",
           "temperature": null,
@@ -582,6 +592,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": null,
           "effort_style": "reasoning-object",
           "temperature": null,
@@ -627,6 +638,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": "none",
           "effort_style": "reasoning-object",
           "temperature": null,
@@ -673,6 +685,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": null,
           "effort_style": "reasoning-object",
           "temperature": null,
@@ -723,6 +736,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": "low",
           "effort_style": "reasoning-object",
           "temperature": null,
@@ -772,6 +786,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": null,
           "effort_style": "reasoning-object",
           "temperature": null,
@@ -1007,6 +1022,7 @@
           "row": "b",
           "endpoint": "openrouter",
           "model": "vendor/b",
+          "wire_model": "vendor/b",
           "effort": "low",
           "effort_style": null,
           "temperature": 0,
@@ -1050,6 +1066,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": null,
           "effort_style": null,
           "temperature": null,
@@ -1092,6 +1109,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": "low",
           "effort_style": "unsupported",
           "temperature": null,
@@ -1135,6 +1153,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": "low",
           "effort_style": "chat_template_kwargs",
           "temperature": null,
@@ -1183,6 +1202,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": "low",
           "effort_style": null,
           "temperature": null,
@@ -1225,6 +1245,7 @@
           "row": "a",
           "endpoint": "openrouter",
           "model": "vendor/a",
+          "wire_model": "vendor/a",
           "effort": "low",
           "effort_style": null,
           "temperature": null,
@@ -1240,6 +1261,51 @@
         "expect": {
           "error": {
             "path": "effort"
+          }
+        }
+      }
+    },
+    {
+      "name": "wire-model-is-resolved",
+      "note": "The resolved request carries the row's model and the model its endpoint is sent: wire_model when the row names one, else model. A sender puts wire_model in the body; the wire fields never hold it. Here the provider takes the explicit effort none on the top-level style.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "endpoints:",
+          "  openrouter: {effort_style: top-level}",
+          "catalog:",
+          "  - id: swift",
+          "    label: Swift",
+          "    endpoint: openrouter",
+          "    model: consumer/swift-1",
+          "    wire_model: vendor/swift-1",
+          "    efforts: [none, low, medium, high]",
+          "selections:",
+          "  k: {model: swift, effort: none}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "request": {
+          "row": "swift",
+          "endpoint": "openrouter",
+          "model": "consumer/swift-1",
+          "wire_model": "vendor/swift-1",
+          "effort": "none",
+          "effort_style": "top-level",
+          "temperature": null,
+          "top_p": null,
+          "max_output_tokens": null,
+          "reasoning_budget": null,
+          "extras": {},
+          "traits": []
+        }
+      },
+      "wire": {
+        "endpoint_style": null,
+        "expect": {
+          "fields": {
+            "reasoning_effort": "none"
           }
         }
       }

@@ -79,6 +79,7 @@ class World:
         self.claude_answer = "answer"
         self.http_error: Optional[BaseException] = None
         self.claude_raw: Optional[str] = None
+        self.selections: list = []
 
     # --- the OpenAI-SDK-shaped client
     def client(self) -> Any:
@@ -141,6 +142,7 @@ def world(home, tmp_path, monkeypatch):  # noqa: F811
 
     def build(endpoint=None, **kwargs):
         selection = real(endpoint, **kwargs)
+        w.selections.append(selection)
         backend = selection.backend
         if backend.name == "claude-cli":
             backend = dataclasses.replace(backend, runner=w.claude_runner, executable="claude")
@@ -192,11 +194,11 @@ def test_openrouter_completion_result_shape(world, capsys):
     assert doc["output"] == {"text": "answer", "structured": None}
     assert doc["usage"]["input_tokens"] == 11 and doc["usage"]["output_tokens"] == 7
     assert doc["usage"]["cache_hit_tokens"] == 4 and isinstance(doc["usage"]["wall_ms"], int)
-    # an unmarked endpoint's native usage.cost is an ESTIMATE; the authoritative amount is unknown, not zero
+    # the shipped openrouter endpoint declares billing.mode provider-reported: its usage.cost is the charge
     assert doc["cost"] == {
         "class": "metered", "reason": "no registry entry: billing undeclared",
-        "usd": None, "source": None,
-        "estimated_usd": 0.0007, "estimated_source": "openrouter.usage.cost",
+        "usd": 0.0007, "source": "provider",
+        "estimated_usd": None, "estimated_source": None,
     }
     assert doc["consent"] == {"opted_in": False, "applied": False, "scope": None}
     assert "files" not in doc
@@ -240,6 +242,33 @@ def test_deepseek_effort_null_sends_none_and_medium_is_refused(world, capsys):
     code, doc, err = call(world, capsys, model="deepseek", effort="medium")  # the vendor lists no medium
     assert code == 4 and doc is None and err["error"]["kind"] == "effort"
     assert len(world.http) == before
+
+
+def test_an_endpoint_that_does_not_declare_provider_reported_billing_keeps_its_usage_cost_as_an_estimate(
+    world, capsys, tmp_path
+):
+    """Only the endpoint's configuration makes a native usage.cost authoritative, never the response."""
+    registry = write(tmp_path / "registry.yaml",
+                     "version: 1\nmodels:\n  self-hosted: {base_url: http://h.invalid/v1, model: m, key_env: null}\n")
+    world.monkeypatch.setenv("MODEL_ENDPOINTS_REGISTRY", str(registry))
+    doc = dict(_DOC, catalog=[*_DOC["catalog"], {"id": "own", "label": "Own", "endpoint": "self-hosted", "model": "m"}],
+               selections={**_DOC["selections"], "own": {"model": "own"}})
+    pm.write_project_models(doc, project_root=str(world.root))
+    allow()
+    code, out, err = call(world, capsys, selection="own")
+    assert code == 0 and err is None, (out, err)
+    assert (out["cost"]["usd"], out["cost"]["source"]) == (None, None)
+    assert (out["cost"]["estimated_usd"], out["cost"]["estimated_source"]) == (0.0007, "openrouter.usage.cost")
+
+
+def test_the_shipped_openrouter_endpoints_declare_provider_reported_billing():
+    from llm_kit.registry.models import DEFAULT_MODEL_CONFIG
+
+    openrouter = {name: ep for name, ep in DEFAULT_MODEL_CONFIG["endpoints"].items()
+                  if ep.get("base_url") == "https://openrouter.ai/api/v1"}
+    assert "openrouter" in openrouter and len(openrouter) > 1
+    for name, ep in openrouter.items():
+        assert ep.get("billing") == {"mode": "provider-reported"}, name
 
 
 def test_the_shipped_openrouter_endpoint_declares_the_style():
@@ -363,6 +392,89 @@ def test_a_call_to_a_row_on_an_unknown_endpoint_refuses_naming_the_row_and_endpo
     assert world.runner_calls == 0
     code, _doc, err = call(world, capsys, model="deepseek")  # the other rows of the same file still call
     assert code == 0 and err is None and world.runner_calls == 1
+
+
+# --- an endpoint the project file connects -----------------------------------------------------
+
+_DIRECT = {"effort_style": "top-level", "base_url": "https://api.vendor.example/v1", "key_env": "VENDOR_API_KEY"}
+
+
+def _with_direct_row(world: World, model: str, *, effort: str = "high", **row: Any) -> None:
+    """A row on endpoint ``direct``, which the file connects (base URL and key variable)."""
+    document = {**_DOC, "endpoints": {"direct": _DIRECT},
+                "catalog": [*_DOC["catalog"], {"id": "direct", "label": "Direct", "endpoint": "direct",
+                                               "model": model, **row}],
+                "selections": {**_DOC["selections"], "direct": {"model": "direct", "effort": effort}}}
+    pm.write_project_models(document, project_root=str(world.root))
+
+
+def test_a_row_is_sent_as_its_wire_model_with_the_none_it_declares(world, capsys):
+    """A vendor direct API: the consumer names the row ``vendor/swift-1``, the endpoint takes ``swift-1`` and
+    ``reasoning_effort: none``. Red on revert: the row's model goes out, or binding refuses ``none``."""
+    _with_direct_row(world, "vendor/swift-1", effort="none", wire_model="swift-1", efforts=["none", "low", "high"])
+    world.http_model = "swift-1"
+    allow()
+    code, doc, err = call(world, capsys, selection="direct")
+    assert code == 0 and err is None, (doc, err)
+    assert world.http[-1]["model"] == "swift-1"
+    assert world.http[-1]["extra_body"] == {"reasoning_effort": "none"}  # top-level sends it as written
+    assert doc["resolved"]["requested_model"] == "swift-1" and doc["resolved"]["model_verified"] is True
+    assert doc["selection"] == {"id": "direct", "model": "direct"}
+    # an effort the row does not declare is still refused before dispatch
+    sent = len(world.http)
+    code, doc, err = call(world, capsys, selection="direct", effort="medium")
+    assert code != 0 and len(world.http) == sent
+
+
+def test_a_row_on_an_endpoint_the_file_connects_is_called_on_that_connection(world, capsys):
+    """Red on revert: without the file's connection the row is unbound and the call refuses."""
+    _with_direct_row(world, "vendor-model-1")
+    stored = pm.read_project_models(project_root=str(world.root))
+    assert stored.unbound == ()
+    assert pm.endpoint_connection(stored.document, "direct") == {
+        "name": "direct", "base_url": "https://api.vendor.example/v1", "key_env": "VENDOR_API_KEY", "key_file": None,
+        "models": {}, "default": None, "defaultCheap": None, "account_check": "none", "frontdoor": False,
+        "billing_mode": None, "effort_style": "top-level", "effort_style_source": "endpoint"}
+    assert pm.endpoint_connection(stored.document, "openrouter") is None  # declared nowhere in the file
+    allow()
+    code, doc, err = call(world, capsys, selection="direct")
+    assert code == 0 and err is None, (doc, err)
+    connection = world.selections[-1].backend.connection
+    assert (connection["base_url"], connection["key_env"]) == ("https://api.vendor.example/v1", "VENDOR_API_KEY")
+    assert world.http[-1]["model"] == "vendor-model-1"  # the row's exact wire model, sent as written (no alias map)
+    assert world.http[-1]["extra_body"] == {"reasoning_effort": "high"}  # the file's effort style places it
+    assert doc["resolved"]["endpoint"] == "direct" and doc["cost"]["class"] == "metered"
+    # a usage.cost from an endpoint the file connects is an estimate: the file cannot declare billing
+    assert (doc["cost"]["usd"], doc["cost"]["estimated_usd"]) == (None, 0.0007)
+
+
+def test_the_machine_endpoint_registry_wins_over_the_files_connection(world, capsys, tmp_path):
+    from llm_kit.registry.models import resolve_endpoint
+
+    registry = write(tmp_path / "registry.yaml",
+                     "version: 1\nmodels:\n  direct: {base_url: http://machine.invalid/v1, model: m, key_env: null}\n")
+    world.monkeypatch.setenv("MODEL_ENDPOINTS_REGISTRY", str(registry))
+    _with_direct_row(world, "vendor/model-1")
+    allow()
+    code, doc, err = call(world, capsys, selection="direct")
+    assert code == 0 and err is None, (doc, err)
+    assert world.selections[-1].backend.connection is None  # the backend resolves the machine's entry by name
+    assert resolve_endpoint("direct", project_root=str(world.root))["base_url"] == "http://machine.invalid/v1"
+    assert world.http[-1]["extra_body"] == {"reasoning_effort": "high"}  # the file's effort style still wins
+
+
+def test_a_client_for_a_connection_uses_its_base_url_and_the_key_its_variable_holds(home, monkeypatch, tmp_path):  # noqa: F811
+    from llm_kit.adapters.client import KEYLESS_API_KEY, make_openai_client
+    from llm_kit.registry.models import connection_endpoint
+
+    resolved = connection_endpoint("direct", base_url="https://api.vendor.example/v1", key_env="VENDOR_API_KEY")
+    with pytest.raises(RuntimeError, match="VENDOR_API_KEY"):
+        make_openai_client(project_root=tmp_path, endpoint="direct", resolved=resolved)
+    monkeypatch.setenv("VENDOR_API_KEY", "vendor-key")
+    client = make_openai_client(project_root=tmp_path, endpoint="direct", resolved=resolved)
+    assert str(client.base_url).rstrip("/") == "https://api.vendor.example/v1" and client.api_key == "vendor-key"
+    keyless = connection_endpoint("local", base_url="http://127.0.0.1:8080/v1", key_env=None)
+    assert make_openai_client(project_root=tmp_path, endpoint="local", resolved=keyless).api_key == KEYLESS_API_KEY
 
 
 def test_protocol2_refuses_images_on_non_image_adapter_before_dispatch(world, capsys):

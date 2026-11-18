@@ -98,6 +98,11 @@ DEFAULT_MODEL_CONFIG = {
             # direct seam drops every effort, so the exact-model menu in
             # model_profiles would be validated and then never sent.
             "effort_style": "top-level",
+            # OpenRouter's usage.cost is the amount it charged for the call, in
+            # USD (credits), so it is the authoritative cost, not an estimate.
+            # An endpoint that does not declare this keeps a native usage.cost
+            # as an estimate (adapters.backends._trusts_native_cost).
+            "billing": {"mode": "provider-reported"},
         },
         # HARNESS entries: no base_url, so nothing here calls them over HTTP.
         # They are shipped because they are codex SUBSCRIPTION models -- nothing
@@ -135,16 +140,19 @@ DEFAULT_MODEL_CONFIG = {
         "or-qwen": {
             "base_url": "https://openrouter.ai/api/v1",
             "key_env": "OPENROUTER_API_KEY", "account_check": "openrouter",
+            "billing": {"mode": "provider-reported"},
             "model": "qwen/qwen3-32b",
         },
         "or-gpt-mini": {
             "base_url": "https://openrouter.ai/api/v1",
             "key_env": "OPENROUTER_API_KEY", "account_check": "openrouter",
+            "billing": {"mode": "provider-reported"},
             "model": "openai/gpt-4o-mini",
         },
         "or-gemini-lite": {
             "base_url": "https://openrouter.ai/api/v1",
             "key_env": "OPENROUTER_API_KEY", "account_check": "openrouter",
+            "billing": {"mode": "provider-reported"},
             "model": "google/gemini-2.5-flash-lite",
         },
         # Claude subscription models, shipped for the same reason: the
@@ -812,6 +820,36 @@ def resolve_endpoint(
         "frontdoor": _config_frontdoor(ep_name, ep),
         "billing_mode": _config_billing_mode(ep_name, ep),
         **_config_effort_keys(ep_name, ep),
+    }
+
+
+def connection_endpoint(
+    name: str, *, base_url: str, key_env: Optional[str], effort_style: Optional[str] = None
+) -> dict:
+    """The :func:`resolve_endpoint` result for a connection declared outside the machine's config.
+
+    A project model file may connect an endpoint the machine does not know
+    (``endpoints.<name>.base_url`` and ``key_env``). This builds the dict a
+    backend needs to call it, in the shape :func:`resolve_endpoint` returns:
+    ``name``, ``base_url``, ``key_env`` (None: keyless), no ``key_file``, no
+    model alias map (the row's model is the exact wire model), no account check,
+    not a front door, no billing mode (a native ``usage.cost`` stays an
+    estimate), and ``effort_style`` with source ``endpoint`` when given, else
+    none. Raises nothing; the caller has validated the values.
+    """
+    return {
+        "name": name,
+        "base_url": base_url,
+        "key_env": key_env,
+        "key_file": None,
+        "models": {},
+        "default": None,
+        "defaultCheap": None,
+        "account_check": "none",
+        "frontdoor": False,
+        "billing_mode": None,
+        "effort_style": effort_style,
+        "effort_style_source": "endpoint" if effort_style is not None else "none",
     }
 
 

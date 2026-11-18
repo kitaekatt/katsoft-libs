@@ -20,6 +20,9 @@ from llm_kit.jobs.model import WORKSPACE_STATUSES, Attempt, AttemptReservation, 
 from llm_kit.jobs.store import LEDGER_SCHEMA, SESSION_SCHEMA, UNIT_SCHEMA, JobStore, LedgerReader, StoreError
 
 V14_DUMP = Path(__file__).parent / "fixtures" / "jobs_ledger_v14.sql"
+# The dump's paths start with /fixture/, which has no drive on Windows. They are rebased onto a root
+# that is absolute on every platform; as_posix keeps the JSON in the jobs rows free of backslashes.
+FIXTURE_ROOT = Path("/fixture").resolve().as_posix()
 ENDPOINT = dict(endpoint="fake-endpoint", backend="fake-backend", model="fake-model")
 
 
@@ -27,7 +30,7 @@ def _v14_ledger(tmp_path: Path) -> Path:
     path = tmp_path / "v14.sqlite3"
     connection = sqlite3.connect(str(path))
     try:
-        connection.executescript(V14_DUMP.read_text(encoding="ascii"))
+        connection.executescript(V14_DUMP.read_text(encoding="ascii").replace("/fixture/", FIXTURE_ROOT + "/"))
         connection.commit()
     finally:
         connection.close()

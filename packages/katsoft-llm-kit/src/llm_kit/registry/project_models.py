@@ -6,11 +6,15 @@ project's own repository):
     version: 1
     endpoints:                   # optional; how this project places an effort on a transport
       openrouter: {effort_style: reasoning-object}   # a row's endpoint; wins over the registry
+      vendor:                    # optional connection, for a machine whose registry lacks it
+        effort_style: top-level
+        base_url: https://api.vendor.example/v1
+        key_env: VENDOR_API_KEY  # the NAME of the key's variable (null: keyless), never a key
     catalog:                     # ordered; the order is the project's order
       - id: luna                 # opaque, unique, chosen by the project
         label: Luna              # presentation text
         endpoint: luna           # a registry endpoint (credentials, adapter)
-        model: gpt-6-luna        # the exact wire model for that endpoint
+        model: gpt-6-luna        # the model; also the wire model unless wire_model names one
         efforts: [low, high]     # optional; a menu-ordered subset of the library menu
                                  # (efforts: [] declares NO effort for the row)
         max_output_tokens: 65536 # optional; positive integer, the output cap this model's
@@ -19,6 +23,7 @@ project's own repository):
         label: Flash
         endpoint: openrouter
         model: vendor/flash-1
+        wire_model: flash-1      # optional; the model id the endpoint is sent, when it differs
         traits: [long_drafts]    # optional; the consumer's labels, never sent
         request_defaults:        # optional; typed defaults and wire extras (a JSON mapping)
           temperature: 0.7
@@ -33,17 +38,32 @@ The request settings (``temperature``, ``top_p``, ``max_output_tokens``,
 ``reasoning_budget``, ``extras``) layer row < selection < call; the resolved
 request and its rules are in :mod:`llm_kit.registry.request_settings`.
 
-The file holds no keys, key files, base URLs, consent or vendor capability
+The file holds no keys, key files, consent, billing or vendor capability
 claims: endpoints, credentials and billing resolve through the endpoint
-registry, and the effort menu is the library's, measured per exact model
+registry. An ``endpoints`` entry may name a connection (``base_url`` and
+``key_env``, the name of the environment variable that holds the key); it binds
+a row only on a machine whose registry and model config do not know that
+endpoint, and its calls take no billing mode, so a native ``usage.cost`` stays an
+estimate. A machine that knows the endpoint uses its own connection; the
+file's ``effort_style`` wins either way. The effort menu is the library's, measured per exact model
 (``model_profiles``). A project may narrow a menu and never widen it; a harness
 model the library has not measured has no menu, so its row declares no
 ``efforts`` and its selections carry a null effort. ``efforts: []`` declares that a
 row has no effort dial at all (any model; the shipped profile of a model the vendor
 lists without one has the same empty menu): every selection of it carries a null
 effort and a request for it refuses any effort. ``null`` effort means "omit"; the string ``none`` is an explicit
-disable value accepted only where the library menu lists it. Nothing here
+disable value accepted only where the library menu lists it, or where the row
+declares it first in ``efforts`` on a style that sends the effort as written
+(``top-level``, ``chat_template_kwargs``) and the library measured no menu for the
+model: those styles' conventional menu omits ``none`` because not every server
+takes it, so the project states that its provider does. Nothing here
 translates ``off`` or any other word.
+
+``wire_model`` is the model id the row's endpoint is sent, when it differs from
+``model`` (a vendor's own id beside the consumer's routing name). It defaults to
+``model``. Calls send it, the effort menu is the menu measured for it, a price is
+looked up by it, and a run record names it as the model that answered
+(:func:`wire_model_of`).
 
 ``max_output_tokens`` is the project's configured output cap for that model. A
 protocol 2 call to a transport (OpenAI-compatible) row uses it when the request
@@ -63,7 +83,7 @@ Canonical form (what ``write`` stores and ``render_yaml`` returns): UTF-8, LF,
 two-space indentation, one final newline, catalogue order preserved, top-level
 keys in the order version/endpoints/catalog/requests/selections (endpoints and
 requests only when the file has them), row fields in the fixed order
-id/label/endpoint/model/efforts/max_output_tokens/traits/request_defaults, typed
+id/label/endpoint/model/wire_model/efforts/max_output_tokens/traits/request_defaults, typed
 settings in the order temperature/top_p/max_output_tokens/reasoning_budget/extras,
 every free-form mapping (``endpoints``, ``requests``, ``selections``, ``extras``)
 sorted by key. Comments are not
@@ -85,7 +105,7 @@ id; an effort is in the row's declared ``efforts``). The BINDING part checks
 what only this machine knows: for each row whose ``endpoint`` resolves in the
 endpoint registry, that each effort is in the library menu for that endpoint and
 model, and that ``extras`` holds no reserved key. A row whose endpoint resolves
-to no registry endpoint is UNBOUND: the endpoint is the consumer's name, so the
+to no registry endpoint, and that the file's ``endpoints`` does not connect, is UNBOUND: the endpoint is the consumer's name, so the
 row loads with every check that needs no endpoint (its declared ``efforts``, the
 endpoint-independent reserved extras), and the result names it
 (:attr:`ProjectModels.unbound`, :attr:`Validation.unbound`). A call or a plan that
@@ -116,7 +136,16 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Optional
 
-from .effort import EFFORT_KEY, EFFORT_STYLES, REASONING_KEY, REASONING_OBJECT, TEMPLATE_KEY, style_effort_menu
+from .effort import (
+    CHAT_TEMPLATE_KWARGS,
+    EFFORT_KEY,
+    EFFORT_STYLES,
+    REASONING_KEY,
+    REASONING_OBJECT,
+    TEMPLATE_KEY,
+    TOP_LEVEL,
+    style_effort_menu,
+)
 from .model_profiles import (
     MENU_ENDPOINT_STYLE,
     MENU_EXACT_MODEL,
@@ -129,10 +158,10 @@ __all__ = [
     "SCHEMA", "FILE_VERSION", "DEFAULT_FILE",
     "CODE_INVALID", "CODE_STALE", "CODE_PATH", "CODE_SYMLINK", "CODE_MISSING", "CODE_DEPENDENCY",
     "CODE_UNKNOWN_SELECTION", "REQUEST_SETTINGS", "PROFILE_RESERVED_EXTRAS", "LEGACY_ROW_EXTRAS",
-    "endpoint_styles", "check_setting", "validate_profile", "KEEP_REQUEST",
+    "endpoint_styles", "endpoint_connection", "PROJECT_ENDPOINT", "check_setting", "validate_profile", "KEEP_REQUEST",
     "LOCAL_SUFFIX", "LAYER_TRACKED", "LAYER_LOCAL", "SOURCE_DEFAULT", "SOURCE_OVERRIDE",
     "ProjectModelsError", "EndpointInfo", "EffortMenuResolver",
-    "library_effort_menu_with_source", "library_effort_menu",
+    "library_effort_menu_with_source", "library_effort_menu", "wire_model_of",
     "parse_json_document", "parse_yaml_document",
     "validate_document", "validate_portable_document",
     "render_yaml", "digest",
@@ -166,18 +195,33 @@ CODE_UNKNOWN_SELECTION = "unknown-selection"
 #: The personal layer: ``<file-stem>.local.yaml`` beside the project file.
 LOCAL_SUFFIX = ".local.yaml"
 #: The ``layer`` values: the tracked file and the personal layer.
+#: :attr:`EndpointInfo.kind` of an endpoint this machine does not know that the
+#: project file connects (``endpoints.<name>.base_url``): calls use that connection.
+PROJECT_ENDPOINT = "project"
+
 LAYER_TRACKED = "tracked"
 LAYER_LOCAL = "local"
 #: The ``source`` values of a resolved selection (:func:`resolve_selections`).
 SOURCE_DEFAULT = "default"
 SOURCE_OVERRIDE = "override"
 
+# A value nests at most this many levels of lists and mappings (the top-level mapping is level 1).
+_MAX_NESTING = 100
+# Python's default limit on the digits of a decimal integer (sys.int_info.default_max_str_digits).
+_MAX_DECIMAL_DIGITS = 4300
+
 _TOP_KEYS = ("version", "endpoints", "catalog", "requests", "selections")
 _LOCAL_TOP_KEYS = ("version", "selections")
-_ROW_KEYS = ("id", "label", "endpoint", "model", "efforts", "max_output_tokens", "traits", "request_defaults")
+_ROW_KEYS = (
+    "id", "label", "endpoint", "model", "wire_model", "efforts", "max_output_tokens", "traits", "request_defaults",
+)
 _ROW_REQUIRED = ("id", "label", "endpoint", "model")
 _SELECTION_KEYS = ("model", "effort", "request")
-_ENDPOINT_KEYS = ("effort_style",)
+_ENDPOINT_KEYS = ("effort_style", "base_url", "key_env")
+# A connection's base URL: http:// or https://, a host, then printable ASCII with no space.
+_BASE_URL = re.compile(r"https?://[\x21-\x2e\x30-\x7e][\x21-\x7e]*")
+# The name of the environment variable that holds a connection's key.
+_KEY_ENV = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 #: The typed request settings, in canonical order. ``max_output_tokens`` and
 #: ``reasoning_budget`` are counts; ``temperature`` is 0 or more; ``top_p`` is 0 to 1.
 REQUEST_SETTINGS = ("temperature", "top_p", "max_output_tokens", "reasoning_budget")
@@ -244,6 +288,9 @@ def _invalid(where: str, message: str, *, path: Optional[str] = None) -> Project
 class EndpointInfo:
     """What validation needs to know about one registry endpoint.
 
+    ``kind`` is the registry entry kind (``transport``, ``harness``), ``wrapper``
+    for a config endpoint record, or :data:`PROJECT_ENDPOINT` for an endpoint
+    this machine does not know that the project file connects (``base_url``).
     ``harness`` is set for a harness entry (``codex``, ``claude``, ...);
     ``effort_style`` for a transport or wrapper endpoint that resolves one.
     ``route`` keys the measured exact-model profiles: the harness name for a
@@ -296,9 +343,65 @@ def library_effort_menu(endpoint: EndpointInfo, model: str) -> "tuple[str, ...]"
     return library_effort_menu_with_source(endpoint, model)[0]
 
 
+#: The styles that send an effort as written. Their conventional menu omits ``none``
+#: because not every server takes it; a row on one may declare it (:func:`_declarable_menu`).
+_DECLARABLE_NONE_STYLES = (TOP_LEVEL, CHAT_TEMPLATE_KWARGS)
+
+
+def _declarable_menu(endpoint: EndpointInfo, model: str, menu: "tuple[str, ...]") -> "tuple[str, ...]":
+    """The efforts a row on ``endpoint`` for wire model ``model`` may declare, low to high.
+
+    ``menu`` is the library menu. When it is the conventional menu of a style that
+    sends the effort as written (``top-level``, ``chat_template_kwargs``) and the
+    library measured no menu for the model, ``none`` goes first: the provider takes
+    it only when the row declares it, and a selection of a row that does not
+    declare it is still held to ``menu``. A measured, harness or ``none``-listing
+    menu is returned unchanged; no other effort is ever added or remapped.
+    """
+    if (
+        "none" in menu
+        or endpoint.harness is not None
+        or endpoint.effort_style not in _DECLARABLE_NONE_STYLES
+        or menu != style_effort_menu(endpoint.effort_style)
+        or exact_effort_menu(endpoint.route, model, effort_style=endpoint.effort_style) is not None
+    ):
+        return menu
+    return ("none", *menu)
+
+
+def wire_model_of(row: Mapping) -> str:
+    """The model id a call to ``row`` sends its endpoint: the row's ``wire_model``, else its ``model``.
+
+    ``row`` is a catalog row of a normalized project model document. Calls, the
+    effort menu, prices and run records use this id; ``model`` stays the
+    consumer's name for the row. Raises ``KeyError`` for a mapping with no ``model``.
+    """
+    return row["wire_model"] if "wire_model" in row else row["model"]
+
+
 def _route_of(base_url: Optional[str]) -> Optional[str]:
     """``openrouter`` when ``base_url`` is on openrouter.ai, else None."""
     return route_of_base_url(base_url)
+
+
+def endpoint_connection(document: Mapping, name: str) -> Optional[dict]:
+    """The connection the project file declares for endpoint ``name``, or None.
+
+    ``document`` is a normalized project model document. Returns a
+    :func:`llm_kit.registry.models.connection_endpoint` result (``base_url``,
+    ``key_env``, the file's effort style) when ``endpoints[name]`` has a
+    ``base_url``, else None. The file names the key's environment variable,
+    never a key. A machine whose endpoint registry or model config knows
+    ``name`` uses its own connection instead (binding resolves the machine
+    first; see :data:`PROJECT_ENDPOINT`). Raises nothing.
+    """
+    entry = (document.get("endpoints") or {}).get(name)
+    if not entry or "base_url" not in entry:
+        return None
+    from .models import connection_endpoint  # noqa: PLC0415
+
+    return connection_endpoint(name, base_url=entry["base_url"], key_env=entry["key_env"],
+                               effort_style=entry["effort_style"])
 
 
 def endpoint_styles(document: Mapping) -> "dict[str, str]":
@@ -318,21 +421,24 @@ class _Endpoints:
     registry's effort style of a transport or wrapper endpoint; a harness keeps its own.
     """
 
-    def __init__(self, project_root: Optional[str], styles: "Optional[Mapping[str, str]]" = None) -> None:
+    def __init__(self, project_root: Optional[str], document: Optional[Mapping] = None) -> None:
         self._project_root = project_root
         self._loaded: Optional["tuple[dict, Any]"] = None
         self._seen: dict[str, Optional[EndpointInfo]] = {}
-        self.styles: "dict[str, str]" = dict(styles or {})
+        self.use_document(document or {})
 
-    def use_styles(self, styles: "Mapping[str, str]") -> None:
-        """Replace the declared effort styles; lookups made before are forgotten."""
-        self.styles = dict(styles)
+    def use_document(self, document: Mapping) -> None:
+        """Use the effort styles and connections ``document``'s ``endpoints`` declares; lookups made before are forgotten."""
+        self.styles: "dict[str, str]" = endpoint_styles(document)
+        self.base_urls: "dict[str, str]" = {
+            name: entry["base_url"] for name, entry in (document.get("endpoints") or {}).items() if "base_url" in entry
+        }
         self._seen.clear()
 
     @classmethod
     def for_document(cls, project_root: Optional[str], document: Mapping) -> "_Endpoints":
-        """The lookups for ``document``, with the effort styles its ``endpoints`` declares."""
-        return cls(project_root, endpoint_styles(document))
+        """The lookups for ``document``, with the effort styles and connections its ``endpoints`` declares."""
+        return cls(project_root, document)
 
     def _load(self) -> "tuple[dict, Any]":
         if self._loaded is None:
@@ -368,6 +474,8 @@ class _Endpoints:
         endpoints = config.get("endpoints") or {}
         if isinstance(endpoints, Mapping) and name in endpoints:
             return self._wrapper(name, config)
+        if name in self.base_urls:  # the machine does not know it: the file's connection binds it
+            return EndpointInfo(name, PROJECT_ENDPOINT, route=_route_of(self.base_urls[name]))
         return None
 
     def _wrapper(self, name: str, config: dict) -> EndpointInfo:
@@ -454,6 +562,27 @@ def _yaml_types() -> "tuple[type, type, type]":
     yaml = _import_yaml()
 
     class Loader(yaml.SafeLoader):
+        def construct_object(self, node: Any, deep: bool = False) -> Any:
+            # PyYAML's scalar constructors fail on some text their resolvers or an
+            # explicit tag accept (2026-02-30, 0x_, !!bool foo, !!timestamp foo)
+            # with these errors instead of a YAML error.
+            try:
+                return super().construct_object(node, deep=deep)
+            except (ValueError, KeyError, AttributeError, IndexError) as exc:
+                text = repr(node.value) if isinstance(node, yaml.ScalarNode) else "value"
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"{node.tag} {text} cannot be built: {exc}", node.start_mark
+                ) from None
+
+        def construct_yaml_int(self, node: Any) -> int:
+            # Python's default limit, held here so every interpreter reads the same files.
+            for digits in _decimal_digits(self.construct_scalar(node)):
+                if len(digits) > _MAX_DECIMAL_DIGITS:
+                    raise yaml.constructor.ConstructorError(
+                        None, None, f"a decimal integer of more than {_MAX_DECIMAL_DIGITS} digits", node.start_mark
+                    )
+            return super().construct_yaml_int(node)
+
         def construct_mapping(self, node: Any, deep: bool = False) -> dict:
             mapping = super().construct_mapping(node, deep=deep)
             if len(mapping) != len(node.value):
@@ -479,6 +608,8 @@ def _yaml_types() -> "tuple[type, type, type]":
     # PyYAML builds these as lists of tuples, which would pass as nested lists.
     Loader.add_constructor("tag:yaml.org,2002:omap", refuse)
     Loader.add_constructor("tag:yaml.org,2002:pairs", refuse)
+    # PyYAML's table holds the base class function, so the override takes effect only when registered.
+    Loader.add_constructor("tag:yaml.org,2002:int", Loader.construct_yaml_int)
 
     class FlowList(list):
         """A list rendered in flow style (``[a, b]``)."""
@@ -520,9 +651,66 @@ def parse_yaml_document(data: bytes) -> Any:
         document = yaml.load(text, Loader=loader)  # noqa: S506 -- a SafeLoader subclass
     except yaml.YAMLError as exc:
         raise _invalid("", f"the file is not valid YAML: {exc}") from None
+    except RecursionError:
+        # PyYAML's composer recurses once per level; far past _MAX_NESTING it runs out of stack.
+        raise _invalid("", f"the file is not supported: a value nests more than {_MAX_NESTING} levels") from None
     if document is None:
         raise _invalid("", "the file is empty")
+    if _nesting(document) > _MAX_NESTING:
+        raise _invalid("", f"the file is not supported: a value nests more than {_MAX_NESTING} levels")
     return document
+
+
+def _decimal_digits(text: str) -> "list[str]":
+    """The decimal digit runs PyYAML's ``construct_yaml_int`` passes to ``int(text)`` (none for 0b, 0x, octal)."""
+    value = text.replace("_", "")
+    if value[:1] in ("-", "+"):
+        value = value[1:]
+    if value == "" or value.startswith("0"):
+        return []
+    parts = value.split(":") if ":" in value else [value]
+    runs = []
+    for part in parts:
+        part = part.strip()
+        runs.append(part[1:] if part[:1] in ("-", "+") else part)
+    return runs
+
+
+def _nesting(value: Any) -> int:
+    """How many levels of lists and mappings ``value`` nests; a scalar is 0, ``{}`` is 1.
+
+    An alias counts as a copy of its anchored value. A container that holds
+    itself (an alias cycle) adds nothing where it repeats; a reader refuses that
+    cycle later, at the alias. The walk visits each container once and uses no
+    recursion, so it is safe for any depth. Every reader counts the same way
+    (docs/reference/llm-kit-formats.md).
+    """
+    if not isinstance(value, (dict, list)):
+        return 0
+    done: "dict[int, int]" = {}
+    open_ids: "set[int]" = set()
+    stack: list = [(value, iter(value.values() if isinstance(value, dict) else value), 0)]
+    open_ids.add(id(value))
+    while stack:
+        container, children, deepest = stack[-1]
+        for child in children:
+            if not isinstance(child, (dict, list)) or id(child) in open_ids:
+                continue
+            if id(child) in done:
+                deepest = max(deepest, done[id(child)])
+                continue
+            stack[-1] = (container, children, deepest)
+            open_ids.add(id(child))
+            stack.append((child, iter(child.values() if isinstance(child, dict) else child), 0))
+            break
+        else:
+            stack.pop()
+            open_ids.discard(id(container))
+            done[id(container)] = deepest + 1
+            if stack:
+                parent, siblings, best = stack[-1]
+                stack[-1] = (parent, siblings, max(best, deepest + 1))
+    return done[id(value)]
 
 
 # ---------------------------------------------------------------------------
@@ -763,7 +951,7 @@ def _traits(value: Any, where: str) -> list[str]:
 
 
 def _validate_endpoints(value: Any) -> "dict[str, dict]":
-    """The key-sorted ``endpoints`` block: endpoint name -> ``{effort_style}``.
+    """The key-sorted ``endpoints`` block: endpoint name -> ``{effort_style, base_url?, key_env?}``.
 
     Checks the structure only; that each name is a row's endpoint is checked
     after the catalogue (:func:`_check_endpoint_names`).
@@ -782,8 +970,32 @@ def _validate_endpoints(value: Any) -> "dict[str, dict]":
         style = entry["effort_style"]
         if style not in EFFORT_STYLES:
             raise _invalid(f"{where}.effort_style", f"must be one of {list(EFFORT_STYLES)}, not {style!r}")
-        out[name] = {"effort_style": style}
+        out[name] = {"effort_style": style, **_connection(entry, where)}
     return {name: out[name] for name in sorted(out)}
+
+
+def _connection(entry: Mapping, where: str) -> dict:
+    """An endpoint's ``base_url`` and ``key_env``: both or neither; ``key_env`` null is keyless."""
+    if "base_url" not in entry:
+        if "key_env" in entry:
+            raise _invalid(f"{where}.key_env", "names the key of a connection; declare base_url with it")
+        return {}
+    base_url = entry["base_url"]
+    if not isinstance(base_url, str) or not _BASE_URL.fullmatch(base_url):
+        raise _invalid(
+            f"{where}.base_url",
+            f"must be an http:// or https:// URL with a host, in printable ASCII with no space, not {base_url!r}",
+        )
+    if "key_env" not in entry:
+        raise _invalid(where, "'key_env' is required with base_url (null for a keyless endpoint)")
+    key_env = entry["key_env"]
+    if key_env is not None and (not isinstance(key_env, str) or not _KEY_ENV.fullmatch(key_env)):
+        raise _invalid(
+            f"{where}.key_env",
+            "must be the name of an environment variable (an ASCII letter or _, then letters, digits and _) "
+            f"or null, not {key_env!r}; the file never holds a key",
+        )
+    return {"base_url": base_url, "key_env": key_env}
 
 
 def _check_endpoint_names(names: "list[str]", rows: "list[dict]", endpoints: "Optional[_Endpoints]") -> None:
@@ -843,6 +1055,10 @@ def _validate_catalog(
         label = _text(row["label"], f"{where}.label")
         endpoint = _text(row["endpoint"], f"{where}.endpoint")
         model = _text(row["model"], f"{where}.model")
+        out: dict = {"id": row_id, "label": label, "endpoint": endpoint, "model": model}
+        if "wire_model" in row:
+            out["wire_model"] = _text(row["wire_model"], f"{where}.wire_model")
+        wire = wire_model_of(out)
         info: Optional[EndpointInfo] = None
         menu: "Optional[tuple[str, ...]]" = None
         if endpoints is not None:
@@ -851,11 +1067,11 @@ def _validate_catalog(
                 if unbound is not None:
                     unbound.append(row_id)
             else:
-                menu = tuple((menu_of or library_effort_menu)(info, model))
-        out: dict = {"id": row_id, "label": label, "endpoint": endpoint, "model": model}
+                menu = tuple((menu_of or library_effort_menu)(info, wire))
         efforts: Optional[list[str]] = None
         if "efforts" in row:
-            efforts = _efforts(row["efforts"], f"{where}.efforts", menu, endpoint, model)
+            declarable = None if info is None or menu is None else _declarable_menu(info, wire, menu)
+            efforts = _efforts(row["efforts"], f"{where}.efforts", declarable, endpoint, wire)
             out["efforts"] = efforts
         if "max_output_tokens" in row:
             out["max_output_tokens"] = _max_output_tokens(
@@ -1001,7 +1217,7 @@ def _validate_top(
     _check_version(top)
     declared = _validate_endpoints(top["endpoints"]) if "endpoints" in top else None
     if endpoints is not None:
-        endpoints.use_styles(endpoint_styles({"endpoints": declared or {}}))
+        endpoints.use_document({"endpoints": declared or {}})
     rows, menus, efforts_of = _validate_catalog(top.get("catalog", []), endpoints, menu_of, unbound)
     if declared is not None:
         _check_endpoint_names(list(top["endpoints"]), rows, endpoints)

@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.fallback-chain/v1",
+  "title": "llm-kit fallback chain file, version 1",
+  "description": "Which hosts serve a request in which order, which failure classes move on to the next host, and the same model's endpoint and input on each host. Reader rules the subset cannot state: a host id matches ^[a-z0-9][a-z0-9_.-]*$ and a class id ^[a-z][a-z0-9_]*$; the hosts of one chain and the classes of one step are unique; a rule with value has no from, number, max, id_key or id_match; max needs number; id_key and id_match go together and not with number; the output fields (key, id_key) of one rule list are unique; input needs from; from names another host of the same model, which has no from itself. Written in llm-scripting-kit.json-schema-subset/v1. Contract and shared cases: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "format": {"const": "llm-kit.fallback-chain/v1"},
+    "chains": {
+      "description": "Chain name -> its steps in order.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "properties": {
+                "host": {"description": "The host id.", "type": "string", "minLength": 1},
+                "next_on": {
+                  "description": "The failure classes that move on to the next step; no_key skips a step with no key.",
+                  "type": "array",
+                  "items": {"type": "string", "minLength": 1}
+                }
+              },
+              "required": ["host", "next_on"],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["steps"],
+        "additionalProperties": false
+      }
+    },
+    "models": {
+      "description": "Model id -> its copy on each host.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "hosts": {
+            "type": "object",
+            "additionalProperties": {"$ref": "#/$defs/host"}
+          }
+        },
+        "required": ["hosts"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["format", "chains", "models"],
+  "additionalProperties": false,
+  "$defs": {
+    "host": {
+      "type": "object",
+      "properties": {
+        "endpoint": {"description": "The model's endpoint or id on this host.", "type": "string", "minLength": 1},
+        "from": {"description": "The host whose input the caller gives.", "type": "string", "minLength": 1},
+        "input": {"description": "The rules that build this host's input, in output order.", "type": "array", "items": {"$ref": "#/$defs/rule"}}
+      },
+      "required": ["endpoint"],
+      "additionalProperties": false
+    },
+    "rule": {
+      "anyOf": [
+        {
+          "description": "A constant.",
+          "type": "object",
+          "properties": {
+            "key": {"type": "string", "minLength": 1},
+            "value": {"type": ["string", "number", "boolean", "null"]}
+          },
+          "required": ["key", "value"],
+          "additionalProperties": false
+        },
+        {
+          "description": "A field of the input.",
+          "type": "object",
+          "properties": {
+            "key": {"type": "string", "minLength": 1},
+            "from": {"type": "string", "minLength": 1},
+            "number": {"const": true},
+            "max": {"type": "number"},
+            "id_key": {"type": "string", "minLength": 1},
+            "id_match": {
+              "type": "object",
+              "properties": {
+                "charset": {"enum": ["alnum"]},
+                "length": {"type": "integer", "minimum": 1}
+              },
+              "required": ["charset", "length"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["key"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

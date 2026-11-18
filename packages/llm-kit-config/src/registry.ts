@@ -24,6 +24,21 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | { [key:
 /** The effort styles an `endpoints` entry may name: where a request puts the effort on the wire. */
 export type EffortStyle = "top-level" | "ninfer" | "chat_template_kwargs" | "reasoning-object" | "unsupported";
 
+/**
+ * An entry of `endpoints`: how this project's calls reach an endpoint that a catalog row names.
+ * `base_url` and `key_env` (both or neither) are its OpenAI-compatible connection: the base URL and
+ * the name of the environment variable that holds its key (`null`: keyless). The file never holds a
+ * key. A consumer whose own configuration knows the endpoint uses its own connection.
+ */
+export interface Endpoint {
+  /** Where a request puts the effort on the wire; wins over the consumer's own style. */
+  readonly effort_style: EffortStyle;
+  /** The endpoint's base URL (`http://` or `https://`); present with `key_env`. */
+  readonly base_url?: string;
+  /** The name of the environment variable that holds the key, or `null` for a keyless endpoint. */
+  readonly key_env?: string | null;
+}
+
 /** A row's request defaults: typed settings and wire extras, the lowest layer of a request. */
 export interface RequestDefaults {
   /** Sampling temperature, 0 or more. */
@@ -58,8 +73,10 @@ export interface CatalogRow {
   readonly label: string;
   /** The endpoint name; the consumer resolves it. */
   readonly endpoint: string;
-  /** The exact wire model for that endpoint. */
+  /** The consumer's name for the model; also the wire model when the row names no `wire_model`. */
   readonly model: string;
+  /** The model id the endpoint is sent, when it differs from `model`; omitted: `model` is sent. */
+  readonly wire_model?: string;
   /** Omitted: the row does not narrow the effort menu. `[]`: the row has no effort. */
   readonly efforts?: readonly string[];
   /** The output cap for calls to this model, from 1 to 2**53 - 1. */
@@ -84,8 +101,8 @@ export interface Selection {
 export interface ProjectModelsDocument {
   /** Always 1. */
   readonly version: 1;
-  /** Endpoint name to how this project places an effort for it; present when the file has the key. */
-  readonly endpoints?: { readonly [name: string]: { readonly effort_style: EffortStyle } };
+  /** Endpoint name to how this project reaches it, sorted by name; present when the file has the key. */
+  readonly endpoints?: { readonly [name: string]: Endpoint };
   /** The catalog rows in file order. */
   readonly catalog: readonly CatalogRow[];
   /** Request profile name to profile, sorted by name; present when the file has the key. */
@@ -154,11 +171,15 @@ export interface ParseOptions {
 const MAX_INTEGER = 2n ** 53n - 1n;
 const TOP_KEYS = ["version", "endpoints", "catalog", "requests", "selections"] as const;
 const LOCAL_TOP_KEYS = ["version", "selections"] as const;
-const ROW_KEYS = ["id", "label", "endpoint", "model", "efforts", "max_output_tokens", "traits", "request_defaults"] as const;
+const ROW_KEYS = ["id", "label", "endpoint", "model", "wire_model", "efforts", "max_output_tokens", "traits", "request_defaults"] as const;
 const ROW_REQUIRED = ["id", "label", "endpoint", "model"] as const;
 const SELECTION_KEYS = ["model", "effort", "request"] as const;
 const DEFAULTS_KEYS = ["temperature", "top_p", "reasoning_budget", "extras"] as const;
-const ENDPOINT_KEYS = ["effort_style"] as const;
+const ENDPOINT_KEYS = ["effort_style", "base_url", "key_env"] as const;
+/** A connection's base URL: http:// or https://, a host, then printable ASCII with no space. */
+const BASE_URL = /^https?:\/\/[\x21-\x2e\x30-\x7e][\x21-\x7e]*$/;
+/** The name of the environment variable that holds a connection's key. */
+const KEY_ENV = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const EFFORT_STYLES: readonly EffortStyle[] = ["top-level", "ninfer", "chat_template_kwargs", "reasoning-object", "unsupported"];
 
 /** Registries and overlays this module made; applyOverlay and select accept only these. */
@@ -294,10 +315,10 @@ function blockKey(key: PyValue, block: string): string {
 }
 
 /** The `endpoints` block: the names in file order and the key-sorted entries. Structure only. */
-function endpointsBlock(value: PyValue): { names: string[]; entries: { [name: string]: { effort_style: EffortStyle } } } {
+function endpointsBlock(value: PyValue): { names: string[]; entries: { [name: string]: Endpoint } } {
   if (!(value instanceof PyMap)) throw invalid("endpoints", `must be a mapping, not ${typeName(value)}`);
   const names: string[] = [];
-  const found = new Map<string, EffortStyle>();
+  const found = new Map<string, Endpoint>();
   for (const [key, raw] of value.entries) {
     const name = blockKey(key, "endpoints");
     const where = `endpoints[${pythonRepr(name)}]`;
@@ -308,11 +329,29 @@ function endpointsBlock(value: PyValue): { names: string[]; entries: { [name: st
       throw invalid(`${where}.effort_style`, `must be one of ${EFFORT_STYLES.join(", ")}`);
     }
     names.push(name);
-    found.set(name, style as EffortStyle);
+    found.set(name, { effort_style: style as EffortStyle, ...connection(entry, where) });
   }
-  const entries: { [name: string]: { effort_style: EffortStyle } } = {};
-  for (const name of [...found.keys()].sort(compareCodePoints)) define(entries, name, { effort_style: found.get(name)! });
+  const entries: { [name: string]: Endpoint } = {};
+  for (const name of [...found.keys()].sort(compareCodePoints)) define(entries, name, found.get(name)!);
   return { names, entries };
+}
+
+/** An endpoint's `base_url` and `key_env`: both or neither; `key_env` null is keyless. */
+function connection(entry: Map<string, PyValue>, where: string): { base_url?: string; key_env?: string | null } {
+  if (!entry.has("base_url")) {
+    if (entry.has("key_env")) throw invalid(`${where}.key_env`, "names the key of a connection; declare base_url with it");
+    return {};
+  }
+  const baseUrl = entry.get("base_url")!;
+  if (typeof baseUrl !== "string" || !BASE_URL.test(baseUrl)) {
+    throw invalid(`${where}.base_url`, "must be an http:// or https:// URL with a host, in printable ASCII with no space");
+  }
+  if (!entry.has("key_env")) throw invalid(where, "'key_env' is required with base_url (null for a keyless endpoint)");
+  const keyEnv = entry.get("key_env")!;
+  if (keyEnv !== null && (typeof keyEnv !== "string" || !KEY_ENV.test(keyEnv))) {
+    throw invalid(`${where}.key_env`, "must be the name of an environment variable or null; the file never holds a key");
+  }
+  return { base_url: baseUrl, key_env: keyEnv };
 }
 
 /** The `requests` block, key-sorted. */
@@ -361,7 +400,7 @@ function catalog(value: PyValue, where = "catalog"): { rows: CatalogRow[]; effor
     const id = text(row.get("id")!, `${at}.id`);
     if (declared.has(id)) throw invalid(`${at}.id`, `duplicate id ${JSON.stringify(id)}`);
     const out: {
-      id: string; label: string; endpoint: string; model: string; efforts?: string[];
+      id: string; label: string; endpoint: string; model: string; wire_model?: string; efforts?: string[];
       max_output_tokens?: number; traits?: string[]; request_defaults?: RequestDefaults;
     } = {
       id,
@@ -369,6 +408,7 @@ function catalog(value: PyValue, where = "catalog"): { rows: CatalogRow[]; effor
       endpoint: text(row.get("endpoint")!, `${at}.endpoint`),
       model: text(row.get("model")!, `${at}.model`),
     };
+    if (row.has("wire_model")) out.wire_model = text(row.get("wire_model")!, `${at}.wire_model`);
     let rowEfforts: string[] | undefined;
     if (row.has("efforts")) out.efforts = rowEfforts = efforts(row.get("efforts")!, `${at}.efforts`);
     if (row.has("max_output_tokens")) out.max_output_tokens = maxOutputTokens(row.get("max_output_tokens")!, `${at}.max_output_tokens`);
@@ -471,7 +511,7 @@ function validateTracked(data: PyValue): ProjectModelsDocument {
   const requests = top.has("requests") ? requestsBlock(top.get("requests")!) : undefined;
   const picked = selections(top.has("selections") ? top.get("selections")! : new PyMap(), { efforts: declared, requests: requests ?? {} });
   const document: {
-    version: 1; endpoints?: { [name: string]: { effort_style: EffortStyle } }; catalog: CatalogRow[];
+    version: 1; endpoints?: { [name: string]: Endpoint }; catalog: CatalogRow[];
     requests?: { [name: string]: RequestProfile }; selections: { [key: string]: Selection };
   } = { version: 1, catalog: rows, selections: sortedSelections(picked) };
   if (endpoints) document.endpoints = endpoints.entries;

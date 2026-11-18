@@ -1,5 +1,5 @@
 // Compare the files of two npm tarballs: `node scripts/compare-tarballs.mjs <a.tgz> <b.tgz>`.
-// Exits 1 and names each difference. release-npm.yml uses it when a version is already on npm.
+// Exits 1 and names each difference. Use it by hand to see why a published tarball differs from a packed one (release-npm.yml compares integrity only).
 import { readTarball } from "./pack-tools.mjs";
 
 const [left, right] = process.argv.slice(2);

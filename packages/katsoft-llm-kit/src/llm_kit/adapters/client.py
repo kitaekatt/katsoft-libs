@@ -6,7 +6,7 @@ ready-made Chat Completions client call ``make_openai_client``.
 """
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from llm_kit.registry.api_key import get_api_key
 from llm_kit.registry.constants import BASE_URL, cli_command
@@ -29,6 +29,7 @@ def make_openai_client(
     project_root: Optional[Path] = None,
     endpoint: Optional[str] = None,
     max_retries: int = DEFAULT_MAX_RETRIES,
+    resolved: Optional[Mapping[str, Any]] = None,
 ) -> Any:
     """Return an ``openai.OpenAI`` client configured for an endpoint.
 
@@ -44,6 +45,10 @@ def make_openai_client(
         max_retries: SDK-level automatic retries per request (connection
             errors, 408/409/429/5xx). Default 2 (the SDK default); must be
             a non-negative integer.
+        resolved: The endpoint already resolved (a ``connection_endpoint``
+            result, such as a connection a project model file declares). Its
+            ``base_url`` and key are used and the endpoint is not looked up by
+            name; ``endpoint`` then only names it in messages.
 
     Returns:
         An ``openai.OpenAI`` instance with ``base_url`` set to the endpoint's
@@ -62,7 +67,7 @@ def make_openai_client(
     # / OPENROUTER_API_KEY for that case.
     from llm_kit.registry.models import resolve_endpoint  # noqa: PLC0415
 
-    ep = resolve_endpoint(
+    ep = resolved if resolved is not None else resolve_endpoint(
         endpoint, project_root=str(project_root) if project_root is not None else None
     )
     base_url = ep["base_url"]
@@ -75,7 +80,7 @@ def make_openai_client(
         api_key = KEYLESS_API_KEY
 
     if api_key is None:
-        result = get_api_key(project_root, endpoint=endpoint)
+        result = get_api_key(project_root, endpoint=endpoint, resolved=resolved)
         if result.key is None:
             raise RuntimeError(
                 f"No API key found for endpoint '{endpoint or 'openrouter'}'. "

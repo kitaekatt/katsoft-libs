@@ -1,0 +1,124 @@
+"""scripts/npm_registry.py: publish once, wait for the registry, compare integrity.
+
+No test calls npm or sleeps: `view`, `publish`, the clock and `sleep` are fakes.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import npm_registry as reg
+
+NAME, VERSION, TARBALL, SUM = "@katsoft/x", "1.0.0", "/t/x.tgz", "sha512-aaa"
+
+
+class Fake:
+    """A registry that lists the version after `lag` seconds and a virtual clock."""
+
+    def __init__(self, listed: str | None = None, lag: float = 0, publish_result=(0, "")):
+        self.now = 0.0
+        self.listed, self.lag = listed, lag
+        self.publish_result = publish_result
+        self.published = 0
+
+    def clock(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+    def view(self, spec: str) -> str | None:
+        assert spec == f"{NAME}@{VERSION}"
+        return self.listed if self.now >= self.lag else None
+
+    def publish(self, tarball: str) -> tuple[int, str]:
+        assert tarball == TARBALL
+        self.published += 1
+        return self.publish_result
+
+    def run(self, **kw) -> str:
+        return reg.release(NAME, VERSION, TARBALL, SUM, view=self.view, publish=self.publish,
+                           sleep=self.sleep, clock=self.clock, log=lambda _m: None, **kw)
+
+
+def test_publish_then_wait_for_a_slow_registry():
+    fake = Fake(listed=SUM, lag=400)
+    assert fake.run(timeout=600, interval=15) == "published"
+    assert fake.published == 1
+
+
+def test_listed_version_is_not_published_again():
+    fake = Fake(listed=SUM)
+    assert fake.run() == "already on the registry"
+    assert fake.published == 0
+
+
+def test_409_after_a_slow_listing_counts_as_already_published():
+    # First view saw nothing (registry lag), publish answered 409, the registry lists it later.
+    fake = Fake(listed=SUM, lag=30, publish_result=(1, "npm error 409 Conflict - cannot publish over the previously published versions"))
+    assert fake.run() == "already on the registry"
+    assert fake.published == 1
+
+
+def test_other_publish_failure_is_loud():
+    fake = Fake(listed=SUM, lag=1, publish_result=(1, "npm error 401 Unauthorized"))
+    with pytest.raises(reg.ReleaseError, match="401 Unauthorized"):
+        fake.run()
+
+
+def test_integrity_mismatch_fails_loudly():
+    with pytest.raises(reg.ReleaseError, match="sha512-bbb.*sha512-aaa"):
+        Fake(listed="sha512-bbb").run()
+
+
+def test_timeout_reports_the_last_answer():
+    fake = Fake(listed=SUM, lag=10_000)
+    with pytest.raises(reg.ReleaseError, match="does not list.*after 600 s"):
+        fake.run(timeout=600, interval=15)
+    assert fake.now >= 600
+
+
+@pytest.mark.parametrize("output", ["npm error code E403\nnpm error 403 Forbidden", "npm error A complete log: _logs/2026-11-17T10_40_09.409Z-debug-0.log"])
+def test_permission_error_or_incidental_409_is_not_already_published(output):
+    fake = Fake(listed=SUM, lag=1, publish_result=(1, output))
+    with pytest.raises(reg.ReleaseError, match="publish of"):
+        fake.run()
+
+
+def _fake_npm(monkeypatch, code, out="", err=""):
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, code, out, err))
+
+
+def test_npm_view_returns_integrity_and_none_for_404(monkeypatch):
+    _fake_npm(monkeypatch, 0, "sha512-aaa\n")
+    assert reg.npm_view("x@1") == "sha512-aaa"
+    _fake_npm(monkeypatch, 1, "", "npm error code E404\nnpm error 404 Not Found")
+    assert reg.npm_view("x@1") is None
+
+
+def test_npm_view_surfaces_other_failures(monkeypatch):
+    _fake_npm(monkeypatch, 1, "", "npm error code ENOTFOUND\nnpm error network request failed")
+    with pytest.raises(reg.ReleaseError, match="ENOTFOUND"):
+        reg.npm_view("x@1")
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize("package", ["llm-kit-config", "llm-kit-send"])
+def test_workflow_runs_the_script_from_the_package_directory(package):
+    """The release step runs in $PACKAGE_DIR; its script path must resolve from there for each package."""
+    wf = yaml.safe_load((ROOT / ".github/workflows/release-npm.yml").read_text())
+    steps = wf["jobs"]["publish"]["steps"]
+    step = next(s for s in steps if "npm_registry.py" in s.get("run", ""))
+    assert step["working-directory"] == "${{ env.PACKAGE_DIR }}"
+    command = next(l for l in step["run"].splitlines() if "npm_registry.py" in l and not l.lstrip().startswith("#"))
+    script = command.split()[1]
+    assert (ROOT / "packages" / package / script).resolve() == ROOT / "scripts" / "npm_registry.py"
+    mapped = f'dir="packages/{package}"'
+    assert mapped in "\n".join(s.get("run", "") for s in steps)

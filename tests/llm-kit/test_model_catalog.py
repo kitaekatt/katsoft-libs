@@ -138,6 +138,22 @@ def test_each_row_reports_its_exact_model_menu_modes_and_adapter(project, capsys
     assert rows["deepseek-flash"]["effort_delivery"] == {"deliverable": True, "style": "top-level"}
 
 
+def test_a_row_shows_its_wire_model_and_the_none_it_declares(project, capsys, monkeypatch):
+    """A connection row on the top-level style: the menu is the style's, plus the ``none`` the row declares."""
+    document = json.loads(json.dumps(_CUSTOMER))
+    document["endpoints"] = {"direct": {"effort_style": "top-level", "base_url": "https://api.vendor.example/v1",
+                                        "key_env": "VENDOR_API_KEY"}}
+    document["catalog"].append({"id": "swift", "label": "Swift", "endpoint": "direct", "model": "vendor/swift-1",
+                                "wire_model": "swift-1", "efforts": ["none", "low", "medium", "high"]})
+    pm.write_project_models(document, project_root=str(project))
+    _out, got = _catalog(capsys, monkeypatch, project)
+    rows = {m["id"]: m for m in got["models"]}
+    assert (rows["swift"]["model"], rows["swift"]["wire_model"]) == ("vendor/swift-1", "swift-1")
+    assert rows["swift"]["efforts"] == ["none", "low", "medium", "high"]
+    assert rows["swift"]["effort_source"] == "library-endpoint-style+project-none"
+    assert "wire_model" not in rows["luna"]  # present only when the row declares one
+
+
 def test_a_row_the_library_has_not_measured_says_so(project, capsys, monkeypatch):
     document = json.loads(json.dumps(_CUSTOMER))
     document["catalog"].append({"id": "new", "label": "New", "endpoint": "sol", "model": "gpt-7-imaginary"})

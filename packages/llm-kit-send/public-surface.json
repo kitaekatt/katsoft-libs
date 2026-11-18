@@ -1,0 +1,465 @@
+{
+  "schema": 1,
+  "purpose": "Public names of @katsoft/llm-kit-send, the package's only export (\".\"). Values are runtime exports (functions, a class, string constants); types are TypeScript-only names in dist/index.d.ts. test/surface.test.mjs compares both lists with the built package.",
+  "package": "@katsoft/llm-kit-send",
+  "covers": [
+    "."
+  ],
+  "entries": [
+    {
+      "name": "postChat",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "sendChat",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "withFallback",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "sendWithRetries",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "retryWait",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "pause",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "isTransient",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "withBackupKey",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "isKeyLimit",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "usageCost",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "tokenCost",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "upstreamReason",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "SendError",
+      "kind": "class",
+      "status": "public"
+    },
+    {
+      "name": "SendErrorKind",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SendErrorFields",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ChatCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PostOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SendOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ReasoningRetry",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ChatAnswer",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "StreamLimits",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "StreamPace",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ToolCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "FallbackOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "CallRecord",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "RetryOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "RetryResult",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "RetryWaitOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "BackupKeyOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "TokenPrice",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "postImages",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "postVenice",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "isVeniceViolation",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "ideogramEdit",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "postFal",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "elevenLabsRequest",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "elevenLabsError",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "fetchFile",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "falQueue",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "sunraQueue",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "readFallbackChains",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "mapInput",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "runChain",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "ChainFormatError",
+      "kind": "class",
+      "status": "public"
+    },
+    {
+      "name": "VENICE_URL",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "IDEOGRAM_URL",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "FAL_RUN_URL",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "FAL_QUEUE_URL",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "SUNRA_QUEUE_URL",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "ELEVENLABS_URL",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "FALLBACK_CHAIN_FORMAT",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "MediaOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ImagesCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ImagesAnswer",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "VeniceCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "IdeogramCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "IdeogramAnswer",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "FalCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ElevenLabsCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "FileOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "FileResult",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "FalQueueCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "FalQueueResult",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SunraQueueCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SunraQueueResult",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "QueueStage",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "FallbackChains",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ChainStep",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "InputRule",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ModelHost",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ChainFailure",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ChainContext",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "AttemptResult",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ChainOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ChainResult",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "requestKey",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "stepKey",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "readEntry",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "ReplyCacheError",
+      "kind": "class",
+      "status": "public"
+    },
+    {
+      "name": "ReplyEntryError",
+      "kind": "class",
+      "status": "public"
+    },
+    {
+      "name": "REPLY_KEY_FORMAT",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "REPLY_ENTRY_FORMAT",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "ReplyVerdict",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ReplyLayer",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ReplyStore",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "StepCache",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ParsedStepCache",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "StepContext",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ReplyEntry",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "WireRequest",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "CachedResponse",
+      "kind": "type",
+      "status": "public"
+    }
+  ]
+}
