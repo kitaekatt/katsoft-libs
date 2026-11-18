@@ -16,6 +16,14 @@ The fleet layer sits below every machine-local layer for the same reason
 ``settings.local.json`` outranks ``settings.json``: a machine-specific answer
 beats the fleet-wide one. See ``fleet_config_path`` / ``load_model_config``.
 
+A project layer lives inside the project tree, so repository content can supply it. It
+may set everything except an endpoint's connection: ``base_url``, ``key_env`` and
+``key_file`` decide which host receives which key, and only the fleet and user layers
+(files the machine's owner wrote outside any repository) may declare or change them.
+``load_model_config`` drops those three keys from a project layer before merging, for a
+new endpoint and for an existing one, and writes one note to stderr naming the file, the
+endpoint and the key. Declare the connection in a user-level file instead.
+
 The canonical project layer carries the ``plugins-kit`` marketplace segment,
 matching both the user layer and the canonical project API-key path
 (``constants.project_env_file``). The marketplace-less location is read at
@@ -190,6 +198,25 @@ DEFAULT_MODEL_CONFIG = {
     "defaultCheap": "qwen",
 }
 
+# The endpoint keys that decide which host receives which key.
+CONNECTION_KEYS = ("base_url", "key_env", "key_file")
+
+# The endpoint keys that feed the cost class (registry.cost.classify): ``billing``
+# (mode and owner: unmetered + self is local, provider-reported makes a native cost
+# authoritative), ``frontdoor`` (a front door takes the class of its tiers, not of its
+# own billing) and ``endpoint`` (a non-claude, non-codex harness takes the class of the
+# transport it names). ``harness`` is not listed: it only names what runs, so changing it
+# changes the class of what runs, never hides a paid host behind a cheaper class.
+COST_CLASS_KEYS = ("billing", "frontdoor", "endpoint")
+
+# The endpoint keys only the machine's own layers (fleet, user) may set. A layer read
+# from the project tree may not (see ``_without_machine_only_keys``).
+MACHINE_ONLY_ENDPOINT_KEYS = CONNECTION_KEYS + COST_CLASS_KEYS
+
+# (file, endpoint, key) triples already reported, so a process that loads the config
+# many times writes each refusal note once.
+_REFUSED_NOTES: set = set()
+
 # The plugin/marketplace identity under which the config.yaml lives.
 CONFIG_PLUGIN = "llm-scripting-kit"
 CONFIG_MARKETPLACE = "plugins-kit"
@@ -273,6 +300,14 @@ def load_model_config(*, project_root: Optional[str] = None) -> dict:
     ``~/.claude/config/llm-scripting-kit.yaml``, the machine-local
     ``config.yaml`` in the plugin data directory, then the project layers.
 
+    A project layer is a file inside the project tree, so it may be repository
+    content. It can set every key except an endpoint's connection (``base_url``,
+    ``key_env``, ``key_file``) and the keys that feed its cost class (``billing``,
+    ``frontdoor``, ``endpoint``; see ``COST_CLASS_KEYS``): those are dropped before
+    the merge for every endpoint, new or existing, and each drop is noted on stderr
+    (see ``_without_machine_only_keys``). A connection and a cost class are declared
+    only in the fleet or user layer.
+
     Falls back to the shipped baseline alone if the layers cannot be read --
     either because bootstrap_lib is unavailable, or because reading them raised
     (most commonly PyYAML missing from whatever interpreter is running us).
@@ -322,8 +357,28 @@ def load_model_config(*, project_root: Optional[str] = None) -> dict:
         # BEFORE the canonical project layer, which standard_config_layers put
         # last.
         layers.insert(-1, Path(project_root) / ".local-data" / CONFIG_PLUGIN / CONFIG_FILE)
+    # Which layers are user-level: exactly the ones standard_config_layers returns
+    # when no project is given, plus the fleet layer. Every other layer lives in
+    # the project tree, so it is untrusted for the connection keys. Deriving the set
+    # this way (rather than guessing from paths) keeps an unknown layer on the
+    # untrusted side.
+    user_level = {fleet_config_path(), *standard_config_layers(
+        CONFIG_FILE,
+        plugin=CONFIG_PLUGIN,
+        marketplace=CONFIG_MARKETPLACE,
+        project_root=None,
+    )}
+    file_cfg: dict = {}
     try:
-        file_cfg = resolve_config(layers)
+        # One resolve_config call per layer, folded with the same deep_merge it
+        # uses, so the result equals resolve_config(layers) apart from the strip.
+        for layer in layers:
+            data = resolve_config([layer])
+            if not data:
+                continue
+            if layer not in user_level:
+                data = _without_machine_only_keys(data, source=layer)
+            file_cfg = deep_merge(file_cfg, data)
     except ConfigError as e:
         print(
             f"llm-scripting-kit: cannot read layered config ({e}); using the shipped "
@@ -332,6 +387,51 @@ def load_model_config(*, project_root: Optional[str] = None) -> dict:
         )
         return base
     return deep_merge(base, file_cfg)
+
+
+def _without_machine_only_keys(layer_config: dict, *, source: Path) -> dict:
+    """Return ``layer_config`` without any endpoint's connection or cost-class keys.
+
+    Applied to a layer read from the project tree (see the module docstring): that
+    file may be repository content. The connection keys (``CONNECTION_KEYS``)
+    decide which host receives which key, and the cost-class keys
+    (``COST_CLASS_KEYS``) decide whether a policy treats the endpoint as local,
+    subscription or metered; both hold for a new endpoint and an existing one
+    alike. An endpoint left with no other key is dropped. Every other key is
+    returned unchanged, as is a layer whose ``endpoints`` is not a mapping (the
+    caller's ordinary validation reports that). The input is not modified.
+
+    Each removed key writes one note to stderr, once per process, naming
+    ``source``, the endpoint and the key, and saying to declare it in a
+    user-level file. The loader notes and continues rather than raising:
+    :func:`load_model_config` never raises, so key management and every
+    unrelated endpoint keep working in a checkout that carries such a file.
+    """
+    endpoints = layer_config.get("endpoints")
+    if not isinstance(endpoints, dict):
+        return layer_config
+    kept: dict = {}
+    for name, endpoint in endpoints.items():
+        if not isinstance(endpoint, dict):
+            kept[name] = endpoint
+            continue
+        refused = [key for key in MACHINE_ONLY_ENDPOINT_KEYS if key in endpoint]
+        for key in refused:
+            note = (str(source), str(name), key)
+            if note not in _REFUSED_NOTES:
+                _REFUSED_NOTES.add(note)
+                what = "connection" if key in CONNECTION_KEYS else "cost class"
+                print(
+                    f"llm-scripting-kit: ignored endpoints.{name}.{key} in {source}: a config "
+                    f"file inside the project tree cannot declare or change an endpoint's "
+                    f"{what} ({', '.join(CONNECTION_KEYS if key in CONNECTION_KEYS else COST_CLASS_KEYS)}); "
+                    "declare it in the user-level config file instead",
+                    file=sys.stderr,
+                )
+        rest = {key: value for key, value in endpoint.items() if key not in MACHINE_ONLY_ENDPOINT_KEYS}
+        if rest or not refused:
+            kept[name] = rest
+    return {**layer_config, "endpoints": kept}
 
 
 def _default_endpoint_value(config: Mapping[str, object]) -> object:

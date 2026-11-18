@@ -86,7 +86,7 @@ Validation has two parts.
 
 An `endpoints` entry with `base_url` and `key_env` is a connection: it says how to reach the endpoint on a machine that does not know it. Precedence, per endpoint name:
 
-1. The machine wins. When the machine's own configuration knows the name (Python: the model config layers, then the endpoint registry), a call uses the machine's connection whole: its base URL, its key, its billing mode. The file's `base_url` and `key_env` are not used on that machine.
+1. The machine wins. When the machine's own configuration knows the name (Python: the fleet and user model config layers, then the endpoint registry; a model config layer in the project tree cannot supply or change a `base_url`, `key_env`, `key_file`, `billing`, `frontdoor` or `endpoint`, see "Model config layers" in the architecture reference), a call uses the machine's connection whole: its base URL, its key, its billing mode. The file's `base_url` and `key_env` are not used on that machine.
 2. Otherwise the file's connection binds the rows on that endpoint. A call sends the row's wire model (`wire_model`, else `model`) as written (no alias map), with the key from the variable `key_env` names (Python: the environment, then the `.env` layers), when the machine approves the connection (see "Approval of a connection that sends a key"). The file declares no billing, so a native `usage.cost` is an estimate and the cost class is `metered`.
 3. Either way, the file's `effort_style` wins over the machine's style (see above).
 
