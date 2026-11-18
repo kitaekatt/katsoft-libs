@@ -52,6 +52,7 @@ def check_file(path: Path, name: str) -> dict:
 
 
 WORK = Path("/work/unit-7").resolve()  # absolute on every platform (a drive on Windows)
+PROJECT = Path("/home/user/project").resolve()
 
 
 @pytest.fixture
@@ -407,7 +408,7 @@ def test_a_session_record_rewrite_cannot_change_identity_or_lose_the_first_init(
     sess.write_session_record(paths, session_record())
     channel = sess.FileSessionChannel(paths)
     for change in (dict(run_id="run-2"), dict(job_id="other"), dict(attempt_no=2), dict(resumed=True),
-                   dict(session_id="1b9f3c3e-8a51-4a0e-9a4f-3d2f7c1e5b10"), dict(cwd=Path("/elsewhere")),
+                   dict(session_id="1b9f3c3e-8a51-4a0e-9a4f-3d2f7c1e5b10"), dict(cwd=Path("/elsewhere").resolve()),
                    dict(process_tag="lst_ffffffffffffffff"), dict(created_at=LATER)):
         with pytest.raises(ValueError, match="cannot change"):
             sess.write_session_record(paths, session_record(**change))
@@ -481,14 +482,14 @@ def test_cleanup_is_absent_until_recorded_then_round_trips_and_validates(paths):
 def test_detached_survivors_round_trip_and_validate(paths):
     sess.write_session_record(paths, session_record())
     channel = sess.FileSessionChannel(paths)
-    survivors = (st.DetachedSurvivor(st.ProcessIdentity(4410, 1794000003.75), "/home/user/project"),
+    survivors = (st.DetachedSurvivor(st.ProcessIdentity(4410, 1794000003.75), str(PROJECT)),
                  st.DetachedSurvivor(st.ProcessIdentity(4411, 1794000004.0), None))
     record = cleanup_record(members=(st.ProcessIdentity(4300, 1794000001.25),), confirmed_stopped_at=LATER,
                             detached_survivors=survivors)
     channel.record_cleanup(record)
     document = check_file(paths.cleanup, st.CLEANUP_RECORD_SCHEMA_FILE)
     assert document["detached_survivors"] == [
-        {"pid": 4410, "create_time": 1794000003.75, "cwd": "/home/user/project"},
+        {"pid": 4410, "create_time": 1794000003.75, "cwd": str(PROJECT)},
         {"pid": 4411, "create_time": 1794000004.0, "cwd": None},
     ]
     assert sess.read_cleanup_record(paths) == record
