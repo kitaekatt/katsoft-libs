@@ -76,7 +76,7 @@ def test_init_cwd_mismatch_is_a_problem(tmp_path):
     other = tmp_path / "elsewhere"
     other.mkdir()
     text = problem(tmp_path, init_event(tmp_path, cwd=str(other)))
-    assert text is not None and text.startswith("cwd ") and str(other) in text
+    assert text is not None and text.startswith("cwd ") and repr(str(other)) in text
 
 
 @pytest.mark.parametrize("cwd", [None, 7, "", ["x"]])

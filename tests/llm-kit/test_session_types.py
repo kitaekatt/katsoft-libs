@@ -289,7 +289,7 @@ def test_session_outcome_requires_detached_survivors_and_derives_quiescence():
     response = LLMResponse(text="done", model="opus")
     with pytest.raises(TypeError, match="detached_survivors"):
         st.SessionOutcome(response, SID, ROOT, "quiescent", "success", True)  # a backend must state it
-    survivor = st.DetachedSurvivor(st.ProcessIdentity(200, 1.7e9 + 5), "/work/tree")
+    survivor = st.DetachedSurvivor(st.ProcessIdentity(200, 1.7e9 + 5), str(ROOT.parent / "tree"))
     clean = _outcome(response, SID, ROOT, "quiescent", "success", True)
     assert clean.workspace_quiescent is True
     detached = _outcome(response, SID, ROOT, "quiescent", "success", True, survivors=[survivor])

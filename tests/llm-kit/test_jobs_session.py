@@ -51,6 +51,9 @@ def check_file(path: Path, name: str) -> dict:
     return document
 
 
+WORK = Path("/work/unit-7").resolve()  # absolute on every platform (a drive on Windows)
+
+
 @pytest.fixture
 def paths(tmp_path):
     value = st.SessionPaths.for_attempt(tmp_path.resolve() / "sessions", "unit/7", 1)
@@ -60,7 +63,7 @@ def paths(tmp_path):
 
 def session_record(**changes) -> st.SessionRecord:
     base = dict(run_id="run-1", job_id="unit/7", attempt_no=1, session_id=SID, resumed=False,
-                cwd=Path("/work/unit-7"), process_tag=TAG, created_at=NOW)
+                cwd=WORK, process_tag=TAG, created_at=NOW)
     return st.SessionRecord(**{**base, **changes})
 
 
@@ -388,7 +391,7 @@ def test_session_record_round_trips_validates_and_replaces_atomically(paths):
     record = session_record()
     sess.write_session_record(paths, record)
     document = check_file(paths.session_record, st.SESSION_RECORD_SCHEMA_FILE)
-    assert document["cwd"] == "/work/unit-7" and document["first_init_at"] is None
+    assert document["cwd"] == str(WORK) and document["first_init_at"] is None
     assert sess.read_session_record(paths) == record
     ended = replace(record, ended_at=LATER, stop_kind=st.StopKind.QUIESCENT, result_subtype="success",
                     shutdown_confirmed=True)
