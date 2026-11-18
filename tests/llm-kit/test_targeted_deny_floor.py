@@ -16,7 +16,7 @@ from llm_kit.completion.capabilities import (
     subjects_for_disallowed_tools,
 )
 from llm_kit.completion.requirements import arm_call, match_capabilities, required_guarantees
-from llm_kit.completion.types import BackendOptions
+from llm_kit.completion.types import ALL_TOOLS, BackendOptions
 from llm_kit.completion.types import LLMResponse
 from llm_kit.dispatch.factory import BackendSelection
 from llm_kit.jobs import run as jobs
@@ -56,7 +56,9 @@ def test_child_only_guarantee_keeps_normal_claude_tools() -> None:
         return json.dumps({"result": "done", "usage": {}}), "", 0
     backend = ClaudeCliBackend(runner=runner, executable="claude")
     original = "Bash(git push --force*),Agent,Task"
-    armed = arm_call(backend, BackendOptions(disallowed_tools=original), {"guarantees": [SUBAGENT_SPAWN]})
+    # A worker states its tool mode; a call with no grant is tool-less.
+    worker = BackendOptions(allowed_tools=ALL_TOOLS, disallowed_tools=original)
+    armed = arm_call(backend, worker, {"guarantees": [SUBAGENT_SPAWN]})
     response = armed.backend.complete("system", "work", model="opus", options=armed.options)
     assert "--tools" not in calls[0]
     assert calls[0][calls[0].index("--disallowedTools") + 1] == original + " Workflow SendMessage"

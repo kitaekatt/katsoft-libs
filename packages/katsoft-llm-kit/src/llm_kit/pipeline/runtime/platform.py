@@ -302,7 +302,7 @@ class BackendOptions:
     - ``effort`` -- reasoning-effort level. A harness that takes one passes
       it as its own effort flag; ``ModelEndpointBackend`` places it in the
       selected entry's effort style and defaults it from the entry.
-    - ``allowed_tools`` -- claude-cli ``--allowedTools`` value. ``None`` means
+    - ``allowed_tools`` -- claude-cli tool grant (names, or ``ALL_TOOLS``). ``None`` means
       a pure completion (no tools).
     - ``cwd`` -- claude-cli working directory.
     - ``client_id`` -- access-log identity for the front door.

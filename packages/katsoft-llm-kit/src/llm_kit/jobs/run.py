@@ -52,9 +52,9 @@ from llm_kit.completion.session_types import (
     WorkspaceFinalizeStatus,
     check_supervisor_budget,
 )
-from llm_kit.completion.types import COMPLETED, ERROR, TIMEOUT, BackendOptions
+from llm_kit.completion.types import ALL_TOOLS, COMPLETED, ERROR, TIMEOUT, BackendOptions
 from llm_kit.dispatch.factory import BackendSelection
-from llm_kit.registry.adapter_names import lookup_by_adapter
+from llm_kit.registry.adapter_names import ADAPTER_CLAUDE_CLI, lookup_by_adapter
 from . import interrupts as _interrupts
 from .model import (
     Acceptance,
@@ -875,6 +875,31 @@ def _backend_options(
         log_prefix=f"[job:{job.id}]",
         extras=extras,
     )
+
+
+def _claude_worker_tools(selection: BackendSelection, options: BackendOptions) -> BackendOptions:
+    """``options`` for a completion job's call, with the Claude worker mode stated.
+
+    A job worker edits files and runs commands, and the claude-cli adapter
+    gives a call with no tool grant no tools at all. So a completion job on
+    claude-cli that names no ``allowed_tools`` asks for
+    :data:`~llm_kit.completion.types.ALL_TOOLS` (every built-in tool, permission
+    checks bypassed, the run's deny floor still applied): the tools such a job
+    always had, now named instead of inherited from the adapter's default.
+
+    Unchanged: a job that names its own ``allowed_tools`` (a grant, or ``""``
+    for no tools), an entry on another adapter, and a backend that arming made
+    text-only (the guarantee that armed it still wins, as before). Call it
+    after ``arm_call``.
+    """
+    backend = selection.backend
+    if (
+        options.allowed_tools is not None
+        or getattr(backend, "name", None) != ADAPTER_CLAUDE_CLI
+        or getattr(backend, "text_only", False)
+    ):
+        return options
+    return replace(options, allowed_tools=ALL_TOOLS)
 
 
 def _exception_attempt(
@@ -1721,6 +1746,8 @@ def _run_job_attempt(
                     "meet the job's requirements; an agent session cannot run without tools"
                 )
             selection = replace(selection, backend=armed_call.backend)
+        if not agent:
+            options = _claude_worker_tools(selection, options)
     except Exception as exc:
         store.resolve_reservation_before_invoke(
             run_id,

@@ -367,7 +367,7 @@ def _check_transport_sdk(selection: Any) -> None:
         ) from exc
 
 
-#: The read-only tool grant for an agent-loop lane (`--allowedTools` value).
+#: The read-only tool grant for an agent-loop lane (`allowed_tools` value).
 AGENT_LOOP_TOOLS = "Read,Grep,Glob"
 
 
@@ -376,20 +376,28 @@ def _allowed_tools_for(lane: str) -> Optional[str]:
 
     Passing the harness check is NOT the same as being handed tools. The codex
     and opencode adapters run their own agent loop and drop this parameter, but
-    claude-cli emits `--allowedTools ""` for a None value -- a deliberate
-    allow-NOTHING list, not an absent flag -- so a lane admitted as needing an
-    agent loop would still reach the model as a tool-less completion, holding a
-    prompt that tells it to read files it cannot open. That is precisely the
-    hallucination LANES_REQUIRING_AGENT_LOOP exists to prevent, so the guard has
-    to grant the capability it just finished checking for.
+    claude-cli runs a call with no grant tool-less (`--tools ""`), so a lane
+    admitted as needing an agent loop would still reach the model as a
+    tool-less completion, holding a prompt that tells it to read files it
+    cannot open. That is precisely the hallucination LANES_REQUIRING_AGENT_LOOP
+    exists to prevent, so the guard has to grant the capability it just
+    finished checking for.
 
     `Read`, `Grep` and `Glob` and nothing else: these lanes inspect the
     repository around the chunk -- the changed files' surrounding context, the
     CLAUDE.md files that govern them, and the consumers of a changed input,
     which must be FOUND before they can be read, so opening files alone is not
     enough. All three are read-only; a reviewer has no business writing
-    (Edit, Write) or running (Bash) anything. The value is the comma-separated
-    form the claude CLI accepts for `--allowedTools`.
+    (Edit, Write) or running (Bash) anything, and the lane prompts say so.
+    claude-cli turns the grant into `--tools Read,Grep,Glob` (only these
+    built-in tools exist in the child) and `--permission-mode dontAsk` with no
+    MCP servers, skills or settings, and pre-approves none of the three, so a
+    read runs only inside the working directory: the project root when the
+    lane has one (`_cwd_for`), else the process cwd, against which the
+    repo-relative file paths resolve anyway. The lane prompts need nothing
+    outside it: the diff is inlined,
+    the governing CLAUDE.md chain stops at the repository root, and the files
+    to read are repository paths.
     """
     return AGENT_LOOP_TOOLS if lane in LANES_REQUIRING_AGENT_LOOP else None
 

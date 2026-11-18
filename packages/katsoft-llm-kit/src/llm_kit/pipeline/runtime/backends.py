@@ -571,8 +571,10 @@ class OpenAICompatBackend(_LazyDelegate):
 class ClaudeCliBackend(_LazyDelegate):
     """Local ``claude -p`` completion, built through the backend factory.
 
-    Spawns the CLI in pure-completion mode (JSON output, no tools by default),
-    enforces a per-call timeout, retries transient 5xx envelopes, and maps
+    Spawns the CLI in pure-completion mode: JSON output, and no tools, MCP
+    servers, skills or settings unless ``options.allowed_tools`` grants tools
+    (named tools, or ``llm_kit.completion.types.ALL_TOOLS`` for the
+    agent-worker mode). It enforces a per-call timeout, retries transient 5xx envelopes, and maps
     rate-limit / auth markers to a hard stop -- all inside the ``claude-cli``
     adapter. The CLI is billed under the operator's subscription rather than
     per call (the billing model, not a measured cost);

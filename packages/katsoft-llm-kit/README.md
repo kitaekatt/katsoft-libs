@@ -70,6 +70,27 @@ Mixed floors retain their whole-tool guarantees: `Write,Bash(git push *)` still 
 The existing OpenCode permission mapping is unchanged.
 These records describe emitted controls; verify the actual harness behavior for your policy.
 
+## Claude tool modes
+
+`BackendOptions.allowed_tools` selects the tools of a `ClaudeCliBackend` call.
+With `None` or `""`, the call has no tools. The argv carries `--tools ""`, no MCP servers, no skills, no settings or CLAUDE.md, and `--permission-mode dontAsk`.
+With tool names or rules, such as `"Read,Grep,Glob"`, `--tools` names only those tools.
+The child has exactly the named built-in tools; the other built-in tools are absent.
+`--allowedTools` pre-approves every clause except a bare `Read`, `Grep` or `Glob`.
+The same isolation follows, and `dontAsk` denies a call that would otherwise prompt.
+So a bare `Read` reads only inside the working directory (measured), and the permissions reference says the same of `Grep` and `Glob` (not measured).
+A scoped rule such as `Read(/data/**)` is pre-approved with exactly the scope written.
+A grant that names `default`, an MCP tool (`mcp__...`) or anything other than a built-in tool name is refused before dispatch.
+With `ALL_TOOLS` (`"*"`, from `llm_kit.completion.types`), the call is an agent worker.
+The argv carries `--permission-mode bypassPermissions --allowedTools ""`: every built-in tool, with no permission check.
+`disallowed_tools` still applies in every mode.
+A completion job on Claude that names no `allowed_tools` runs as an `ALL_TOOLS` worker, unless a deny floor arms text-only mode.
+Agent-loop review lanes grant `Read,Grep,Glob`, so their file reads stay inside the project root, their working directory.
+Measured on Claude Code 2.1.327 (2026-11-18): the no-grant argv had no tools.
+With `--tools Read,Grep,Glob` and no `--allowedTools`, a read in the working directory ran with no prompt, and a read of a sibling directory was denied.
+With a bare `--allowedTools Read,Grep,Glob`, the same outside read succeeded.
+Not measured: Grep or Glob outside the working directory, `../` paths, symlinks, and pre-approved Bash or write tools.
+
 ## Runtime mode
 
 `llm_kit._runtime.mode()` reports how the library is deployed. This

@@ -281,6 +281,22 @@ class LLMResponse:
     reasoning_tokens: int = 0
 
 
+ALL_TOOLS = "*"
+"""The ``BackendOptions.allowed_tools`` value for a claude-cli agent worker.
+
+Purpose: a caller whose child must run tools it cannot list in advance (a job
+worker that edits files and runs commands) asks for this mode by name. The
+claude-cli adapter then emits ``--permission-mode bypassPermissions
+--allowedTools ""``: every built-in tool, and no permission check. Deny rules
+(``disallowed_tools``) still apply in that mode.
+
+Input and output: none; it is a constant. It must be the whole
+``allowed_tools`` value; the adapter refuses ``"*"`` beside other names with
+``ValueError`` before anything runs, and a text-only backend refuses it too.
+No default selects this mode: ``None`` is a completion with no tools.
+"""
+
+
 @dataclass(frozen=True)
 class BackendOptions:
     """Per-call knobs, some understood by only one transport.
@@ -312,9 +328,14 @@ class BackendOptions:
       message, used for a second prompt-cache breakpoint (OpenRouter only).
     - ``effort`` -- thinking-budget / provider-variant flag (claude-cli,
       codex-cli, and opencode; the spelling is transport-specific).
-    - ``allowed_tools`` -- claude-cli ``--allowedTools`` value. ``None`` (the
-      default) means a pure completion (no tools). Only read-only vision use
-      (``"Read"``) is sanctioned; agentic tool sets are out of scope here.
+    - ``allowed_tools`` -- claude-cli tool grant. ``None`` (the default) or
+      ``""`` means a pure completion with no tools. Tool names or permission
+      rules (``"Read"``, ``"Read,Grep,Glob"``, ``"Bash(git log *)"``) make
+      exactly those built-in tools available, with no permission bypass: a
+      bare ``Read``, ``Grep`` or ``Glob`` reads only inside the working
+      directory, and every other clause is pre-approved as written. :data:`ALL_TOOLS` is the explicit agent-worker mode:
+      every built-in tool, with permission checks bypassed. Other adapters
+      ignore the field and report it as dropped.
     - ``disallowed_tools`` -- claude-cli ``--disallowedTools`` value: a
       comma/space-separated deny-list (``"Bash(git *) Edit"``). ``None`` (the
       default) emits the flag nowhere, which is an absence rather than an empty
@@ -393,6 +414,7 @@ class LLMBackend(Protocol):
 
 
 __all__ = [
+    "ALL_TOOLS",
     "LLMResponse",
     "BackendOptions",
     "LLMBackend",

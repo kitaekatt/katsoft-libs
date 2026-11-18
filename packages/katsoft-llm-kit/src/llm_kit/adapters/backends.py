@@ -8,9 +8,10 @@ transport, selected by configuration:
   ``make_openai_client(endpoint=...)`` + ``chat.completions.create``. Costs
   real money per the provider's pricing. Consumes ``llm_kit.adapters``'s own
   client factory and model resolver so a named endpoint is honored end to end.
-- :class:`ClaudeCliBackend` -- the local ``claude -p`` CLI in pure completion
-  mode (no tools, JSON envelope) over :mod:`llm_kit.adapters
-  .claude_runner`. Auth and billing come from the CLI's own login (Claude Max /
+- :class:`ClaudeCliBackend` -- the local ``claude -p`` CLI over
+  :mod:`llm_kit.adapters.claude_runner`, JSON envelope. By default a pure
+  completion with no tools; a caller grants named tools or the agent-worker
+  mode through ``allowed_tools``. Auth and billing come from the CLI's own login (Claude Max /
   a Claude subscription), so the run is subscription-billed rather than metered
   per API call. Recorded cost is flat zero by design.
 
@@ -21,11 +22,18 @@ identically regardless of provider.
 A *completion* here is strictly one system prompt + one user prompt -> one text
 response. The claude CLI exposes no temperature / max_tokens controls, so
 :class:`ClaudeCliBackend` accepts those options and drops them -- reported in
-``LLMResponse.dropped_params``, not discarded in silence. The
-agentic features (a default ``--allowedTools`` set, ``--mcp-config``) are
-deliberately absent; ``allowed_tools`` exists for read-only vision use and
-nothing more, and ``disallowed_tools`` narrows that further rather than opening
-anything up.
+``LLMResponse.dropped_params``, not discarded in silence.
+
+``allowed_tools`` selects one of three tool modes. ``None`` or ``""``: no
+tools, no MCP servers, no skills, no settings (the text-only argv). Tool names
+or rules (``"Read,Grep,Glob"``): the child has exactly those built-in tools
+(the others are absent) and no permission bypass. A bare Read, Grep or Glob is
+not pre-approved, so it reads only inside the working directory; every other
+clause is pre-approved as written; a call that would still prompt is denied
+(``dontAsk``).
+:data:`~llm_kit.completion.types.ALL_TOOLS`: the agent-worker mode, every
+built-in tool with permission checks bypassed. ``disallowed_tools`` narrows
+any mode further and opens nothing up.
 """
 from __future__ import annotations
 
@@ -48,8 +56,10 @@ from .claude_runner import (
     run_claude_streaming,
 )
 from .capabilities import (
+    _CLAUDE_ALL_TOOLS_ARGS,
     _CLAUDE_SYSTEM_PROMPT_FLAGS,
     _CLAUDE_TEXT_ONLY_ARGS,
+    _claude_grant_args,
     CLAUDE_CAPABILITIES,
     OPENAI_COMPAT_CAPABILITIES,
 )
@@ -71,6 +81,7 @@ from llm_kit.completion.results import (
     utc_now_iso,
 )
 from llm_kit.completion.types import (
+    ALL_TOOLS,
     COST_SOURCE_PROVIDER,
     COST_SOURCE_REGISTRY_UNMETERED,
     BackendOptions,
@@ -710,6 +721,28 @@ def _envelope_transient_status(stdout: str) -> Optional[int]:
 class ClaudeCliBackend:
     """``claude -p`` completion transport over :mod:`.claude_runner`.
 
+    Tool modes, chosen per call by ``options.allowed_tools`` (see
+    :func:`_claude_tool_args`):
+
+    - ``None`` or ``""``: no tools. The argv carries ``_CLAUDE_TEXT_ONLY_ARGS``
+      (``--tools ""``, no MCP servers, no skills, no settings or CLAUDE.md,
+      ``--permission-mode dontAsk``) and no permission bypass.
+    - Tool names or rules (``"Read,Grep,Glob"``): ``--tools`` makes only those
+      built-in tools available (the others are absent from the child),
+      ``--allowedTools`` pre-approves every clause except a bare Read, Grep
+      or Glob, and the same isolation follows, with ``dontAsk`` denying any
+      call that would otherwise prompt. A bare Read, Grep or Glob therefore
+      reads only inside the working directory; a scoped rule keeps its scope.
+      ``default``, MCP tool names and anything that is not a built-in tool
+      name are refused.
+    - :data:`~llm_kit.completion.types.ALL_TOOLS`: the agent-worker mode,
+      ``--permission-mode bypassPermissions --allowedTools ""``: every
+      built-in tool, no permission check, settings and CLAUDE.md loaded.
+
+    ``disallowed_tools`` adds ``--disallowedTools`` in every mode. An invalid
+    grant raises ``ValueError`` (``TypeError`` for a non-string) before any
+    process starts.
+
     Attributes:
         default_timeout_s: Per-call watchdog when the caller's options carry no
             ``timeout_s``. 900s default -- generous for a large completion,
@@ -731,13 +764,12 @@ class ClaudeCliBackend:
             at call time: ``LLM_KIT_CLAUDE_EXECUTABLE`` when set, else ``claude`` on PATH.
         runner: The subprocess runner -- test seam; production is
             :func:`.claude_runner.run_claude_streaming`.
-        text_only: Run with no tools, no MCP servers, no skills, no settings
-            or CLAUDE.md memory and no
-            permission bypass (``_CLAUDE_TEXT_ONLY_ARGS`` replaces
-            ``--permission-mode bypassPermissions --allowedTools``). Not a
-            caller flag: :func:`~.requirements.arm_requirements` sets it when a
+        text_only: Force the no-tools argv (``_CLAUDE_TEXT_ONLY_ARGS``) whatever
+            the call asks for. Not a caller flag:
+            :func:`~.requirements.arm_requirements` sets it when a
             ``guarantees`` requirement admitted this entry. A non-empty
-            ``allowed_tools`` is refused before dispatch in this mode.
+            ``allowed_tools`` (``ALL_TOOLS`` included) is refused before
+            dispatch in this mode.
 
     Cost/usage: the JSON envelope's ``usage`` block is read best-effort (absent
     on older CLIs -> zeros). Recorded cost is flat zero by design -- Claude Max
@@ -781,12 +813,9 @@ class ClaudeCliBackend:
         _check_system_prompt_mode(opts)
         from .claude_command import batch_shim_spawn_argv  # noqa: PLC0415 -- keeps the module surface parity-pinned
 
-        if self.text_only and opts.allowed_tools:
-            raise ValueError(
-                f"{self.name} text-only mode exposes no tools, so "
-                f"allowed_tools={opts.allowed_tools!r} cannot be honored; "
-                "nothing was dispatched"
-            )
+        # Before argv is built or the runner invoked: a grant text-only mode
+        # cannot honor, or a malformed grant, is refused here.
+        tool_args = _claude_tool_args(self.text_only, opts.allowed_tools, subject=self.name)
 
         cmd = [
             executable,
@@ -799,16 +828,8 @@ class ClaudeCliBackend:
             "--output-format",
             "json",
             "--no-session-persistence",
+            *tool_args,
         ]
-        if self.text_only:
-            cmd.extend(_CLAUDE_TEXT_ONLY_ARGS)
-        else:
-            cmd.extend([
-                "--permission-mode",
-                "bypassPermissions",
-                "--allowedTools",
-                opts.allowed_tools if opts.allowed_tools is not None else "",
-            ])
         cmd.extend(_claude_option_args(opts, contract_plan))
 
         started_at = utc_now_iso()
@@ -931,24 +952,32 @@ class ClaudeCliBackend:
     def _applied_controls(self, opts: BackendOptions) -> "tuple[str, ...]":
         """The advertised controls this adapter's argv carries, per call.
 
-        In text-only mode the argv carries ``no-session-persistence`` and
-        ``text-only-mode`` instead of the three below. Otherwise three are
-        unconditional, ``allowed-tools`` included: the argv above
-        emits ``--allowedTools`` on every call, passing "" when the caller named
-        no tools. An empty allow-list is still an emitted allow-list -- the
-        adapter suppresses nothing -- so reporting it only when the caller set
-        the param would under-report what the request actually contained.
+        One set per tool mode (see :func:`_claude_tool_args`):
 
-        ``disallowed-tools`` is the one CONDITIONAL control here, and the
-        asymmetry with ``allowed-tools`` is deliberate rather than an
-        inconsistency: an unset deny-list emits no flag at all, and reporting a
-        control for a flag the argv does not carry is precisely the overclaim
-        this contract exists to prevent.
+        - no tools (``text_only``, or no grant): ``no-session-persistence`` and
+          ``text-only-mode``;
+        - a named grant: ``tool-grant`` and ``no-session-persistence``, with
+          ``allowed-tools`` first when the argv carries ``--allowedTools`` (a
+          grant of only bare Read, Grep or Glob carries none);
+        - ``ALL_TOOLS``: ``allowed-tools``, ``permission-bypass`` and
+          ``no-session-persistence``. The argv passes ``--allowedTools ""``
+          there, and an emitted empty list is still reported: the adapter
+          suppresses nothing.
+
+        ``disallowed-tools`` is added only when the caller set a deny-list: an
+        unset deny-list emits no flag at all, and reporting a control for a
+        flag the argv does not carry is precisely the overclaim this contract
+        exists to prevent.
         """
-        if self.text_only:
-            applied = ["no-session-persistence", "text-only-mode"]
-        else:
+        mode = _claude_tool_mode(self.text_only, opts.allowed_tools)
+        if mode == _TOOL_MODE_GRANT:
+            approves = "--allowedTools" in _claude_grant_args(opts.allowed_tools)
+            applied = ["allowed-tools"] if approves else []
+            applied += ["tool-grant", "no-session-persistence"]
+        elif mode == _TOOL_MODE_ALL:
             applied = ["allowed-tools", "permission-bypass", "no-session-persistence"]
+        else:
+            applied = ["no-session-persistence", "text-only-mode"]
         if opts.disallowed_tools is not None:
             applied.append("disallowed-tools")
         return check_applied_controls(self.capabilities, tuple(applied))
@@ -1061,6 +1090,57 @@ def _check_system_prompt_mode(opts: BackendOptions) -> None:
         )
 
 
+#: The three tool modes of one ClaudeCliBackend call (:func:`_claude_tool_mode`).
+_TOOL_MODE_NONE = "none"
+_TOOL_MODE_GRANT = "grant"
+_TOOL_MODE_ALL = "all"
+
+
+def _claude_tool_mode(text_only: bool, allowed_tools: Optional[str]) -> str:
+    """The tool mode of one call: no tools, a named grant, or ``ALL_TOOLS``.
+
+    ``text_only`` or an unset or empty ``allowed_tools`` is no tools;
+    :data:`~llm_kit.completion.types.ALL_TOOLS` is the agent-worker mode; any
+    other value is a named grant. Validates nothing: :func:`_claude_tool_args`
+    does that before dispatch.
+    """
+    if text_only or not allowed_tools:
+        return _TOOL_MODE_NONE
+    if allowed_tools == ALL_TOOLS:
+        return _TOOL_MODE_ALL
+    return _TOOL_MODE_GRANT
+
+
+def _claude_tool_args(text_only: bool, allowed_tools: Optional[str], *, subject: str) -> tuple:
+    """The tool argv of one ClaudeCliBackend call, after the fixed flags.
+
+    No tools: ``_CLAUDE_TEXT_ONLY_ARGS``. A named grant:
+    :func:`~.capabilities._claude_grant_args`. ``ALL_TOOLS``:
+    ``_CLAUDE_ALL_TOOLS_ARGS``. Raises ``TypeError`` before dispatch when
+    ``allowed_tools`` is neither None nor a string, and ``ValueError`` when
+    ``text_only`` is set and ``allowed_tools`` is not empty (``ALL_TOOLS``
+    included), or when a grant is malformed or names a refused tool;
+    ``subject`` names the adapter in the message.
+    """
+    if allowed_tools is not None and not isinstance(allowed_tools, str):
+        raise TypeError(
+            f"{subject} allowed_tools must be a string or None, not "
+            f"{type(allowed_tools).__name__} ({allowed_tools!r}); nothing was dispatched"
+        )
+    if text_only and allowed_tools:
+        raise ValueError(
+            f"{subject} text-only mode exposes no tools, so "
+            f"allowed_tools={allowed_tools!r} cannot be honored; "
+            "nothing was dispatched"
+        )
+    mode = _claude_tool_mode(text_only, allowed_tools)
+    if mode == _TOOL_MODE_ALL:
+        return _CLAUDE_ALL_TOOLS_ARGS
+    if mode == _TOOL_MODE_GRANT:
+        return _claude_grant_args(allowed_tools)
+    return _CLAUDE_TEXT_ONLY_ARGS
+
+
 def _claude_option_args(opts: BackendOptions, contract_plan: Any) -> list:
     """The conditional flags both Claude argv builders emit, in order.
 
@@ -1069,11 +1149,9 @@ def _claude_option_args(opts: BackendOptions, contract_plan: Any) -> list:
     natively delivered output contract.
     """
     args: list = []
-    # Emitted only when the caller named tools to deny. The empty-string
-    # treatment `--allowedTools` gets in completion mode would be wrong here:
-    # an empty ALLOW-list is a meaningful restriction (allow nothing), while
-    # an empty DENY-list restricts nothing at all, so emitting it would
-    # advertise a control the request does not actually carry.
+    # Emitted only when the caller named tools to deny: an empty DENY-list
+    # restricts nothing at all, so emitting it would advertise a control the
+    # request does not actually carry.
     if opts.disallowed_tools is not None:
         args.extend(["--disallowedTools", opts.disallowed_tools])
     if opts.effort is not None:

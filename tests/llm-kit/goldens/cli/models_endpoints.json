@@ -27,7 +27,15 @@
               "effect": "allow",
               "emits": "--allowedTools",
               "id": "allowed-tools",
-              "note": "an ALLOW-list of caller-supplied tool names, not a deny-list: it cannot express denial of an arbitrary tool without a complete tool universe. The record makes no claim about how it composes with the permission bypass below",
+              "note": "an APPROVAL list: the CLI reference calls --allowedTools the tools that execute without prompting, and says to use --tools to restrict which tools are available. Emitted with a named grant that has a clause other than a bare Read, Grep or Glob (beside tool-grant), and with ALL_TOOLS (as \"\", beside permission-bypass, where allow rules have no effect). Not emitted when the call grants no tool",
+              "parameter": "allowed_tools",
+              "source": "request"
+            },
+            {
+              "effect": "confine",
+              "emits": "--tools <tool names> [--allowedTools <clauses except a bare Read, Grep or Glob>] --strict-mcp-config --mcp-config {\"mcpServers\":{}} --disable-slash-commands --setting-sources \"\" --permission-mode dontAsk",
+              "id": "tool-grant",
+              "note": "emitted when allowed_tools names tools (not ALL_TOOLS): --tools makes only those built-in tools available (the others are absent from the child), --allowedTools pre-approves every clause except a bare Read, Grep or Glob, and the text-only isolation follows (no MCP servers, no skills, no settings or CLAUDE.md memory, dontAsk instead of a bypass), so a call that would prompt is denied rather than prompted. A bare Read therefore reads only inside the working directory (measured), and the permissions reference says the same of Grep and Glob (not measured); a scoped rule keeps the scope written. default, MCP tool names and anything that is not a built-in tool name are refused before dispatch. Measured 2026-11-18 on Claude Code 2.1.327 (haiku): with --tools Read,Grep,Glob and no --allowedTools, a read in the cwd ran unprompted, Glob and Grep ran, and a Read of an absolute path in a sibling directory was denied (permission_denials, don't-ask mode), exit 0, no hang; with --allowedTools Read,Grep,Glob added, that outside read succeeded; Read(./**),Grep,Glob confined the Read like the first shape; a Read grant had no shell or write tool and wrote nothing. Not measured: Grep or Glob outside the cwd, ../ traversal, symlinks, and Bash, write or other pre-approved tools (documented only). No guarantee is declared for it",
               "parameter": "allowed_tools",
               "source": "request"
             },
@@ -48,10 +56,10 @@
               "effect": "bypass",
               "emits": "--permission-mode bypassPermissions",
               "id": "permission-bypass",
-              "note": "emitted on every call except in text-only mode",
-              "parameter": "backend.text_only",
+              "note": "emitted only for the explicit agent-worker mode (allowed_tools='*', ALL_TOOLS): every built-in tool runs without a permission check. Never emitted for a call with no grant, a named grant, or backend.text_only",
+              "parameter": "allowed_tools",
               "source": "request",
-              "when_value": "false"
+              "when_value": "*"
             },
             {
               "effect": "disable",
@@ -66,7 +74,7 @@
               "effect": "deny",
               "emits": "--tools \"\" --strict-mcp-config --mcp-config {\"mcpServers\":{}} --disable-slash-commands --setting-sources \"\" --permission-mode dontAsk",
               "id": "text-only-mode",
-              "note": "no tools, no MCP servers, no skills, no settings or CLAUDE.md memory, and no permission bypass. A guarantees requirement admits claude-cli through this control and declaration.run arms it, so the caller passes no flag. Measured 2026-10-07 on Claude Code 2.1.293: the model reported no callable tool and ran nothing. Neither allowed-tools nor permission-bypass is emitted in this mode",
+              "note": "no tools, no MCP servers, no skills, no settings or CLAUDE.md memory, and no permission bypass. A guarantees requirement admits claude-cli through this control and declaration.run arms it, so the caller passes no flag. A call whose allowed_tools is None or empty carries the same argv and reports this control unarmed. Measured 2026-10-07 on Claude Code 2.1.293: the model reported no callable tool and ran nothing. Measured 2026-11-18 on Claude Code 2.1.327 through the no-grant argv: the model reported no tools (exit 0, one turn). Neither allowed-tools nor permission-bypass is emitted in this mode",
               "parameter": "backend.text_only",
               "source": "request",
               "subjects": [
@@ -80,17 +88,16 @@
           "guarantees": [],
           "params": {
             "allowed_tools": {
-              "default": "",
-              "emits": "--allowedTools",
+              "emits": "--tools | --allowedTools | --permission-mode",
               "handling": "mapped",
-              "note": "None becomes the empty string, i.e. a pure completion with no tools",
+              "note": "the tool grant, validated before dispatch. None or empty: no tools (the text-only argv). Tool names or rules: --tools names those tools, --allowedTools carries every clause except a bare Read, Grep or Glob (those read only inside the working directory), and the permission mode is dontAsk (see the tool-grant control). '*' (ALL_TOOLS): the agent-worker argv --permission-mode bypassPermissions --allowedTools \"\", every built-in tool (see permission-bypass). A non-string, '*' beside other names, unbalanced parentheses, default, MCP tool names and other non-tool names are refused",
               "type": "string"
             },
             "backend.text_only": {
               "default": false,
               "emits": "--tools \"\" --strict-mcp-config --mcp-config {\"mcpServers\":{}} --disable-slash-commands --setting-sources \"\" --permission-mode dontAsk",
               "handling": "mapped",
-              "note": "a ClaudeCliBackend field, not a BackendOptions field: declaration.run sets it when a guarantees requirement admitted this entry (requirements.arm_requirements). When true it replaces --permission-mode bypassPermissions and --allowedTools, and a non-empty allowed_tools is refused before dispatch",
+              "note": "a ClaudeCliBackend field, not a BackendOptions field: declaration.run sets it when a guarantees requirement admitted this entry (requirements.arm_requirements). When true the call carries the text-only argv, which a call with no tool grant carries anyway, and a non-empty allowed_tools (ALL_TOOLS included) is refused before dispatch",
               "type": "boolean"
             },
             "cwd": {
@@ -102,7 +109,7 @@
             "disallowed_tools": {
               "emits": "--disallowedTools",
               "handling": "mapped",
-              "note": "emitted ONLY when not None; unlike --allowedTools no empty value is sent, because an empty deny-list restricts nothing",
+              "note": "emitted ONLY when not None; no empty value is sent, because an empty deny-list restricts nothing",
               "type": "string"
             },
             "effort": {

@@ -12,6 +12,7 @@ of truth that can disagree with the adapter, which is the drift this replaces.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import fields
 from typing import Any
 
@@ -55,6 +56,7 @@ from llm_kit.completion.capabilities import (
     PARSED_RESULT,
     TEXT_RESULT,
     WINDOWS,
+    _disallowed_tool_clauses,
 )
 from llm_kit.completion.contract_types import (
     DELIVERY_NATIVE,
@@ -66,7 +68,7 @@ from llm_kit.completion.contract_types import (
     SCHEMA_CLASS_SUBSET,
 )
 from llm_kit.completion.skill_context_types import DELIVERY_SYSTEM_MESSAGE
-from llm_kit.completion.types import BackendOptions
+from llm_kit.completion.types import ALL_TOOLS, BackendOptions
 
 # Every field on BackendOptions, READ FROM THE DATACLASS rather than restated.
 # An adapter's dropped_params is this set minus the params it reads, so a field
@@ -288,12 +290,13 @@ OPENAI_COMPAT_CAPABILITIES = Capabilities(
 # -- claude-cli ------------------------------------------------------------
 #
 # ClaudeCliBackend.complete builds argv directly. --effort and --disallowedTools
-# are conditional, and text-only mode swaps --permission-mode bypassPermissions
-# --allowedTools for _CLAUDE_TEXT_ONLY_ARGS. A caller's output contract is passed
-# natively as --json-schema and read from the envelope's structured_output field.
-# The --output-format json flag itself selects claude's TRANSPORT envelope, which
-# the adapter parses to reach data["result"], and is not a structured-output
-# channel.
+# are conditional. The tool argv has three modes, chosen by allowed_tools:
+# no grant (None or "") or backend.text_only emits _CLAUDE_TEXT_ONLY_ARGS; a
+# named grant emits _claude_grant_args(grant); ALL_TOOLS emits
+# _CLAUDE_ALL_TOOLS_ARGS. A caller's output contract is passed natively as
+# --json-schema and read from the envelope's structured_output field. The
+# --output-format json flag itself selects claude's TRANSPORT envelope, which the
+# adapter parses to reach data["result"], and is not a structured-output channel.
 
 #: The claude-cli flag each ``system_prompt_mode`` emits, consumed by
 #: ClaudeCliBackend to BUILD the argv and by the record below to ADVERTISE the
@@ -310,19 +313,15 @@ _CLAUDE_SYSTEM_PROMPT_FLAGS = {
     "append": "--append-system-prompt",
 }
 
-#: The argv ClaudeCliBackend emits IN PLACE OF ``--permission-mode
-#: bypassPermissions --allowedTools <x>`` when its ``text_only`` field is set.
-#: One tuple, two jobs, like the map above: the backend extends argv with it
-#: and the record below advertises it, so the two cannot drift.
+#: The isolation that follows the ``--tools`` list whenever ClaudeCliBackend
+#: restricts the child's tools: in text-only mode (no grant) and in a named
+#: grant. One tuple, two jobs, like the map above: the backend extends argv with
+#: it and the record below advertises it, so the two cannot drift.
 #:
-#: ``--tools ""`` removes every built-in tool (the Agent tool included);
 #: ``--strict-mcp-config`` with an EMPTY ``--mcp-config`` loads no MCP server
 #: from any settings source; ``--disable-slash-commands`` disables skills; and
 #: ``--permission-mode dontAsk`` denies anything not pre-approved instead of
-#: bypassing the check. Measured 2026-10-07 on Claude Code 2.1.293 (haiku):
-#: asked to list every tool it could call and to run ``echo`` if it had a
-#: shell, the model answered ``NO_TOOLS`` in one turn with no permission
-#: denial.
+#: bypassing the check.
 #:
 #: ``--setting-sources ""`` loads no user, project or local settings and no
 #: CLAUDE.md memory. Without it every call injected the user and project
@@ -330,9 +329,7 @@ _CLAUDE_SYSTEM_PROMPT_FLAGS = {
 #: 2026-10-21 (17 sonnet calls, cwd inside a repo) ~30.6k cache-write tokens
 #: per call against 571 with the flag, same 3,094-token system prompt read.
 #: ``--bare`` is not an option: it ignores OAuth login.
-_CLAUDE_TEXT_ONLY_ARGS = (
-    "--tools",
-    "",
+_CLAUDE_ISOLATION_ARGS = (
     "--strict-mcp-config",
     "--mcp-config",
     '{"mcpServers":{}}',
@@ -343,6 +340,135 @@ _CLAUDE_TEXT_ONLY_ARGS = (
     "dontAsk",
 )
 
+#: The tool argv of a ClaudeCliBackend call that grants no tool: its
+#: ``text_only`` field is set, or ``allowed_tools`` is None or empty.
+#:
+#: ``--tools ""`` removes every built-in tool (the Agent tool included), and
+#: the isolation above removes MCP servers, skills and settings. Measured
+#: 2026-10-07 on Claude Code 2.1.293 (haiku): asked to list every tool it could
+#: call and to run ``echo`` if it had a shell, the model answered ``NO_TOOLS``
+#: in one turn with no permission denial. Measured 2026-11-18 on Claude Code
+#: 2.1.327 through the no-grant argv: the model reported no tools (exit 0, one
+#: turn).
+_CLAUDE_TEXT_ONLY_ARGS = ("--tools", "", *_CLAUDE_ISOLATION_ARGS)
+
+#: The tool argv of the explicit agent-worker mode, ``allowed_tools=ALL_TOOLS``:
+#: every built-in tool and no permission check. It is the argv every call
+#: carried before a call with no grant became tool-less. The empty
+#: ``--allowedTools`` restricts nothing: the permission-modes reference says
+#: "Allow rules have no effect in bypassPermissions". Deny rules still apply
+#: ("Deny rules block in every mode, including bypassPermissions").
+_CLAUDE_ALL_TOOLS_ARGS = ("--permission-mode", "bypassPermissions", "--allowedTools", "")
+
+
+def _claude_grant_args(grant: str) -> tuple:
+    """The tool argv of a named grant: ``--tools``, ``--allowedTools``, then the isolation.
+
+    ``grant`` is a non-empty ``allowed_tools`` value other than ``ALL_TOOLS``:
+    tool names or permission rules separated by commas or spaces
+    (``"Read,Grep,Glob"``, ``"Bash(git log *) Read"``). Returns a tuple:
+
+    - ``--tools`` with each distinct tool name once, in the order given, with a
+      rule read by the name before its parenthesis. The CLI reference: ``--tools``
+      "Restrict[s] which built-in tools Claude can use", and "With ``--tools``
+      you get the ones you list".
+    - ``--allowedTools`` ("Tools that execute without prompting for
+      permission") with every clause of ``grant`` as written, joined by
+      commas, except a bare ``Read``, ``Grep`` or ``Glob`` (any case). Those
+      three run without approval inside the working directory, and dontAsk
+      denies them elsewhere, so leaving them out confines reads to the cwd; a
+      bare entry would approve every path. A scoped rule such as ``Read(./**)``
+      or ``Read(/abs/**)`` is kept, so the caller gets exactly the scope written.
+      The flag is omitted when no clause is left.
+    - :data:`_CLAUDE_ISOLATION_ARGS`, whose ``--permission-mode dontAsk``
+      "Auto-denies every call that would otherwise prompt". The permission-modes
+      reference shows dontAsk with pre-approval for an unattended run: ``claude
+      -p ... --permission-mode dontAsk --allowedTools "Bash(npm test)" "Read"``.
+
+    Each tool name (the part of a clause before any parenthesis) must be a
+    built-in tool name, ``^[A-Za-z][A-Za-z0-9_]*$``, so nothing else can reach
+    ``--tools`` or be read as a flag. ``default`` in any case is refused: the
+    help text says ``--tools`` takes "default" for the default set, which would
+    hand the child every built-in tool. An MCP tool name (``mcp__...``) is
+    refused: the isolation loads no MCP server, so it could never be granted.
+
+    Measured 2026-11-18 on Claude Code 2.1.327 (haiku, dontAsk and the
+    isolation, cwd a scratch directory): with ``--tools Read,Grep,Glob`` and
+    no ``--allowedTools``, a read in the cwd ran unprompted, Glob and Grep ran,
+    and a Read of an absolute path in a sibling directory was denied
+    (``permission_denials``, don't-ask mode), exit 0, no hang. With
+    ``--allowedTools Read,Grep,Glob`` added, that outside read succeeded,
+    which is why the bare three are left out. ``Read(./**),Grep,Glob`` as one
+    value confined the Read the same way. A ``Read`` grant had no shell or
+    write tool and wrote nothing. Not measured: Grep or Glob outside the cwd,
+    ``../`` traversal, symlinks, and Bash, write or other tools, which are
+    pre-approved as granted on the CLI reference's word only.
+
+    Raises ``ValueError`` before dispatch when a rule has unbalanced
+    parentheses, when the grant names no tool, when it names ``ALL_TOOLS``
+    beside other tools, or when a tool name is refused as above; the message
+    names the refused name.
+    """
+    try:
+        clauses = _disallowed_tool_clauses(grant)
+    except ValueError as exc:
+        raise ValueError(
+            f"allowed_tools={grant!r} is not a valid tool grant ({exc}); nothing was dispatched"
+        ) from exc
+    names = tuple(dict.fromkeys(clause.split("(", 1)[0] for clause in clauses))
+    if not names:
+        raise ValueError(
+            f"allowed_tools={grant!r} names no tool; pass None for a completion "
+            "with no tools; nothing was dispatched"
+        )
+    if ALL_TOOLS in names:
+        raise ValueError(
+            f"allowed_tools={grant!r} names {ALL_TOOLS!r} beside other tools; "
+            f"ALL_TOOLS ({ALL_TOOLS!r}) must be the whole value; nothing was dispatched"
+        )
+    for name in names:
+        _check_grant_tool_name(grant, name)
+    approvals = tuple(clause for clause in clauses if clause.lower() not in _CWD_READ_TOOLS)
+    approve = ("--allowedTools", ",".join(approvals)) if approvals else ()
+    return ("--tools", ",".join(names), *approve, *_CLAUDE_ISOLATION_ARGS)
+
+
+#: Read-only built-in tools that a BARE grant clause leaves unapproved, in
+#: lower case. They read inside the working directory without approval, and
+#: dontAsk denies a read elsewhere; a bare --allowedTools entry would approve
+#: every path. A scoped rule (``Read(./**)``) is approved as written.
+_CWD_READ_TOOLS = frozenset({"read", "grep", "glob"})
+
+
+#: A built-in tool name as ``--tools`` takes it (``Read``, ``NotebookEdit``).
+_BUILT_IN_TOOL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+
+
+def _check_grant_tool_name(grant: str, name: str) -> None:
+    """Refuse one tool name of ``grant`` that ``--tools`` must not receive.
+
+    Raises ``ValueError`` naming ``name`` for ``default`` in any case (the
+    CLI's preset for the whole default set), for an MCP tool name (the grant
+    loads no MCP server), and for anything that is not a plain built-in tool
+    name, such as a name starting with ``-``.
+    """
+    if name.lower() == "default":
+        raise ValueError(
+            f"allowed_tools={grant!r} names {name!r}, which --tools reads as the "
+            "whole default tool set; name the tools instead; nothing was dispatched"
+        )
+    if name.lower().startswith("mcp__"):
+        raise ValueError(
+            f"allowed_tools={grant!r} names the MCP tool {name!r}; a tool grant "
+            "loads no MCP server (--strict-mcp-config with an empty --mcp-config), "
+            "so an MCP tool can never be granted; nothing was dispatched"
+        )
+    if not _BUILT_IN_TOOL_NAME.fullmatch(name):
+        raise ValueError(
+            f"allowed_tools={grant!r} names {name!r}, which is not a built-in tool "
+            "name (a letter, then letters, digits or underscores); nothing was dispatched"
+        )
+
 
 def _render_args(args: tuple) -> str:
     """An argv fragment as one ``emits`` string; an empty value shows as ``""``."""
@@ -350,6 +476,10 @@ def _render_args(args: tuple) -> str:
 
 
 _CLAUDE_TEXT_ONLY_EMITS = _render_args(_CLAUDE_TEXT_ONLY_ARGS)
+_CLAUDE_GRANT_EMITS = (
+    "--tools <tool names> [--allowedTools <clauses except a bare Read, Grep or Glob>] "
+    + _render_args(_CLAUDE_ISOLATION_ARGS)
+)
 
 _CLAUDE_PARAMS = {
     "timeout_s": ParamCapability(
@@ -365,16 +495,26 @@ _CLAUDE_PARAMS = {
     ),
     "allowed_tools": ParamCapability(
         type="string",
-        default="",
-        emits="--allowedTools",
-        note="None becomes the empty string, i.e. a pure completion with no tools",
+        emits="--tools | --allowedTools | --permission-mode",
+        note=(
+            "the tool grant, validated before dispatch. None or empty: no "
+            "tools (the text-only argv). Tool names or rules: --tools names "
+            "those tools, --allowedTools carries every clause except a bare "
+            "Read, Grep or Glob (those read only inside the working directory), "
+            "and the permission mode is dontAsk (see the tool-grant control). "
+            "'*' (ALL_TOOLS): "
+            "the agent-worker argv --permission-mode bypassPermissions "
+            "--allowedTools \"\", every built-in tool (see permission-bypass). "
+            "A non-string, '*' beside other names, unbalanced parentheses, "
+            "default, MCP tool names and other non-tool names are refused"
+        ),
     ),
     "disallowed_tools": ParamCapability(
         type="string",
         emits="--disallowedTools",
         note=(
-            "emitted ONLY when not None; unlike --allowedTools no empty value "
-            "is sent, because an empty deny-list restricts nothing"
+            "emitted ONLY when not None; no empty value is sent, because an "
+            "empty deny-list restricts nothing"
         ),
     ),
     "system_prompt_mode": ParamCapability(
@@ -400,9 +540,10 @@ _CLAUDE_PARAMS = {
         note=(
             "a ClaudeCliBackend field, not a BackendOptions field: "
             "declaration.run sets it when a guarantees requirement admitted "
-            "this entry (requirements.arm_requirements). When true it "
-            "replaces --permission-mode bypassPermissions and --allowedTools, "
-            "and a non-empty allowed_tools is refused before dispatch"
+            "this entry (requirements.arm_requirements). When true the call "
+            "carries the text-only argv, which a call with no tool grant "
+            "carries anyway, and a non-empty allowed_tools (ALL_TOOLS "
+            "included) is refused before dispatch"
         ),
     ),
 }
@@ -419,10 +560,45 @@ CLAUDE_CAPABILITIES = Capabilities(
             source=REQUEST,
             parameter="allowed_tools",
             note=(
-                "an ALLOW-list of caller-supplied tool names, not a deny-list: it "
-                "cannot express denial of an arbitrary tool without a complete "
-                "tool universe. The record makes no claim about how it composes "
-                "with the permission bypass below"
+                "an APPROVAL list: the CLI reference calls --allowedTools the "
+                "tools that execute without prompting, and says to use --tools "
+                "to restrict which tools are available. Emitted with a named "
+                "grant that has a clause other than a bare Read, Grep or Glob "
+                "(beside tool-grant), and with ALL_TOOLS (as \"\", beside "
+                "permission-bypass, where allow rules have no effect). Not "
+                "emitted when the call grants no tool"
+            ),
+        ),
+        ExecutionControl(
+            id="tool-grant",
+            emits=_CLAUDE_GRANT_EMITS,
+            effect=CONFINE,
+            source=REQUEST,
+            parameter="allowed_tools",
+            note=(
+                "emitted when allowed_tools names tools (not ALL_TOOLS): --tools "
+                "makes only those built-in tools available (the others are "
+                "absent from the child), --allowedTools pre-approves every "
+                "clause except a bare Read, Grep or Glob, and the text-only "
+                "isolation follows (no MCP servers, no skills, no settings or "
+                "CLAUDE.md memory, dontAsk instead of a bypass), so a call that "
+                "would prompt is denied rather than prompted. A bare Read "
+                "therefore reads only inside the working directory (measured), "
+                "and the permissions reference says the same of Grep and Glob "
+                "(not measured); a scoped rule keeps the scope written. "
+                "default, MCP tool names "
+                "and anything that is not a built-in tool name are refused "
+                "before dispatch. Measured 2026-11-18 on Claude Code 2.1.327 "
+                "(haiku): with --tools Read,Grep,Glob and no --allowedTools, a "
+                "read in the cwd ran unprompted, Glob and Grep ran, and a Read "
+                "of an absolute path in a sibling directory was denied "
+                "(permission_denials, don't-ask mode), exit 0, no hang; with "
+                "--allowedTools Read,Grep,Glob added, that outside read "
+                "succeeded; Read(./**),Grep,Glob confined the Read like the "
+                "first shape; a Read grant had no shell or write tool and wrote "
+                "nothing. Not measured: Grep or Glob outside the cwd, ../ "
+                "traversal, symlinks, and Bash, write or other pre-approved "
+                "tools (documented only). No guarantee is declared for it"
             ),
         ),
         ExecutionControl(
@@ -450,9 +626,14 @@ CLAUDE_CAPABILITIES = Capabilities(
             emits="--permission-mode bypassPermissions",
             effect=BYPASS,
             source=REQUEST,
-            parameter=TEXT_ONLY_PARAMETER,
-            when_value="false",
-            note="emitted on every call except in text-only mode",
+            parameter="allowed_tools",
+            when_value=ALL_TOOLS,
+            note=(
+                "emitted only for the explicit agent-worker mode "
+                "(allowed_tools='*', ALL_TOOLS): every built-in tool runs "
+                "without a permission check. Never emitted for a call with no "
+                "grant, a named grant, or backend.text_only"
+            ),
         ),
         ExecutionControl(
             id="no-session-persistence",
@@ -474,8 +655,12 @@ CLAUDE_CAPABILITIES = Capabilities(
                 "CLAUDE.md memory, and no permission "
                 "bypass. A guarantees requirement admits claude-cli through "
                 "this control and declaration.run arms it, so the caller "
-                "passes no flag. Measured 2026-10-07 on Claude Code 2.1.293: "
-                "the model reported no callable tool and ran nothing. Neither "
+                "passes no flag. A call whose allowed_tools is None or empty "
+                "carries the same argv and reports this control unarmed. "
+                "Measured 2026-10-07 on Claude Code 2.1.293: "
+                "the model reported no callable tool and ran nothing. Measured "
+                "2026-11-18 on Claude Code 2.1.327 through the no-grant argv: "
+                "the model reported no tools (exit 0, one turn). Neither "
                 "allowed-tools nor permission-bypass is emitted in this mode"
             ),
         ),
@@ -524,8 +709,10 @@ CLAUDE_CAPABILITIES = Capabilities(
 # --permission-mode bypassPermissions [--allowedTools <a>] [--disallowedTools
 # <d>] [--effort <e>] [--json-schema <s>] [--strict-mcp-config --mcp-config
 # <document>] (--session-id <id> | --resume <id>)``.
-# It keeps the session (no --no-session-persistence), has no text-only mode,
-# emits --allowedTools only when the caller names tools, and defaults
+# It keeps the session (no --no-session-persistence), has no text-only mode or
+# tool grant (allowed_tools is passed as --allowedTools under the fixed bypass,
+# so it restricts nothing), emits --allowedTools only when the caller names
+# tools, and defaults
 # system_prompt_mode to append. Same adapter name as the completion record: it
 # is the same CLI, selected per job by the ``session: agent`` job option, and
 # jobs selection matches an agent job against THIS record instead.
@@ -544,7 +731,12 @@ _CLAUDE_AGENT_PARAMS["timeout_s"] = ParamCapability(
 _CLAUDE_AGENT_PARAMS["allowed_tools"] = ParamCapability(
     type="string",
     emits="--allowedTools",
-    note="emitted ONLY when not None; an agent session with no allow-list keeps every tool",
+    note=(
+        "emitted ONLY when not None. An agent session keeps every tool either "
+        "way: the session's permission mode is bypassPermissions, where the "
+        "permission-modes reference says allow rules have no effect, so the "
+        "list restricts nothing"
+    ),
 )
 _CLAUDE_AGENT_PARAMS["system_prompt_mode"] = ParamCapability(
     type="string",

@@ -17,6 +17,7 @@ from llm_kit.adapters.capabilities import (
     CLAUDE_CAPABILITIES,
 )
 from llm_kit.completion.capabilities import TEXT_ONLY_MODE
+from llm_kit.completion.types import ALL_TOOLS
 
 
 class _Runner:
@@ -43,8 +44,17 @@ def test_text_only_argv_passes_an_empty_setting_sources():
     assert argv[-len(_CLAUDE_TEXT_ONLY_ARGS):] == list(_CLAUDE_TEXT_ONLY_ARGS)
 
 
-def test_default_argv_keeps_its_settings():
-    assert "--setting-sources" not in _argv(text_only=False)
+def test_the_all_tools_worker_argv_keeps_its_settings():
+    runner = _Runner()
+    ClaudeCliBackend(runner=runner, executable="claude").complete(
+        "sys", "usr", model="m", options=BackendOptions(allowed_tools=ALL_TOOLS)
+    )
+    assert "--setting-sources" not in runner.calls[0]
+
+
+def test_a_call_with_no_grant_also_passes_an_empty_setting_sources():
+    argv = _argv(text_only=False)
+    assert argv[argv.index("--setting-sources") + 1] == ""
 
 
 def test_the_advertised_text_only_emits_names_the_flag():
