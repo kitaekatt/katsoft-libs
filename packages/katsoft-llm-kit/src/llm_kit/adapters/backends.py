@@ -779,6 +779,7 @@ class ClaudeCliBackend:
         cwd = opts.cwd if opts.cwd is not None else Path.cwd()
         executable = self.executable or _resolve_claude_executable()
         _check_system_prompt_mode(opts)
+        from .claude_command import batch_shim_spawn_argv  # noqa: PLC0415 -- keeps the module surface parity-pinned
 
         if self.text_only and opts.allowed_tools:
             raise ValueError(
@@ -816,32 +817,36 @@ class ClaudeCliBackend:
         last_stderr = ""
         last_returncode = 0
         attempts_made = 0
-        for attempt in range(self.retry_max_attempts):
-            attempts_made = attempt + 1
-            try:
-                last_stdout, last_stderr, last_returncode = self.runner(
-                    cmd,
-                    user,
-                    cwd,
-                    log_prefix=opts.log_prefix,
-                    timeout_s=timeout_s,
+        # A batch-shim launcher (claude.cmd) is re-parsed by cmd.exe: the system
+        # prompt goes by file and any other unsafe element is refused here, before
+        # the runner starts a process. Unchanged for a real executable.
+        with batch_shim_spawn_argv(cmd) as spawn_cmd:
+            for attempt in range(self.retry_max_attempts):
+                attempts_made = attempt + 1
+                try:
+                    last_stdout, last_stderr, last_returncode = self.runner(
+                        spawn_cmd,
+                        user,
+                        cwd,
+                        log_prefix=opts.log_prefix,
+                        timeout_s=timeout_s,
+                    )
+                except AgentTimeoutError as exc:
+                    # A timeout is not retryable: the CLI was already killed after
+                    # the full per-call budget, so re-issuing would just burn
+                    # another budget's worth of wall time.
+                    self._dump_timeout_diagnostics(exc)
+                    raise
+                transient = _envelope_transient_status(last_stdout)
+                if transient is None or attempt == self.retry_max_attempts - 1:
+                    break
+                sys.stderr.write(
+                    f"{opts.log_prefix} api_error_status={transient} (transient "
+                    f"server error); sleeping {self.retry_cooldown_s}s before "
+                    f"retry (attempt {attempt + 2}/{self.retry_max_attempts})\n"
                 )
-            except AgentTimeoutError as exc:
-                # A timeout is not retryable: the CLI was already killed after
-                # the full per-call budget, so re-issuing would just burn
-                # another budget's worth of wall time.
-                self._dump_timeout_diagnostics(exc)
-                raise
-            transient = _envelope_transient_status(last_stdout)
-            if transient is None or attempt == self.retry_max_attempts - 1:
-                break
-            sys.stderr.write(
-                f"{opts.log_prefix} api_error_status={transient} (transient "
-                f"server error); sleeping {self.retry_cooldown_s}s before "
-                f"retry (attempt {attempt + 2}/{self.retry_max_attempts})\n"
-            )
-            sys.stderr.flush()
-            time.sleep(self.retry_cooldown_s)
+                sys.stderr.flush()
+                time.sleep(self.retry_cooldown_s)
 
         stdout, stderr, returncode = last_stdout, last_stderr, last_returncode
         if returncode != 0:

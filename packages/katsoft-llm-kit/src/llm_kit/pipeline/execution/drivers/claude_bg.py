@@ -118,6 +118,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Set, 
 
 from llm_kit.adapters.claude_command import (
     ClaudeExecutableError,
+    batch_shim_spawn_argv,
     resolve_claude_executable,
 )
 from llm_kit.pipeline.execution.adapter import RunAdapter
@@ -386,7 +387,13 @@ class ClaudeCli:
         cwd: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> Tuple[str, str, int]:
-        return self.runner(argv, stdin=stdin, env=env, cwd=cwd, timeout=timeout)
+        # Every claude spawn in this module passes here. A batch-shim launcher
+        # (claude.cmd) is re-parsed by cmd.exe, so an element it would re-parse,
+        # or cut at a line break, is refused before the runner starts a process.
+        # No system prompt moves to a file: a --bg session outlives this call.
+        # Unchanged for a real executable.
+        with batch_shim_spawn_argv(argv, prompt_files=False) as spawn_argv:
+            return self.runner(spawn_argv, stdin=stdin, env=env, cwd=cwd, timeout=timeout)
 
     def launch_bg(
         self,

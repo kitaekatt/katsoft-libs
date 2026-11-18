@@ -120,6 +120,7 @@ from .backends import (
     _resolve_claude_executable,
 )
 from .capabilities import _CLAUDE_SYSTEM_PROMPT_FLAGS, CLAUDE_AGENT_CAPABILITIES
+from .claude_command import batch_shim_spawn_argv, check_batch_shim_argv
 from .claude_stream import StreamVerdict, init_problem, parse_stream_line
 
 #: Bytes of stderr kept for failure messages.
@@ -243,6 +244,7 @@ class ClaudeAgentSession:
         model's menu, an unknown ``system_prompt_mode``, or a missing CLI.
         """
         argv, _, _ = self._prepare(request)
+        check_batch_shim_argv(argv)
         return argv
 
     def applied_controls(self, request: SessionRequest) -> tuple[str, ...]:
@@ -318,34 +320,39 @@ class ClaudeAgentSession:
         if timeout_s is None:
             raise ValueError("an agent session needs options.timeout_s (the attempt timeout)")
         psutil = _psutil()
-        sink = open(request.paths.events, "ab")  # noqa: SIM115 -- closed by the reader thread
-        try:
-            started_at = utc_now_iso()
-            kwargs: dict[str, Any] = {}
-            if os.name == "nt":
-                kwargs["creationflags"] = (
-                    subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+        # A batch-shim launcher (claude.cmd) is re-parsed by cmd.exe: the system
+        # prompt goes by file (kept until the session ends) and any other unsafe
+        # element is refused before the sink is opened or a process started.
+        # Unchanged for a real executable.
+        with batch_shim_spawn_argv(argv) as spawn_argv:
+            sink = open(request.paths.events, "ab")  # noqa: SIM115 -- closed by the reader thread
+            try:
+                started_at = utc_now_iso()
+                kwargs: dict[str, Any] = {}
+                if os.name == "nt":
+                    kwargs["creationflags"] = (
+                        subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+                    )
+                else:
+                    kwargs["start_new_session"] = True
+                process = subprocess.Popen(  # noqa: S603 -- argv built above, no shell
+                    spawn_argv,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=str(request.cwd),
+                    env=_child_env(request.process_tag),
+                    **kwargs,
                 )
-            else:
-                kwargs["start_new_session"] = True
-            process = subprocess.Popen(  # noqa: S603 -- argv built above, no shell
-                argv,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=str(request.cwd),
-                env=_child_env(request.process_tag),
-                **kwargs,
+            except BaseException:
+                sink.close()
+                raise
+            run = _SessionRun(
+                self, request, process, sink, psutil,
+                contract_plan=contract_plan, controls=controls, started_at=started_at,
+                timeout_s=float(timeout_s),
             )
-        except BaseException:
-            sink.close()
-            raise
-        run = _SessionRun(
-            self, request, process, sink, psutil,
-            contract_plan=contract_plan, controls=controls, started_at=started_at,
-            timeout_s=float(timeout_s),
-        )
-        return run.execute()
+            return run.execute()
 
 
 class _ChannelFailure(RuntimeError):
