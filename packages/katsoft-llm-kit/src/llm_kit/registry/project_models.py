@@ -251,6 +251,16 @@ LEGACY_ROW_EXTRAS = (("temperature", "temperature"), ("top_p", "top_p"), ("max_t
 # selections (so the menu check cannot be bypassed), and these name what the
 # call itself owns.
 _RESERVED_EXTRAS = frozenset({"model", "messages", "stream", "api_key", EFFORT_KEY})
+#: Extras that widen what a Codex run may write or reach: further writable roots
+#: (``add_dirs``, ``scratch_dir``) and network inside the sandbox (``network``).
+#: The tracked project file is repository content, so binding refuses them in a row's
+#: extras and in a request profile's extras; only ``network: false`` (it narrows the
+#: sandbox) is allowed there. A call (the request layer) and the code that calls the
+#: backend (``BackendOptions.extras``) set them as before.
+_CODEX_SANDBOX_EXTRAS = ("add_dirs", "scratch_dir", "network")
+#: Extras names the library sets itself (``__llm_kit_image_paths``, ``__llm_kit_codex_config``);
+#: binding refuses the prefix in the tracked file with the sandbox extras above.
+_INTERNAL_EXTRAS_PREFIX = "__llm_kit_"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 # The largest integer every JSON reader holds exactly (an IEEE 754 double).
 _MAX_INTEGER = 2**53 - 1
@@ -954,6 +964,33 @@ def _check_profile_extras(extras: Mapping, where: str) -> None:
         raise _invalid(f"{where}.{TEMPLATE_KEY}", f"{EFFORT_KEY!r} is reserved; set the effort instead")
 
 
+def _check_sandbox_extras(extras: Mapping, where: str) -> None:
+    """Refuse a Codex extra that widens the sandbox in the tracked file (:data:`_CODEX_SANDBOX_EXTRAS`).
+
+    ``network`` may be ``false`` (it narrows the sandbox); every other value of
+    it, and any ``add_dirs`` or ``scratch_dir``, is refused at ``where.<key>``.
+    A key that starts with ``__llm_kit_`` is refused too: those names carry the
+    library's own per-call values (image paths, the Codex config) that its code
+    sets after the file is read, so a file may not supply them.
+    """
+    for key in extras:
+        if isinstance(key, str) and key.startswith(_INTERNAL_EXTRAS_PREFIX):
+            raise _invalid(
+                f"{where}.{key}",
+                f"{key!r} is an internal name (the {_INTERNAL_EXTRAS_PREFIX!r} prefix is the library's own); "
+                "the tracked project file may not set it",
+            )
+    for key in _CODEX_SANDBOX_EXTRAS:
+        if key not in extras or (key == "network" and extras[key] is False):
+            continue
+        allowed = "; only network: false is allowed there" if key == "network" else ""
+        raise _invalid(
+            f"{where}.{key}",
+            f"{key!r} widens the Codex sandbox, so the tracked project file may not set it{allowed}; "
+            "the code that calls the backend sets it (BackendOptions.extras), or a call (the request layer)",
+        )
+
+
 def validate_profile(value: Any, where: str, *, call: bool = False) -> dict:
     """Validate a request profile (an entry of ``requests``) or, with ``call``, a call layer.
 
@@ -993,7 +1030,8 @@ def _request_defaults(
 ) -> dict:
     """Validate a row's request defaults: its typed defaults and its extras.
 
-    ``bound`` (binding) refuses the reserved extras; portable validation passes
+    ``bound`` (binding) refuses the reserved extras and the Codex extras that
+    widen the sandbox (:func:`_check_sandbox_extras`); portable validation passes
     False. ``reasoning_reserved`` is set for a ``reasoning-object`` endpoint only:
     there a raw ``reasoning`` extra would override the selected effort and bypass
     the menu. A typed default may not also be spelled in extras (``temperature``,
@@ -1010,6 +1048,7 @@ def _request_defaults(
             raise _invalid(f"{where}.extras", "must be a mapping")
         copy = _json_value(extras, f"{where}.extras")
         if bound:
+            _check_sandbox_extras(copy, f"{where}.extras")
             for key in copy:
                 if key in _RESERVED_EXTRAS or (reasoning_reserved and key == REASONING_KEY):
                     raise _invalid(
@@ -1149,8 +1188,12 @@ def _check_endpoint_names(names: "list[str]", rows: "list[dict]", endpoints: "Op
             raise _invalid(f"{where}.effort_style", f"{name!r} is a {info.harness} harness, which takes no effort style")
 
 
-def _validate_requests(value: Any) -> "dict[str, dict]":
-    """The key-sorted ``requests`` block: profile name -> normalized profile (:func:`validate_profile`)."""
+def _validate_requests(value: Any, *, bound: bool = False) -> "dict[str, dict]":
+    """The key-sorted ``requests`` block: profile name -> normalized profile (:func:`validate_profile`).
+
+    ``bound`` (binding) also refuses the Codex extras that widen the sandbox
+    (:func:`_check_sandbox_extras`).
+    """
     if not isinstance(value, Mapping):
         raise _invalid("requests", f"must be a mapping, not {type(value).__name__}")
     out: dict[str, dict] = {}
@@ -1160,6 +1203,8 @@ def _validate_requests(value: Any) -> "dict[str, dict]":
         where = f"requests[{name!r}]"
         _text(name, f"requests key {name!r}", path=where)
         out[name] = validate_profile(value[name], where)
+        if bound:
+            _check_sandbox_extras(out[name].get("extras", {}), f"{where}.extras")
     return {name: out[name] for name in sorted(out)}
 
 
@@ -1360,7 +1405,7 @@ def _validate_top(
     rows, menus, efforts_of = _validate_catalog(top.get("catalog", []), endpoints, menu_of, unbound)
     if declared is not None:
         _check_endpoint_names(list(top["endpoints"]), rows, endpoints)
-    requests = _validate_requests(top["requests"]) if "requests" in top else None
+    requests = _validate_requests(top["requests"], bound=endpoints is not None) if "requests" in top else None
     selections = _validate_selections(top.get("selections", {}), menus, efforts_of, requests or {})
     document: dict = {"version": FILE_VERSION}
     if declared is not None:

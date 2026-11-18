@@ -372,6 +372,11 @@ def build_codex_exec_argv(
     under TEMP, which is otherwise denied because ``exclude_tmpdir_env_var`` is
     commonly true.
 
+    ``add_dirs``, ``scratch_dir`` and ``network=True`` widen the sandbox. This
+    builder takes them from its caller as given; the tracked project model file
+    may not supply them (``llm_kit.registry.project_models`` refuses them when it
+    binds the file), so no file in a repository adds a writable root.
+
     ``extra_config`` is an iterable of raw ``key=value`` strings, each appended
     as a further ``-c`` pair after the ones this function derives.
 

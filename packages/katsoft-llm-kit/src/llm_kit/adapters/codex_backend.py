@@ -122,6 +122,9 @@ class CodexRunError(RuntimeError):
 PROMPT_SEPARATOR = "\n\n---\n\n"
 
 #: ``options.extras`` keys this backend forwards to ``build_codex_exec_argv``.
+#: ``scratch_dir``, ``add_dirs`` and ``network: true`` widen the sandbox: the code
+#: that builds the options sets them, and the tracked project model file may not
+#: (``llm_kit.registry.project_models`` refuses them when it binds the file).
 #: Anything else in ``extras`` reaches no argv element (it belongs to another
 #: consumer) and is reported per key in ``dropped_params`` as ``extras.<key>``.
 #: This tuple and the ``extras.*`` params in the advertisement are the same
@@ -340,7 +343,12 @@ class CodexCliBackend:
       writable roots), ``sandbox`` (``-s`` value), ``network`` (bool, network
       access inside the sandbox), ``output_schema`` (JSON-schema file). Each is
       optional and forwarded to the builder only when present, so the builder's
-      defaults (``-s workspace-write``, network on) stand otherwise. Any OTHER
+      defaults (``-s workspace-write``, network on) stand otherwise.
+      ``scratch_dir``, ``add_dirs`` and ``network: true`` widen the sandbox, so
+      they are the calling code's to set: the tracked project model file may not
+      carry them (binding refuses them in a row's or a profile's ``extras``,
+      :mod:`llm_kit.registry.project_models`); ``network: false`` is allowed
+      there. Any OTHER
       extras key reaches nothing and comes back in ``dropped_params`` as
       ``extras.<key>`` -- per key, because half of this map IS read and the
       bare field name would have no single answer here.
