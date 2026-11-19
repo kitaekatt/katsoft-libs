@@ -403,9 +403,21 @@ def _claude_grant_args(grant: str) -> tuple:
     ``--allowedTools Read,Grep,Glob`` added, that outside read succeeded,
     which is why the bare three are left out. ``Read(./**),Grep,Glob`` as one
     value confined the Read the same way. A ``Read`` grant had no shell or
-    write tool and wrote nothing. Not measured: Grep or Glob outside the cwd,
-    ``../`` traversal, symlinks, and Bash, write or other tools, which are
-    pre-approved as granted on the CLI reference's word only.
+    write tool and wrote nothing.
+
+    Tested by the gated live suite ``tests/llm-kit/live/test_claude_grant_live.py``
+    (``LLM_KIT_LIVE_CLAUDE=1``; it passed on Claude Code 2.1.328, haiku,
+    Windows). Through ``ClaudeCliBackend`` and the real CLI it asserts, by a
+    marker that must or must not appear in the answer: with no grant the child
+    cannot read a file in the cwd; a bare ``Read`` reads a file in the cwd but
+    not an absolute path in a sibling directory, not ``../`` traversal, and not
+    a file reached through a symlink (on Windows a junction) in the cwd that
+    points outside (skipped where neither can be made); under
+    ``Read,Grep,Glob``, Grep finds text in the cwd but not in a sibling
+    directory, Glob lists no file of a sibling directory, and with no write or
+    shell tool the child creates no file. It does not test a scoped rule, a
+    pre-approved Bash or write grant, or any other tool: those are pre-approved
+    as granted on the CLI reference's word only.
 
     Raises ``ValueError`` before dispatch when a rule has unbalanced
     parentheses, when the grant names no tool, when it names ``ALL_TOOLS``
@@ -660,9 +672,9 @@ CLAUDE_CAPABILITIES = Capabilities(
                 "isolation follows (no MCP servers, no skills, no settings or "
                 "CLAUDE.md memory, dontAsk instead of a bypass), so a call that "
                 "would prompt is denied rather than prompted. A bare Read "
-                "therefore reads only inside the working directory (measured), "
-                "and the permissions reference says the same of Grep and Glob "
-                "(not measured); a scoped rule keeps the scope written. "
+                "therefore reads only inside the working directory, and Grep "
+                "and Glob search only inside it (both tested by the gated live "
+                "suite); a scoped rule keeps the scope written. "
                 "default, MCP tool names "
                 "and anything that is not a built-in tool name are refused "
                 "before dispatch. Measured 2026-11-18 on Claude Code 2.1.327 "
@@ -673,9 +685,14 @@ CLAUDE_CAPABILITIES = Capabilities(
                 "--allowedTools Read,Grep,Glob added, that outside read "
                 "succeeded; Read(./**),Grep,Glob confined the Read like the "
                 "first shape; a Read grant had no shell or write tool and wrote "
-                "nothing. Not measured: Grep or Glob outside the cwd, ../ "
-                "traversal, symlinks, and Bash, write or other pre-approved "
-                "tools (documented only). No guarantee is declared for it"
+                "nothing. The gated live suite "
+                "tests/llm-kit/live/test_claude_grant_live.py asserts that a "
+                "bare Read reaches no absolute path, ../ path or symlink "
+                "outside the cwd, that Grep and Glob reach no sibling "
+                "directory, and that a grant with no write or shell tool "
+                "creates no file. Not tested: a scoped rule, and Bash, write "
+                "or other pre-approved tools (documented only). No guarantee "
+                "is declared for it"
             ),
         ),
         ExecutionControl(

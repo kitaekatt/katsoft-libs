@@ -88,8 +88,8 @@ from .conserve import ConserveSpec
 # The name of the endpoint used when a caller does not name one.
 DEFAULT_ENDPOINT_NAME = "openrouter"
 
-# Authoritative shipped baseline. Mirrored by default_config.yaml (which bootstrap
-# uses to seed the editable user copy); a test asserts the two stay in sync.
+# Authoritative shipped baseline. It is the only copy: no seed file mirrors it, and
+# ``load_model_config`` deep-copies it and layers the user's registry files over it.
 #
 # The ``openrouter`` endpoint deliberately omits ``models`` / ``default`` /
 # ``defaultCheap`` so it inherits the top-level registry below -- that is what

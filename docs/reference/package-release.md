@@ -10,10 +10,11 @@ Historical entries retain their original plugins-kit URLs and commit IDs.
 1. Update the distribution version after changing its build inputs.
 2. Run `uv run --extra dev pytest`.
 3. Run `WHEEL_CLOSURE_SOURCE=local uv run --extra dev pytest tests/packaging`.
-4. Commit and push the reviewed changes to `dev`.
-5. Run `uv run --extra dev python scripts/release.py` to inspect the release plan.
-6. Obtain the user's publication approval.
-7. Run `uv run --extra dev python scripts/release.py --execute`.
+4. If files under `packages/katsoft-llm-kit/src/llm_kit/adapters/` or any Claude spawn path (`relay/resume.py`, `pipeline/execution/drivers/claude_bg.py`) changed since the last release, run `LLM_KIT_LIVE_CLAUDE=1 uv run --extra dev pytest tests/llm-kit/live`. It needs a signed-in `claude` and costs a few haiku turns. Record the result and the Claude Code version in the changelog entry. A failed case blocks the release.
+5. Commit and push the reviewed changes to `dev`.
+6. Run `uv run --extra dev python scripts/release.py` to inspect the release plan.
+7. Obtain the user's publication approval.
+8. Run `uv run --extra dev python scripts/release.py --execute`.
 
 The command requires a clean `dev` checkout. It releases packages in dependency order.
 It builds from committed inputs, pushes release tags, and waits for GitHub Actions.

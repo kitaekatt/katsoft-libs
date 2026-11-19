@@ -14,3 +14,4 @@ dev = [
 testpaths = ["tests"]
 addopts = ["--dist=worksteal"]
 pythonpath = ["packages/katsoft-llm-kit/src", "packages/katsoft-contracts/src"]
+markers = ["live_claude: runs the real claude CLI; skipped unless LLM_KIT_LIVE_CLAUDE=1 (tests/llm-kit/live)"]
