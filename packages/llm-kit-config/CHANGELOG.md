@@ -8,23 +8,24 @@ Security fix. The tracked project file is repository content, so it may not set 
 
 Changed behaviour (read before upgrading):
 
-- `resolveRequest` throws `invalid` when the file sets, in a row's `request_defaults.extras` or in a `requests` profile's `extras`, any of `add_dirs`, `scratch_dir`, `output_schema`, a key that starts with `__llm_kit_`, or `network` with a value other than `false`. `where` is `catalog[<i>].request_defaults.extras.<key>` or `requests['<name>'].extras.<key>`, and the message names the key. It checks the whole file, before it looks up the selection key (as the Python `validate_document` does), so a refused file is refused for every key, an unknown key included. A caller that sent these extras on to a Codex-style backend now gets the error instead. `network: false` and every other extras key stay allowed.
+- `resolveRequest` throws `invalid` when the file sets, in a row's `request_defaults.extras` or in a `requests` profile's `extras`, any of `add_dirs`, `scratch_dir`, `output_schema`, a key that starts with `__llm_kit_`, or `network` with a value other than `false`. `where` is `catalog[<i>].request_defaults.extras.<key>` or `requests['<name>'].extras.<key>`, and the message names the key. It checks the whole file, before it looks up the selection key (as the Python `validate_document` does), so a refused file is refused for every key, an unknown key included. The first problem is the same one Python reports: the rows in catalog order, then the profiles in code point order of their names (katsoft-llm-kit 1.38.0 moved Python to that order; 1.37.0 read the profiles in file order). A caller that sent these extras on to a Codex-style backend now gets the error instead. `network: false` and every other extras key stay allowed.
 - Unchanged: `parseRegistry`, `loadRegistry`, `parseOverlay`, `loadOverlay` and `applyOverlay` read a file that holds these keys, as the Python portable validation does. A call's own `extras` (`resolveRequest(registry, key, {extras})`) may set them, and `chatFields` still does not check extras.
 - The connection-approval rule stays a duty of the caller (README, "The file is untrusted"): it depends on the machine's consent file, which this package never reads.
 
 Added:
 
-- `tests/formats/project-models/tracked-extras.json`: 34 shared cases (refused and accepted keys in a row and in a profile, and which problem is the first). Python runs them against `validate_document` (`tests/llm-kit/test_codex_tracked_extras.py`), this package against `resolveRequest` (`test/tracked-extras.test.mjs`). Both fail when the file is missing or holds no case.
+- `tests/formats/project-models/tracked-extras.json`: 36 shared cases (refused and accepted keys in a row and in a profile, and which problem is the first, with two refused profiles in non-sorted file order and two refused rows). Python runs them against `validate_document` (`tests/llm-kit/test_codex_tracked_extras.py`), this package against `resolveRequest` (`test/tracked-extras.test.mjs`). Both fail when the file is missing or holds no case.
 
 Quality bar for the pieces above:
 
 1. Public API documented: pass. The JSDoc of `resolveRequest` (`@throws`), `chatFields`, `RequestDefaults.extras` and `RequestProfile.extras` states the rule; no export is added, so `public-surface.json` is unchanged; `test/surface.test.mjs` passes.
 2. Semver release with a changelog: pass. Version 1.4.0 in `package.json` and `package-lock.json` (a minor release, for the reasons above); this entry.
-3. Tests for each public function: pass. `test/tracked-extras.test.mjs` runs the 34 cases through `parseRegistry`, `loadRegistry` and `resolveRequest`, and checks the order (the file before the key), an overlay, the call layer and `chatFields`; it fails before the change.
+3. Tests for each public function: pass. `test/tracked-extras.test.mjs` runs the 36 cases through `parseRegistry`, `loadRegistry` and `resolveRequest`, and checks the order (the file before the key), an overlay, the call layer and `chatFields`; it fails before the change.
 4. No client names, prompts or data: pass.
 5. Examples run without a client app: pass. No example changed; `npm run check-pack` runs them from the packed tarball.
 6. JSON Schema for each file format: pass. The schema does not change and cannot state the rule (it accepts every case; the test checks that with ajv); the shared cases state it for both readers.
-7. Gate before adoption: pass. Lines 1 to 6 pass.
+7. Gate before adoption: pass. Lines 1 to 6 and 8 pass.
+8. Security properties are tested: pass. Each claim and its test: the refused keys and their paths, in a row and in a profile (`tracked-extras.json` cases `row-*` and `profile-*`, run by `test/tracked-extras.test.mjs` and `tests/llm-kit/test_codex_tracked_extras.py`); `network: false` and ordinary extras stay allowed (`row-network-false`, `profile-network-false`, `row-ordinary-extras` and the other accepted cases); the whole file is checked before the key, so every key is refused (`first-problem-unused-profile`, `first-problem-later-row`, and "the whole file is refused before the selection key is looked up" in `test/tracked-extras.test.mjs`); both readers report the same first problem (the `first-problem-*` cases); the reading functions, an overlay and a call's own extras keep their reach (`test/tracked-extras.test.mjs`). The rule has one definition, the shared cases file, which both readers run.
 
 ## 1.3.0
 
