@@ -16,7 +16,12 @@ When the job names no MCP server, a grant also carries ``--strict-mcp-config
 --mcp-config {"mcpServers":{}}``, so no settings-sourced server adds a tool.
 That ``--tools`` restricts under bypassPermissions rests on the Claude CLI
 reference only; no test runs the CLI with this argv (see
-:func:`~llm_kit.adapters.capabilities._claude_agent_tool_args`).
+:func:`~llm_kit.adapters.capabilities._claude_agent_tool_args`). A grant may
+not name ``Agent``, ``Task`` or ``Skill``: a subagent or a skill may use tools
+outside it. A grant removes built-in tools only: the session still loads every
+settings source (hooks, enabled plugins) and the plugins' skills and MCP
+servers, because it passes neither ``--setting-sources ""`` nor
+``--disable-slash-commands``.
 
 The session is persisted (no ``--no-session-persistence``), so it can be
 resumed later with ``--resume``. The backend owns the child's three pipes:

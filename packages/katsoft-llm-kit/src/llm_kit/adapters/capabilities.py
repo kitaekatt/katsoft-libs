@@ -500,10 +500,24 @@ def _claude_agent_tool_args(allowed_tools: object) -> tuple:
     the job names no MCP server, so no server from a settings source adds a
     tool outside the grant.
 
+    What a grant does not confine (no behaviour of this function): the agent
+    session still loads every settings source (user, project and local
+    settings, with their hooks and enabled plugins) and the plugins' skills
+    and MCP servers; it passes neither ``--setting-sources ""`` nor
+    ``--disable-slash-commands`` as the completion path does. ``--tools``
+    removes built-in tools only.
+
+    ``Agent``, ``Task`` and ``Skill`` (:data:`_AGENT_GRANT_REFUSED`, in any
+    case) are refused in a grant: a subagent or a skill may use tools outside
+    ``--tools``, and no test here can measure what it reaches (that needs a
+    bypass child). A caller that wants them passes no grant or ``ALL_TOOLS``.
+    No caller in this library or in plugins-kit grants them.
+
     Raises ``TypeError`` or ``ValueError`` before the spawn for every value
-    :func:`_claude_grant_clauses` refuses, and ``ValueError`` for a scoped
-    rule such as ``Bash(git log *)`` or ``Read(./**)``: under the bypass the
-    CLI does not enforce a rule's scope, so the whole tool would be granted.
+    :func:`_claude_grant_clauses` refuses, ``ValueError`` for a scoped rule
+    such as ``Bash(git log *)`` or ``Read(./**)`` (under the bypass the CLI
+    does not enforce a rule's scope, so the whole tool would be granted), and
+    ``ValueError`` naming ``Agent``, ``Task`` or ``Skill``.
     """
     if allowed_tools is None or allowed_tools == ALL_TOOLS:
         return ()
@@ -517,7 +531,21 @@ def _claude_agent_tool_args(allowed_tools: object) -> tuple:
             "session runs with --permission-mode bypassPermissions, where a rule's scope "
             "is not enforced, so name whole tools; nothing was dispatched"
         )
+    reaching = [name for name in names if name.lower() in _AGENT_GRANT_REFUSED]
+    if reaching:
+        raise ValueError(
+            f"allowed_tools={allowed_tools!r} names {reaching[0]!r}; a subagent or a skill "
+            "may use tools outside the grant, so an agent-session grant may not name Agent, "
+            "Task or Skill; pass no grant or ALL_TOOLS ('*') for a session that uses them; "
+            "nothing was dispatched"
+        )
     return ("--tools", ",".join(names))
+
+
+#: Tool names an agent-session grant refuses, in lower case: each starts a
+#: subagent (``Agent``, ``Task``) or runs a skill (``Skill``), which may use
+#: tools outside ``--tools``.
+_AGENT_GRANT_REFUSED = frozenset({"agent", "task", "skill"})
 
 
 #: Read-only built-in tools that a BARE grant clause leaves unapproved, in
@@ -838,7 +866,9 @@ _CLAUDE_AGENT_PARAMS["allowed_tools"] = ParamCapability(
         "names: --tools with those names. Never --allowedTools: under the "
         "fixed bypassPermissions an approval list restricts nothing. A "
         "non-string, '*' beside other names, unbalanced parentheses, default, "
-        "MCP tool names, other non-tool names and scoped rules are refused"
+        "MCP tool names, other non-tool names, scoped rules and Agent, Task and "
+        "Skill (a subagent or a skill may use tools outside the grant) are "
+        "refused"
     ),
 )
 _CLAUDE_AGENT_PARAMS["system_prompt_mode"] = ParamCapability(
@@ -867,7 +897,11 @@ CLAUDE_AGENT_CAPABILITIES = Capabilities(
                 "MCP document keeps every settings-sourced MCP server out. Not "
                 "emitted for None or '*' (ALL_TOOLS): the session keeps every "
                 "tool. Scoped rules are refused, because the fixed bypass does "
-                "not enforce a rule's scope. That --tools restricts under "
+                "not enforce a rule's scope. Agent, Task and Skill are refused, "
+                "because a subagent or a skill may use tools outside the grant. "
+                "The grant removes built-in tools only: the session still loads "
+                "every settings source (hooks, enabled plugins) and the plugins' "
+                "skills and MCP servers. That --tools restricts under "
                 "bypassPermissions rests on the CLI reference (--tools "
                 "\"Restrict[s] which built-in tools Claude can use\") only: no "
                 "test runs the CLI with this argv (the gated live suite covers "

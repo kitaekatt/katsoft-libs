@@ -288,6 +288,26 @@ def test_an_agent_grant_the_completion_path_would_refuse_is_refused_before_the_s
         backend.applied_controls(request)
 
 
+@pytest.mark.parametrize("grant, name", [
+    ("Agent", "Agent"), ("Read,Task", "Task"), ("Skill Read", "Skill"), ("agent", "agent"), ("Read TASK", "TASK"),
+])
+def test_an_agent_grant_refuses_the_tools_that_reach_outside_it(tmp_path: Path, grant: str, name: str) -> None:
+    """A subagent (Agent, Task) or a skill (Skill) may use tools outside --tools, so the grant would not
+    hold; the caller who wants them passes no grant or ALL_TOOLS."""
+    request = _session_request(tmp_path, allowed_tools=grant)
+    backend = ClaudeAgentSession(executable="claude")
+    with pytest.raises(ValueError, match=f"'{name}'.*subagent or a skill"):
+        backend.build_argv(request)
+    with pytest.raises(ValueError, match=f"'{name}'.*subagent or a skill"):
+        backend.applied_controls(request)
+
+
+def test_the_agent_session_without_a_grant_may_still_use_subagents(tmp_path: Path) -> None:
+    for grant in (None, ALL_TOOLS):
+        argv = ClaudeAgentSession(executable="claude").build_argv(_session_request(tmp_path, allowed_tools=grant))
+        assert "--tools" not in argv
+
+
 def test_the_agent_record_advertises_the_grant_as_confining() -> None:
     controls = {control.id: control for control in records.CLAUDE_AGENT_CAPABILITIES.execution_controls}
     grant = controls["tool-grant"]
@@ -295,5 +315,9 @@ def test_the_agent_record_advertises_the_grant_as_confining() -> None:
     assert grant.emits.startswith("--tools <")
     # The live suite covers the completion path only; the note must not claim it covers this grant.
     assert "no test runs the CLI with this argv" in grant.note
+    # What the grant does not confine, said plainly (no behaviour change): settings sources and plugins.
+    assert "Agent, Task and Skill are refused" in grant.note
+    assert "every settings source" in grant.note and "plugin" in grant.note
+    assert "Agent, Task and Skill" in records.CLAUDE_AGENT_CAPABILITIES.params["allowed_tools"].note
     assert "allowed-tools" not in controls
     assert records.CLAUDE_AGENT_CAPABILITIES.params["allowed_tools"].emits == "--tools"
