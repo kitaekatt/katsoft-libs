@@ -78,6 +78,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+from llm_kit.adapters.claude_env import _claude_child_env
 from llm_kit.adapters.claude_stream import StreamVerdict, parse_stream_line
 from llm_kit.relay.mailbox import LeaseLost, Mailbox
 
@@ -114,11 +115,10 @@ def new_relay_instance() -> str:
 
 def child_env(tag: str, base: Optional[Mapping[str, str]] = None) -> dict[str, str]:
     """The child's environment: ``base`` (default: this process's) without ``CLAUDECODE`` and
-    ``CLAUDE_CODE_*``, plus the run's immutable process tag."""
-    env = {k: v for k, v in (os.environ if base is None else base).items()
-           if k != "CLAUDECODE" and not k.startswith("CLAUDE_CODE_")}
-    env[LEASE_ENV] = tag
-    return env
+    ``CLAUDE_CODE_*``, plus the run's immutable process tag. Built by the one definition of the
+    Claude child environment, :func:`llm_kit.adapters.claude_env._claude_child_env`; the Codex
+    app-server child of a resumed turn gets the same environment."""
+    return _claude_child_env(base, remove_prefixes=("CLAUDE_CODE_",), extra={LEASE_ENV: tag})
 
 
 # --------------------------------------------------------------------------

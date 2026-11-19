@@ -136,6 +136,7 @@ from .capabilities import (
     _claude_agent_tool_args,
 )
 from .claude_command import batch_shim_spawn_argv, check_batch_shim_argv
+from .claude_env import _claude_child_env
 from .claude_stream import StreamVerdict, init_problem, parse_stream_line
 
 #: Bytes of stderr kept for failure messages.
@@ -197,14 +198,8 @@ def _psutil() -> Any:
 
 
 def _child_env(tag: str) -> dict[str, str]:
-    """This process's environment without ``CLAUDECODE``, plus the membership tag.
-
-    ``CLAUDECODE`` marks a process as running inside Claude Code; a session
-    started from a Claude Code tool must not inherit it.
-    """
-    env = {key: value for key, value in os.environ.items() if key != "CLAUDECODE"}
-    env[SESSION_TAG_ENV] = tag
-    return env
+    """The Claude child environment (:func:`~llm_kit.adapters.claude_env._claude_child_env`) plus the membership tag."""
+    return _claude_child_env(extra={SESSION_TAG_ENV: tag})
 
 
 def _same_user(proc: Any) -> bool:

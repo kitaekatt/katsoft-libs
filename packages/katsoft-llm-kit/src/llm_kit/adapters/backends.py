@@ -675,7 +675,8 @@ def _claudx_plugin_args() -> list:
 
     Empty outside claudx (``CLAUDE_PLUGIN_TEST`` unset), where
     ``bootstrap_lib.claudx`` is never imported. Under claudx the child inherits
-    this process's environment (the runner is given none), so the flags are
+    this process's environment, less ``CLAUDECODE`` only (the runner is given
+    :func:`~llm_kit.adapters.claude_env._claude_child_env`), so the flags are
     validated and derived by :func:`bootstrap_lib.claudx.nested_claude_args`,
     which raises ``ClaudxPropagationError`` when the claudx variables are lost
     or unusable, and :class:`ClaudxSupportError` when ``bootstrap_lib.claudx``
@@ -763,7 +764,11 @@ class ClaudeCliBackend:
         executable: Explicit path to the ``claude`` binary. ``None`` resolves it
             at call time: ``LLM_KIT_CLAUDE_EXECUTABLE`` when set, else ``claude`` on PATH.
         runner: The subprocess runner -- test seam; production is
-            :func:`.claude_runner.run_claude_streaming`.
+            :func:`.claude_runner.run_claude_streaming`. Called as
+            ``runner(cmd, user, cwd, log_prefix=..., timeout_s=..., env=...)``;
+            ``env`` is the Claude child environment
+            (:func:`~llm_kit.adapters.claude_env._claude_child_env`: this
+            process's environment without ``CLAUDECODE``).
         text_only: Force the no-tools argv (``_CLAUDE_TEXT_ONLY_ARGS``) whatever
             the call asks for. Not a caller flag:
             :func:`~.requirements.arm_requirements` sets it when a
@@ -812,6 +817,7 @@ class ClaudeCliBackend:
         executable = self.executable or _resolve_claude_executable()
         _check_system_prompt_mode(opts)
         from .claude_command import batch_shim_spawn_argv  # noqa: PLC0415 -- keeps the module surface parity-pinned
+        from .claude_env import _claude_child_env  # noqa: PLC0415 -- keeps the module surface parity-pinned
 
         # Before argv is built or the runner invoked: a grant text-only mode
         # cannot honor, or a malformed grant, is refused here.
@@ -841,6 +847,7 @@ class ClaudeCliBackend:
         # A batch-shim launcher (claude.cmd) is re-parsed by cmd.exe: the system
         # prompt goes by file and any other unsafe element is refused here, before
         # the runner starts a process. Unchanged for a real executable.
+        child_env = _claude_child_env()
         with batch_shim_spawn_argv(cmd) as spawn_cmd:
             for attempt in range(self.retry_max_attempts):
                 attempts_made = attempt + 1
@@ -851,6 +858,7 @@ class ClaudeCliBackend:
                         cwd,
                         log_prefix=opts.log_prefix,
                         timeout_s=timeout_s,
+                        env=child_env,
                     )
                 except AgentTimeoutError as exc:
                     # A timeout is not retryable: the CLI was already killed after
