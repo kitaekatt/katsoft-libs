@@ -148,7 +148,8 @@ function rowLayer(row: CatalogRow, index: number): { settings: Map<SettingName, 
 
 /**
  * Refuse the extras the tracked file may not set (Python binding, `_check_sandbox_extras`): the whole
- * file, rows in catalog order and then request profiles, as the Python `validate_document` does.
+ * file, rows in catalog order and then request profiles in code point order of their names (the
+ * document holds them key-sorted), as the Python `validate_document` does.
  * A call layer is not checked here: the caller sets its own extras.
  */
 function checkTrackedExtras(document: ProjectModelsDocument): void {

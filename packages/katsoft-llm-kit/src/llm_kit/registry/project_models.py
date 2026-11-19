@@ -1200,7 +1200,13 @@ def _validate_requests(value: Any, *, bound: bool = False) -> "dict[str, dict]":
     """The key-sorted ``requests`` block: profile name -> normalized profile (:func:`validate_profile`).
 
     ``bound`` (binding) also refuses the Codex extras that widen the sandbox
-    (:func:`_check_sandbox_extras`).
+    (:func:`_check_sandbox_extras`). Order: every profile's structure first, in
+    the file's key order (as every other structural check reads the file); then
+    the sandbox extras of the profiles in code point order of their names, so
+    the first refused profile does not depend on the key order of the file or
+    on the parser. The TypeScript reader's ``resolveRequest`` reads the profiles
+    in the same order (shared cases in
+    ``tests/formats/project-models/tracked-extras.json``).
     """
     if not isinstance(value, Mapping):
         raise _invalid("requests", f"must be a mapping, not {type(value).__name__}")
@@ -1211,9 +1217,11 @@ def _validate_requests(value: Any, *, bound: bool = False) -> "dict[str, dict]":
         where = f"requests[{name!r}]"
         _text(name, f"requests key {name!r}", path=where)
         out[name] = validate_profile(value[name], where)
-        if bound:
-            _check_sandbox_extras(out[name].get("extras", {}), f"{where}.extras")
-    return {name: out[name] for name in sorted(out)}
+    ordered = {name: out[name] for name in sorted(out)}
+    if bound:
+        for name, profile in ordered.items():
+            _check_sandbox_extras(profile.get("extras", {}), f"requests[{name!r}].extras")
+    return ordered
 
 
 def _validate_catalog(

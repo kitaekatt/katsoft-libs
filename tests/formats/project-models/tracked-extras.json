@@ -1,6 +1,6 @@
 {
   "format": "llm-kit.project-models/v1",
-  "description": "Shared cases of the extras a tracked project file may not set. The file is repository content, so binding refuses, in a row's request_defaults.extras and in a request profile's extras, the keys add_dirs, scratch_dir, output_schema, any key that starts with __llm_kit_, and network with any value but the boolean false; portable validation still accepts them. EVERY implementation of this format must run this file against its binding stage (Python: validate_document; TypeScript: resolveRequest) and must fail when the file is missing or holds no case. Each case has a tracked input ('lines': join with LF and add one final LF) that passes portable validation, and a selection 'key'. 'expect' is {document} (binding accepts; the normalized tracked document, which portable validation returns too) or {error: {layer, code, path}} (binding refuses the whole file at the first problem: layer is always 'tracked', code 'invalid', path the key's path; the error message names the key, the last segment of the path). The whole file is checked, in this order: the catalog rows in order, then the requests profiles; within one extras mapping, output_schema, then the __llm_kit_ keys in code point order, then add_dirs, scratch_dir and network. The call layer and the code that calls a backend may still set these keys; a case does not cover them. Compare JSON values; object key order does not count. The contract is docs/reference/llm-kit-formats.md, 'Request settings'.",
+  "description": "Shared cases of the extras a tracked project file may not set. The file is repository content, so binding refuses, in a row's request_defaults.extras and in a request profile's extras, the keys add_dirs, scratch_dir, output_schema, any key that starts with __llm_kit_, and network with any value but the boolean false; portable validation still accepts them. EVERY implementation of this format must run this file against its binding stage (Python: validate_document; TypeScript: resolveRequest) and must fail when the file is missing or holds no case. Each case has a tracked input ('lines': join with LF and add one final LF) that passes portable validation, and a selection 'key'. 'expect' is {document} (binding accepts; the normalized tracked document, which portable validation returns too) or {error: {layer, code, path}} (binding refuses the whole file at the first problem: layer is always 'tracked', code 'invalid', path the key's path; the error message names the key, the last segment of the path). The whole file is checked, in this order: the catalog rows in order, then the requests profiles in code point order of their names (not the key order of the file); within one extras mapping, output_schema, then the __llm_kit_ keys in code point order, then add_dirs, scratch_dir and network. The call layer and the code that calls a backend may still set these keys; a case does not cover them. Compare JSON values; object key order does not count. The contract is docs/reference/llm-kit-formats.md, 'Request settings'.",
   "cases": [
     {
       "name": "row-add-dirs",
@@ -1120,6 +1120,67 @@
           "    model: vendor/a",
           "    request_defaults:",
           "      extras: {\"network\": true, \"scratch_dir\": \"/work/s\"}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.scratch_dir"
+        }
+      }
+    },
+    {
+      "name": "first-problem-profiles-in-name-order",
+      "note": "Two profiles hold a widening key, in non-sorted file order (zeta before alpha): profiles are checked in code point order of their names, so the first problem is alpha's, whatever the key order of the file or the parser.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  zeta:",
+          "    extras: {\"add_dirs\": [\"/work/a\"]}",
+          "  alpha:",
+          "    extras: {\"scratch_dir\": \"/work/s\"}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['alpha'].extras.scratch_dir"
+        }
+      }
+    },
+    {
+      "name": "first-problem-rows-in-catalog-order",
+      "note": "Two rows hold a widening key: rows are checked in catalog order, so the first row's key is the first problem.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: z",
+          "    label: Z",
+          "    endpoint: api",
+          "    model: vendor/z",
+          "    request_defaults:",
+          "      extras: {\"scratch_dir\": \"/work/s\"}",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"add_dirs\": [\"/work/a\"]}",
           "selections:",
           "  k: {model: a}"
         ]
