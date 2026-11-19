@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Callable, Collection, Iterator, Mapping, Optional, Sequence
 
 from llm_kit import _runtime
-from llm_kit._claude_env import _claude_child_env
 from llm_kit.completion.capabilities import Capabilities, _disallowed_tool_clauses, subjects_for_disallowed_tools
 from llm_kit.completion.halt import (
     AgentTimeoutError,
@@ -404,20 +403,17 @@ def run_contract(
 ) -> Acceptance:
     """Run a contract command and capture its observed result.
 
-    The command runs with the Claude child environment
-    (:func:`llm_kit._claude_env._claude_child_env`: the process's
-    environment without ``CLAUDECODE``), because a contract command may start
-    ``claude`` itself, directly or through a wrapper. ``interrupt_io`` exports
-    the interrupt request path (and, for a continuation, the resolution path,
-    interrupt id and continuation number); any of those variables it does not
-    set are removed from the inherited environment. Reading the request file is
-    the caller's job.
+    ``interrupt_io`` exports the interrupt request path (and, for a
+    continuation, the resolution path, interrupt id and continuation number);
+    any of those variables it does not set are removed from the inherited
+    environment. Reading the request file is the caller's job.
     """
     if timeout_s is not None and timeout_s <= 0:
         raise ValueError("timeout_s must be positive")
     working_directory = (directory or contract.directory or Path.cwd()).expanduser().resolve()
-    environment = _claude_child_env()
+    environment = None
     if context is not None or interrupt_io is not None:
+        environment = os.environ.copy()
         for name in _INTERRUPT_VARIABLES:
             environment.pop(name, None)
     if context is not None:

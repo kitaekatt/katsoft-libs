@@ -13,24 +13,26 @@ with :func:`_claude_child_env`:
 - the sign-in probe ``claude auth status`` (``harness_auth.claude_auth``),
 - the reachability probe ``claude --version`` (``dispatch/reachability.py``).
 
-Commands a job names, which may start ``claude`` themselves (directly, or
-through a script or wrapper whose argv this package cannot see into), follow
-the same rule: a job's contract command (``jobs/run.py`` ``run_contract``) and
-a compare scorer (``runs/compare.py`` ``command_scorer``). Removing one marker
-costs a command that is not ``claude`` nothing.
+A command the caller names is not a Claude spawn of this package, even when it
+starts ``claude`` itself: a job's contract command (``jobs/run.py``
+``run_contract``), a compare scorer (``runs/compare.py`` ``command_scorer``),
+a supervised process and a graph ``llm.subprocess`` node. Each gets the
+environment its caller's own rule gives it, unchanged. The signed import graph
+(``docs/reference/llm-kit-architecture.md``) keeps ``jobs`` and ``runs`` from
+importing ``adapters``, where this definition lives, and the package cannot see
+whether a command, a script or a wrapper starts ``claude``. A caller whose
+command starts ``claude`` inside a Claude Code session removes ``CLAUDECODE``
+from that command's environment itself.
 
 ``tests/llm-kit/test_claude_spawn_env.py`` proves this: each path above is run
 through its real code (with a spy runner where the path takes an injected
 runner) and must spawn with an environment this function made, without the
 parent's ``CLAUDECODE``; and an AST scan of the whole package classifies every
-process spawn as one of these sites or as a named exception that does not start
-``claude`` (git, the Codex CLI, the package's own Python workers, a graph
-``llm.subprocess`` node with its allow-list environment, a supervised process
-whose spec sets its own environment).
+process spawn as one of these sites or as a named exception with its reason
+(git, the Codex CLI, the package's own Python workers, and the caller-named
+commands above).
 
 The module is private to the package: no caller outside ``llm_kit`` needs it.
-It sits at the package root, not in ``llm_kit.adapters``, so that the jobs
-layer (which never imports adapters) uses this same definition.
 """
 from __future__ import annotations
 
@@ -74,9 +76,7 @@ def _claude_child_env(
     Removals each path adds (each one predates this function and is kept
     unchanged):
 
-    - the relay's resumed turn: every ``CLAUDE_CODE_*`` name (``remove_prefixes``);
-    - a contract command: the interrupt variables its ``interrupt_io`` does not
-      set (removed by ``run_contract`` after this function).
+    - the relay's resumed turn: every ``CLAUDE_CODE_*`` name (``remove_prefixes``).
 
     Args:
         base: the parent environment; ``None`` reads ``os.environ`` at the call.

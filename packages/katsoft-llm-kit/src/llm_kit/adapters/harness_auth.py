@@ -33,7 +33,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
-from llm_kit._claude_env import _claude_child_env
+from llm_kit.adapters.claude_env import _claude_child_env
 from llm_kit.adapters.claude_command import (
     CLAUDE_EXECUTABLE_ENV,
     ClaudeExecutableError,
@@ -122,7 +122,7 @@ def claude_auth(
     """Claude authentication state; ``env`` defaults to ``os.environ``.
 
     ``claude auth status`` runs with the Claude child environment built from
-    ``env`` (:func:`llm_kit._claude_env._claude_child_env`: no
+    ``env`` (:func:`llm_kit.adapters.claude_env._claude_child_env`: no
     ``CLAUDECODE``); ``runner`` receives it as ``env=``.
     """
     env = os.environ if env is None else env

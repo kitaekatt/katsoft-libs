@@ -1,10 +1,10 @@
 """One definition of the Claude child environment, used by every Claude spawn path.
 
 Every path that starts a ``claude`` child builds its environment with
-``llm_kit._claude_env._claude_child_env``, so the parent's ``CLAUDECODE`` (the marker of a
-process running inside Claude Code) never reaches a child. ``PATHS`` below names each path; a
-contract command and a compare scorer (commands a job names, which may start ``claude``) follow the
-same rule.
+``llm_kit.adapters.claude_env._claude_child_env``, so the parent's ``CLAUDECODE`` (the marker of a
+process running inside Claude Code) never reaches a child. ``PATHS`` below names each path. A
+command the caller names (a contract command, a compare scorer) is a named exception: see
+``llm_kit.adapters.claude_env``.
 
 1. Each path passes, through its real code, an environment that function produced. A spy wraps the
    function and adds a unique marker; the fake runner or Popen must see that marker. A path that
@@ -69,7 +69,7 @@ def parent_env(monkeypatch):
 @pytest.fixture
 def spy(monkeypatch):
     """Wrap ``_claude_child_env`` wherever a loaded llm_kit module binds it; record each environment it made."""
-    from llm_kit import _claude_env as claude_env
+    from llm_kit.adapters import claude_env
 
     original = claude_env._claude_child_env
     made: list = []
@@ -234,38 +234,6 @@ def _bg_cli_env(verb: str):
     return build
 
 
-def _contract_env(tmp_path: Path, monkeypatch) -> dict:
-    from llm_kit.jobs import run as jobs_run
-    from llm_kit.jobs.model import Contract
-
-    seen: dict = {}
-
-    def fake_popen(argv, **kwargs):
-        seen.update(kwargs)
-        raise _Spawned
-
-    monkeypatch.setattr(jobs_run.subprocess, "Popen", fake_popen)
-    with pytest.raises(_Spawned):
-        jobs_run.run_contract(Contract(command=("claude", "-p", "judge")), directory=tmp_path)
-    return dict(seen["env"])
-
-
-def _scorer_env(tmp_path: Path, monkeypatch) -> dict:
-    from llm_kit.runs import compare
-
-    seen: dict = {}
-
-    def fake_run(argv, **kwargs):
-        seen.update(kwargs)
-        raise _Spawned
-
-    monkeypatch.setattr(compare.subprocess, "run", fake_run)
-    scorer = compare.command_scorer(["claude", "-p", "score"], cwd=tmp_path)
-    with pytest.raises(_Spawned):
-        scorer.score({})
-    return dict(seen["env"])
-
-
 BG_CLI_VERBS = ("agents", "stop", "rm", "respawn", "version", "launch")
 
 PATHS = {
@@ -275,8 +243,6 @@ PATHS = {
     "bg-driver": _bg_env,
     "harness-auth": _harness_auth_env,
     "reachability": _reachability_env,
-    "contract-command": _contract_env,
-    "compare-scorer": _scorer_env,
     **{f"bg-cli-{verb}": _bg_cli_env(verb) for verb in BG_CLI_VERBS},
 }
 
@@ -326,7 +292,7 @@ def test_a_bg_cli_call_given_an_env_with_the_marker_still_drops_it(parent_env):
 
 
 def test_the_function_removes_the_marker_keeps_the_rest_and_adds_extras():
-    from llm_kit._claude_env import _claude_child_env
+    from llm_kit.adapters.claude_env import _claude_child_env
 
     base = {"CLAUDECODE": "1", "CLAUDE_CODE_X": "y", "PATH": "/bin", "ANTHROPIC_API_KEY": "k"}
     assert _claude_child_env(base) == {"CLAUDE_CODE_X": "y", "PATH": "/bin", "ANTHROPIC_API_KEY": "k"}
@@ -337,7 +303,7 @@ def test_the_function_removes_the_marker_keeps_the_rest_and_adds_extras():
 
 
 def test_the_function_reads_the_process_environment_by_default(monkeypatch):
-    from llm_kit._claude_env import _claude_child_env
+    from llm_kit.adapters.claude_env import _claude_child_env
 
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setenv(KEEP, "v")
@@ -347,7 +313,7 @@ def test_the_function_reads_the_process_environment_by_default(monkeypatch):
 
 @pytest.mark.parametrize("extra", [{"CLAUDECODE": "1"}, {"CLAUDE_CODE_X": "1"}])
 def test_an_extra_may_not_put_back_a_removed_variable(extra):
-    from llm_kit._claude_env import _claude_child_env
+    from llm_kit.adapters.claude_env import _claude_child_env
 
     with pytest.raises(ValueError, match="removes"):
         _claude_child_env({}, remove_prefixes=("CLAUDE_CODE_",), extra=extra)
@@ -367,7 +333,7 @@ def test_a_bg_worker_overlay_that_names_the_marker_raises():
 
 def test_names_compare_without_case_where_the_platform_ignores_case(monkeypatch):
     """On Windows a caller's mapping may spell the marker in any case; it is still the marker."""
-    from llm_kit._claude_env import _claude_child_env
+    from llm_kit.adapters.claude_env import _claude_child_env
     from llm_kit.registry import consent
 
     base = {"claudecode": "1", "ClaudeCode": "1", "claude_code_x": "1", "PATH": "/bin"}
@@ -382,7 +348,7 @@ def test_names_compare_without_case_where_the_platform_ignores_case(monkeypatch)
 
 @pytest.mark.skipif(sys.platform != "win32", reason="the platform's own case rule")
 def test_on_windows_a_lower_case_marker_in_a_caller_mapping_is_removed():
-    from llm_kit._claude_env import _claude_child_env
+    from llm_kit.adapters.claude_env import _claude_child_env
 
     assert _claude_child_env({"claudecode": "1", "PATH": "x"}) == {"PATH": "x"}
 
@@ -398,8 +364,6 @@ CLAUDE_SITES = {
     ("pipeline/execution/drivers/claude_bg.py", "_default_runner"): (  # ClaudeCli's runner
         "bg-driver", *(f"bg-cli-{verb}" for verb in BG_CLI_VERBS)),
     ("dispatch/reachability.py", "_run_version_probe"): ("reachability",),
-    ("jobs/run.py", "run_contract"): ("contract-command",),
-    ("runs/compare.py", "score"): ("compare-scorer",),
 }
 
 #: Spawn sites that do not start ``claude``, each with its reason.
@@ -419,6 +383,14 @@ EXCEPTIONS = {
     ("jobs/workspace.py", "_git_detection_result"): "runs git",
     ("pipeline/artifacts/vcs/git_vcs.py", "_default_runner"): "runs git",
     ("jobs/run.py", "_kill_contract_process_group"): "runs taskkill on a timed-out contract",
+    ("jobs/run.py", "run_contract"): (
+        "a contract command the job names: the caller's command, not a Claude spawn of this package; "
+        "jobs may not import adapters (signed import graph), so it keeps the caller's environment"
+    ),
+    ("runs/compare.py", "score"): (
+        "a scorer command the caller names: not a Claude spawn of this package; runs may not import "
+        "adapters (signed import graph), so it inherits the caller's environment"
+    ),
     ("relay/codex_appserver.py", "start"): "starts `codex app-server`: not a Claude child",
     ("graph/ops/subprocess.py", "llm_subprocess"): (
         "an allow-list environment (env_allow, default PATH HOME LANG LC_ALL TMPDIR, plus the node's "

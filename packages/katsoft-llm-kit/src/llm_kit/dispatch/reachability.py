@@ -50,7 +50,7 @@ from typing import Any, Dict, List, Optional
 
 from llm_kit.adapters import codex_command
 from llm_kit.adapters.claude_command import resolve_claude_cli
-from llm_kit._claude_env import _claude_child_env
+from llm_kit.adapters.claude_env import _claude_child_env
 from llm_kit.adapters.account import EndpointProbe, get_authenticated, probe_endpoint
 from llm_kit.adapters.harness_adapters import resolve_opencode_cli
 

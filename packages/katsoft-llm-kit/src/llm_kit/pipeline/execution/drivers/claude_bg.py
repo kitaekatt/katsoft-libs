@@ -121,7 +121,7 @@ from llm_kit.adapters.claude_command import (
     batch_shim_spawn_argv,
     resolve_claude_executable,
 )
-from llm_kit._claude_env import _claude_child_env
+from llm_kit.adapters.claude_env import _claude_child_env
 from llm_kit.pipeline.execution.adapter import RunAdapter
 from llm_kit.pipeline.execution.controller import record_halt
 from llm_kit.pipeline.execution.model import (
@@ -687,7 +687,7 @@ def compose_worker_environment(
     2. ``child`` is the Claude child environment of ``base`` (``base``
        defaults to ``os.environ``, the DISPATCHER's own process environment)
        built by the one definition,
-       :func:`llm_kit._claude_env._claude_child_env`: ``base``
+       :func:`llm_kit.adapters.claude_env._claude_child_env`: ``base``
        without ``CLAUDECODE``, updated with the overlay -- the overlay always
        wins over whatever the dispatcher process itself happened to have
        set, which is the whole point: a worker must see the RUN's recorded
