@@ -40,6 +40,7 @@ verb (one endpoint, exit code is the answer). Same code, two surfaces.
 from __future__ import annotations
 
 import json
+import os
 import shutil  # noqa: F401 -- tests patch shutil.which through this module
 import subprocess
 import time
@@ -49,6 +50,7 @@ from typing import Any, Dict, List, Optional
 
 from llm_kit.adapters import codex_command
 from llm_kit.adapters.claude_command import resolve_claude_cli
+from llm_kit._claude_env import _claude_child_env
 from llm_kit.adapters.account import EndpointProbe, get_authenticated, probe_endpoint
 from llm_kit.adapters.harness_adapters import resolve_opencode_cli
 
@@ -273,7 +275,7 @@ def check_harness(harness: Optional[str], *, timeout: float = DEFAULT_VERIFY_TIM
         prefix = resolve_opencode_cli()
         if prefix is None:
             return Reachability(status=STATUS_UNREACHABLE, checked="cli-version", detail="`opencode` not found on PATH")
-        return _run_version_probe(list(prefix), label="opencode", timeout=timeout)
+        return _run_version_probe(list(prefix), label="opencode", timeout=timeout, env=dict(os.environ))
     # claude
     # A misconfigured LLM_KIT_CLAUDE_EXECUTABLE raises ClaudeExecutableError
     # naming the variable (as detect_codex does for its twin) rather than
@@ -281,7 +283,7 @@ def check_harness(harness: Optional[str], *, timeout: float = DEFAULT_VERIFY_TIM
     resolved = resolve_claude_cli()
     if resolved is None:
         return Reachability(status=STATUS_UNREACHABLE, checked="cli-version", detail="`claude` not found on PATH")
-    return _run_version_probe(list(resolved), label="claude", timeout=timeout)
+    return _run_version_probe(list(resolved), label="claude", timeout=timeout, env=_claude_child_env())
 
 
 def _check_codex(*, timeout: float) -> Reachability:
@@ -298,11 +300,12 @@ def _check_codex(*, timeout: float) -> Reachability:
     return Reachability(status=status, checked="cli-version", detail=detection.reason)
 
 
-def _run_version_probe(argv: List[str], *, label: str, timeout: float) -> Reachability:
+def _run_version_probe(argv: List[str], *, label: str, timeout: float, env: Dict[str, str]) -> Reachability:
+    """``<argv> --version`` with ``env``: the Claude child environment for claude, the parent's for opencode."""
     shown = f"{label} --version"
     try:
         proc = subprocess.run(
-            [*argv, "--version"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout
+            [*argv, "--version"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout, env=env
         )
     except subprocess.TimeoutExpired:
         return Reachability(status=STATUS_UNREACHABLE, checked="cli-version", detail=f"`{shown}` timed out after {timeout:g}s")

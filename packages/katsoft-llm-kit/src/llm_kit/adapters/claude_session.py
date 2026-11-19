@@ -136,7 +136,7 @@ from .capabilities import (
     _claude_agent_tool_args,
 )
 from .claude_command import batch_shim_spawn_argv, check_batch_shim_argv
-from .claude_env import _claude_child_env
+from llm_kit._claude_env import _claude_child_env
 from .claude_stream import StreamVerdict, init_problem, parse_stream_line
 
 #: Bytes of stderr kept for failure messages.
@@ -198,7 +198,7 @@ def _psutil() -> Any:
 
 
 def _child_env(tag: str) -> dict[str, str]:
-    """The Claude child environment (:func:`~llm_kit.adapters.claude_env._claude_child_env`) plus the membership tag."""
+    """The Claude child environment (:func:`~llm_kit._claude_env._claude_child_env`) plus the membership tag."""
     return _claude_child_env(extra={SESSION_TAG_ENV: tag})
 
 

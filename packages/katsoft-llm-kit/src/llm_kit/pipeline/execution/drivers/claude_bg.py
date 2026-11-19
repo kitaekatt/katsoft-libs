@@ -121,7 +121,7 @@ from llm_kit.adapters.claude_command import (
     batch_shim_spawn_argv,
     resolve_claude_executable,
 )
-from llm_kit.adapters.claude_env import _claude_child_env
+from llm_kit._claude_env import _claude_child_env
 from llm_kit.pipeline.execution.adapter import RunAdapter
 from llm_kit.pipeline.execution.controller import record_halt
 from llm_kit.pipeline.execution.model import (
@@ -388,13 +388,16 @@ class ClaudeCli:
         cwd: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> Tuple[str, str, int]:
-        # Every claude spawn in this module passes here. A batch-shim launcher
-        # (claude.cmd) is re-parsed by cmd.exe, so an element it would re-parse,
-        # or cut at a line break, is refused before the runner starts a process.
-        # No system prompt moves to a file: a --bg session outlives this call.
-        # Unchanged for a real executable.
+        # Every claude spawn in this module passes here. The child gets the
+        # Claude child environment built from ``env`` (None: the process's own),
+        # so CLAUDECODE never reaches it; the runner always receives a dict.
+        # A batch-shim launcher (claude.cmd) is re-parsed by cmd.exe, so an
+        # element it would re-parse, or cut at a line break, is refused before
+        # the runner starts a process. No system prompt moves to a file: a --bg
+        # session outlives this call. Unchanged for a real executable.
+        child_env = _claude_child_env(env)
         with batch_shim_spawn_argv(argv, prompt_files=False) as spawn_argv:
-            return self.runner(spawn_argv, stdin=stdin, env=env, cwd=cwd, timeout=timeout)
+            return self.runner(spawn_argv, stdin=stdin, env=child_env, cwd=cwd, timeout=timeout)
 
     def launch_bg(
         self,
@@ -684,7 +687,7 @@ def compose_worker_environment(
     2. ``child`` is the Claude child environment of ``base`` (``base``
        defaults to ``os.environ``, the DISPATCHER's own process environment)
        built by the one definition,
-       :func:`llm_kit.adapters.claude_env._claude_child_env`: ``base``
+       :func:`llm_kit._claude_env._claude_child_env`: ``base``
        without ``CLAUDECODE``, updated with the overlay -- the overlay always
        wins over whatever the dispatcher process itself happened to have
        set, which is the whole point: a worker must see the RUN's recorded

@@ -676,7 +676,7 @@ def _claudx_plugin_args() -> list:
     Empty outside claudx (``CLAUDE_PLUGIN_TEST`` unset), where
     ``bootstrap_lib.claudx`` is never imported. Under claudx the child inherits
     this process's environment, less ``CLAUDECODE`` only (the runner is given
-    :func:`~llm_kit.adapters.claude_env._claude_child_env`), so the flags are
+    :func:`~llm_kit._claude_env._claude_child_env`), so the flags are
     validated and derived by :func:`bootstrap_lib.claudx.nested_claude_args`,
     which raises ``ClaudxPropagationError`` when the claudx variables are lost
     or unusable, and :class:`ClaudxSupportError` when ``bootstrap_lib.claudx``
@@ -767,7 +767,7 @@ class ClaudeCliBackend:
             :func:`.claude_runner.run_claude_streaming`. Called as
             ``runner(cmd, user, cwd, log_prefix=..., timeout_s=..., env=...)``;
             ``env`` is the Claude child environment
-            (:func:`~llm_kit.adapters.claude_env._claude_child_env`: this
+            (:func:`~llm_kit._claude_env._claude_child_env`: this
             process's environment without ``CLAUDECODE``).
         text_only: Force the no-tools argv (``_CLAUDE_TEXT_ONLY_ARGS``) whatever
             the call asks for. Not a caller flag:
@@ -817,7 +817,7 @@ class ClaudeCliBackend:
         executable = self.executable or _resolve_claude_executable()
         _check_system_prompt_mode(opts)
         from .claude_command import batch_shim_spawn_argv  # noqa: PLC0415 -- keeps the module surface parity-pinned
-        from .claude_env import _claude_child_env  # noqa: PLC0415 -- keeps the module surface parity-pinned
+        from llm_kit._claude_env import _claude_child_env  # noqa: PLC0415 -- keeps the module surface parity-pinned
 
         # Before argv is built or the runner invoked: a grant text-only mode
         # cannot honor, or a malformed grant, is refused here.

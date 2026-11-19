@@ -33,6 +33,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
+from llm_kit._claude_env import _claude_child_env
 from llm_kit.adapters.claude_command import (
     CLAUDE_EXECUTABLE_ENV,
     ClaudeExecutableError,
@@ -118,7 +119,12 @@ def claude_auth(
     runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
     timeout_s: float = 10,
 ) -> HarnessAuth:
-    """Claude authentication state; ``env`` defaults to ``os.environ``."""
+    """Claude authentication state; ``env`` defaults to ``os.environ``.
+
+    ``claude auth status`` runs with the Claude child environment built from
+    ``env`` (:func:`llm_kit._claude_env._claude_child_env`: no
+    ``CLAUDECODE``); ``runner`` receives it as ``env=``.
+    """
     env = os.environ if env is None else env
     for name in BILLING_DIVERTING_VARS:
         if env.get(name):
@@ -135,7 +141,7 @@ def claude_auth(
         return HarnessAuth(UNKNOWN, f"{CLAUDE_EXECUTABLE_ENV} is set to an unusable value")
     doc, failure = _run_json(
         [executable, "auth", "status"], what="claude auth status",
-        env=env, cwd=None, runner=runner, timeout_s=timeout_s,
+        env=_claude_child_env(env), cwd=None, runner=runner, timeout_s=timeout_s,
     )
     if failure is not None:
         return HarnessAuth(UNKNOWN, failure)

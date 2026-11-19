@@ -67,6 +67,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Union
 
+from llm_kit._claude_env import _claude_child_env
 from llm_kit.graph.model import GraphError
 from llm_kit.graph.prompt import parse_prompt_file, render_prompt
 from llm_kit.pipeline.artifacts.freshness.hashing import FULL_DIGEST_LENGTH, digest, stable_json
@@ -336,7 +337,9 @@ def command_scorer(
 
     The program reads one ``llm-kit.run-import/v1`` line on stdin and writes
     the same line, with ``record.scores`` filled, on stdout. It runs in
-    ``cwd`` (default: the current directory). A non-zero exit fails the score.
+    ``cwd`` (default: the current directory), with the process's environment
+    minus ``CLAUDECODE`` (a scorer may start ``claude``; see
+    ``llm_kit._claude_env``). A non-zero exit fails the score.
     ``sha256`` hashes the words of ``argv`` and the bytes of each word that
     names an existing file (relative to ``cwd``); it does not hash a program
     found on PATH or a file the program reads itself, so name those in
@@ -361,7 +364,7 @@ def command_scorer(
 
     def score(line: dict) -> dict:
         proc = subprocess.run(words, input=json.dumps(line, ensure_ascii=True).encode("ascii"),
-                              capture_output=True, cwd=str(base), check=False)
+                              capture_output=True, cwd=str(base), check=False, env=_claude_child_env())
         if proc.returncode != 0:
             tail = proc.stderr.decode("utf-8", "replace").strip()[-2000:]
             raise CompareError("scorer-failed", f"scorer {label} exited {proc.returncode}: {tail}")

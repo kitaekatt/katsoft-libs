@@ -1,23 +1,31 @@
 """One definition of the Claude child environment, used by every Claude spawn path.
 
-Four paths start a ``claude`` child: the completion backend (``ClaudeCliBackend``), the agent session
-(``ClaudeAgentSession``), the relay's resumed turn (``ResumeRunner._run_claude``) and the ``--bg``
-driver's worker launch (``dispatch_wave`` through ``compose_worker_environment``). Each builds the
-child's environment with ``llm_kit.adapters.claude_env._claude_child_env``, so the parent's
-``CLAUDECODE`` (the marker of a process running inside Claude Code) never reaches a child.
+Every path that starts a ``claude`` child builds its environment with
+``llm_kit._claude_env._claude_child_env``, so the parent's ``CLAUDECODE`` (the marker of a
+process running inside Claude Code) never reaches a child. ``PATHS`` below names each path; a
+contract command and a compare scorer (commands a job names, which may start ``claude``) follow the
+same rule.
 
 1. Each path passes, through its real code, an environment that function produced. A spy wraps the
-   function and adds a unique marker; the fake runner or Popen must see that marker.
+   function and adds a unique marker; the fake runner or Popen must see that marker. A path that
+   spawns through an injected runner (``claude_auth``, ``ClaudeCli``, ``ClaudeCliBackend``) is called
+   with a spy runner.
 2. ``CLAUDECODE`` set in the parent reaches no child.
-3. An AST scan: every ``subprocess`` / ``asyncio`` spawn call in ``llm_kit/adapters`` and the Claude
-   driver and relay spawn modules passes an explicit ``env=``, except the named exceptions below.
+3. An AST scan of the WHOLE ``llm_kit`` source tree finds every process spawn (``subprocess.*``,
+   ``asyncio.create_subprocess_*``, ``os.spawn*``, ``os.exec*``, ``os.system``, ``os.popen``,
+   ``os.posix_spawn*``). Each one is either a Claude spawn site, which passes an explicit ``env=``
+   and names the ``PATHS`` entries that prove its environment at run time, or a named exception with
+   its reason (a child that is not ``claude``). A new spawn anywhere fails until it is classified.
+4. Every module that resolves the Claude executable is a module of a ``PATHS`` entry, so a new path
+   that starts ``claude`` through an injected runner also fails until it is covered.
 
-No process is started.
+No ``claude`` process is started.
 """
 from __future__ import annotations
 
 import ast
 import json
+import subprocess
 import sys
 import time
 import uuid
@@ -61,7 +69,7 @@ def parent_env(monkeypatch):
 @pytest.fixture
 def spy(monkeypatch):
     """Wrap ``_claude_child_env`` wherever a loaded llm_kit module binds it; record each environment it made."""
-    from llm_kit.adapters import claude_env
+    from llm_kit import _claude_env as claude_env
 
     original = claude_env._claude_child_env
     made: list = []
@@ -164,11 +172,112 @@ def _bg_env(tmp_path: Path, monkeypatch) -> dict:
     return dict(seen["env"])
 
 
+def _harness_auth_env(tmp_path: Path, monkeypatch) -> dict:
+    from llm_kit.adapters import harness_auth
+
+    for name in harness_auth.BILLING_DIVERTING_VARS:  # with one set, the probe answers metered unspawned
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv(harness_auth.CLAUDE_EXECUTABLE_ENV, raising=False)
+    seen: dict = {}
+
+    def runner(argv, **kwargs):
+        seen["argv"] = list(argv)
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, '{"authMethod":"claude.ai","apiProvider":"firstParty"}', "")
+
+    assert harness_auth.claude_auth(runner=runner).state == harness_auth.SUBSCRIPTION
+    assert seen["argv"] == ["claude", "auth", "status"]
+    return dict(seen["env"])
+
+
+def _reachability_env(tmp_path: Path, monkeypatch) -> dict:
+    from llm_kit.dispatch import reachability
+
+    monkeypatch.setattr(reachability, "resolve_claude_cli", lambda *args, **kwargs: ("claude",))
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = list(argv)
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0, b"2.1.0 (Claude Code)\n", None)
+
+    monkeypatch.setattr(reachability.subprocess, "run", fake_run)
+    assert reachability.check_harness("claude").status == reachability.STATUS_REACHABLE
+    assert seen["argv"] == ["claude", "--version"]
+    return dict(seen["env"])
+
+
+def _bg_cli_env(verb: str):
+    """``ClaudeCli``'s own calls (admin verbs, version, the launch): its injected runner sees the env."""
+
+    def build(tmp_path: Path, monkeypatch) -> dict:
+        seen: dict = {}
+
+        def runner(argv, **kwargs):
+            seen["argv"] = list(argv)
+            seen.update(kwargs)
+            return "", "", 0
+
+        cli = claude_bg.ClaudeCli(executable="claude", runner=runner)
+        calls = {
+            "agents": lambda: cli.agents_json(),
+            "stop": lambda: cli.stop("sess-1"),
+            "rm": lambda: cli.rm("sess-1"),
+            "respawn": lambda: cli.respawn("sess-1"),
+            "version": lambda: cli.version(),
+            "launch": lambda: cli.launch_bg("do the unit"),
+        }
+        calls[verb]()
+        assert seen["argv"][0] == "claude"
+        return dict(seen["env"])
+
+    return build
+
+
+def _contract_env(tmp_path: Path, monkeypatch) -> dict:
+    from llm_kit.jobs import run as jobs_run
+    from llm_kit.jobs.model import Contract
+
+    seen: dict = {}
+
+    def fake_popen(argv, **kwargs):
+        seen.update(kwargs)
+        raise _Spawned
+
+    monkeypatch.setattr(jobs_run.subprocess, "Popen", fake_popen)
+    with pytest.raises(_Spawned):
+        jobs_run.run_contract(Contract(command=("claude", "-p", "judge")), directory=tmp_path)
+    return dict(seen["env"])
+
+
+def _scorer_env(tmp_path: Path, monkeypatch) -> dict:
+    from llm_kit.runs import compare
+
+    seen: dict = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        raise _Spawned
+
+    monkeypatch.setattr(compare.subprocess, "run", fake_run)
+    scorer = compare.command_scorer(["claude", "-p", "score"], cwd=tmp_path)
+    with pytest.raises(_Spawned):
+        scorer.score({})
+    return dict(seen["env"])
+
+
+BG_CLI_VERBS = ("agents", "stop", "rm", "respawn", "version", "launch")
+
 PATHS = {
     "completion": lambda tmp_path, monkeypatch: _completion_env(tmp_path),
     "agent-session": _session_env,
     "relay-resume": _relay_env,
     "bg-driver": _bg_env,
+    "harness-auth": _harness_auth_env,
+    "reachability": _reachability_env,
+    "contract-command": _contract_env,
+    "compare-scorer": _scorer_env,
+    **{f"bg-cli-{verb}": _bg_cli_env(verb) for verb in BG_CLI_VERBS},
 }
 
 
@@ -198,14 +307,26 @@ def test_only_the_relay_drops_claude_code_variables_and_only_bg_drops_billing(pa
     # CLAUDECODE. Billing variables are deliberately not stripped on the other paths yet.
     env = PATHS[path](tmp_path, monkeypatch)
     assert ("CLAUDE_CODE_ENTRYPOINT" in env) is (path != "relay-resume")
-    assert ("ANTHROPIC_API_KEY" in env) is (path != "bg-driver")
+    if path != "harness-auth":  # that probe never spawns while a billing variable is set
+        assert ("ANTHROPIC_API_KEY" in env) is (path != "bg-driver")
+
+
+def test_a_bg_cli_call_given_an_env_with_the_marker_still_drops_it(parent_env):
+    seen: dict = {}
+
+    def runner(argv, **kwargs):
+        seen.update(kwargs)
+        return "", "", 0
+
+    claude_bg.ClaudeCli(executable="claude", runner=runner).stop("sess-1", env={"CLAUDECODE": "1", KEEP: "k"})
+    assert seen["env"] == {KEEP: "k"}
 
 
 # -- the function -----------------------------------------------------------------------------------
 
 
 def test_the_function_removes_the_marker_keeps_the_rest_and_adds_extras():
-    from llm_kit.adapters.claude_env import _claude_child_env
+    from llm_kit._claude_env import _claude_child_env
 
     base = {"CLAUDECODE": "1", "CLAUDE_CODE_X": "y", "PATH": "/bin", "ANTHROPIC_API_KEY": "k"}
     assert _claude_child_env(base) == {"CLAUDE_CODE_X": "y", "PATH": "/bin", "ANTHROPIC_API_KEY": "k"}
@@ -216,7 +337,7 @@ def test_the_function_removes_the_marker_keeps_the_rest_and_adds_extras():
 
 
 def test_the_function_reads_the_process_environment_by_default(monkeypatch):
-    from llm_kit.adapters.claude_env import _claude_child_env
+    from llm_kit._claude_env import _claude_child_env
 
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setenv(KEEP, "v")
@@ -226,79 +347,199 @@ def test_the_function_reads_the_process_environment_by_default(monkeypatch):
 
 @pytest.mark.parametrize("extra", [{"CLAUDECODE": "1"}, {"CLAUDE_CODE_X": "1"}])
 def test_an_extra_may_not_put_back_a_removed_variable(extra):
-    from llm_kit.adapters.claude_env import _claude_child_env
+    from llm_kit._claude_env import _claude_child_env
 
     with pytest.raises(ValueError, match="removes"):
         _claude_child_env({}, remove_prefixes=("CLAUDE_CODE_",), extra=extra)
 
 
-# -- the AST guard ----------------------------------------------------------------------------------
+def test_names_compare_without_case_where_the_platform_ignores_case(monkeypatch):
+    """On Windows a caller's mapping may spell the marker in any case; it is still the marker."""
+    from llm_kit._claude_env import _claude_child_env
+    from llm_kit.registry import consent
 
-#: Modules scanned besides every module in llm_kit/adapters.
-SCANNED_EXTRA = ("pipeline/execution/drivers/claude_bg.py", "relay/resume.py")
+    base = {"claudecode": "1", "ClaudeCode": "1", "claude_code_x": "1", "PATH": "/bin"}
+    monkeypatch.setattr(consent, "ENV_NAMES_IGNORE_CASE", True)
+    assert _claude_child_env(base, remove_prefixes=("CLAUDE_CODE_",)) == {"PATH": "/bin"}
+    for extra in ({"claudeCode": "1"}, {"Claude_Code_Y": "1"}):
+        with pytest.raises(ValueError, match="removes"):
+            _claude_child_env({}, remove_prefixes=("CLAUDE_CODE_",), extra=extra)
+    monkeypatch.setattr(consent, "ENV_NAMES_IGNORE_CASE", False)  # POSIX: names are case-sensitive
+    assert _claude_child_env(base, remove_prefixes=("CLAUDE_CODE_",)) == base
 
-#: ``(module, enclosing function)`` spawn calls allowed without ``env=``, each with its reason.
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the platform's own case rule")
+def test_on_windows_a_lower_case_marker_in_a_caller_mapping_is_removed():
+    from llm_kit._claude_env import _claude_child_env
+
+    assert _claude_child_env({"claudecode": "1", "PATH": "x"}) == {"PATH": "x"}
+
+
+# -- the AST guard: every process spawn in the package is classified -------------------------------
+
+#: Claude spawn sites ``(module, enclosing function)``: each passes an explicit ``env=``, and the
+#: ``PATHS`` entries named prove at run time that the env reaching it came from ``_claude_child_env``.
+CLAUDE_SITES = {
+    ("adapters/claude_runner.py", "run_cli_streaming"): ("completion",),  # the transport; env from its caller
+    ("adapters/claude_session.py", "run"): ("agent-session",),
+    ("relay/resume.py", "_run_claude"): ("relay-resume",),
+    ("pipeline/execution/drivers/claude_bg.py", "_default_runner"): (  # ClaudeCli's runner
+        "bg-driver", *(f"bg-cli-{verb}" for verb in BG_CLI_VERBS)),
+    ("dispatch/reachability.py", "_run_version_probe"): ("reachability",),
+    ("jobs/run.py", "run_contract"): ("contract-command",),
+    ("runs/compare.py", "score"): ("compare-scorer",),
+}
+
+#: Spawn sites that do not start ``claude``, each with its reason.
 EXCEPTIONS = {
     ("adapters/codex_command.py", "_detect_codex_uncached"): (
-        "`codex --version` probe of the installed Codex CLI: no prompt, no model call, not a Claude "
-        "child; it inherits the environment as the Codex backend it detects does"
+        "`codex --version` probe of the installed Codex CLI: not a Claude child; it inherits the "
+        "environment as the Codex backend it detects does"
+    ),
+    ("bootstrap_guard.py", "reexec_under_plugin_venv"): (
+        "re-executes the current Python program under the plugin's virtual environment: the same "
+        "program, not a Claude child"
+    ),
+    ("dispatch/declaration.py", "_git"): "runs git",
+    ("graph/records.py", "_git_common_dir"): "runs git",
+    ("jobs/units.py", "_git"): "runs git",
+    ("jobs/workspace.py", "_git_result"): "runs git",
+    ("jobs/workspace.py", "_git_detection_result"): "runs git",
+    ("pipeline/artifacts/vcs/git_vcs.py", "_default_runner"): "runs git",
+    ("jobs/run.py", "_kill_contract_process_group"): "runs taskkill on a timed-out contract",
+    ("relay/codex_appserver.py", "start"): "starts `codex app-server`: not a Claude child",
+    ("graph/ops/subprocess.py", "llm_subprocess"): (
+        "an allow-list environment (env_allow, default PATH HOME LANG LC_ALL TMPDIR, plus the node's "
+        "env): CLAUDECODE reaches the command only when the graph names it"
+    ),
+    ("jobs/supervisor.py", "start"): "starts the package's own supervisor worker (Python), not a Claude child",
+    ("jobs/supervisor.py", "adopt"): "starts the package's own recovery worker (Python), not a Claude child",
+    ("jobs/supervisor.py", "_finish_ledger"): "starts the package's own finalizer worker (Python)",
+    ("jobs/_supervisor_worker.py", "_run"): "starts the package's own child worker (Python)",
+    ("jobs/_supervisor_worker.py", "_child"): (
+        "a process primitive: replays the caller's JobProcessSpec argv and env verbatim; the package "
+        "starts no model step through it, and the spec's env is the caller's to set"
     ),
 }
 
-_SPAWNERS = {
-    ("subprocess", "Popen"), ("subprocess", "run"), ("subprocess", "call"), ("subprocess", "check_call"),
-    ("subprocess", "check_output"), ("asyncio", "create_subprocess_exec"), ("asyncio", "create_subprocess_shell"),
-}
+_SUBPROCESS = {"Popen", "run", "call", "check_call", "check_output", "getoutput", "getstatusoutput"}
 
 
-def _spawn_calls_without_env(tree: ast.AST) -> list:
-    """``(function, line)`` of each spawn call that has no ``env=`` or passes ``env=None`` literally."""
+def _is_os_spawn(attr: str) -> bool:
+    return attr.startswith(("spawn", "exec", "posix_spawn")) or attr in ("system", "popen", "startfile")
+
+
+def _spawn_calls(tree: ast.AST) -> list:
+    """``(function, line, env)`` of each process spawn; ``env`` is the ``env=`` node or None."""
+    aliases: dict = {}  # a bare name imported from subprocess, asyncio or os -> (module, attr)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in ("subprocess", "asyncio", "os"):
+            for alias in node.names:
+                aliases[alias.asname or alias.name] = (node.module, alias.name)
+
+    def spawner(func: ast.AST):
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            return func.value.id, func.attr
+        if isinstance(func, ast.Name) and func.id in aliases:
+            return aliases[func.id]
+        return None
+
     found = []
 
     def visit(node: ast.AST, function: str) -> None:
         for child in ast.iter_child_nodes(node):
             name = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else function
-            if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and isinstance(child.func.value, ast.Name):
-                if (child.func.value.id, child.func.attr) in _SPAWNERS:
-                    env = [kw for kw in child.keywords if kw.arg == "env"]
-                    if not env or (isinstance(env[0].value, ast.Constant) and env[0].value.value is None):
-                        found.append((function, child.lineno))
+            if isinstance(child, ast.Call):
+                target = spawner(child.func)
+                if target is not None:
+                    module, attr = target
+                    if ((module == "subprocess" and attr in _SUBPROCESS)
+                            or (module == "asyncio" and attr.startswith("create_subprocess_"))
+                            or (module == "os" and _is_os_spawn(attr))):
+                        env = next((kw.value for kw in child.keywords if kw.arg == "env"), None)
+                        found.append((function, child.lineno, env))
             visit(child, name)
 
     visit(tree, "<module>")
     return found
 
 
-def _scanned_modules() -> list:
-    modules = sorted(path.relative_to(SRC).as_posix() for path in (SRC / "adapters").glob("*.py"))
-    return modules + list(SCANNED_EXTRA)
+def _package_modules() -> list:
+    return sorted(path.relative_to(SRC).as_posix() for path in SRC.rglob("*.py"))
 
 
-def test_the_scan_covers_every_claude_spawn_module():
-    modules = _scanned_modules()
-    for required in ("adapters/claude_runner.py", "adapters/claude_session.py", *SCANNED_EXTRA):
-        assert required in modules and (SRC / required).is_file()
+def test_the_scan_reads_the_whole_package():
+    modules = _package_modules()
+    assert len(modules) > 100
+    for module, _function in (*CLAUDE_SITES, *EXCEPTIONS):
+        assert module in modules
 
 
-def test_every_cli_spawn_passes_an_explicit_env():
-    offenders, used = [], set()
-    for module in _scanned_modules():
-        tree = ast.parse((SRC / module).read_text(encoding="utf-8"))
-        for function, line in _spawn_calls_without_env(tree):
-            if (module, function) in EXCEPTIONS:
-                used.add((module, function))
-            else:
-                offenders.append(f"{module}:{line} in {function}()")
-    assert not offenders, "spawn calls without an explicit env= (add env=, or name an exception with its reason): " + ", ".join(offenders)
-    assert used == set(EXCEPTIONS), f"stale exceptions: {sorted(set(EXCEPTIONS) - used)}"
+def test_every_process_spawn_in_the_package_is_a_claude_site_or_a_named_exception():
+    unclassified, without_env, used = [], [], set()
+    for module in _package_modules():
+        for function, line, env in _spawn_calls(ast.parse((SRC / module).read_text(encoding="utf-8"))):
+            site = (module, function)
+            used.add(site)
+            if site in CLAUDE_SITES:
+                if env is None or (isinstance(env, ast.Constant) and env.value is None):
+                    without_env.append(f"{module}:{line} in {function}()")
+            elif site not in EXCEPTIONS:
+                unclassified.append(f"{module}:{line} in {function}()")
+    assert not unclassified, (
+        "process spawns that are neither a Claude site nor a named exception (route a claude child "
+        "through _claude_child_env and add a PATHS test, or name the exception and its reason): "
+        + ", ".join(unclassified))
+    assert not without_env, "Claude spawn sites without an explicit env=: " + ", ".join(without_env)
+    assert used >= set(CLAUDE_SITES) | set(EXCEPTIONS), (
+        f"stale entries: {sorted((set(CLAUDE_SITES) | set(EXCEPTIONS)) - used)}")
 
 
-def test_the_scan_flags_a_spawn_without_env_and_one_with_env_none():
+def test_each_claude_site_names_paths_that_exist():
+    for site, paths in CLAUDE_SITES.items():
+        assert paths and set(paths) <= set(PATHS), site
+
+
+#: Each module that resolves or names the Claude executable, and the ``PATHS`` entries covering it.
+CLAUDE_MODULES = {
+    "adapters/claude_command.py": ("completion", "agent-session"),  # defines the resolvers
+    "adapters/backends.py": ("completion",),
+    "adapters/claude_session.py": ("agent-session",),
+    "adapters/harness_auth.py": ("harness-auth",),
+    "dispatch/reachability.py": ("reachability",),
+    "pipeline/execution/drivers/claude_bg.py": ("bg-driver", *(f"bg-cli-{verb}" for verb in BG_CLI_VERBS)),
+    "relay/resume.py": ("relay-resume",),
+}
+
+_RESOLVES_CLAUDE = ("resolve_claude_executable", "resolve_claude_cli", 'which("claude")', "which('claude')")
+
+
+def test_every_module_that_resolves_the_claude_executable_is_covered_by_a_path():
+    resolving = {
+        module for module in _package_modules()
+        if any(token in (SRC / module).read_text(encoding="utf-8") for token in _RESOLVES_CLAUDE)
+    }
+    assert resolving == set(CLAUDE_MODULES), (
+        "a module resolves the claude executable without a PATHS test (an injected-runner spawn "
+        f"needs a spy-runner test): {sorted(resolving ^ set(CLAUDE_MODULES))}")
+    for paths in CLAUDE_MODULES.values():
+        assert set(paths) <= set(PATHS)
+
+
+def test_the_scan_finds_each_spawn_form_and_reads_env():
     source = (
-        "import subprocess, asyncio\n"
+        "import subprocess, asyncio, os\n"
+        "from subprocess import Popen as P\n"
         "def a():\n    subprocess.Popen(['claude'])\n"
         "def b():\n    subprocess.run(['claude'], env=None)\n"
         "async def c():\n    await asyncio.create_subprocess_exec('claude')\n"
         "def d(env):\n    subprocess.run(['claude'], env=env)\n"
+        "def e():\n    os.execvpe('claude', ['claude'], {})\n"
+        "def f():\n    P(['claude'])\n"
+        "def g():\n    os.system('claude')\n"
+        "def h():\n    os.spawnv(0, 'claude', ['claude'])\n"
+        "def i():\n    print('not a spawn')\n"
     )
-    assert [function for function, _line in _spawn_calls_without_env(ast.parse(source))] == ["a", "b", "c"]
+    found = _spawn_calls(ast.parse(source))
+    assert [function for function, _line, _env in found] == ["a", "b", "c", "d", "e", "f", "g", "h"]
+    assert [env is None for _function, _line, env in found] == [True, False, True, False, True, True, True, True]
