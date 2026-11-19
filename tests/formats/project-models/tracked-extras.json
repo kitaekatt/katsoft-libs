@@ -1,0 +1,1137 @@
+{
+  "format": "llm-kit.project-models/v1",
+  "description": "Shared cases of the extras a tracked project file may not set. The file is repository content, so binding refuses, in a row's request_defaults.extras and in a request profile's extras, the keys add_dirs, scratch_dir, output_schema, any key that starts with __llm_kit_, and network with any value but the boolean false; portable validation still accepts them. EVERY implementation of this format must run this file against its binding stage (Python: validate_document; TypeScript: resolveRequest) and must fail when the file is missing or holds no case. Each case has a tracked input ('lines': join with LF and add one final LF) that passes portable validation, and a selection 'key'. 'expect' is {document} (binding accepts; the normalized tracked document, which portable validation returns too) or {error: {layer, code, path}} (binding refuses the whole file at the first problem: layer is always 'tracked', code 'invalid', path the key's path; the error message names the key, the last segment of the path). The whole file is checked, in this order: the catalog rows in order, then the requests profiles; within one extras mapping, output_schema, then the __llm_kit_ keys in code point order, then add_dirs, scratch_dir and network. The call layer and the code that calls a backend may still set these keys; a case does not cover them. Compare JSON values; object key order does not count. The contract is docs/reference/llm-kit-formats.md, 'Request settings'.",
+  "cases": [
+    {
+      "name": "row-add-dirs",
+      "note": "A row's request_defaults.extras holds add_dirs (any value): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"add_dirs\": [\"/work/extra\"]}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.add_dirs"
+        }
+      }
+    },
+    {
+      "name": "row-scratch-dir",
+      "note": "A row's request_defaults.extras holds scratch_dir (any value): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"scratch_dir\": \"/work/scratch\"}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.scratch_dir"
+        }
+      }
+    },
+    {
+      "name": "row-output-schema",
+      "note": "A row's request_defaults.extras holds output_schema (any value): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"output_schema\": \"schema.json\"}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.output_schema"
+        }
+      }
+    },
+    {
+      "name": "row-internal-prefix",
+      "note": "A row's request_defaults.extras holds __llm_kit_images (any value): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"__llm_kit_images\": [\"/work/a.png\"]}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.__llm_kit_images"
+        }
+      }
+    },
+    {
+      "name": "row-network-true",
+      "note": "A row's request_defaults.extras holds network (a value that is not the boolean false): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"network\": true}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.network"
+        }
+      }
+    },
+    {
+      "name": "row-network-null",
+      "note": "A row's request_defaults.extras holds network (a value that is not the boolean false): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"network\": null}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.network"
+        }
+      }
+    },
+    {
+      "name": "row-network-text-false",
+      "note": "A row's request_defaults.extras holds network (a value that is not the boolean false): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"network\": \"false\"}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.network"
+        }
+      }
+    },
+    {
+      "name": "row-network-zero",
+      "note": "A row's request_defaults.extras holds network (a value that is not the boolean false): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"network\": 0}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.network"
+        }
+      }
+    },
+    {
+      "name": "profile-add-dirs",
+      "note": "A request profile's extras holds add_dirs (any value): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"add_dirs\": [\"/work/extra\"]}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['wide'].extras.add_dirs"
+        }
+      }
+    },
+    {
+      "name": "profile-scratch-dir",
+      "note": "A request profile's extras holds scratch_dir (any value): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"scratch_dir\": \"/work/scratch\"}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['wide'].extras.scratch_dir"
+        }
+      }
+    },
+    {
+      "name": "profile-output-schema",
+      "note": "A request profile's extras holds output_schema (any value): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"output_schema\": \"schema.json\"}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['wide'].extras.output_schema"
+        }
+      }
+    },
+    {
+      "name": "profile-internal-prefix",
+      "note": "A request profile's extras holds __llm_kit_images (any value): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"__llm_kit_images\": [\"/work/a.png\"]}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['wide'].extras.__llm_kit_images"
+        }
+      }
+    },
+    {
+      "name": "profile-network-true",
+      "note": "A request profile's extras holds network (a value that is not the boolean false): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"network\": true}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['wide'].extras.network"
+        }
+      }
+    },
+    {
+      "name": "profile-network-null",
+      "note": "A request profile's extras holds network (a value that is not the boolean false): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"network\": null}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['wide'].extras.network"
+        }
+      }
+    },
+    {
+      "name": "profile-network-text-false",
+      "note": "A request profile's extras holds network (a value that is not the boolean false): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"network\": \"false\"}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['wide'].extras.network"
+        }
+      }
+    },
+    {
+      "name": "profile-network-zero",
+      "note": "A request profile's extras holds network (a value that is not the boolean false): refused, naming the key.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"network\": 0}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['wide'].extras.network"
+        }
+      }
+    },
+    {
+      "name": "row-network-false",
+      "note": "network: false only narrows the sandbox: accepted in a row.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"network\": false}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "request_defaults": {
+                "extras": {
+                  "network": false
+                }
+              }
+            }
+          ],
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile-network-false",
+      "note": "network: false is accepted in a request profile.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"network\": false}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a"
+            }
+          ],
+          "requests": {
+            "wide": {
+              "extras": {
+                "network": false
+              }
+            }
+          },
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null,
+              "request": "wide"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "row-network-no-is-false",
+      "note": "The YAML word no is the boolean false (PyYAML rules), so it is accepted like false.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {network: no}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "request_defaults": {
+                "extras": {
+                  "network": false
+                }
+              }
+            }
+          ],
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "row-ordinary-extras",
+      "note": "Ordinary wire extras are accepted in a row.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"provider\": {\"sort\": \"latency\"}, \"seed\": 7, \"stop\": [\"END\"]}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "request_defaults": {
+                "extras": {
+                  "provider": {
+                    "sort": "latency"
+                  },
+                  "seed": 7,
+                  "stop": [
+                    "END"
+                  ]
+                }
+              }
+            }
+          ],
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile-ordinary-extras",
+      "note": "Ordinary wire extras are accepted in a request profile.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"provider\": {\"sort\": \"latency\"}, \"seed\": 7}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a"
+            }
+          ],
+          "requests": {
+            "wide": {
+              "extras": {
+                "provider": {
+                  "sort": "latency"
+                },
+                "seed": 7
+              }
+            }
+          },
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null,
+              "request": "wide"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "row-near-miss-keys",
+      "note": "Only the exact names are refused: a name that merely resembles one, or holds the internal prefix away from its start, is accepted. Keys compare as written, with case.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"add_dir\": [\"/work/a\"], \"scratch\": \"x\", \"output_schemas\": \"x\", \"_llm_kit_x\": 1, \"llm_kit_x\": 1, \"x__llm_kit_y\": 1, \"Network\": true, \"NETWORK\": true, \"Add_Dirs\": []}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "request_defaults": {
+                "extras": {
+                  "Add_Dirs": [],
+                  "NETWORK": true,
+                  "Network": true,
+                  "_llm_kit_x": 1,
+                  "add_dir": [
+                    "/work/a"
+                  ],
+                  "llm_kit_x": 1,
+                  "output_schemas": "x",
+                  "scratch": "x",
+                  "x__llm_kit_y": 1
+                }
+              }
+            }
+          ],
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile-near-miss-keys",
+      "note": "The same near-miss names are accepted in a request profile.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"add_dir\": [\"/work/a\"], \"scratch\": \"x\", \"_llm_kit_x\": 1, \"Network\": true}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a"
+            }
+          ],
+          "requests": {
+            "wide": {
+              "extras": {
+                "Network": true,
+                "_llm_kit_x": 1,
+                "add_dir": [
+                  "/work/a"
+                ],
+                "scratch": "x"
+              }
+            }
+          },
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null,
+              "request": "wide"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "row-nested-keys-are-not-checked",
+      "note": "Only the top-level keys of extras are checked: the same names inside a nested value are accepted.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"provider\": {\"add_dirs\": [\"/work/a\"], \"network\": true, \"output_schema\": \"s\", \"__llm_kit_x\": 1}}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "request_defaults": {
+                "extras": {
+                  "provider": {
+                    "add_dirs": [
+                      "/work/a"
+                    ],
+                    "network": true,
+                    "output_schema": "s",
+                    "__llm_kit_x": 1
+                  }
+                }
+              }
+            }
+          ],
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "profile-nested-keys-are-not-checked",
+      "note": "A request profile's nested values are not checked either.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  wide:",
+          "    extras: {\"provider\": {\"scratch_dir\": \"/work/s\", \"network\": true}}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a"
+            }
+          ],
+          "requests": {
+            "wide": {
+              "extras": {
+                "provider": {
+                  "scratch_dir": "/work/s",
+                  "network": true
+                }
+              }
+            }
+          },
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null,
+              "request": "wide"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "row-and-profile-both-clean",
+      "note": "network: false in a row and in the profile the selection names: accepted.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"network\": false}",
+          "requests:",
+          "  wide:",
+          "    extras: {\"network\": false}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "document": {
+          "version": 1,
+          "catalog": [
+            {
+              "id": "a",
+              "label": "A",
+              "endpoint": "api",
+              "model": "vendor/a",
+              "request_defaults": {
+                "extras": {
+                  "network": false
+                }
+              }
+            }
+          ],
+          "requests": {
+            "wide": {
+              "extras": {
+                "network": false
+              }
+            }
+          },
+          "selections": {
+            "k": {
+              "model": "a",
+              "effort": null,
+              "request": "wide"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "first-problem-row-before-profile",
+      "note": "The catalog is checked before requests: a row and a profile both hold a widening key, and the row is the first problem.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"add_dirs\": [\"/work/a\"]}",
+          "requests:",
+          "  wide:",
+          "    extras: {\"scratch_dir\": \"/work/s\"}",
+          "selections:",
+          "  k: {model: a, request: wide}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.add_dirs"
+        }
+      }
+    },
+    {
+      "name": "first-problem-later-row",
+      "note": "Rows are checked in catalog order; the selection names a clean row, and the file is refused all the same (the whole file is checked, not the selected row).",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "  - id: b",
+          "    label: B",
+          "    endpoint: api",
+          "    model: vendor/b",
+          "    request_defaults:",
+          "      extras: {\"scratch_dir\": \"/work/s\"}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[1].request_defaults.extras.scratch_dir"
+        }
+      }
+    },
+    {
+      "name": "first-problem-unused-profile",
+      "note": "A profile that no selection names is checked too.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "requests:",
+          "  unused:",
+          "    extras: {\"add_dirs\": [\"/work/a\"]}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "requests['unused'].extras.add_dirs"
+        }
+      }
+    },
+    {
+      "name": "first-problem-output-schema-before-sandbox-keys",
+      "note": "output_schema is refused before the sandbox keys.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"add_dirs\": [\"/work/a\"], \"output_schema\": \"schema.json\"}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.output_schema"
+        }
+      }
+    },
+    {
+      "name": "first-problem-internal-prefix-before-sandbox-keys",
+      "note": "A __llm_kit_ key is refused before add_dirs, scratch_dir and network.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"add_dirs\": [\"/work/a\"], \"__llm_kit_x\": 1}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.__llm_kit_x"
+        }
+      }
+    },
+    {
+      "name": "first-problem-internal-prefix-keys-in-code-point-order",
+      "note": "Extras keys are checked in code point order, not the order the file lists them: __llm_kit_a comes before __llm_kit_b.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"__llm_kit_b\": 1, \"__llm_kit_a\": 1}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.__llm_kit_a"
+        }
+      }
+    },
+    {
+      "name": "first-problem-sandbox-keys-in-fixed-order",
+      "note": "add_dirs, then scratch_dir, then network, whatever order the file lists them.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"network\": true, \"scratch_dir\": \"/work/s\", \"add_dirs\": [\"/work/a\"]}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.add_dirs"
+        }
+      }
+    },
+    {
+      "name": "first-problem-scratch-dir-before-network",
+      "note": "scratch_dir is refused before network.",
+      "tracked": {
+        "lines": [
+          "version: 1",
+          "catalog:",
+          "  - id: a",
+          "    label: A",
+          "    endpoint: api",
+          "    model: vendor/a",
+          "    request_defaults:",
+          "      extras: {\"network\": true, \"scratch_dir\": \"/work/s\"}",
+          "selections:",
+          "  k: {model: a}"
+        ]
+      },
+      "key": "k",
+      "expect": {
+        "error": {
+          "layer": "tracked",
+          "code": "invalid",
+          "path": "catalog[0].request_defaults.extras.scratch_dir"
+        }
+      }
+    }
+  ]
+}

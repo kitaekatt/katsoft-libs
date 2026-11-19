@@ -6,9 +6,9 @@
  * (`llm_kit.registry.project_models.validate_portable_document`); the shared
  * cases in `tests/formats/project-models/cases.json` fix them. Binding (the
  * machine's endpoint registry, the library effort menu, reserved extras) is
- * not part of this package. Nor are the two checks that the Python binding and call apply to this
- * untrusted tracked file: the approval of a connection that sends a key, and the refusal of the
- * Codex sandbox extras (see {@link Endpoint} and {@link RequestDefaults}).
+ * not part of this package, and neither is the approval of a connection that sends a key (see
+ * {@link Endpoint}). The refusal of the Codex sandbox extras is: reading accepts them, as the
+ * Python portable validation does, and `resolveRequest` refuses them (see {@link RequestDefaults}).
  *
  * @module
  */
@@ -60,11 +60,11 @@ export interface RequestDefaults {
   /** A reasoning token budget, 1 or more. */
   readonly reasoning_budget?: number;
   /**
-   * Wire fields of the endpoint, sent as given. The Python binding refuses, in these extras and in a
-   * request profile's, the keys `add_dirs`, `scratch_dir`, `output_schema`, any key that starts with
-   * `__llm_kit_`, and `network` with any value but `false`, because the tracked file is untrusted
-   * and they widen a Codex sandbox. This reader accepts all of them as syntax and `chatFields`
-   * passes them on; a caller that hands extras to a Codex-style backend must refuse them too.
+   * Wire fields of the endpoint. The tracked file is untrusted, so it may not set, in these extras
+   * or in a request profile's, the keys `add_dirs`, `scratch_dir`, `output_schema`, any key that
+   * starts with `__llm_kit_`, and `network` with any value but `false`: they widen a Codex sandbox.
+   * Reading accepts them as syntax, as the Python portable validation does; `resolveRequest`
+   * refuses them (`invalid`), as the Python binding does. A call may still set them.
    */
   readonly extras?: { readonly [key: string]: JsonValue };
 }
@@ -79,7 +79,7 @@ export interface RequestProfile {
   readonly max_output_tokens?: number;
   /** A reasoning token budget, 1 or more. */
   readonly reasoning_budget?: number;
-  /** Wire fields; no name a typed setting or the effort owns. The sandbox keys that {@link RequestDefaults}`.extras` lists are accepted here too, and the Python binding refuses them. */
+  /** Wire fields; no name a typed setting or the effort owns. The sandbox keys that {@link RequestDefaults}`.extras` lists are read here too, and `resolveRequest` refuses them. */
   readonly extras?: { readonly [key: string]: JsonValue };
 }
 

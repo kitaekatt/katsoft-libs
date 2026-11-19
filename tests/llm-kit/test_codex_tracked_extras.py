@@ -249,3 +249,41 @@ def test_the_calling_code_and_an_output_contract_still_set_the_schema(world, cap
     assert code == 0, err
     assert doc["output"]["structured"] == {"summary": "done"}
     assert "--output-schema" in world.codex[-1]
+
+
+# ---------------------------------------------------------------------------
+# the shared cases: every implementation of the format runs them (the TypeScript reader's
+# test/tracked-extras.test.mjs reads the same file and refuses the same keys in resolveRequest)
+# ---------------------------------------------------------------------------
+
+SHARED_CASES_FILE = Path(__file__).resolve().parents[1] / "formats" / "project-models" / "tracked-extras.json"
+SHARED = json.loads(SHARED_CASES_FILE.read_text(encoding="utf-8"))  # a missing file fails the collection
+
+
+def _case_bytes(case: dict) -> bytes:
+    return ("\n".join(case["tracked"]["lines"]) + "\n").encode("utf-8")
+
+
+def test_the_shared_cases_file_names_this_format_and_holds_cases():
+    """A guard: an empty case list would make the parametrized test below run nothing."""
+    assert SHARED["format"] == "llm-kit.project-models/v1"
+    assert len(SHARED["cases"]) > 0
+    assert len({case["name"] for case in SHARED["cases"]}) == len(SHARED["cases"])
+    assert any("error" in case["expect"] for case in SHARED["cases"])
+    assert any("document" in case["expect"] for case in SHARED["cases"])
+
+
+@pytest.mark.parametrize("case", SHARED["cases"], ids=[case["name"] for case in SHARED["cases"]])
+def test_every_shared_case_runs_against_the_binding(case, home, tmp_path):
+    data = pm.parse_yaml_document(_case_bytes(case))
+    portable = pm.validate_portable_document(data)  # portable validation accepts every case
+    expect = case["expect"]
+    if "error" in expect:
+        with pytest.raises(pm.ProjectModelsError) as caught:
+            pm.validate_document(data, project_root=str(tmp_path))
+        error = caught.value
+        assert expect["error"]["layer"] == "tracked"
+        assert (error.code, error.where) == (expect["error"]["code"], expect["error"]["path"])
+        assert expect["error"]["path"].rsplit(".", 1)[-1] in str(error)
+    else:
+        assert pm.validate_document(data, project_root=str(tmp_path)) == expect["document"] == portable

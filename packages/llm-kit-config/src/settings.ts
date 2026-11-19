@@ -7,6 +7,7 @@
  */
 
 import { invalid } from "./errors.js";
+import { compareCodePoints, pythonRepr } from "./text.js";
 
 /** The typed request settings, in canonical order. */
 export const REQUEST_SETTINGS = ["temperature", "top_p", "max_output_tokens", "reasoning_budget"] as const;
@@ -73,5 +74,44 @@ export function checkProfileExtras(extras: { readonly [key: string]: unknown }, 
   const nested = Object.hasOwn(extras, "chat_template_kwargs") ? extras.chat_template_kwargs : undefined;
   if (nested !== null && typeof nested === "object" && !Array.isArray(nested) && Object.hasOwn(nested, "reasoning_effort")) {
     throw invalid(`${where}.chat_template_kwargs`, "'reasoning_effort' is reserved; set the effort instead");
+  }
+}
+
+/** The extras names that widen a Codex sandbox, in the order the Python binding checks them. */
+const SANDBOX_EXTRAS = ["add_dirs", "scratch_dir", "network"] as const;
+
+/** The prefix of the extras names that are the library's own per-call values. */
+const INTERNAL_EXTRAS_PREFIX = "__llm_kit_";
+
+/**
+ * Refuse, in the extras of the tracked project file, the names that widen a Codex sandbox or are
+ * the library's own (Python `_check_sandbox_extras`): `output_schema`, then any `__llm_kit_` name
+ * (in code point order), then `add_dirs`, `scratch_dir` and `network` (any value but `false`).
+ * Refuses at `where.<key>`. `extras` is a normalized, key-sorted mapping of the document.
+ */
+export function checkSandboxExtras(extras: { readonly [key: string]: unknown }, where: string): void {
+  if (Object.hasOwn(extras, "output_schema")) {
+    throw invalid(
+      `${where}.output_schema`,
+      "'output_schema' names a file Codex reads as the answer schema, so the tracked project file may not set it; "
+      + "the code that calls the backend sets it, or the request's output contract",
+    );
+  }
+  for (const key of Object.keys(extras).sort(compareCodePoints)) {
+    if (key.startsWith(INTERNAL_EXTRAS_PREFIX)) {
+      throw invalid(
+        `${where}.${key}`,
+        `${pythonRepr(key)} is an internal name (the '${INTERNAL_EXTRAS_PREFIX}' prefix is the library's own); the tracked project file may not set it`,
+      );
+    }
+  }
+  for (const key of SANDBOX_EXTRAS) {
+    if (!Object.hasOwn(extras, key) || (key === "network" && extras[key] === false)) continue;
+    const allowed = key === "network" ? "; only network: false is allowed there" : "";
+    throw invalid(
+      `${where}.${key}`,
+      `${pythonRepr(key)} widens the Codex sandbox, so the tracked project file may not set it${allowed}; `
+      + "the code that calls the backend sets it, or a call (the request layer)",
+    );
   }
 }

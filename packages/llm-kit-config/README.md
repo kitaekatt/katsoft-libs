@@ -51,10 +51,10 @@ All the load functions are synchronous, so a program can read its configuration 
 
 ### The file is untrusted
 
-The project model file is repository content: anyone who can change it can name any host in `base_url` and any environment variable in `key_env`, and any wire field in `extras`. This package validates the shape of the file and nothing more. It never reads an environment variable, never sends a request and does not approve a connection.
+The project model file is repository content: anyone who can change it can name any host in `base_url` and any environment variable in `key_env`, and any wire field in `extras`. This package validates the shape of the file and refuses the Codex sandbox extras below (in `resolveRequest`). It never reads an environment variable, never sends a request and does not approve a connection.
 
 - **Connections.** The Python library uses a connection from the file that has a `key_env` only after the machine owner approves it. All of these must hold: the host is plain https (or http to a literal loopback address), no endpoint of the machine already sends that key variable to another host, and the user-level consent file approves that exact endpoint name, host and key variable. The owner approves with `llm-kit consent connection on --endpoint NAME --host HOST --key-env VAR`. A keyless connection (`key_env: null`) needs no approval. This reader applies none of these rules, so a caller must not send the value of `process.env[endpoint.key_env]` to `endpoint.base_url` unless it applies the same rule itself. Take the approval from the machine owner's own configuration, never from the project tree. The rules are in `docs/reference/llm-kit-formats.md`, "Approval of a connection that sends a key".
-- **Extras.** The Python binding refuses these keys in a row's `request_defaults.extras` and in a profile's `extras`: `add_dirs`, `scratch_dir`, `output_schema`, any key that starts with `__llm_kit_`, and `network` with any value but `false`. They widen a Codex sandbox. This reader accepts all of them as syntax, `resolveRequest` merges them into `extras`, and `chatFields` puts them in the body. A caller that gives extras to a Codex-style backend, or that does not want these wire fields, must refuse them itself.
+- **Extras.** The file may not set these keys in a row's `request_defaults.extras` or in a profile's `extras`: `add_dirs`, `scratch_dir`, `output_schema`, any key that starts with `__llm_kit_`, and `network` with any value but `false`. They widen a Codex sandbox. The Python binding refuses them, and so does `resolveRequest` (the point where this package resolves a row's and a profile's extras for use): it checks the whole file, before it looks up the key, and throws `invalid` at `catalog[i].request_defaults.extras.<key>` or `requests['<name>'].extras.<key>` with a message that names the key. `parseRegistry` and `loadRegistry` still read such a file, as the Python portable validation does. The call layer (`resolveRequest(registry, key, {extras})`) may still set these keys: the caller wrote them, so they stay a decision of the calling code. The shared cases are `tests/formats/project-models/tracked-extras.json`.
 
 ## Prompts
 
@@ -75,7 +75,7 @@ Every function stops at the first problem and throws `LlmKitConfigError`. Nothin
 
 | `code` | Meaning |
 |---|---|
-| `invalid` | The content is wrong. `where` is the path of the first problem, the same path that the Python reader gives: `""` (the bytes or the YAML), `document`, `version`, `catalog[1].efforts[0]`, `selections['draft'].effort`. |
+| `invalid` | The content is wrong. `where` is the path of the first problem, the same path that the Python reader gives: `""` (the bytes or the YAML), `document`, `version`, `catalog[1].efforts[0]`, `selections['draft'].effort`, and from `resolveRequest` a sandbox extra the file may not set (`catalog[0].request_defaults.extras.add_dirs`). |
 | `missing` | The file does not exist. |
 | `io` | The file exists but cannot be read. `cause` holds the system error. |
 | `unknown-selection` | `select` got a key that no layer names. |

@@ -2,6 +2,30 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
+## 1.4.0
+
+Security fix. The tracked project file is repository content, so it may not set the Codex sandbox extras. The Python binding has refused them since katsoft-llm-kit 1.37.0; this reader accepted them and passed them on (1.3.0 and earlier, and the README of 1.3.0 said so). Now it refuses them too. This is a minor release because it follows the Python release of the same rule (a minor release, with the behaviour change listed first), the format and its schemas do not change, and no file that the Python library accepts is refused here.
+
+Changed behaviour (read before upgrading):
+
+- `resolveRequest` throws `invalid` when the file sets, in a row's `request_defaults.extras` or in a `requests` profile's `extras`, any of `add_dirs`, `scratch_dir`, `output_schema`, a key that starts with `__llm_kit_`, or `network` with a value other than `false`. `where` is `catalog[<i>].request_defaults.extras.<key>` or `requests['<name>'].extras.<key>`, and the message names the key. It checks the whole file, before it looks up the selection key (as the Python `validate_document` does), so a refused file is refused for every key, an unknown key included. A caller that sent these extras on to a Codex-style backend now gets the error instead. `network: false` and every other extras key stay allowed.
+- Unchanged: `parseRegistry`, `loadRegistry`, `parseOverlay`, `loadOverlay` and `applyOverlay` read a file that holds these keys, as the Python portable validation does. A call's own `extras` (`resolveRequest(registry, key, {extras})`) may set them, and `chatFields` still does not check extras.
+- The connection-approval rule stays a duty of the caller (README, "The file is untrusted"): it depends on the machine's consent file, which this package never reads.
+
+Added:
+
+- `tests/formats/project-models/tracked-extras.json`: 34 shared cases (refused and accepted keys in a row and in a profile, and which problem is the first). Python runs them against `validate_document` (`tests/llm-kit/test_codex_tracked_extras.py`), this package against `resolveRequest` (`test/tracked-extras.test.mjs`). Both fail when the file is missing or holds no case.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. The JSDoc of `resolveRequest` (`@throws`), `chatFields`, `RequestDefaults.extras` and `RequestProfile.extras` states the rule; no export is added, so `public-surface.json` is unchanged; `test/surface.test.mjs` passes.
+2. Semver release with a changelog: pass. Version 1.4.0 in `package.json` and `package-lock.json` (a minor release, for the reasons above); this entry.
+3. Tests for each public function: pass. `test/tracked-extras.test.mjs` runs the 34 cases through `parseRegistry`, `loadRegistry` and `resolveRequest`, and checks the order (the file before the key), an overlay, the call layer and `chatFields`; it fails before the change.
+4. No client names, prompts or data: pass.
+5. Examples run without a client app: pass. No example changed; `npm run check-pack` runs them from the packed tarball.
+6. JSON Schema for each file format: pass. The schema does not change and cannot state the rule (it accepts every case; the test checks that with ajv); the shared cases state it for both readers.
+7. Gate before adoption: pass. Lines 1 to 6 pass.
+
 ## 1.3.0
 
 Added:

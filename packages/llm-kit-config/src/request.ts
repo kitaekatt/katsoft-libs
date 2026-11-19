@@ -8,7 +8,9 @@
  * top-level key. Reasoning is one control with two forms, `effort` and `reasoning_budget`: the
  * highest layer that sets either wins, and a call that names `effort` (null included) decides it.
  * The Python reader (`llm_kit.registry.request_settings`) has the same rules; the shared cases in
- * `tests/formats/project-models/requests.json` fix both.
+ * `tests/formats/project-models/requests.json` fix both. The tracked file may not set the Codex
+ * sandbox extras; `resolveRequest` refuses them in the whole file, as the Python binding does (shared
+ * cases: `tests/formats/project-models/tracked-extras.json`). A call may set them.
  *
  * @module
  */
@@ -16,7 +18,7 @@
 import { LlmKitConfigError, invalid, withSource } from "./errors.js";
 import type { CatalogRow, EffortStyle, JsonValue, ProjectModelsDocument, Registry, RequestProfile, Selection } from "./registry.js";
 import { isRegistry } from "./registry.js";
-import { LEGACY_ROW_EXTRAS, PROFILE_KEYS, REQUEST_SETTINGS, checkProfileExtras, checkSetting, jsNumber } from "./settings.js";
+import { LEGACY_ROW_EXTRAS, PROFILE_KEYS, REQUEST_SETTINGS, checkProfileExtras, checkSandboxExtras, checkSetting, jsNumber } from "./settings.js";
 import type { SettingName } from "./settings.js";
 import { compareCodePoints, deepFreeze, define, pythonRepr } from "./text.js";
 
@@ -144,6 +146,21 @@ function rowLayer(row: CatalogRow, index: number): { settings: Map<SettingName, 
   return { settings, extras };
 }
 
+/**
+ * Refuse the extras the tracked file may not set (Python binding, `_check_sandbox_extras`): the whole
+ * file, rows in catalog order and then request profiles, as the Python `validate_document` does.
+ * A call layer is not checked here: the caller sets its own extras.
+ */
+function checkTrackedExtras(document: ProjectModelsDocument): void {
+  document.catalog.forEach((row, index) => {
+    if (row.request_defaults?.extras !== undefined) checkSandboxExtras(row.request_defaults.extras, `catalog[${index}].request_defaults.extras`);
+  });
+  for (const name of Object.keys(document.requests ?? {})) {
+    const extras = document.requests![name]!.extras;
+    if (extras !== undefined) checkSandboxExtras(extras, `requests[${pythonRepr(name)}].extras`);
+  }
+}
+
 /** The resolved request of one effective selection (Python `request_for`). */
 function requestFor(document: ProjectModelsDocument, selection: Selection, call: unknown): ResolvedRequest {
   const index = document.catalog.findIndex((row) => row.id === selection.model);
@@ -210,15 +227,24 @@ function requestFor(document: ProjectModelsDocument, selection: Selection, call:
  * @param call - The call layer: any of `temperature`, `top_p`, `max_output_tokens`,
  *   `reasoning_budget`, `extras` and `effort`. Omitted: an empty call.
  * @returns A frozen {@link ResolvedRequest}; every key is present, `null` when unset.
- * @throws {LlmKitConfigError} `unknown-selection` when no layer names `key`
- *   (`where` `selections['<key>']`); `invalid` at `call` or `call.<key>` for a bad call, and at
- *   `catalog[<i>].request_defaults.extras.<key>` for an older extras spelling that is not a valid
- *   setting.
+ * @throws {LlmKitConfigError} `invalid` at `catalog[<i>].request_defaults.extras.<key>` or
+ *   `requests['<name>'].extras.<key>` when the file sets, in a row's or a profile's extras, a key it
+ *   may not: `add_dirs`, `scratch_dir`, `output_schema`, a name that starts with `__llm_kit_`, or
+ *   `network` with a value but `false` (the whole file is checked first; the message names the key);
+ *   `unknown-selection` when no layer names `key` (`where` `selections['<key>']`); `invalid` at `call`
+ *   or `call.<key>` for a bad call, and at `catalog[<i>].request_defaults.extras.<key>` for an older
+ *   extras spelling that is not a valid setting.
  * @throws {TypeError} When `registry` does not come from this package or `key` is not a string.
  */
 export function resolveRequest(registry: Registry, key: string, call?: RequestCall): ResolvedRequest {
   if (!isRegistry(registry)) throw new TypeError("registry must come from parseRegistry, loadRegistry or applyOverlay");
   if (typeof key !== "string") throw new TypeError("key must be a string");
+  try {
+    checkTrackedExtras(registry.document);
+  } catch (error) {
+    if (error instanceof LlmKitConfigError) throw withSource(error, registry.source);
+    throw error;
+  }
   if (!Object.hasOwn(registry.resolved, key)) {
     throw new LlmKitConfigError("unknown-selection", "no layer names this selection key", `selections[${pythonRepr(key)}]`, registry.source);
   }
@@ -261,10 +287,10 @@ function placeEffort(fields: Mutable, effort: string, style: EffortStyle): void 
  * The OpenAI-compatible chat body fields of a resolved request: `max_tokens`, `temperature`,
  * `top_p`, the effort placed in its style, the reasoning budget and the extras. A sender adds
  * `model`, `messages` and its own transport fields. The Python reader's protocol 2 call sends
- * exactly these fields for the same request. The extras come from the tracked file and are passed on
- * as given: this function does not refuse the keys the Python binding refuses (`add_dirs`,
- * `scratch_dir`, `output_schema`, `__llm_kit_` names, `network` other than `false`; see
- * {@link RequestDefaults}`.extras`).
+ * exactly these fields for the same request. The extras are passed on as given: this function does
+ * not check them. {@link resolveRequest} has already refused, in the tracked file's extras, the keys
+ * the Python binding refuses (`add_dirs`, `scratch_dir`, `output_schema`, `__llm_kit_` names,
+ * `network` other than `false`); the call layer's own extras reach the body unchecked.
  *
  * Effort placement: `top-level` sends `reasoning_effort`; `ninfer` the same with `high` sent as
  * `xhigh`; `chat_template_kwargs` adds `reasoning_effort` to that object; `reasoning-object` sends
