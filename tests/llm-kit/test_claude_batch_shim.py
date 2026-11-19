@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_kit.adapters import claude_command, claude_session
+from llm_kit.adapters import _cmd_shell, claude_command, claude_session
 from llm_kit.adapters.backends import ClaudeCliBackend
 from llm_kit.adapters.claude_command import (
     batch_shim_spawn_argv,
@@ -139,6 +139,16 @@ def test_a_system_prompt_with_a_percent_sign_travels_by_file_not_refused(windows
         body = Path(spawn[spawn.index("--system-prompt-file") + 1]).read_bytes()
         abody = Path(spawn[spawn.index("--append-system-prompt-file") + 1]).read_bytes()
     assert body == prompt.encode("utf-8") and abody == b"50%"
+
+
+@pytest.mark.parametrize("char", [*_cmd_shell.REFUSED_CHARACTERS, '"', "(", ")", ",", ";", "=", "\\"])
+def test_a_system_prompt_with_any_cmd_special_character_travels_by_file(windows, char):
+    """Every refused character, and each one the module allows, reaches the CLI unchanged by file."""
+    prompt = "Hello! Say %s now %s\n" % (char, char)
+    with batch_shim_spawn_argv([SHIM, "-p", "--append-system-prompt", prompt]) as spawn:
+        assert prompt not in spawn
+        body = Path(spawn[spawn.index("--append-system-prompt-file") + 1]).read_bytes()
+    assert body == prompt.encode("utf-8")
 
 
 def test_a_percent_sign_in_another_element_is_refused_while_the_prompt_goes_by_file(windows):

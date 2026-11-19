@@ -175,7 +175,7 @@ def check_batch_shim_argv(argv: Sequence[str]) -> None:
     batch shim on Windows (see :func:`is_batch_shim`). Otherwise raises
     ``ValueError`` naming the element position and a bounded excerpt when an
     element contains a character cmd.exe re-parses or expands (``&``, ``|``,
-    ``^``, ``<``, ``>``, ``%``) or a line break. The value after
+    ``^``, ``<``, ``>``, ``%``, ``!``) or a line break. The value after
     ``--system-prompt`` or ``--append-system-prompt`` is skipped, because
     :func:`batch_shim_spawn_argv` sends it by file instead; use that function
     at a spawn.
