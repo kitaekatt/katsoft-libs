@@ -302,6 +302,14 @@ def test_an_agent_grant_refuses_the_tools_that_reach_outside_it(tmp_path: Path, 
         backend.applied_controls(request)
 
 
+@pytest.mark.parametrize("grant", ["mcp__tools__run", "Read mcp__tools__run"])
+def test_an_agent_grant_refuses_an_mcp_tool_name_also_when_the_job_sets_mcp_config(tmp_path: Path, grant: str) -> None:
+    """The job's mcp_config chooses the servers; --tools takes built-in names only, so the grant may not name one."""
+    request = _session_request(tmp_path, mcp_config=MCP, allowed_tools=grant)
+    with pytest.raises(ValueError, match="MCP tool 'mcp__tools__run'"):
+        ClaudeAgentSession(executable="claude").build_argv(request)
+
+
 def test_the_agent_session_without_a_grant_may_still_use_subagents(tmp_path: Path) -> None:
     for grant in (None, ALL_TOOLS):
         argv = ClaudeAgentSession(executable="claude").build_argv(_session_request(tmp_path, allowed_tools=grant))

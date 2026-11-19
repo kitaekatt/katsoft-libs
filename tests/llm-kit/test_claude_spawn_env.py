@@ -353,6 +353,18 @@ def test_an_extra_may_not_put_back_a_removed_variable(extra):
         _claude_child_env({}, remove_prefixes=("CLAUDE_CODE_",), extra=extra)
 
 
+def test_a_bg_worker_overlay_that_names_the_marker_raises():
+    """The run's recorded overlay may not put CLAUDECODE back into a --bg worker's environment."""
+    from types import SimpleNamespace
+
+    from llm_kit.pipeline.execution.adapter import WorkerEnvironment
+
+    adapter = RunAdapter(environment=WorkerEnvironment(required_vars=("CLAUDECODE",)))
+    run = SimpleNamespace(environment={"CLAUDECODE": "1"})
+    with pytest.raises(ValueError, match="removes"):
+        claude_bg.compose_worker_environment(run, adapter, base={"PATH": "/bin"})
+
+
 def test_names_compare_without_case_where_the_platform_ignores_case(monkeypatch):
     """On Windows a caller's mapping may spell the marker in any case; it is still the marker."""
     from llm_kit._claude_env import _claude_child_env
