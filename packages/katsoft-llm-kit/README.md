@@ -86,10 +86,16 @@ The argv carries `--permission-mode bypassPermissions --allowedTools ""`: every 
 `disallowed_tools` still applies in every mode.
 A completion job on Claude that names no `allowed_tools` runs as an `ALL_TOOLS` worker, unless a deny floor arms text-only mode.
 Agent-loop review lanes grant `Read,Grep,Glob`, so their file reads stay inside the project root, their working directory.
-Measured on Claude Code 2.1.327 (2026-11-18): the no-grant argv had no tools.
-With `--tools Read,Grep,Glob` and no `--allowedTools`, a read in the working directory ran with no prompt, and a read of a sibling directory was denied.
-With a bare `--allowedTools Read,Grep,Glob`, the same outside read succeeded.
-Not measured: Grep or Glob outside the working directory, `../` paths, symlinks, and pre-approved Bash or write tools.
+Measured by the gated live suite (`tests/llm-kit/live`, run with `LLM_KIT_LIVE_CLAUDE=1`) on Claude Code 2.1.328 (2026-11-19): the no-grant child starts with no tools.
+With `--tools Read,Grep,Glob` and no `--allowedTools`, Read and Grep work in the working directory; the child calls Read on an absolute path outside it, on a `../` path and through a link out of it, and Grep and Glob on a sibling directory, and each call is refused; the grant exposes no write or shell tool.
+With a bare `--allowedTools Read,Grep,Glob`, an outside read succeeded (Claude Code 2.1.327).
+Not measured: pre-approved Bash or write tools.
+
+An agent session (`ClaudeAgentSession`) always runs with `--permission-mode bypassPermissions`.
+Its grant is `--tools <names>` (`""`: no built-in tool), never `--allowedTools`, which restricts nothing under the bypass.
+A scoped rule, `default`, an MCP tool name, and `Agent`, `Task` or `Skill` (a subagent or a skill may use tools outside the grant) are refused before the spawn.
+A grant removes built-in tools only: the session still loads every settings source and the plugins' skills and MCP servers.
+That `--tools` restricts under the bypass rests on the CLI reference only: no test runs the CLI with that argv.
 
 ## Runtime mode
 

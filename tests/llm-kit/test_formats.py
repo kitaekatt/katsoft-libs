@@ -588,6 +588,15 @@ def test_public_surface_lists_the_1_37_names_and_each_is_documented(qualified):
     assert lines[at - 1].lstrip().startswith("#") or after.startswith(('"""', "r\"\"\"")), qualified
 
 
+def test_public_surface_lists_no_private_module_or_name():
+    """Private names (``claude_env._claude_child_env``) and modules (``adapters._cmd_shell``) stay unlisted."""
+    surface = json.loads((PACKAGE / "public-surface.json").read_text(encoding="utf-8"))
+    private = [entry["name"] for entry in surface["entries"]
+               if any(part.startswith("_") and not part.endswith("__") for part in entry["name"].split("."))]
+    assert private == []
+    assert "_claude_child_env" in surface["purpose"] and "llm_kit.adapters._cmd_shell" in surface["purpose"]
+
+
 def test_every_public_format_name_has_a_docstring():
     import llm_kit.graph.prompt as prompt_module  # noqa: PLC0415
 
