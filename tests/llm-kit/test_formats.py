@@ -538,6 +538,56 @@ def test_public_surface_lists_the_format_names():
         assert listed == set(module.__all__)
 
 
+# The names release 1.37.0 adds or changes in modules the surface does not list whole.
+# Each is listed one by one, resolves in the code, and is documented: a callable or class
+# by its docstring, a constant by a comment on the line before it or a docstring after it.
+SURFACE_1_37_NAMES = (
+    "llm_kit.registry.consent.ConnectionApproval",
+    "llm_kit.registry.consent.ConsentConfig",
+    "llm_kit.registry.consent.ConsentConfigError",
+    "llm_kit.registry.consent.ENV_NAMES_IGNORE_CASE",
+    "llm_kit.registry.consent.approve_connection",
+    "llm_kit.registry.consent.connection_command",
+    "llm_kit.registry.consent.connection_host",
+    "llm_kit.registry.consent.env_name_key",
+    "llm_kit.registry.consent.load_config",
+    "llm_kit.registry.consent.revoke_connection",
+    "llm_kit.registry.consent.save_config",
+    "llm_kit.adapters.claude_command.batch_shim_spawn_argv",
+    "llm_kit.adapters.claude_command.check_batch_shim_argv",
+    "llm_kit.adapters.claude_command.is_batch_shim",
+    "llm_kit.completion.types.ALL_TOOLS",
+    "llm_kit.completion.types.BackendOptions",
+    "llm_kit.adapters.backends.ClaudeCliBackend",
+    "llm_kit.registry.models.CONNECTION_KEYS",
+    "llm_kit.registry.models.COST_CLASS_KEYS",
+    "llm_kit.registry.models.MACHINE_ONLY_ENDPOINT_KEYS",
+    "llm_kit.registry.models.load_model_config",
+    "llm_kit.frontdoor.server.create_app",
+)
+
+
+@pytest.mark.parametrize("qualified", SURFACE_1_37_NAMES)
+def test_public_surface_lists_the_1_37_names_and_each_is_documented(qualified):
+    import importlib  # noqa: PLC0415
+    import inspect  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    surface = json.loads((PACKAGE / "public-surface.json").read_text(encoding="utf-8"))
+    entries = {e["name"]: e for e in surface["entries"]}
+    assert entries[qualified]["status"] == "public"
+    module_name, name = qualified.rsplit(".", 1)
+    module = importlib.import_module(module_name)
+    value = getattr(module, name)
+    if inspect.isfunction(value) or inspect.isclass(value):
+        assert (value.__doc__ or "").strip(), qualified
+        return
+    lines = inspect.getsource(module).splitlines()
+    at = next(i for i, line in enumerate(lines) if re.match(rf"{name}\s*(:[^=]*)?=", line))
+    after = lines[at + 1].lstrip() if at + 1 < len(lines) else ""
+    assert lines[at - 1].lstrip().startswith("#") or after.startswith(('"""', "r\"\"\"")), qualified
+
+
 def test_every_public_format_name_has_a_docstring():
     import llm_kit.graph.prompt as prompt_module  # noqa: PLC0415
 

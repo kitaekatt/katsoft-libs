@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0. The resolved request (llm_kit.registry.request_settings) is listed whole and is not yet released. The agent-session pieces (llm_kit.completion.session_types, llm_kit.adapters.claude_stream, llm_kit.adapters.claude_session, llm_kit.jobs.session, llm_kit.storage.file_lock) and the jobs runner (llm_kit.jobs.run) are listed whole from 1.26.0. The run records, run store, derived index and runs CLI (llm_kit.runs, llm_kit.runs.record, llm_kit.runs.store, llm_kit.runs.index, llm_kit.cli.runs) are listed whole from 1.26.0. The comparison (llm_kit.runs.compare) is listed whole and is not yet released. The branch-mode unit registry and workspaces (llm_kit.jobs.units, llm_kit.jobs.workspace) are listed whole and are not yet released. The fallback chain reader (llm_kit.registry.fallback_chains) and the reply cache reader (llm_kit.registry.reply_cache) are listed whole from 1.35.0.",
+  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0. The resolved request (llm_kit.registry.request_settings) is listed whole and is not yet released. The agent-session pieces (llm_kit.completion.session_types, llm_kit.adapters.claude_stream, llm_kit.adapters.claude_session, llm_kit.jobs.session, llm_kit.storage.file_lock) and the jobs runner (llm_kit.jobs.run) are listed whole from 1.26.0. The run records, run store, derived index and runs CLI (llm_kit.runs, llm_kit.runs.record, llm_kit.runs.store, llm_kit.runs.index, llm_kit.cli.runs) are listed whole from 1.26.0. The comparison (llm_kit.runs.compare) is listed whole and is not yet released. The branch-mode unit registry and workspaces (llm_kit.jobs.units, llm_kit.jobs.workspace) are listed whole and are not yet released. The fallback chain reader (llm_kit.registry.fallback_chains) and the reply cache reader (llm_kit.registry.reply_cache) are listed whole from 1.35.0. From 1.37.0 the names that release adds or changes in llm_kit.registry.consent, llm_kit.adapters.claude_command, llm_kit.completion.types, llm_kit.adapters.backends, llm_kit.registry.models and llm_kit.frontdoor.server are listed one by one; those modules are not listed whole and are not in covers.",
   "package": "llm_kit",
   "current_version_file": ".claude-plugin/plugin.json",
   "covers": [
@@ -4126,6 +4126,94 @@
     },
     {
       "name": "llm_kit.registry.reply_cache.step_key",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.consent.ConnectionApproval",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.consent.ConsentConfig",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.consent.ConsentConfigError",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.consent.ENV_NAMES_IGNORE_CASE",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.consent.approve_connection",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.consent.connection_command",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.consent.connection_host",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.consent.env_name_key",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.consent.load_config",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.consent.revoke_connection",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.consent.save_config",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.adapters.claude_command.batch_shim_spawn_argv",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.adapters.claude_command.check_batch_shim_argv",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.adapters.claude_command.is_batch_shim",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.types.ALL_TOOLS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.completion.types.BackendOptions",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.adapters.backends.ClaudeCliBackend",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.models.CONNECTION_KEYS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.models.COST_CLASS_KEYS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.models.MACHINE_ONLY_ENDPOINT_KEYS",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.registry.models.load_model_config",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.frontdoor.server.create_app",
       "status": "public"
     }
   ]
