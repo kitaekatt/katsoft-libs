@@ -203,7 +203,22 @@ def test_a_resumed_session_uses_resume_and_replace_mode_uses_system_prompt(tmp_p
     argv = ClaudeAgentSession(executable=str(h.cli)).build_argv(request)
     assert argv[-2:] == ["--resume", SESSION_ID] and "--session-id" not in argv
     assert argv[argv.index("--system-prompt") + 1] == "SYSTEM TEXT"
-    assert argv[argv.index("--allowedTools") + 1] == "Read"
+    assert argv[argv.index("--tools") + 1] == "Read" and "--allowedTools" not in argv
+
+
+def test_a_grant_runs_the_session_with_only_the_granted_tools_and_reports_the_tool_grant(tmp_path, monkeypatch):
+    h = Harness(tmp_path, monkeypatch, "basic")
+    request = h.request(allowed_tools="Read,Grep")
+    expected = [
+        str(h.cli), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        "--model", "haiku", "--append-system-prompt", "SYSTEM TEXT", "--permission-mode", "bypassPermissions",
+        "--tools", "Read,Grep", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+        "--session-id", SESSION_ID,
+    ]
+    assert ClaudeAgentSession(executable=str(h.cli)).build_argv(request) == expected
+    outcome = h.run(request)
+    assert h.argv()["argv"] == expected[1:]
+    assert outcome.response.execution_controls_applied == ("permission-bypass", "tool-grant")
 
 
 def test_events_file_is_stdout_verbatim_and_the_prompt_is_the_first_stdin_line(tmp_path, monkeypatch):

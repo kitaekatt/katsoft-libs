@@ -348,6 +348,19 @@ def test_an_agent_job_without_mcp_config_emits_no_mcp_flags(tmp_path, monkeypatc
     assert "mcp-servers" not in (snapshot.attempts[0].execution_controls_applied or ())
 
 
+@pytest.mark.usefixtures("isolated")
+def test_an_agent_job_grant_reaches_the_argv_as_a_tool_restriction(tmp_path, monkeypatch):
+    world = World(tmp_path, monkeypatch)
+    snapshot = world.run([world.job(options={**FAST, "allowed_tools": "Read"})])
+    assert snapshot.jobs[0].state is JobState.ACCEPTED
+    argv = world.argv()
+    assert argv[argv.index("--tools") + 1] == "Read" and "--allowedTools" not in argv
+    assert argv[argv.index("--permission-mode") + 1] == "bypassPermissions"
+    assert json.loads(argv[argv.index("--mcp-config") + 1]) == {"mcpServers": {}}
+    (attempt,) = snapshot.attempts
+    assert attempt.execution_controls_applied == ("permission-bypass", "tool-grant")
+
+
 def _bare_job(directory: Path, options: dict, **kwargs: Any) -> Job:
     return Job(id="j", prompt=Prompt(user="u"), models=("h-claude",), directory=directory, options=options,
                contract=Contract(command=("true",), directory=directory), **kwargs)

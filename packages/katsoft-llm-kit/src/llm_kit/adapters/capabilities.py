@@ -313,6 +313,11 @@ _CLAUDE_SYSTEM_PROMPT_FLAGS = {
     "append": "--append-system-prompt",
 }
 
+#: No MCP server from any settings source: ``--strict-mcp-config`` with an
+#: EMPTY ``--mcp-config``. The first part of the isolation below, and what an
+#: agent session's tool grant adds when the job names no MCP server.
+_CLAUDE_NO_MCP_ARGS = ("--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}')
+
 #: The isolation that follows the ``--tools`` list whenever ClaudeCliBackend
 #: restricts the child's tools: in text-only mode (no grant) and in a named
 #: grant. One tuple, two jobs, like the map above: the backend extends argv with
@@ -330,9 +335,7 @@ _CLAUDE_SYSTEM_PROMPT_FLAGS = {
 #: per call against 571 with the flag, same 3,094-token system prompt read.
 #: ``--bare`` is not an option: it ignores OAuth login.
 _CLAUDE_ISOLATION_ARGS = (
-    "--strict-mcp-config",
-    "--mcp-config",
-    '{"mcpServers":{}}',
+    *_CLAUDE_NO_MCP_ARGS,
     "--disable-slash-commands",
     "--setting-sources",
     "",
@@ -407,8 +410,37 @@ def _claude_grant_args(grant: str) -> tuple:
     Raises ``ValueError`` before dispatch when a rule has unbalanced
     parentheses, when the grant names no tool, when it names ``ALL_TOOLS``
     beside other tools, or when a tool name is refused as above; the message
-    names the refused name.
+    names the refused name. The checks are :func:`_claude_grant_clauses`.
     """
+    clauses, names = _claude_grant_clauses(grant)
+    approvals = tuple(clause for clause in clauses if clause.lower() not in _CWD_READ_TOOLS)
+    approve = ("--allowedTools", ",".join(approvals)) if approvals else ()
+    return ("--tools", ",".join(names), *approve, *_CLAUDE_ISOLATION_ARGS)
+
+
+def _claude_grant_clauses(grant: object) -> tuple:
+    """Parse and check a named grant; the checks every Claude tool grant shares.
+
+    ``grant`` is a non-empty ``allowed_tools`` value other than ``ALL_TOOLS``.
+    Used by :func:`_claude_grant_args` (the completion backend) and
+    :func:`_claude_agent_tool_args` (the agent session), so both refuse the
+    same values.
+
+    Returns ``(clauses, names)``: every clause as written (split at commas or
+    whitespace outside parentheses), and each distinct tool name once, in the
+    order given, a rule read by the name before its parenthesis.
+
+    Raises ``TypeError`` when ``grant`` is not a string. Raises ``ValueError``
+    when a rule has unbalanced parentheses, when the grant names no tool, when
+    it names ``ALL_TOOLS`` beside other tools, or when a tool name is
+    ``default`` (any case), an MCP tool name, or not a built-in tool name (see
+    :func:`_check_grant_tool_name`); the message names the refused value.
+    """
+    if not isinstance(grant, str):
+        raise TypeError(
+            f"allowed_tools must be a string or None, not {type(grant).__name__} "
+            f"({grant!r}); nothing was dispatched"
+        )
     try:
         clauses = _disallowed_tool_clauses(grant)
     except ValueError as exc:
@@ -418,8 +450,8 @@ def _claude_grant_args(grant: str) -> tuple:
     names = tuple(dict.fromkeys(clause.split("(", 1)[0] for clause in clauses))
     if not names:
         raise ValueError(
-            f"allowed_tools={grant!r} names no tool; pass None for a completion "
-            "with no tools; nothing was dispatched"
+            f"allowed_tools={grant!r} names no tool; pass \"\" for no tools; "
+            "nothing was dispatched"
         )
     if ALL_TOOLS in names:
         raise ValueError(
@@ -428,9 +460,52 @@ def _claude_grant_args(grant: str) -> tuple:
         )
     for name in names:
         _check_grant_tool_name(grant, name)
-    approvals = tuple(clause for clause in clauses if clause.lower() not in _CWD_READ_TOOLS)
-    approve = ("--allowedTools", ",".join(approvals)) if approvals else ()
-    return ("--tools", ",".join(names), *approve, *_CLAUDE_ISOLATION_ARGS)
+    return clauses, names
+
+
+def _claude_agent_tool_args(allowed_tools: object) -> tuple:
+    """The ``--tools`` argv of a Claude agent session for ``allowed_tools``.
+
+    An agent session always runs with ``--permission-mode bypassPermissions``,
+    because an agent worker runs unattended. Under that mode an approval list
+    (``--allowedTools``) restricts nothing: the permission-modes reference says
+    "Allow rules have no effect in bypassPermissions". ``--tools`` is not a
+    permission rule. The CLI reference says it "Restrict[s] which built-in
+    tools Claude can use" ("With ``--tools`` you get the ones you list"), so
+    the tools left out are absent from the child in every permission mode.
+    That ``--tools`` restricts under bypassPermissions rests on that
+    documentation only: no test runs the CLI with this argv. The gated live
+    suite in ``tests/llm-kit/live/`` covers only the completion path, and
+    never starts the CLI with bypassPermissions.
+
+    - ``None`` or ``ALL_TOOLS``: ``()``. The session keeps every tool: the
+      agent-worker meaning.
+    - ``""``: ``("--tools", "")``, no built-in tool, as on the completion path.
+    - Tool names (``"Read,Grep Glob"``): ``("--tools", "Read,Grep,Glob")``,
+      each distinct name once, in the order given.
+
+    The caller adds :data:`_CLAUDE_NO_MCP_ARGS` beside a non-empty result when
+    the job names no MCP server, so no server from a settings source adds a
+    tool outside the grant.
+
+    Raises ``TypeError`` or ``ValueError`` before the spawn for every value
+    :func:`_claude_grant_clauses` refuses, and ``ValueError`` for a scoped
+    rule such as ``Bash(git log *)`` or ``Read(./**)``: under the bypass the
+    CLI does not enforce a rule's scope, so the whole tool would be granted.
+    """
+    if allowed_tools is None or allowed_tools == ALL_TOOLS:
+        return ()
+    if allowed_tools == "":
+        return ("--tools", "")
+    clauses, names = _claude_grant_clauses(allowed_tools)
+    scoped = [clause for clause in clauses if "(" in clause]
+    if scoped:
+        raise ValueError(
+            f"allowed_tools={allowed_tools!r} has the scoped rule {scoped[0]!r}; an agent "
+            "session runs with --permission-mode bypassPermissions, where a rule's scope "
+            "is not enforced, so name whole tools; nothing was dispatched"
+        )
+    return ("--tools", ",".join(names))
 
 
 #: Read-only built-in tools that a BARE grant clause leaves unapproved, in
@@ -459,9 +534,11 @@ def _check_grant_tool_name(grant: str, name: str) -> None:
         )
     if name.lower().startswith("mcp__"):
         raise ValueError(
-            f"allowed_tools={grant!r} names the MCP tool {name!r}; a tool grant "
-            "loads no MCP server (--strict-mcp-config with an empty --mcp-config), "
-            "so an MCP tool can never be granted; nothing was dispatched"
+            f"allowed_tools={grant!r} names the MCP tool {name!r}; --tools takes "
+            "built-in tool names only and a tool grant loads no MCP server of its "
+            "own (--strict-mcp-config with an empty --mcp-config; an agent session "
+            "gets MCP tools only from its mcp_config), so an MCP tool can never be "
+            "granted; nothing was dispatched"
         )
     if not _BUILT_IN_TOOL_NAME.fullmatch(name):
         raise ValueError(
@@ -706,16 +783,22 @@ CLAUDE_CAPABILITIES = Capabilities(
 # ClaudeAgentSession (adapters/claude_session.py) runs the same CLI as a
 # stream-json agent session: ``claude -p --input-format stream-json
 # --output-format stream-json --verbose --model <m> <system flag> <system>
-# --permission-mode bypassPermissions [--allowedTools <a>] [--disallowedTools
+# --permission-mode bypassPermissions [--tools <names>] [--disallowedTools
 # <d>] [--effort <e>] [--json-schema <s>] [--strict-mcp-config --mcp-config
 # <document>] (--session-id <id> | --resume <id>)``.
-# It keeps the session (no --no-session-persistence), has no text-only mode or
-# tool grant (allowed_tools is passed as --allowedTools under the fixed bypass,
-# so it restricts nothing), emits --allowedTools only when the caller names
-# tools, and defaults
-# system_prompt_mode to append. Same adapter name as the completion record: it
+# It keeps the session (no --no-session-persistence), has no text-only mode,
+# and defaults system_prompt_mode to append. The bypass is fixed: an agent
+# worker runs unattended. So allowed_tools is a tool grant through --tools
+# (_claude_agent_tool_args), never an --allowedTools approval list, which
+# restricts nothing under the bypass. A grant with no job mcp_config carries
+# the empty strict MCP document. Same adapter name as the completion record: it
 # is the same CLI, selected per job by the ``session: agent`` job option, and
 # jobs selection matches an agent job against THIS record instead.
+
+#: The ``emits`` string of the agent session's tool-grant control.
+_CLAUDE_AGENT_GRANT_EMITS = (
+    "--tools <tool names> [" + _render_args(_CLAUDE_NO_MCP_ARGS) + " when the job sets no mcp_config]"
+)
 
 _CLAUDE_AGENT_PARAMS = {
     key: value for key, value in _CLAUDE_PARAMS.items() if key != TEXT_ONLY_PARAMETER
@@ -730,12 +813,15 @@ _CLAUDE_AGENT_PARAMS["timeout_s"] = ParamCapability(
 )
 _CLAUDE_AGENT_PARAMS["allowed_tools"] = ParamCapability(
     type="string",
-    emits="--allowedTools",
+    emits="--tools",
     note=(
-        "emitted ONLY when not None. An agent session keeps every tool either "
-        "way: the session's permission mode is bypassPermissions, where the "
-        "permission-modes reference says allow rules have no effect, so the "
-        "list restricts nothing"
+        "the session's tool grant, validated before the spawn (see the "
+        "tool-grant control). None or '*' (ALL_TOOLS): no --tools, every tool, "
+        "the agent-worker meaning. '': --tools \"\", no built-in tool. Tool "
+        "names: --tools with those names. Never --allowedTools: under the "
+        "fixed bypassPermissions an approval list restricts nothing. A "
+        "non-string, '*' beside other names, unbalanced parentheses, default, "
+        "MCP tool names, other non-tool names and scoped rules are refused"
     ),
 )
 _CLAUDE_AGENT_PARAMS["system_prompt_mode"] = ParamCapability(
@@ -752,12 +838,24 @@ CLAUDE_AGENT_CAPABILITIES = Capabilities(
     dropped_params=_dropped(_CLAUDE_AGENT_PARAMS),
     execution_controls=(
         ExecutionControl(
-            id="allowed-tools",
-            emits="--allowedTools",
-            effect=ALLOW,
+            id="tool-grant",
+            emits=_CLAUDE_AGENT_GRANT_EMITS,
+            effect=CONFINE,
             source=REQUEST,
             parameter="allowed_tools",
-            note="emitted only when the caller sets the param",
+            note=(
+                "emitted and reported only when allowed_tools is '' or names "
+                "tools: --tools makes only those built-in tools available (none "
+                "for ''), and when the job sets no mcp_config the empty strict "
+                "MCP document keeps every settings-sourced MCP server out. Not "
+                "emitted for None or '*' (ALL_TOOLS): the session keeps every "
+                "tool. Scoped rules are refused, because the fixed bypass does "
+                "not enforce a rule's scope. That --tools restricts under "
+                "bypassPermissions rests on the CLI reference (--tools "
+                "\"Restrict[s] which built-in tools Claude can use\") only: no "
+                "test runs the CLI with this argv (the gated live suite covers "
+                "the completion path only). No guarantee is declared for it"
+            ),
         ),
         ExecutionControl(
             id="disallowed-tools",
@@ -776,7 +874,11 @@ CLAUDE_AGENT_CAPABILITIES = Capabilities(
             emits="--permission-mode bypassPermissions",
             effect=BYPASS,
             source=FIXED,
-            note="every agent session; its init event must report it",
+            note=(
+                "every agent session; its init event must report it. No "
+                "allow-list control is advertised beside it: allow rules have no "
+                "effect in bypassPermissions, so the tool grant is --tools"
+            ),
         ),
         ExecutionControl(
             id="mcp-servers",
@@ -789,8 +891,9 @@ CLAUDE_AGENT_CAPABILITIES = Capabilities(
                 "the document names the MCP servers the session may load, and "
                 "--strict-mcp-config asks the CLI to load no server from any "
                 "settings source. Absent, no MCP flag is emitted and the CLI's "
-                "own MCP settings apply. The record claims the emission, not "
-                "that the CLI honors it"
+                "own MCP settings apply, unless a tool grant carries the empty "
+                "document (see tool-grant; this control is not reported then). "
+                "The record claims the emission, not that the CLI honors it"
             ),
         ),
     ),

@@ -4,9 +4,19 @@
 
     claude -p --input-format stream-json --output-format stream-json --verbose
       --model <m> --append-system-prompt <system> --permission-mode bypassPermissions
-      [--allowedTools <a>] [--disallowedTools <d>] [--effort <e>] [--json-schema <s>]
+      [--tools <names>] [--disallowedTools <d>] [--effort <e>] [--json-schema <s>]
       [--strict-mcp-config --mcp-config <document>]
       (--session-id <uuid> | --resume <uuid>)
+
+Tools: the bypass is fixed, because an agent worker runs unattended. With no
+``allowed_tools`` (or ``ALL_TOOLS``) the session has every tool. An
+``allowed_tools`` grant is passed as ``--tools <names>`` (``""``: no built-in
+tool), never as ``--allowedTools``, which restricts nothing under the bypass.
+When the job names no MCP server, a grant also carries ``--strict-mcp-config
+--mcp-config {"mcpServers":{}}``, so no settings-sourced server adds a tool.
+That ``--tools`` restricts under bypassPermissions rests on the Claude CLI
+reference only; no test runs the CLI with this argv (see
+:func:`~llm_kit.adapters.capabilities._claude_agent_tool_args`).
 
 The session is persisted (no ``--no-session-persistence``), so it can be
 resumed later with ``--resume``. The backend owns the child's three pipes:
@@ -119,7 +129,12 @@ from .backends import (
     _claudx_plugin_args,
     _resolve_claude_executable,
 )
-from .capabilities import _CLAUDE_SYSTEM_PROMPT_FLAGS, CLAUDE_AGENT_CAPABILITIES
+from .capabilities import (
+    _CLAUDE_NO_MCP_ARGS,
+    _CLAUDE_SYSTEM_PROMPT_FLAGS,
+    CLAUDE_AGENT_CAPABILITIES,
+    _claude_agent_tool_args,
+)
 from .claude_command import batch_shim_spawn_argv, check_batch_shim_argv
 from .claude_stream import StreamVerdict, init_problem, parse_stream_line
 
@@ -241,7 +256,9 @@ class ClaudeAgentSession:
 
         Raises the same errors as :meth:`run` raises before the spawn: an
         unsupported output contract, any skill context, an effort outside the
-        model's menu, an unknown ``system_prompt_mode``, or a missing CLI.
+        model's menu, an unknown ``system_prompt_mode``, an ``allowed_tools``
+        grant :func:`~llm_kit.adapters.capabilities._claude_agent_tool_args`
+        refuses (``TypeError`` or ``ValueError``), or a missing CLI.
         """
         argv, _, _ = self._prepare(request)
         check_batch_shim_argv(argv)
@@ -250,16 +267,25 @@ class ClaudeAgentSession:
     def applied_controls(self, request: SessionRequest) -> tuple[str, ...]:
         """The execution controls the argv for ``request`` carries.
 
-        ``permission-bypass`` always; ``allowed-tools`` and ``disallowed-tools``
-        only when the request sets them; ``mcp-servers`` only when the request
-        sets ``mcp_config``. Never ``no-session-persistence``: the agent
-        session keeps its session. Raises ``ValueError`` when an id is not
-        advertised by :attr:`capabilities`.
+        Args:
+            request: the session request whose argv is described.
+
+        Returns:
+            ``permission-bypass`` always; ``tool-grant`` only when the argv
+            carries ``--tools`` (``allowed_tools`` is ``""`` or names tools);
+            ``disallowed-tools`` only when the request sets it; ``mcp-servers``
+            only when the request sets ``mcp_config``. Never
+            ``no-session-persistence``: the agent session keeps its session.
+
+        Raises:
+            TypeError: ``allowed_tools`` is neither None nor a string.
+            ValueError: the grant is refused (see :meth:`build_argv`), or an id
+                is not advertised by :attr:`capabilities`.
         """
         options = request.options
         applied = ["permission-bypass"]
-        if options.allowed_tools is not None:
-            applied.append("allowed-tools")
+        if _claude_agent_tool_args(options.allowed_tools):
+            applied.append("tool-grant")
         if options.disallowed_tools is not None:
             applied.append("disallowed-tools")
         if request.mcp_config is not None:
@@ -291,8 +317,8 @@ class ClaudeAgentSession:
             "--permission-mode",
             AGENT_PERMISSION_MODE,
         ]
-        if options.allowed_tools is not None:
-            argv.extend(["--allowedTools", options.allowed_tools])
+        tool_args = _claude_agent_tool_args(options.allowed_tools)
+        argv.extend(tool_args)
         argv.extend(_claude_option_args(options, contract_plan))
         if request.mcp_config is not None:
             # Strict: only the job's servers load, none from any settings
@@ -302,6 +328,10 @@ class ClaudeAgentSession:
                 "--mcp-config",
                 json.dumps(request.mcp_config, separators=(",", ":"), ensure_ascii=True),
             ])
+        elif tool_args:
+            # A grant names the session's whole tool set: no MCP server from
+            # a settings source may add one.
+            argv.extend(_CLAUDE_NO_MCP_ARGS)
         argv.extend(["--resume" if request.resume else "--session-id", request.session_id])
         return argv, contract_plan, self.applied_controls(request)
 

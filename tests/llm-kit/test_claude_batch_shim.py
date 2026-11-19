@@ -345,8 +345,10 @@ def test_session_on_a_shim_refuses_a_metacharacter_in_the_model_before_any_spawn
     assert not request.paths.events.exists() or request.paths.events.stat().st_size == 0
 
 
-def test_session_on_a_shim_refuses_a_metacharacter_in_a_tool_list(windows, popen, tmp_path):
-    request = _session_request(tmp_path, allowed_tools="Bash(git status | cat)")
+def test_session_on_a_shim_refuses_a_metacharacter_in_the_deny_list(windows, popen, tmp_path):
+    # A grant can no longer carry a metacharacter (a scoped rule is refused
+    # earlier); the deny list still reaches argv as --disallowedTools.
+    request = _session_request(tmp_path, disallowed_tools="Bash(git status | cat)")
     with pytest.raises(ValueError, match="'\\|'"):
         ClaudeAgentSession(executable=SHIM).run(request)
     assert popen["calls"] == []
