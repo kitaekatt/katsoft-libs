@@ -75,7 +75,7 @@ def test_nothing_is_a_batch_shim_off_windows(posix):
 # -- the check -------------------------------------------------------------
 
 
-@pytest.mark.parametrize("char", ["&", "|", "^", "<", ">"])
+@pytest.mark.parametrize("char", ["&", "|", "^", "<", ">", "%"])
 def test_the_check_refuses_each_cmd_metacharacter_in_any_element(windows, char):
     with pytest.raises(ValueError) as caught:
         check_batch_shim_argv([SHIM, "-p", "--model", "a%sb" % char])
@@ -130,6 +130,21 @@ def test_a_shim_gets_each_system_prompt_as_a_temp_file(windows):
     assert seen["abody"] == b"tail & more"
     assert not any(path.exists() for path in seen["paths"])
     assert argv[argv.index("--system-prompt") + 1] == PROMPT  # the input is not mutated
+
+
+def test_a_system_prompt_with_a_percent_sign_travels_by_file_not_refused(windows):
+    prompt = "Discount is 100% of %PATH% and %1.\n"
+    with batch_shim_spawn_argv([SHIM, "-p", "--system-prompt", prompt, "--append-system-prompt", "50%"]) as spawn:
+        assert prompt not in spawn and not any("%" in part for part in spawn)
+        body = Path(spawn[spawn.index("--system-prompt-file") + 1]).read_bytes()
+        abody = Path(spawn[spawn.index("--append-system-prompt-file") + 1]).read_bytes()
+    assert body == prompt.encode("utf-8") and abody == b"50%"
+
+
+def test_a_percent_sign_in_another_element_is_refused_while_the_prompt_goes_by_file(windows):
+    with pytest.raises(ValueError, match="'%'"):
+        with batch_shim_spawn_argv([SHIM, "--system-prompt", "100%", "--mcp-config", "http://h/a%20b"]):
+            raise AssertionError("the spawn must not be reached")
 
 
 def test_the_temp_file_is_removed_when_the_spawn_raises(windows):

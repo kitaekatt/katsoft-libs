@@ -2,7 +2,8 @@
 
 This module owns every way a ``codex exec`` command line is made: CLI
 resolution (including Windows batch launchers), availability detection, the
-argv builder, the absolute-path checks and the cmd.exe metacharacter refusal.
+argv builder, the absolute-path checks and the cmd.exe metacharacter refusal
+(the character set itself is shared, see :mod:`llm_kit.adapters._cmd_shell`).
 It is standard library only and imports nothing from any plugin, bootstrap
 layer or AI harness, so a plain ``pip install katsoft-llm-kit`` user reaches the
 same builder as every plugin does. The completion backend
@@ -33,6 +34,8 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence, Tuple, Union
+
+from llm_kit.adapters._cmd_shell import check_cmd_argv
 
 CODEX_EXECUTABLE = "codex"
 
@@ -261,37 +264,35 @@ def _decode(raw) -> str:
     return str(raw)
 
 
-#: Characters cmd.exe re-parses as command syntax. VERIFIED on Python 3.12.9 /
-#: Windows 11: `subprocess.list2cmdline` quotes only for spaces, tabs and
-#: quotes -- per the MSVC argv convention, which cmd.exe does not follow -- so
-#: an element carrying one of these WITHOUT a space reaches cmd.exe unquoted
-#: and is executed as a separate command. Reproduced end to end: an argv
-#: element `hello&echo>INJECTED.txt` created that file. Running the `.cmd`
-#: directly instead of through `cmd /c` does NOT help; it is still re-parsed.
-_CMD_METACHARACTERS = ("&", "|", "^", "<", ">")
+#: The advice that ends a refusal. The refused characters and the check are the
+#: single definition in :mod:`llm_kit.adapters._cmd_shell`, shared with the
+#: Claude launcher guard. VERIFIED on Python 3.12.9 / Windows 11:
+#: `subprocess.list2cmdline` quotes only for spaces, tabs and quotes -- per the
+#: MSVC argv convention, which cmd.exe does not follow -- so an element carrying
+#: ``&`` WITHOUT a space reaches cmd.exe unquoted and is executed as a separate
+#: command (reproduced end to end: `hello&echo>INJECTED.txt` created that file).
+#: Running the `.cmd` directly instead of through `cmd /c` does NOT help; it is
+#: still re-parsed.
+_CMD_ADVICE = (
+    "subprocess quotes only for spaces, so cmd re-parses the value. Move the "
+    "path off a directory containing shell metacharacters, or install Codex so "
+    "it resolves to a real executable rather than a .cmd launcher."
+)
 
 
 def _reject_cmd_metacharacters(argv: Sequence[str]) -> None:
-    """Refuse an argv that cmd.exe would re-parse into extra commands.
+    """Refuse an argv that cmd.exe would re-parse or expand.
 
     Only reachable when a batch launcher put ``cmd`` in front (Windows,
     npm/scoop install). Refusing is deliberate: the alternative is silently
-    executing caller-supplied text as a command, and every value here is a
-    path, a model id, or a config pair, none of which legitimately needs shell
-    syntax. A directory genuinely containing ``&`` is legal on Windows, so this
-    raises a NAMED error rather than mangling the value.
+    executing caller-supplied text as a command, changing a ``%VAR%`` value or
+    cutting the argument at a line break, and every value here is a path, a
+    model id, or a config pair, none of which legitimately needs shell syntax.
+    A directory genuinely containing ``&`` is legal on Windows, so this raises a
+    NAMED error rather than mangling the value. The refused characters are
+    :data:`llm_kit.adapters._cmd_shell.REFUSED_CHARACTERS`.
     """
-    for item in argv:
-        hit = next((c for c in _CMD_METACHARACTERS if c in item), None)
-        if hit is not None:
-            raise ValueError(
-                "refusing to launch through cmd.exe: argument %r contains %r, "
-                "which cmd re-parses as command syntax (subprocess quotes only "
-                "for spaces, so it would run as a separate command). Move the "
-                "path off a directory containing shell metacharacters, or "
-                "install Codex so it resolves to a real executable rather than "
-                "a .cmd launcher." % (item, hit)
-            )
+    check_cmd_argv(argv, advice=_CMD_ADVICE)
 
 
 def _is_cmd_launcher(value: str) -> bool:
