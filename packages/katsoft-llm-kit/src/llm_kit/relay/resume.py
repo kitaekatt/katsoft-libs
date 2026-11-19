@@ -79,6 +79,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from llm_kit._claude_env import _claude_child_env
+from llm_kit.adapters.claude_command import check_batch_shim_argv
 from llm_kit.adapters.claude_stream import StreamVerdict, parse_stream_line
 from llm_kit.relay.mailbox import LeaseLost, Mailbox
 
@@ -574,8 +575,13 @@ class ResumeRunner:
         from llm_kit.relay.codex_channel import fit_reply
 
         job = active.job
+        argv = self.claude_argv(job)
+        # A batch-shim launcher (claude.cmd) is re-parsed by cmd.exe: refuse an element it would
+        # re-parse before any process starts, as the other Claude spawn paths do. The argv carries no
+        # system prompt (the prompt goes on stdin), so nothing moves to a file.
+        check_batch_shim_argv(argv)
         proc = subprocess.Popen(
-            self.claude_argv(job), cwd=job.cwd, env=child_env(job.tag),
+            argv, cwd=job.cwd, env=child_env(job.tag),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", start_new_session=True,
         )

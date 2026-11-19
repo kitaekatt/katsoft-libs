@@ -462,5 +462,50 @@ def test_bg_launch_off_windows_keeps_the_prompt_for_a_cmd_named_executable(posix
     assert runner.calls == [[SHIM, "--bg", "--", BG_PROMPT]]
 
 
+# -- the relay's resumed turn ------------------------------------------------
+
+
+def _resume_spawn(tmp_path, monkeypatch, claude_argv):
+    """Run the relay's resumed-turn spawn with a fake Popen; return the argv it got (None: refused first)."""
+    import time
+
+    from llm_kit.relay import resume as relay_resume
+
+    seen: dict = {}
+
+    class _Spawned(RuntimeError):
+        pass
+
+    def fake_popen(argv, **kwargs):
+        seen["argv"] = list(argv)
+        raise _Spawned
+
+    monkeypatch.setattr(relay_resume.subprocess, "Popen", fake_popen)
+    job = relay_resume.ResumeJob(
+        lease_id="lse_test", message_id="m1", address="a1", harness="claude", session_id=SESSION_ID,
+        cwd=str(tmp_path), prompt="go on", timeout_s=5.0,
+    )
+    runner = relay_resume.ResumeRunner(None, claude_argv=claude_argv)
+    with pytest.raises((_Spawned, ValueError)) as caught:
+        runner._run_claude(relay_resume._Active(job=job), time.monotonic() + 5.0)
+    return seen.get("argv"), caught.value
+
+
+@pytest.mark.parametrize("char", _cmd_shell.REFUSED_CHARACTERS)
+def test_relay_resume_on_a_shim_refuses_a_refused_character_before_any_spawn(windows, tmp_path, monkeypatch, char):
+    argv, error = _resume_spawn(tmp_path, monkeypatch, [SHIM, "--settings", "a%sb" % char])
+    assert argv is None and isinstance(error, ValueError) and "cmd.exe" in str(error)
+
+
+def test_relay_resume_on_a_shim_spawns_a_clean_argv(windows, tmp_path, monkeypatch):
+    argv, _error = _resume_spawn(tmp_path, monkeypatch, [SHIM])
+    assert argv is not None and argv[0] == SHIM and SESSION_ID in argv
+
+
+def test_relay_resume_with_an_exe_is_not_checked(windows, tmp_path, monkeypatch):
+    argv, _error = _resume_spawn(tmp_path, monkeypatch, [EXE, "--settings", "a&b"])
+    assert argv is not None and argv[:3] == [EXE, "--settings", "a&b"]
+
+
 def test_the_module_uses_os_name_for_the_default_platform_test():
     assert claude_command._on_windows() is (os.name == "nt")
