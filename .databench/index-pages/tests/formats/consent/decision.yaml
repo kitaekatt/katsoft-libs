@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/formats/consent",
+  "decision": "none",
+  "source_sha": "cb9b8d69350b3507a014face132a7c3e00cceade",
+  "input_sha256": "aed61c68c8138159fceff399dfedda38020e8995abbfac5ae13fa02a6846b5b8",
+  "input_shape_sha256": "8f604f46cf67c1ce3c77fbd4f02c0fee774aa6682c0b48ceeb17daad41473b05",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

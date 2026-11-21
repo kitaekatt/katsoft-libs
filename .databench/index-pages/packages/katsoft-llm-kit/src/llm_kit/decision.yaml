@@ -2,12 +2,12 @@
   "schema_version": 1,
   "directory": "packages/katsoft-llm-kit/src/llm_kit",
   "decision": "page",
-  "source_sha": "368f6c5e53d161dd237979b9c0114f6308457d49",
+  "source_sha": "0ab325a60b8ca64e6cf1a7a7b92306ed404fd800",
   "generation_spec_sha256": "8573606e5f3b827eff1eb29578efe854f3b917c38f7e9b9539ce898c925d9fa1",
-  "input_sha256": "c3c9fb0c7ce50b29ee90fcef48b6de8166c4b9a1a46511985fb5cba0cd260be1",
-  "input_shape_sha256": "a4d325b8a463fb67c6725c6a1d9555f26cdd14ed0207faa52a7df3ccdd51055b",
+  "input_sha256": "5bfa5c8ab5910f46fdbdadf3c92df26c6ded4fe9c2ef4f59165a85c69cd960d3",
+  "input_shape_sha256": "9cc8ba572d09134e67acf68f4d6b52d34888274bc44f36a5f6e73933a2f0c2cb",
   "dirty": false,
-  "identity": "LLM completion and execution library: shared completion protocol, four provider transports (OpenAI-compatible HTTP, Claude CLI, Codex CLI, OpenCode CLI), endpoint and model registry, dispatch routing, front-door API, graph viewer, CLI, and deployment-mode runtime",
+  "identity": "The llm_kit core library: the completion protocol and its four provider backends (OpenAI-compatible HTTP, Claude CLI, Codex CLI, OpenCode CLI), dispatch routing, the front-door API, the graph viewer, the CLI, and the deployment-mode runtime.",
   "instructions": "",
   "references": []
 }

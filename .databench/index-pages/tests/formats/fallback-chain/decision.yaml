@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/formats/fallback-chain",
+  "decision": "none",
+  "source_sha": "dd8fa833e92b189e609d329af8ab53860fb80dc1",
+  "input_sha256": "8d0285a8be160efccc85c7573953c40acaf82377f43aed4cef4020017f314dc0",
+  "input_shape_sha256": "f10fa31e5f93b780814d583c37f6510bc72167724a2b492212695084013e7430",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

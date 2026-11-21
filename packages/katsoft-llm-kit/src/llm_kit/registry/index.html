@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<!-- index-pages: {"generated_by":"md-domain","source_sha":"25ca42034048bf80ac36ff557996f4f999432286","directory":"packages/katsoft-llm-kit/src/llm_kit/registry","kind":"page"} -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>The llm-kit endpoint and model registry: defines machine-known LLM endpoints, reads project model files, resolves API keys and request settings, and checks connection consent.</title>
+<link rel="stylesheet" href="../../../../../.databench/index-pages.css">
+</head>
+<body>
+<nav data-index-pages-chrome="nav"><ul><li><a href="../index.html"><span class="hh-nav-label">llm_kit</span> <span class="hh-nav-identity">The llm_kit core library: the completion protocol and its four provider backends (OpenAI-compatible HTTP, Claude CLI, Codex CLI, OpenCode CLI), dispatch routing, the front-door API, the graph viewer, the CLI, and the deployment-mode runtime.</span></a></li></ul></nav>
+<main>
+<h1>The llm-kit endpoint and model registry: defines machine-known LLM endpoints, reads project model files, resolves API keys and request settings, and checks connection consent.</h1>
+<p class="hh-orientation">This is the registry layer of llm-kit. It answers what this machine can call, with what credential, and how a request goes on the wire. It holds endpoint declarations, model-to-provider resolution, layered credential lookup, the consent and cost-class policy, and the wire vocabulary for reasoning effort. It sits below adapters and dispatch: no HTTP, no network calls. The package has no root re-exports; import from the owning module directly.</p><section><h2>Where to start</h2><p>Start with <a href="catalog.py">packages/katsoft-llm-kit/src/llm_kit/registry/catalog.py</a>: it builds the catalogue document and imports every other module here, so it shows how the pieces connect. For the model-name-to-slug resolution underneath, open <a href="models.py">packages/katsoft-llm-kit/src/llm_kit/registry/models.py</a></p></section><section><h2>Routes</h2><ul><li><strong>Resolve a model name to a provider call</strong><ol><li>Read the layered config and resolve the name to an endpoint entry ( <a href="models.py">packages/katsoft-llm-kit/src/llm_kit/registry/models.py</a>)</li><li>Look up the entry in the user-declared registry ( <a href="model_endpoints.py">packages/katsoft-llm-kit/src/llm_kit/registry/model_endpoints.py</a>)</li><li>Resolve the API key through the six layered sources ( <a href="api_key.py">packages/katsoft-llm-kit/src/llm_kit/registry/api_key.py</a>)</li><li>Pick the effort style and wire placement for the request ( <a href="effort.py">packages/katsoft-llm-kit/src/llm_kit/registry/effort.py</a>)</li></ol></li><li><strong>Build and read a project catalogue</strong><ol><li>Validate and read the project model YAML ( <a href="project_models.py">packages/katsoft-llm-kit/src/llm_kit/registry/project_models.py</a>)</li><li>Build the catalogue document with effort menus and cost classification ( <a href="catalog.py">packages/katsoft-llm-kit/src/llm_kit/registry/catalog.py</a>)</li><li>Resolve a selection&#x27;s typed request settings across three layers ( <a href="request_settings.py">packages/katsoft-llm-kit/src/llm_kit/registry/request_settings.py</a>)</li></ol></li></ul></section><section><h2>Endpoint and model resolution</h2><ul><li><a href="models.py">packages/katsoft-llm-kit/src/llm_kit/registry/models.py</a> -- the layered config that resolves a model name to a provider slug; trace how a declaration like defaultCheap becomes a concrete endpoint</li><li><a href="model_endpoints.py">packages/katsoft-llm-kit/src/llm_kit/registry/model_endpoints.py</a> -- reads the user-declared endpoint registry (YAML); machine-specific host and port facts live in the user&#x27;s file, not here</li><li><a href="model_profiles.py">packages/katsoft-llm-kit/src/llm_kit/registry/model_profiles.py</a> -- measured exact-model effort menus shipped as data; open to see which models accept which levels and from which source</li><li><a href="catalog.py">packages/katsoft-llm-kit/src/llm_kit/registry/catalog.py</a> -- builds the llm-kit.model-catalog/v1 document from a validated project file; the output of llm-kit models catalog</li></ul></section><section><h2>Project model file and requests</h2><ul><li><a href="project_models.py">packages/katsoft-llm-kit/src/llm_kit/registry/project_models.py</a> -- the per-project catalogue format: validation, canonical rendering, atomic read/write, and the personal local layer</li><li><a href="request_settings.py">packages/katsoft-llm-kit/src/llm_kit/registry/request_settings.py</a> -- resolves a selection&#x27;s typed request settings across three layers (row, selection, call)</li><li><a href="fallback_chains.py">packages/katsoft-llm-kit/src/llm_kit/registry/fallback_chains.py</a> -- reads and checks fallback chain files: hosts in order, failure classes, and input mapping rules</li></ul></section><section><h2>Credentials and consent</h2><ul><li><a href="api_key.py">packages/katsoft-llm-kit/src/llm_kit/registry/api_key.py</a> -- resolves an endpoint&#x27;s API key through six layered sources, from env var down to a bare-value key file</li><li><a href="consent.py">packages/katsoft-llm-kit/src/llm_kit/registry/consent.py</a> -- the user-level consent file: an optional cost-class policy and always-on connection approvals</li><li><a href="cost.py">packages/katsoft-llm-kit/src/llm_kit/registry/cost.py</a> -- classifies an endpoint as local, subscription, or metered; pure, no I/O</li><li><a href="constants.py">packages/katsoft-llm-kit/src/llm_kit/registry/constants.py</a> -- the default endpoint&#x27;s base URL and key env var, plus canonical and legacy credential file paths</li><li><a href="user_paths.py">packages/katsoft-llm-kit/src/llm_kit/registry/user_paths.py</a> -- the harness-neutral user file directory under XDG; the one place the neutral path is spelled</li></ul></section><section><h2>Effort and pacing</h2><ul><li><a href="effort.py">packages/katsoft-llm-kit/src/llm_kit/registry/effort.py</a> -- the effort style vocabulary (top-level, ninfer, chat_template_kwargs, reasoning-object) and the wire placement logic</li><li><a href="conserve.py">packages/katsoft-llm-kit/src/llm_kit/registry/conserve.py</a> -- conserve-usage pacing: the Budget verdict (available, under-quota, out-of-quota, no-data) and the ConserveSpec parser</li></ul></section><section><h2>Supporting formats</h2><ul><li><a href="adapter_names.py">packages/katsoft-llm-kit/src/llm_kit/registry/adapter_names.py</a> -- the four adapter family names and the openrouter-to-openai-compat rename mapping</li><li><a href="env_file.py">packages/katsoft-llm-kit/src/llm_kit/registry/env_file.py</a> -- the minimal .env KEY=VALUE reader and writer with quoting rules</li><li><a href="reply_cache.py">packages/katsoft-llm-kit/src/llm_kit/registry/reply_cache.py</a> -- the reply cache request-key and entry format reader, shared with the TypeScript package</li><li><a href="declaration_syntax.py">packages/katsoft-llm-kit/src/llm_kit/registry/declaration_syntax.py</a> -- the probe that returns the bootstrap model-declaration validator</li></ul></section>
+</main>
+<script>
+if (window.parent !== window) {
+  window.parent.postMessage({
+    type: "index-pages:announce",
+    version: 1,
+    directory: "packages/katsoft-llm-kit/src/llm_kit/registry",
+    file: "index.html",
+    kind: "page",
+    source_sha: "25ca42034048bf80ac36ff557996f4f999432286"
+  }, "*");
+  document.addEventListener("click", function (event) {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var el = event.target;
+    while (el && el.nodeName !== "A") el = el.parentNode;
+    if (!el) return;
+    var href = el.getAttribute("href");
+    if (!href) return;
+    if (href.charAt(0) === "#" || href.charAt(0) === "/") return;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) return;
+    var target = href.split("#")[0].split("?")[0];
+    if (!target) return;
+    if (/(^|\/)index-page(\.[^/]+)?\.html$/.test(target)) return;
+    var parts = "packages/katsoft-llm-kit/src/llm_kit/registry".split("/");
+    if (parts.length === 1 && parts[0] === ".") parts = [];
+    var segs = target.split("/");
+    for (var i = 0; i < segs.length; i++) {
+      if (segs[i] === "" || segs[i] === ".") continue;
+      if (segs[i] === "..") { parts.pop(); continue; }
+      parts.push(segs[i]);
+    }
+    event.preventDefault();
+    window.parent.postMessage({
+      type: "index-pages:navigate",
+      version: 1,
+      path: parts.join("/")
+    }, "*");
+  });
+}
+</script>
+</body>
+</html>
