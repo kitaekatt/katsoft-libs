@@ -2,6 +2,30 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## 1.39.0
+
+The front door accepts a model preference list. A request whose `model` is a comma-separated list of door names (`"fast,slow"`) may be served by any of them; on a swapper host (deployments sharing a `base_url`) the door keeps a busy host on the listed model it is already serving and sends an idle host the first listed one, so mixed callers stop forcing model swaps. A request with one name routes exactly as before. README "Front door: model preference lists" states the rule.
+
+Added:
+
+- `create_app`'s `/v1/chat/completions` reads a comma-separated `model` as a preference list. An unknown name is a 404 naming it, an empty item a 400. The access log's `group` and `size` are the serving deployment's.
+- `frontdoor_group_members` expands a `frontdoor: true` entry whose `model` is a preference list into the members of each listed name, in list order: a name another front-door entry declares has that entry's members (at its size); any other name is a group at the list entry's `context_window`. A client's fall-through past a list entry therefore reaches the same deployments the door would.
+
+Changed:
+
+- The front door walks a precomputed list of tiers (private `_order_tiers`, `_preference_tiers`); a single name's tiers are its `routing.order` groups, as before. A runtime deployment records when it last became busy (`busy_since`).
+
+Quality bar:
+
+1. Public API documented: pass. No public name is added; `create_app`'s request contract is documented in the README, and `frontdoor_group_members`'s docstring states the list rule.
+2. Semver release with a changelog: pass. Version 1.39.0 (a minor release: new request behaviour, no change for a single name); this entry.
+3. Tests for each public function: pass. `test_frontdoor_preference.py` covers the rule through `_preference_tiers` (idle host, busy host, busy with the first choice, two in flight, another host busy) and through `create_app` (idle list request, failover through the list, unknown and empty items); `test_frontdoor_members_of_a_preference_list_follow_each_name` covers `frontdoor_group_members`; the existing front-door tests pass unchanged.
+4. No client names, prompts or data: pass. Generic hosts and names.
+5. Examples run without a client app: pass. No example changed.
+6. JSON Schema for each file format: pass. No file format changed.
+7. Gate before adoption: pass. Lines 1 to 6 and 8 pass.
+8. Security properties are tested: pass. No security property changed; the guard tests pass unchanged.
+
 ## 1.38.0
 
 Hardening follow-ups to the 1.37.0 security release. An agent session's tool grant now restricts the tools it names, no Claude child inherits the Claude Code session marker, the Windows batch-launcher guard covers more characters and one more spawn path, and the live suite proves each refusal it reports. Several of these change behaviour: a call or a job that worked before can now be refused or run with fewer tools. Read the first list before upgrading.

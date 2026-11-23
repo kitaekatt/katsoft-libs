@@ -154,6 +154,19 @@ def test_frontdoor_members_follow_the_door_size(tmp_path):
     assert frontdoor_group_members(entries["door-fn-240k"], entries) == ["fn-240k"]
 
 
+def test_frontdoor_members_of_a_preference_list_follow_each_name(tmp_path):
+    text = REGISTRY + """
+  door-list:
+    base_url: http://door.invalid/v1
+    model: fn,g-240k
+    frontdoor: true
+    context_window: 65536
+"""
+    entries = _load(tmp_path, text).entries
+    # fn at the list entry's own window (64k tier), then g-240k at its door's size.
+    assert frontdoor_group_members(entries["door-list"], entries) == ["fn-64k", "gpu-240k", "cloud"]
+
+
 # --------------------------------------------------------------------------
 # The real door app
 # --------------------------------------------------------------------------

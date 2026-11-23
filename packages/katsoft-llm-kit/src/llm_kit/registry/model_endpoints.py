@@ -104,7 +104,7 @@ only: no default or fall-through selects it.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Sequence
 
@@ -936,10 +936,31 @@ def frontdoor_group_members(entry: object, entries: Mapping[str, object]) -> lis
     entry's own ``context_window`` (:func:`tiers_for_size`). A front-door entry is
     never a member (no nested expansion), so an entry that is not a front door,
     or a group with no members, yields an empty list.
+
+    A ``model`` that is a comma-separated preference list (``"a,b"``, which the
+    front door serves from any listed name) has the members of each listed name
+    in list order, each id once: a name another ``frontdoor: true`` entry
+    declares as its ``model`` has that entry's members; any other name is a
+    group, limited to this entry's ``context_window``.
     """
     group = frontdoor_group_of(entry)
     if group is None:
         return []
+    if "," in group:
+        result: list[str] = []
+        for name in (item.strip() for item in group.split(",")):
+            doors = [
+                other for other in entries.values()
+                if getattr(other, "model", None) == name and frontdoor_group_of(other) is not None
+            ]
+            if doors:
+                ids = frontdoor_group_members(doors[0], entries)
+            else:
+                ids = frontdoor_group_members(
+                    replace(entry, model=name, frontdoor_group=None), entries
+                )
+            result.extend(member for member in ids if member not in result)
+        return result
     own_id = getattr(entry, "id", None)
     members = []
     for candidate in entries.values():

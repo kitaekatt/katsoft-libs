@@ -37,6 +37,8 @@ class RuntimeDeployment:
     users: list[Optional[str]] = field(default_factory=list)
     last_error: Optional[str] = None
     last_error_at: Optional[str] = None
+    #: monotonic time in_flight last rose from 0; None while idle.
+    busy_since: Optional[float] = None
 
     @property
     def routing(self) -> Any:
@@ -143,6 +145,57 @@ def _pool(deployments: list[RuntimeDeployment], size: Optional[int]) -> list[Run
     """The deployments of one group that may serve a request of ``size`` tokens."""
     allowed = {entry.id for entry in tiers_for_size([d.entry for d in deployments], size)}
     return [deployment for deployment in deployments if deployment.entry.id in allowed]
+
+
+def _order_tiers(pool: list[RuntimeDeployment]) -> list[list[RuntimeDeployment]]:
+    """One group's deployments as walk tiers, grouped by ``routing.order``."""
+    by_order: dict[int, list[RuntimeDeployment]] = {}
+    for deployment in pool:
+        by_order.setdefault(deployment.routing.order, []).append(deployment)
+    return [by_order[order] for order in sorted(by_order)]
+
+
+def _preference_tiers(pools: list[list[RuntimeDeployment]]) -> list[list[RuntimeDeployment]]:
+    """Walk tiers for a request that lists several names, in preference order.
+
+    ``pools`` holds each listed name's deployments (already size-filtered), in
+    the caller's order. Deployments that share a ``base_url`` sit behind one
+    swapper, which holds one model at a time. For each such host that serves
+    more than one listed deployment, one is chosen: the listed deployment that
+    has been in flight the longest when the host is busy with one (serving it
+    costs no swap), else the earliest-listed one (an idle host may swap). The
+    chosen deployment takes the host's first place in the walk; the host's other
+    listed deployments move to the end, so they serve only after the earlier
+    tiers fail or fill. Returns the tiers in walk order, each deployment once.
+    """
+    listed: dict[str, list[RuntimeDeployment]] = {}
+    for pool in pools:
+        for deployment in pool:
+            on_host = listed.setdefault(deployment.entry.base_url, [])
+            if deployment not in on_host:
+                on_host.append(deployment)
+    chosen: dict[str, RuntimeDeployment] = {}
+    for host, deployments in listed.items():
+        busy = [d for d in deployments if d.in_flight > 0 and d.busy_since is not None]
+        chosen[host] = min(busy, key=lambda d: d.busy_since) if busy else deployments[0]
+    placed: list[RuntimeDeployment] = []
+    tiers: list[list[RuntimeDeployment]] = []
+    for pool in pools:
+        for tier in _order_tiers(pool):
+            row = []
+            for deployment in tier:
+                pick = chosen[deployment.entry.base_url]
+                if pick not in placed:
+                    placed.append(pick)
+                    row.append(pick)
+            if row:
+                tiers.append(row)
+    for deployments in listed.values():
+        for deployment in deployments:
+            if deployment not in placed:
+                placed.append(deployment)
+                tiers.append([deployment])
+    return tiers
 
 
 def _too_big_message(group: str, size: int, deployments: list[RuntimeDeployment]) -> str:
@@ -339,24 +392,24 @@ def create_app(
     condition = asyncio.Condition()
     log_path = access_log or (Path.home() / ".claude" / "plugins" / "data" / "plugins-kit" / "llm-scripting-kit" / "frontdoor-access.jsonl")
 
-    async def choose(deployments: list[RuntimeDeployment], excluded: set[str]) -> RuntimeDeployment:
+    async def choose(walk: list[list[RuntimeDeployment]], excluded: set[str]) -> RuntimeDeployment:
         while True:
-            by_order: dict[int, list[RuntimeDeployment]] = {}
-            for deployment in deployments:
-                if deployment.entry.id not in excluded:
-                    by_order.setdefault(deployment.routing.order, []).append(deployment)
-            orders = sorted(by_order)
+            tiers = [
+                [deployment for deployment in tier if deployment.entry.id not in excluded]
+                for tier in walk
+            ]
+            tiers = [tier for tier in tiers if tier]
 
-            def _eligible(order: int) -> list[RuntimeDeployment]:
+            def _eligible(index: int) -> list[RuntimeDeployment]:
                 return [
-                    deployment for deployment in by_order[order]
+                    deployment for deployment in tiers[index]
                     if deployment.routing.max_parallel is None
                     or deployment.in_flight < deployment.routing.max_parallel
                 ]
 
-            for index, order in enumerate(orders):
-                eligible = _eligible(order)
-                if not eligible and index < len(orders) - 1 and spill_after > 0:
+            for index in range(len(tiers)):
+                eligible = _eligible(index)
+                if not eligible and index < len(tiers) - 1 and spill_after > 0:
                     # Give this tier one bounded chance to free a slot before
                     # spilling; whatever happens, the walk then moves ON to
                     # the next tier rather than restarting here.
@@ -365,7 +418,7 @@ def create_app(
                             await asyncio.wait_for(condition.wait(), spill_after)
                     except asyncio.TimeoutError:
                         pass
-                    eligible = _eligible(order)
+                    eligible = _eligible(index)
                 if eligible:
                     return eligible[0]
             # Every tier is at its cap: wait for any release, then walk again.
@@ -375,6 +428,8 @@ def create_app(
     async def release(deployment: RuntimeDeployment, user: Optional[str]) -> None:
         async with condition:
             deployment.in_flight -= 1
+            if deployment.in_flight == 0:
+                deployment.busy_since = None
             if user in deployment.users:
                 deployment.users.remove(user)
             condition.notify_all()
@@ -418,13 +473,32 @@ def create_app(
         if not isinstance(body, dict):
             return JSONResponse(_error("request body must be an object"), status_code=400)
         requested = body.get("model")
-        if not isinstance(requested, str) or requested not in names:
+        if not isinstance(requested, str):
             return JSONResponse(_error(f"unknown model group: {requested}"), status_code=404)
-        group, size = names[requested].group, names[requested].size
-        pool = _pool(groups[group], size)
-        if not pool:
-            assert size is not None  # an unsized request never drops a tier
-            return JSONResponse(_error(_too_big_message(group, size, groups[group])), status_code=400)
+        # A comma-separated model is a preference list (see _preference_tiers).
+        listed = [item.strip() for item in requested.split(",")]
+        if "" in listed:
+            return JSONResponse(_error(f"empty name in model list: {requested!r}"), status_code=400)
+        unknown = [item for item in listed if item not in names]
+        if unknown:
+            return JSONResponse(_error(f"unknown model group: {unknown[0]}"), status_code=404)
+        listed = list(dict.fromkeys(listed))
+        meanings = [names[item] for item in listed]
+        pools = [_pool(groups[meaning.group], meaning.size) for meaning in meanings]
+        if not any(pools):
+            meaning = meanings[0]
+            assert meaning.size is not None  # an unsized request never drops a tier
+            return JSONResponse(
+                _error(_too_big_message(meaning.group, meaning.size, groups[meaning.group])),
+                status_code=400,
+            )
+        walk = _order_tiers(pools[0]) if len(pools) == 1 else _preference_tiers(pools)
+        pool = [deployment for tier in walk for deployment in tier]
+        size_of = {
+            deployment.entry.id: meaning.size
+            for meaning, candidates in reversed(list(zip(meanings, pools)))
+            for deployment in candidates
+        }
         stream = bool(body.get("stream"))
         user = body.get("user")
         excluded: set[str] = set()
@@ -445,12 +519,15 @@ def create_app(
                     media_type="application/json",
                     headers=_header_value(deployment.entry) if deployment is not None else {},
                 )
-            deployment = await choose(pool, excluded)
+            deployment = await choose(walk, excluded)
+            group, size = deployment.routing.group, size_of[deployment.entry.id]
             try:
                 payload, user = _normalize_body(body, deployment.entry)
             except ValueError as exc:
                 _log(deployment, user, group, body, 400, started, None, None, stream, str(exc), log_path, requested=requested, size=size)
                 return JSONResponse(_error(str(exc)), status_code=400)
+            if deployment.in_flight == 0:
+                deployment.busy_since = time.monotonic()
             deployment.in_flight += 1
             deployment.users.append(user)
             acquired = True

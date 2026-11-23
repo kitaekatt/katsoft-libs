@@ -246,6 +246,27 @@ entry's window; without one, no size filter. A tier with `routing.size_only: tru
 when no ordinary tier holds the size, never as busy-spill (for a tier that costs a model swap).
 Spill on a busy tier is immediate, as before. The access log records `requested` and `size`.
 
+## Front door: model preference lists
+
+A request whose `model` is a comma-separated list of door names (`"qwen3.8-flash-next,qwen3.8"`)
+may be served by any of them, in that order of preference. Every name must be known (404) and
+none empty (400); a single name routes exactly as before. Deployments that share a `base_url`
+are treated as one swapper (such as llama-swap) that holds one model at a time. For each such
+host serving more than one listed name, the door picks one: when the host is busy with a listed
+model (it has requests in flight through the door), that model, so the request costs no swap;
+when the host is idle, the first listed name's model, which the swapper may swap in. When
+several listed models are in flight on one host (one is queued behind a swap), the one in
+flight longest keeps the host. The chosen model takes the host's first place in the walk; the
+host's other listed models move to the end and serve only after the earlier tiers fail or
+fill. Other hosts keep their places, in list order and then tier order. "Busy" counts only
+requests that pass through the door; a direct call to the swapper is not seen. The access log's
+`group` and `size` are the serving deployment's; `requested` is the list as sent.
+
+A registry entry can carry the list: `frontdoor: true` with `model: "qwen3.8-flash-next,qwen3.8-64k"`.
+The door ignores it as a name of its own (it is not a group) and serves the list it sends;
+`frontdoor_group_members` expands it into each listed name's members, so a client that falls
+through past the door reaches the same deployments.
+
 ## Upgrading to 1.23
 
 The mailbox moves to schema v3, and a 1.22 relay cannot read it. Remote resume is
