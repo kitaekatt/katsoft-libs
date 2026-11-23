@@ -2,6 +2,29 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## 1.41.0
+
+A preference-list front-door entry is classified by what it lists. 1.40.0 looked for a routing group named like the whole list, found none, and classed every list entry `metered`, so a consent policy that refuses metered entries refused a list of local models.
+
+Added:
+
+- `preference_list_members(entry, entries)` in `llm_kit.registry.model_endpoints`: each listed name of a list entry, in order, with the deployment ids it reaches. `frontdoor_group_members` now uses it.
+
+Changed:
+
+- The cost class of a list entry (`llm_kit.registry.cost.classify`): `local` when every deployment of every listed name is unmetered and self-owned; `metered` when one is not, or a listed name reaches no deployment.
+
+Quality bar:
+
+1. Public API documented: pass, with the 1.33.0 exception. `preference_list_members` has a docstring; `registry.model_endpoints` is not in `covers` and is not listed whole, so its names (like `frontdoor_group_members`) stay unlisted.
+2. Semver release with a changelog: pass. Version 1.41.0 (a new public function and a classification fix); this entry.
+3. Tests for each public function: pass. `test_frontdoor_members_of_a_preference_list_follow_each_name` calls `preference_list_members`; `test_frontdoor_preference_list_classifies_by_every_listed_name` (`test_cost_class.py`) pins the classification.
+4. No client names, prompts or data: pass.
+5. Examples run without a client app: pass. No example changed.
+6. JSON Schema for each file format: pass. No file format changed.
+7. Gate before adoption: pass, with the line 1 exception.
+8. Security properties are tested: pass. The cost class gates paid use; its list rule has the test above.
+
 ## 1.40.0
 
 Model preference lists steer by request size, and their failover order is fixed. The door estimates a list request's tokens on the high side and skips a listed name whose deployments cannot hold it, so one list (`"fast-64k,big-240k"`) sends small requests to the first name and large ones to the second. The estimate never refuses: when it would leave nothing, the list routes unsteered. Fixes 1.39.0's failover order: the other listed models on a swapper host moved to the end of the walk, so when the chosen model failed, the request reached every later tier (a paid one included) before the same host's other local model. They now stand by right after the chosen model: a standby serves once the chosen model has failed for the request, and never because the chosen model is full, which would swap a busy host.

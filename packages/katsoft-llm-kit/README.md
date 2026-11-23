@@ -273,7 +273,9 @@ requests that pass through the door; a direct call to the swapper is not seen. T
 A registry entry can carry the list: `frontdoor: true` with `model: "qwen3.8-flash-next,qwen3.8-64k"`.
 The door ignores it as a name of its own (it is not a group) and serves the list it sends;
 `frontdoor_group_members` expands it into each listed name's members, so a client that falls
-through past the door reaches the same deployments.
+through past the door reaches the same deployments. Its cost class is `local` only when every
+deployment of every listed name is unmetered and self-owned; a list that names no paid
+deployment therefore never reaches one.
 
 ## Upgrading to 1.23
 

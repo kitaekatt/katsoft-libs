@@ -21,6 +21,7 @@ from llm_kit.registry.model_endpoints import (
     frontdoor_group_members,
     frontdoor_group_of,
     load_endpoint_registry,
+    preference_list_members,
     tiers_for_size,
 )
 
@@ -166,6 +167,10 @@ def test_frontdoor_members_of_a_preference_list_follow_each_name(tmp_path):
     # fn unsized, as the door reads a plain group (its ordinary 64k tier, not the
     # size-only one the list's 240k window would pick), then g-240k at its door's size.
     assert frontdoor_group_members(entries["door-list"], entries) == ["fn-64k", "gpu-240k", "cloud"]
+    assert preference_list_members(entries["door-list"], entries) == {
+        "fn": ["fn-64k"], "g-240k": ["gpu-240k", "cloud"],
+    }
+    assert preference_list_members(entries["door-32k"], entries) == {}  # not a list
 
 
 # --------------------------------------------------------------------------

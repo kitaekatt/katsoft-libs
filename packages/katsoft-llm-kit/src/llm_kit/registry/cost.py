@@ -49,6 +49,7 @@ from llm_kit.registry.model_endpoints import (
     TRANSPORT_KIND,
     EndpointEntry,
     frontdoor_group_of,
+    preference_list_members,
 )
 
 # The harness auth states SUBSCRIPTION and METERED share their spelling with the
@@ -184,6 +185,8 @@ def _classify_frontdoor(
     entry: EndpointEntry, entries: Optional[Mapping[str, EndpointEntry]]
 ) -> CostVerdict:
     group = frontdoor_group_of(entry) or entry.model
+    if "," in group:
+        return _classify_preference_list(entry, entries)
     tiers = [
         e
         for e in (entries or {}).values()
@@ -201,6 +204,29 @@ def _classify_frontdoor(
                 "(billing.owner: self) (billing unverified)",
             )
     return CostVerdict(LOCAL, f"every tier of group {group} is unmetered and owned by self")
+
+
+def _classify_preference_list(
+    entry: EndpointEntry, entries: Optional[Mapping[str, EndpointEntry]]
+) -> CostVerdict:
+    """A preference-list door serves only its listed names: LOCAL when every
+    deployment they reach is unmetered and self-owned, else METERED."""
+    known = entries or {}
+    by_name = preference_list_members(entry, known)
+    for name, ids in by_name.items():
+        if not ids:
+            return CostVerdict(METERED, f"listed name {name} reaches no tier (billing unverified)")
+        for tier_id in sorted(ids):
+            tier = known[tier_id]
+            if not is_unmetered(tier):
+                return CostVerdict(METERED, f"tier {tier.id} is not declared unmetered (billing unverified)")
+            if not is_self_owned(tier):
+                return CostVerdict(
+                    METERED,
+                    f"tier {tier.id} is unmetered but its hardware ownership is not declared "
+                    "(billing.owner: self) (billing unverified)",
+                )
+    return CostVerdict(LOCAL, "every tier of every listed name is unmetered and owned by self")
 
 
 def _classify_transport_or_frontdoor(

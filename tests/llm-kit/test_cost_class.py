@@ -116,6 +116,23 @@ def test_frontdoor_no_tiers_is_metered():
         assert "no tiers declared for group g" in verdict.reason
 
 
+def test_frontdoor_preference_list_classifies_by_every_listed_name():
+    # A list door serves only the names it lists, so only their tiers count.
+    door = transport("door", frontdoor=True, model="g,h")
+    g = transport("g1", billing="unmetered", owner="self", group="g")
+    h = transport("h1", billing="unmetered", owner="self", group="h")
+    paid = transport("p1", group="paid")  # not listed: does not count
+    entries = {e.id: e for e in (door, g, h, paid)}
+    assert cost_class(door, entries=entries) == LOCAL
+    paid_in_h = transport("h2", group="h")
+    entries = {e.id: e for e in (door, g, h, paid_in_h)}
+    verdict = classify(door, entries=entries)
+    assert verdict.cost_class == METERED
+    assert "h2" in verdict.reason
+    entries = {e.id: e for e in (door, g)}  # h names no tier
+    assert cost_class(door, entries=entries) == METERED
+
+
 def test_plain_transport():
     assert cost_class(transport("a", billing="unmetered", owner="self")) == LOCAL
     assert cost_class(transport("a")) == METERED

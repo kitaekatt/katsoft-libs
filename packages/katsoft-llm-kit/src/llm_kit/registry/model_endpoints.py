@@ -948,17 +948,7 @@ def frontdoor_group_members(entry: object, entries: Mapping[str, object]) -> lis
         return []
     if "," in group:
         result: list[str] = []
-        for name in (item.strip() for item in group.split(",")):
-            doors = [
-                other for other in entries.values()
-                if getattr(other, "model", None) == name and frontdoor_group_of(other) is not None
-            ]
-            if doors:
-                ids = frontdoor_group_members(doors[0], entries)
-            else:
-                ids = frontdoor_group_members(
-                    replace(entry, model=name, frontdoor_group=None, context_window=None), entries
-                )
+        for ids in preference_list_members(entry, entries).values():
             result.extend(member for member in ids if member not in result)
         return result
     own_id = getattr(entry, "id", None)
@@ -977,6 +967,34 @@ def frontdoor_group_members(entry: object, entries: Mapping[str, object]) -> lis
     members.sort(key=lambda member: (member.routing.order, member.id))
     members = tiers_for_size(members, getattr(entry, "context_window", None))
     return [member.id for member in members]
+
+
+def preference_list_members(entry: object, entries: Mapping[str, object]) -> dict[str, list[str]]:
+    """Each listed name of a preference-list front-door entry, with its members.
+
+    For a ``frontdoor: true`` entry whose ``model`` is a comma-separated list,
+    maps each listed name, in list order, to the deployment ids that name
+    reaches (:func:`frontdoor_group_members` states the rule): the members of
+    another front-door entry that declares the name as its ``model``, else the
+    members of the group of that name with no size filter. A name that reaches
+    no deployment maps to an empty list. Any other entry yields an empty dict.
+    """
+    group = frontdoor_group_of(entry)
+    if group is None or "," not in group:
+        return {}
+    result: dict[str, list[str]] = {}
+    for name in (item.strip() for item in group.split(",")):
+        doors = [
+            other for other in entries.values()
+            if getattr(other, "model", None) == name and frontdoor_group_of(other) is not None
+        ]
+        if doors:
+            result[name] = frontdoor_group_members(doors[0], entries)
+        else:
+            result[name] = frontdoor_group_members(
+                replace(entry, model=name, frontdoor_group=None, context_window=None), entries
+            )
+    return result
 
 
 def resolve_registry_entry(
