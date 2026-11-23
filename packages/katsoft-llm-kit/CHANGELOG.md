@@ -2,6 +2,30 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## 1.40.0
+
+Model preference lists steer by request size, and their failover order is fixed. The door estimates a list request's tokens on the high side and skips a listed name whose deployments cannot hold it, so one list (`"fast-64k,big-240k"`) sends small requests to the first name and large ones to the second. The estimate never refuses: when it would leave nothing, the list routes unsteered. Fixes 1.39.0's failover order: the other listed models on a swapper host moved to the end of the walk, so when the chosen model failed, the request reached every later tier (a paid one included) before the same host's other local model. They now stand by right after the chosen model: a standby serves once the chosen model has failed for the request, and never because the chosen model is full, which would swap a busy host.
+
+Added:
+
+- Size steering for a list request (private `_estimated_tokens`, `_steer_by_size`; `_ESTIMATE_CHARS_PER_TOKEN` = 3). A single name routes as before.
+
+Changed:
+
+- `frontdoor_group_members` expands a plain group name in a list with no size filter, as the door reads it (1.39.0 applied the list entry's `context_window`, so a 240k list started its fall-through at a size-only tier).
+- The private `_preference_tiers` also returns the standby map; the private `_active_tiers` drops a standby until its host's choice is excluded.
+
+Quality bar:
+
+1. Public API documented: pass. No public name changes; the README states the size and standby rules.
+2. Semver release with a changelog: pass. Version 1.40.0 (new request behaviour for a list, plus a fix); this entry.
+3. Tests for each public function: pass. `test_frontdoor_preference.py` pins size steering (small request, request too big for the first name, `max_tokens` counted, the estimate never refusing), the standby placement, `test_a_standby_serves_only_after_its_host_choice_is_excluded` the activation rule, and `test_failed_choice_falls_back_through_the_list` the failover through `create_app`.
+4. No client names, prompts or data: pass.
+5. Examples run without a client app: pass. No example changed.
+6. JSON Schema for each file format: pass. No file format changed.
+7. Gate before adoption: pass.
+8. Security properties are tested: pass. No security property changed.
+
 ## 1.39.0
 
 The front door accepts a model preference list. A request whose `model` is a comma-separated list of door names (`"fast,slow"`) may be served by any of them; on a swapper host (deployments sharing a `base_url`) the door keeps a busy host on the listed model it is already serving and sends an idle host the first listed one, so mixed callers stop forcing model swaps. A request with one name routes exactly as before. README "Front door: model preference lists" states the rule.

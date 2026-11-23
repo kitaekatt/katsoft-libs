@@ -941,7 +941,7 @@ def frontdoor_group_members(entry: object, entries: Mapping[str, object]) -> lis
     front door serves from any listed name) has the members of each listed name
     in list order, each id once: a name another ``frontdoor: true`` entry
     declares as its ``model`` has that entry's members; any other name is a
-    group, limited to this entry's ``context_window``.
+    group with no size filter, as the front door reads it.
     """
     group = frontdoor_group_of(entry)
     if group is None:
@@ -957,7 +957,7 @@ def frontdoor_group_members(entry: object, entries: Mapping[str, object]) -> lis
                 ids = frontdoor_group_members(doors[0], entries)
             else:
                 ids = frontdoor_group_members(
-                    replace(entry, model=name, frontdoor_group=None), entries
+                    replace(entry, model=name, frontdoor_group=None, context_window=None), entries
                 )
             result.extend(member for member in ids if member not in result)
         return result

@@ -257,8 +257,16 @@ model (it has requests in flight through the door), that model, so the request c
 when the host is idle, the first listed name's model, which the swapper may swap in. When
 several listed models are in flight on one host (one is queued behind a swap), the one in
 flight longest keeps the host. The chosen model takes the host's first place in the walk; the
-host's other listed models move to the end and serve only after the earlier tiers fail or
-fill. Other hosts keep their places, in list order and then tier order. "Busy" counts only
+host's other listed models stand by right after it. A standby serves only when the chosen model
+fails for this request, never because the chosen model is full (that would swap a busy host),
+so a failure stays on local hardware before the walk reaches a later tier.
+
+A list also steers by size. The door estimates the request's tokens on the high side (the
+serialized `messages` and `tools` at 3 characters per token, plus `max_completion_tokens` or
+`max_tokens`) and drops each deployment whose `context_window` is smaller, before choosing; a
+name left with no deployment is skipped. So `"fast-64k,big-240k"` sends a small request to the
+first name and a large one to the second. The estimate never refuses a request: when it would
+leave nothing, the list routes unsteered and the servers judge the size. Other hosts keep their places, in list order and then tier order. "Busy" counts only
 requests that pass through the door; a direct call to the swapper is not seen. The access log's
 `group` and `size` are the serving deployment's; `requested` is the list as sent.
 

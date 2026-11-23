@@ -160,10 +160,11 @@ def test_frontdoor_members_of_a_preference_list_follow_each_name(tmp_path):
     base_url: http://door.invalid/v1
     model: fn,g-240k
     frontdoor: true
-    context_window: 65536
+    context_window: 240000
 """
     entries = _load(tmp_path, text).entries
-    # fn at the list entry's own window (64k tier), then g-240k at its door's size.
+    # fn unsized, as the door reads a plain group (its ordinary 64k tier, not the
+    # size-only one the list's 240k window would pick), then g-240k at its door's size.
     assert frontdoor_group_members(entries["door-list"], entries) == ["fn-64k", "gpu-240k", "cloud"]
 
 

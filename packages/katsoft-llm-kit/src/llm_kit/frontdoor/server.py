@@ -155,7 +155,9 @@ def _order_tiers(pool: list[RuntimeDeployment]) -> list[list[RuntimeDeployment]]
     return [by_order[order] for order in sorted(by_order)]
 
 
-def _preference_tiers(pools: list[list[RuntimeDeployment]]) -> list[list[RuntimeDeployment]]:
+def _preference_tiers(
+    pools: list[list[RuntimeDeployment]],
+) -> tuple[list[list[RuntimeDeployment]], dict[str, str]]:
     """Walk tiers for a request that lists several names, in preference order.
 
     ``pools`` holds each listed name's deployments (already size-filtered), in
@@ -164,9 +166,14 @@ def _preference_tiers(pools: list[list[RuntimeDeployment]]) -> list[list[Runtime
     more than one listed deployment, one is chosen: the listed deployment that
     has been in flight the longest when the host is busy with one (serving it
     costs no swap), else the earliest-listed one (an idle host may swap). The
-    chosen deployment takes the host's first place in the walk; the host's other
-    listed deployments move to the end, so they serve only after the earlier
-    tiers fail or fill. Returns the tiers in walk order, each deployment once.
+    chosen deployment takes the host's first place in the walk, and the host's
+    other listed deployments stand by in the tiers right after it.
+
+    Returns ``(tiers, standby)``: the tiers in walk order, each deployment once,
+    and a map from each standby deployment's id to its host's chosen id. A
+    standby serves only once that chosen deployment is excluded (it failed),
+    never because it is full: filling it would swap a busy host
+    (:func:`_active_tiers`).
     """
     listed: dict[str, list[RuntimeDeployment]] = {}
     for pool in pools:
@@ -178,24 +185,88 @@ def _preference_tiers(pools: list[list[RuntimeDeployment]]) -> list[list[Runtime
     for host, deployments in listed.items():
         busy = [d for d in deployments if d.in_flight > 0 and d.busy_since is not None]
         chosen[host] = min(busy, key=lambda d: d.busy_since) if busy else deployments[0]
+    standby: dict[str, str] = {}
     placed: list[RuntimeDeployment] = []
     tiers: list[list[RuntimeDeployment]] = []
     for pool in pools:
         for tier in _order_tiers(pool):
             row = []
+            waiting = []
             for deployment in tier:
-                pick = chosen[deployment.entry.base_url]
-                if pick not in placed:
-                    placed.append(pick)
-                    row.append(pick)
+                host = deployment.entry.base_url
+                pick = chosen[host]
+                if pick in placed:
+                    continue
+                placed.append(pick)
+                row.append(pick)
+                for other in listed[host]:
+                    if other is not pick:
+                        placed.append(other)
+                        waiting.append(other)
+                        standby[other.entry.id] = pick.entry.id
             if row:
                 tiers.append(row)
-    for deployments in listed.values():
-        for deployment in deployments:
-            if deployment not in placed:
-                placed.append(deployment)
-                tiers.append([deployment])
-    return tiers
+            tiers.extend([other] for other in waiting)
+    return tiers, standby
+
+
+#: Characters per token the size estimate assumes. Low on purpose: dense text
+#: and code run near 3, so the estimate errs toward a larger window.
+_ESTIMATE_CHARS_PER_TOKEN = 3
+
+
+def _estimated_tokens(body: dict[str, Any]) -> int:
+    """A deliberately high estimate of a request's size in tokens.
+
+    The serialized ``messages`` (plus ``tools``, when sent) at
+    :data:`_ESTIMATE_CHARS_PER_TOKEN` characters per token, plus the requested
+    completion budget (``max_completion_tokens``, else ``max_tokens``).
+    """
+    sent = {key: body[key] for key in ("messages", "tools") if key in body}
+    text = json.dumps(sent, ensure_ascii=False)
+    budget = body.get("max_completion_tokens") or body.get("max_tokens") or 0
+    if not isinstance(budget, int) or isinstance(budget, bool) or budget < 0:
+        budget = 0
+    return -(-len(text) // _ESTIMATE_CHARS_PER_TOKEN) + budget
+
+
+def _steer_by_size(
+    pools: list[list[RuntimeDeployment]], estimate: int,
+) -> list[list[RuntimeDeployment]]:
+    """Each listed name's pool without the deployments too small for ``estimate``.
+
+    A deployment with an unknown ``context_window`` is kept. The estimate only
+    steers a preference list: when it would leave no deployment at all, the
+    pools are returned unchanged and the servers judge the request.
+    """
+    steered = [
+        [
+            deployment for deployment in pool
+            if deployment.entry.context_window is None or deployment.entry.context_window >= estimate
+        ]
+        for pool in pools
+    ]
+    return steered if any(steered) else pools
+
+
+def _active_tiers(
+    tiers: list[list[RuntimeDeployment]], excluded: set[str], standby: dict[str, str],
+) -> list[list[RuntimeDeployment]]:
+    """The tiers that may take a request now, in order, empty tiers dropped.
+
+    A deployment is left out when it is ``excluded`` (it failed this request)
+    or it stands by for a host choice that is not excluded (``standby`` from
+    :func:`_preference_tiers`).
+    """
+    active = [
+        [
+            deployment for deployment in tier
+            if deployment.entry.id not in excluded
+            and (deployment.entry.id not in standby or standby[deployment.entry.id] in excluded)
+        ]
+        for tier in tiers
+    ]
+    return [tier for tier in active if tier]
 
 
 def _too_big_message(group: str, size: int, deployments: list[RuntimeDeployment]) -> str:
@@ -392,13 +463,11 @@ def create_app(
     condition = asyncio.Condition()
     log_path = access_log or (Path.home() / ".claude" / "plugins" / "data" / "plugins-kit" / "llm-scripting-kit" / "frontdoor-access.jsonl")
 
-    async def choose(walk: list[list[RuntimeDeployment]], excluded: set[str]) -> RuntimeDeployment:
+    async def choose(
+        walk: list[list[RuntimeDeployment]], excluded: set[str], standby: dict[str, str],
+    ) -> RuntimeDeployment:
         while True:
-            tiers = [
-                [deployment for deployment in tier if deployment.entry.id not in excluded]
-                for tier in walk
-            ]
-            tiers = [tier for tier in tiers if tier]
+            tiers = _active_tiers(walk, excluded, standby)
 
             def _eligible(index: int) -> list[RuntimeDeployment]:
                 return [
@@ -492,7 +561,11 @@ def create_app(
                 _error(_too_big_message(meaning.group, meaning.size, groups[meaning.group])),
                 status_code=400,
             )
-        walk = _order_tiers(pools[0]) if len(pools) == 1 else _preference_tiers(pools)
+        if len(pools) == 1:
+            walk, standby = _order_tiers(pools[0]), {}
+        else:
+            pools = _steer_by_size(pools, _estimated_tokens(body))
+            walk, standby = _preference_tiers(pools)
         pool = [deployment for tier in walk for deployment in tier]
         size_of = {
             deployment.entry.id: meaning.size
@@ -519,7 +592,7 @@ def create_app(
                     media_type="application/json",
                     headers=_header_value(deployment.entry) if deployment is not None else {},
                 )
-            deployment = await choose(walk, excluded)
+            deployment = await choose(walk, excluded, standby)
             group, size = deployment.routing.group, size_of[deployment.entry.id]
             try:
                 payload, user = _normalize_body(body, deployment.entry)
