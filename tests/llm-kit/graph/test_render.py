@@ -242,6 +242,43 @@ def test_the_walk_stays_inside_the_project_root(tmp_path):
     assert all(not key.endswith("far.graph.yaml") for key in catalog["files"])
 
 
+def _walk_result(project: Path) -> list:
+    from llm_kit.graph.render.catalog import _graph_files_under  # noqa: PLC0415
+
+    return [p.relative_to(project).as_posix() for p in _graph_files_under(project)]
+
+
+def _link_directory(kind: str, target: Path, link: Path) -> None:
+    """Make ``link`` a directory link of ``kind`` ("symlink" or "junction") to ``target``, or skip the test."""
+    if kind == "junction":
+        try:
+            import _winapi  # noqa: PLC0415
+            _winapi.CreateJunction(str(target), str(link))
+        except (ImportError, AttributeError, OSError):
+            pytest.skip("this machine cannot make a directory junction")
+        return
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this machine cannot make a symbolic link")
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+def test_the_walk_enters_no_directory_link_to_an_ancestor_a_sibling_or_outside(tmp_path, kind):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "far.graph.yaml").write_text(_SPARE_TEXT, encoding="utf-8")
+    project = _with_extra_graphs(tmp_path)
+    expected = _walk_result(project)
+    assert SPARE in expected and "far.graph.yaml" not in " ".join(expected)
+    _link_directory(kind, project, project / "loop")                  # to an ancestor (the root itself)
+    _link_directory(kind, project / "graphs", project / "alias")      # to a sibling inside the root
+    _link_directory(kind, outside, project / "graphs" / "away")       # to a folder outside the root
+    assert _walk_result(project) == expected, "a directory link was entered"
+    catalog = project_catalog(load_config(project))
+    assert [item["file"] for item in catalog["unused"]] == [BROKEN, SPARE]
+
+
 def test_render_command_without_graphs_draws_the_unused_files(tmp_path):
     project = _with_extra_graphs(tmp_path)
     out = tmp_path / "all.html"

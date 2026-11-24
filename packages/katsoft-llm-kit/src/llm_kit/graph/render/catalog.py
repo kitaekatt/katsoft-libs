@@ -184,18 +184,40 @@ class _Builder:
         return result
 
 
+def _is_directory_link(path: Path, root: Path) -> bool:
+    """Whether ``path`` is a directory link of any kind, or resolves outside ``root``.
+
+    ``os.path.islink`` is false for a Windows junction, so ``os.path.isjunction``
+    (Python 3.12 and later) is asked as well.
+    """
+    if os.path.islink(path):
+        return True
+    is_junction = getattr(os.path, "isjunction", None)
+    if is_junction is not None and is_junction(path):
+        return True
+    try:
+        path.resolve().relative_to(root)
+    except ValueError:
+        return True
+    return False
+
+
 def _graph_files_under(root: Path | str) -> list[Path]:
     """Every ``*.graph.yaml`` file under ``root``, sorted by path.
 
     The walk does not enter a directory whose name starts with ``.`` (``.git``,
     a virtual environment, tool caches), ``node_modules`` or ``__pycache__``,
-    and follows no directory link. A file link is kept only when it resolves
-    inside ``root``, so the result never leaves the root.
+    nor a directory that is a link of any kind (a symbolic link, or a Windows
+    junction, which ``os.walk`` does not count as a link) or whose resolved
+    path is outside ``root``. A file link is kept only when it resolves inside
+    ``root``, so the result never leaves the root and lists no file twice by
+    way of a directory.
     """
     root_path = Path(root).resolve()
     found = []
     for folder, names, files in os.walk(root_path):
-        names[:] = sorted(n for n in names if not n.startswith(".") and n not in _SKIPPED_DIRECTORIES)
+        names[:] = sorted(n for n in names if not n.startswith(".") and n not in _SKIPPED_DIRECTORIES
+                          and not _is_directory_link(Path(folder) / n, root_path))
         for name in files:
             if not name.endswith(".graph.yaml"):
                 continue
