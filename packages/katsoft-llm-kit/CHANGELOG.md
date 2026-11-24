@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased
+## 1.42.0
 
 Graph pages: `llm-kit graph render` draws graph files as one self-contained HTML page.
 
@@ -17,7 +17,7 @@ Added:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. Each new public name has a docstring; `public-surface.json` lists `llm_kit.graph.render.catalog`, `llm_kit.graph.render.page` and `GRAPH_CATALOG_V1`, and `test_public_surface_lists_the_graph_names` and `test_public_surface_lists_the_format_names` check them.
-2. Semver release with a changelog: pending; this entry gets its version at release.
+2. Semver release with a changelog: pass. Version 1.42.0 in `pyproject.toml` and this entry.
 3. Tests for each public function: pass. `tests/llm-kit/graph/test_render.py` calls `build_catalog`, `project_catalog`, `render_page`, `write_page` and the command's `run`.
 4. No client names, prompts or data: pass. The tests use the `demo.*` fixture project and graphs written in the test.
 5. Examples run without a client app: pass from the source tree (`test_the_example_runs_from_the_source_tree`); the wheel check runs at release.
