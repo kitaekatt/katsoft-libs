@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/katsoft-llm-kit/src/llm_kit/graph/render/vendor",
+  "decision": "none",
+  "source_sha": "b7c993d982430c6df604a15e0bea24b682d268fe",
+  "input_sha256": "87c90941d43c4d92fac06f9c7e64b6c6ef96d28eb66c10763e927f71eb86878e",
+  "input_shape_sha256": "115ff90d5f956d380a315a500abaa2e896d914bee2e013d4d64228005385e7b8",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}
