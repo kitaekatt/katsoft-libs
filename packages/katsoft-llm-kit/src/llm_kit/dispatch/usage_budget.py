@@ -88,6 +88,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
+import threading
 import time
 import types
 from pathlib import Path
@@ -113,6 +115,11 @@ VERDICT_CACHE = (
     / "llm-scripting-kit" / "usage-verdicts.json"
 )
 """Session-pinned verdicts. See the module docstring on pinning."""
+
+_VERDICT_LOCK = threading.Lock()
+"""Held across each read-modify-write of the verdict cache, so threads in one
+process cannot lose each other's updates (an observed halt included). It does
+not order separate processes."""
 
 # The raw readers (the claude snapshot and codex rollout readers, their helpers
 # and their path constants) live in llm_kit.adapters.usage_sources; the pacing
@@ -215,16 +222,20 @@ def _store_cache(path: Path, key: str, verdicts: Mapping[str, Any]) -> None:
     file read -- never a reason to fail the caller's actual work.
     """
     payload = {"session_key": key, "verdicts": dict(verdicts)}
-    tmp = path.with_suffix(f".{os.getpid()}.tmp")
+    tmp: Optional[str] = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(payload), encoding="utf-8")
-        tmp.replace(path)
+        # A temp file of its own per write, so two writers never share one.
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload))
+        os.replace(tmp, path)
     except OSError:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def pinned_evaluate(
@@ -250,40 +261,41 @@ def pinned_evaluate(
         return evaluate(spec, harness, now=now)
     moment = time.time() if now is None else now
     path = VERDICT_CACHE if cache_path is None else cache_path
-    verdicts = _load_cache(path, key)
-    stored = verdicts.get(entry_id)
-    if isinstance(stored, Mapping) and stored.get("spec") == spec.to_json():
-        budget = stored.get("budget")
-        if isinstance(budget, Mapping) and budget.get("status") in _STATUSES:
-            raw_resets_at = budget.get("resets_at")
-            # Normalize once: a cached resets_at can be a float epoch (a
-            # harness snapshot may report sub-second timestamps), and the
-            # expiry decision below and the rehydrated Budget must agree on
-            # the same value -- keeping it only when isinstance(x, int) here
-            # while accepting int OR float for the expiry test used the float
-            # correctly to decide "not expired" and then reported it back as
-            # resets_at=None ("no reset known").
-            resets_at = (
-                int(raw_resets_at) if isinstance(raw_resets_at, (int, float)) else None
-            )
-            expired = (
-                budget["status"] in (STATUS_UNDER_QUOTA, STATUS_OUT_OF_QUOTA)
-                and resets_at is not None
-                and moment >= resets_at
-            )
-            if not expired:
-                return Budget(
-                    status=str(budget["status"]),
-                    pool=str(budget.get("pool", spec.pool)),
-                    detail=str(budget.get("detail", "")),
-                    remaining=budget.get("remaining"),
-                    window_remaining=budget.get("window_remaining"),
-                    resets_at=resets_at,
+    with _VERDICT_LOCK:
+        verdicts = _load_cache(path, key)
+        stored = verdicts.get(entry_id)
+        if isinstance(stored, Mapping) and stored.get("spec") == spec.to_json():
+            budget = stored.get("budget")
+            if isinstance(budget, Mapping) and budget.get("status") in _STATUSES:
+                raw_resets_at = budget.get("resets_at")
+                # Normalize once: a cached resets_at can be a float epoch (a
+                # harness snapshot may report sub-second timestamps), and the
+                # expiry decision below and the rehydrated Budget must agree on
+                # the same value -- keeping it only when isinstance(x, int) here
+                # while accepting int OR float for the expiry test used the float
+                # correctly to decide "not expired" and then reported it back as
+                # resets_at=None ("no reset known").
+                resets_at = (
+                    int(raw_resets_at) if isinstance(raw_resets_at, (int, float)) else None
                 )
-    fresh = evaluate(spec, harness, now=moment)
-    verdicts[entry_id] = {"spec": spec.to_json(), "budget": fresh.to_json()}
-    _store_cache(path, key, verdicts)
-    return fresh
+                expired = (
+                    budget["status"] in (STATUS_UNDER_QUOTA, STATUS_OUT_OF_QUOTA)
+                    and resets_at is not None
+                    and moment >= resets_at
+                )
+                if not expired:
+                    return Budget(
+                        status=str(budget["status"]),
+                        pool=str(budget.get("pool", spec.pool)),
+                        detail=str(budget.get("detail", "")),
+                        remaining=budget.get("remaining"),
+                        window_remaining=budget.get("window_remaining"),
+                        resets_at=resets_at,
+                    )
+        fresh = evaluate(spec, harness, now=moment)
+        verdicts[entry_id] = {"spec": spec.to_json(), "budget": fresh.to_json()}
+        _store_cache(path, key, verdicts)
+        return fresh
 
 
 def quota_pool_key(harness: Optional[str], spec: Optional[ConserveSpec]) -> Optional[tuple]:
@@ -381,20 +393,21 @@ def record_observed_halt(
         resets_at=reset_at,
     )
     path = VERDICT_CACHE if cache_path is None else cache_path
-    verdicts = _load_cache(path, key)
-    verdicts[entry_id] = {"spec": spec.to_json(), "budget": budget.to_json()}
-    for name, sibling_spec in _pool_siblings(entry_id, spec, entries or {}):
-        verdicts[name] = {
-            "spec": sibling_spec.to_json(),
-            "budget": Budget(
-                status=STATUS_OUT_OF_QUOTA,
-                pool=sibling_spec.pool,
-                detail=f"observed quota/credit halt on {entry_id}, which shares this pool",
-                remaining=0.0,
-                resets_at=reset_at,
-            ).to_json(),
-        }
-    _store_cache(path, key, verdicts)
+    with _VERDICT_LOCK:
+        verdicts = _load_cache(path, key)
+        verdicts[entry_id] = {"spec": spec.to_json(), "budget": budget.to_json()}
+        for name, sibling_spec in _pool_siblings(entry_id, spec, entries or {}):
+            verdicts[name] = {
+                "spec": sibling_spec.to_json(),
+                "budget": Budget(
+                    status=STATUS_OUT_OF_QUOTA,
+                    pool=sibling_spec.pool,
+                    detail=f"observed quota/credit halt on {entry_id}, which shares this pool",
+                    remaining=0.0,
+                    resets_at=reset_at,
+                ).to_json(),
+            }
+        _store_cache(path, key, verdicts)
     return budget
 
 
