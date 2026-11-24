@@ -5,6 +5,8 @@ A person who installs the library with ``pip`` and runs no AI harness has no
 (fallback ``~/.config/llm-kit/``), and the files an earlier release kept under
 ``~/.claude`` stay readable as a lower-precedence LEGACY location. Reading
 creates nothing; a write targets the neutral path or the explicit override.
+Caches (the inferred graph labels) live under ``$XDG_CACHE_HOME/llm-kit/``
+(fallback ``~/.cache/llm-kit/``).
 
 Every test runs under a throwaway HOME (the ``home`` fixture) with the steering
 variables scrubbed.
@@ -225,3 +227,39 @@ def test_nothing_under_claude_is_created_by_the_user_state_commands(home, tmp_pa
         run(cli.main, argv, capsys)
     assert not (home / ".claude").exists()
     assert sorted(p.name for p in (home / NEUTRAL).iterdir()) == [".env", "consent.json"]
+
+
+# --- the cache home -----------------------------------------------------------------------
+
+
+def test_the_cache_directory_follows_xdg_cache_home_when_absolute(home, monkeypatch, tmp_path):
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    assert user_paths.cache_home() == home / ".cache"
+    assert user_paths.neutral_cache_dir() == home / ".cache" / "llm-kit"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg-cache"))
+    assert user_paths.cache_home() == tmp_path / "xdg-cache"
+    assert user_paths.neutral_cache_dir() == tmp_path / "xdg-cache" / "llm-kit"
+    # XDG: a relative or empty value is ignored
+    for ignored in ("relative/dir", "", "   "):
+        monkeypatch.setenv("XDG_CACHE_HOME", ignored)
+        assert user_paths.cache_home() == home / ".cache"
+    # the config home and the cache home are independent
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "cfg"))
+    assert user_paths.neutral_dir() == tmp_path / "cfg" / "llm-kit"
+    assert user_paths.neutral_cache_dir() == home / ".cache" / "llm-kit"
+
+
+def test_the_cache_paths_take_an_explicit_environment_and_create_nothing(home, tmp_path):
+    env = {"XDG_CACHE_HOME": str(tmp_path / "c")}
+    assert user_paths.neutral_cache_dir(env) == tmp_path / "c" / "llm-kit"
+    assert user_paths.cache_home({}) == home / ".cache"
+    assert not (tmp_path / "c").exists() and not (home / ".cache").exists()
+
+
+def test_the_graph_label_cache_lives_under_the_neutral_cache_directory(home, monkeypatch, tmp_path):
+    from llm_kit.graph.render.labels import default_cache_dir
+
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    assert default_cache_dir() == home / ".cache" / "llm-kit" / "graph-labels"
+    assert default_cache_dir({"XDG_CACHE_HOME": str(tmp_path / "x")}) == tmp_path / "x" / "llm-kit" / "graph-labels"
+    assert not (home / ".cache").exists()

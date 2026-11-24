@@ -13,6 +13,10 @@ changes ``HOME`` or ``XDG_CONFIG_HOME`` is honoured):
 ``XDG_CONFIG_HOME`` is honoured only when it is an absolute path, as the XDG
 specification requires; an empty or relative value is ignored.
 
+Caches (data a tool can rebuild, such as the inferred graph labels) live under
+the cache home instead: ``$XDG_CACHE_HOME/llm-kit/`` (fallback
+``$HOME/.cache/llm-kit/``), with the same absolute-path rule.
+
 The files an earlier release kept under ``~/.claude`` remain readable as a
 lower-precedence LEGACY location: a reader uses the neutral file when it exists
 and falls back to the legacy file only when it does not (each owner module
@@ -54,6 +58,22 @@ def config_home(environ: Optional[Mapping[str, str]] = None) -> Path:
     if configured and os.path.isabs(configured):
         return Path(configured)
     return Path.home() / ".config"
+
+
+def cache_home(environ: Optional[Mapping[str, str]] = None) -> Path:
+    """``$XDG_CACHE_HOME`` when absolute, else ``$HOME/.cache`` (``Path.home()``).
+
+    Resolved on every call and never created: reading a location makes nothing.
+    """
+    configured = (_environ(environ).get("XDG_CACHE_HOME") or "").strip()
+    if configured and os.path.isabs(configured):
+        return Path(configured)
+    return Path.home() / ".cache"
+
+
+def neutral_cache_dir(environ: Optional[Mapping[str, str]] = None) -> Path:
+    """The directory holding the neutral caches: ``<cache home>/llm-kit``."""
+    return cache_home(environ) / NEUTRAL_DIRNAME
 
 
 def neutral_dir(environ: Optional[Mapping[str, str]] = None) -> Path:
@@ -99,7 +119,9 @@ __all__ = [
     "NEUTRAL_DIRNAME",
     "PROJECT_ENV_RELATIVE",
     "REGISTRY_FILENAME",
+    "cache_home",
     "config_home",
+    "neutral_cache_dir",
     "neutral_consent_file",
     "neutral_dir",
     "neutral_project_env_file",
