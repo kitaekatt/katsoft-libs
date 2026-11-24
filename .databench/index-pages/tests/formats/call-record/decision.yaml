@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/formats/call-record",
+  "decision": "none",
+  "source_sha": "a401038c1c221261658b2d38c7d97bc150bfde69",
+  "input_sha256": "783000fd954fa4c8a9593ed46891e22f0701fca5d83a96b8901e1ea70a0648e9",
+  "input_shape_sha256": "981b1606d662f1ba5127c9d9665983fb58d5ce20925968991a112f3e99f59a93",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

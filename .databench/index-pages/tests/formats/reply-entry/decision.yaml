@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/formats/reply-entry",
+  "decision": "none",
+  "source_sha": "a401038c1c221261658b2d38c7d97bc150bfde69",
+  "input_sha256": "70ccd27cbc475a97b3c532eec841885c779115afb54af581afc807a560b99a47",
+  "input_shape_sha256": "d14458b3b4325d8cc2024984362532d2f45610d5e6731a0c9069af0ebf7bc5ee",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

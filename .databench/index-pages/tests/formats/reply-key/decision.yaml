@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/formats/reply-key",
+  "decision": "none",
+  "source_sha": "a401038c1c221261658b2d38c7d97bc150bfde69",
+  "input_sha256": "c3aaea1b6b5354bdb96ebe1ae72a8ed604f5f0559aba9e64d5878415dd3d799b",
+  "input_shape_sha256": "396b1c9c445b2805ad9af7c073224ead3bfff8c9ca7ffd49f14669ece1e2800a",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

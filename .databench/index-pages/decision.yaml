@@ -1,12 +1,13 @@
 {
   "schema_version": 1,
   "directory": ".",
-  "decision": "none",
-  "source_sha": "368f6c5e53d161dd237979b9c0114f6308457d49",
-  "input_sha256": "8948ac30aa67b7b3a0a8fa5ae8c0e932bb912b2c7697dafa6787725d53fb7d3e",
-  "input_shape_sha256": "d9d63c9c8f0594d52491a0f89ef6eeb78b0abf8f5bafc58703739070f2d763c0",
+  "decision": "page",
+  "source_sha": "1fe613324a5ffbb933f618c76792ed02dd33e04a",
+  "generation_spec_sha256": "8573606e5f3b827eff1eb29578efe854f3b917c38f7e9b9539ce898c925d9fa1",
+  "input_sha256": "24a601e594d65239467c7ab98431064fec1a0f33db63d98e4ee254b795fb4d10",
+  "input_shape_sha256": "25681e3018444c64b79bcd63df084f3611c2e2195fdc5cf09977723dd480e682",
   "dirty": false,
-  "identity": "",
+  "identity": "Packaging, release, and reference documentation for the katsoft libraries: the contracts, llm-kit-config, and llm-kit-send packages with their PyPI and npm release pipeline and cross-language format tests.",
   "instructions": "",
   "references": []
 }

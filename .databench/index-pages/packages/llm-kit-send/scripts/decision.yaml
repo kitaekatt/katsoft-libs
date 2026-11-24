@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "packages/llm-kit-send/scripts",
+  "decision": "none",
+  "source_sha": "a401038c1c221261658b2d38c7d97bc150bfde69",
+  "input_sha256": "818cbd02d0f8d09218a531231e7c46a5e30913e3a3adbffb4f7a8b4739b8bd04",
+  "input_shape_sha256": "7d606acb814a7ae3aea00afaa46cfbe448c0dd71e1cf5780894c2a6755ee3b78",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

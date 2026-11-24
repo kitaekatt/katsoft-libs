@@ -3,8 +3,10 @@
   "state": "complete",
   "finished": {
     "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts": "afd6870ec5ff7477f0c853972072ffde8b7d7644e5b9b012a85a7a23cff3ef0d",
-    "packages/katsoft-llm-kit/src/llm_kit/pipeline": "fa5b7b51afcc92354d3a71858aee4a0c2a6311077c14dc245d9c4484aec9bdff",
-    "packages/katsoft-llm-kit/src/llm_kit/relay": "f7f97045afea50e0acaba50a61259e0589eb03be4e48274deb2f480994dcbc6d",
-    "packages/katsoft-llm-kit/src/llm_kit": "103caaed0d23464cfd648532e43350fc7b7c03fbfb3a44f4b56e9ffa5c41e43a"
+    "packages/katsoft-llm-kit/src/llm_kit/pipeline": "282405609043141cb0f8cb36119d8a5e0af54e1e4343a05e6041bd09b091fa1f",
+    "packages/katsoft-llm-kit/src/llm_kit/registry": "885ca60bb4f1b6c7dcaee01fbd3588d6d1df75df64bf649300463ff386f9249c",
+    "packages/katsoft-llm-kit/src/llm_kit/relay": "5b5ac2862ce851356d58889155c6ee540d730be0b8a1b6e0edb0be66d847fc84",
+    "packages/katsoft-llm-kit/src/llm_kit": "cd9459cb394dded325102e9febff74b7f2d86cc715c99a141b30bc3b7c13e111",
+    ".": "9d13d01062770c2c17b0369ddcbb3eb3d1566e54b315fbc4fc1792f62c47fbf7"
   }
 }
