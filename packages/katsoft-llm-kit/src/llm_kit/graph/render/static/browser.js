@@ -7,6 +7,11 @@
 // closes with -; double-click, or "Open graph file" in the details panel, moves
 // into the graph file it runs. All text from the catalog is set as text, never
 // parsed as markup.
+//
+// A catalog of format llm-kit.graph-catalog/v2 also carries inferred labels (titles,
+// descriptions, edge labels, input and output glosses written by a small model). The
+// Labels button shows or hides them; with them off, or with a v1 catalog, the picture
+// is the plain one. Label text is inferred, so it is drawn in purple italic.
 (function () {
   "use strict";
 
@@ -32,11 +37,30 @@
     "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
     "elk.padding": "[top=30,left=30,bottom=30,right=30]",
   };
+  // Added while labels are on: an edge label sits at the middle of its edge and takes room in the layer.
+  var ELK_LABEL_OPTIONS = {
+    "elk.edgeLabels.placement": "CENTER",
+    "elk.edgeLabels.inline": "false",
+    "elk.spacing.edgeLabel": "4",
+    "elk.layered.spacing.nodeNodeBetweenLayers": "64",
+  };
+
+  var LABELLED_FORMAT = "llm-kit.graph-catalog/v2";
+  var LABELS_KEY = "llm-kit-graph-labels";
+  var LABELS = CATALOG.format === LABELLED_FORMAT && CATALOG.labels && typeof CATALOG.labels === "object" ? CATALOG.labels : null;
+  var ELLIPSIS = String.fromCharCode(0x2026), DOT = " " + String.fromCharCode(0xb7) + " ";
+  var FONT_UI = "system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif";
+  var FONT_TITLE = "700 13px " + FONT_UI, FONT_DESC = "italic 11px " + FONT_UI, FONT_EDGE = "italic 10.5px " + FONT_UI;
+  var FONT_GLOSS = "italic 10px " + FONT_UI, FONT_H1 = "700 34px " + FONT_UI, FONT_H2 = "italic 15px " + FONT_UI;
+  // Labelled cards are wider and as tall as their text: tag, title, up to DESC_LINES of description, raw line.
+  var LAB_W = 252, DESC_LINES = 3, DESC_STEP = 13.5, LAB_IO_W = 200, EDGE_LABEL_W = 150, HEADER_W = 880;
+  var LAB_KIND = { op: "CODE", llm: "AI MODEL" };
 
   var elk = new ELK();
-  var state = { trail: [], open: new Set(), sel: null, view: { k: 1, x: 0, y: 0 }, query: "", layoutId: 0, allEdges: false };
+  var state = { trail: [], open: new Set(), sel: null, view: { k: 1, x: 0, y: 0 }, query: "", layoutId: 0, allEdges: false, labels: true };
   var meta = new Map();   // drawn element id -> {node, key, kind, ...}
-  var drawn = { edges: [], size: { w: 0, h: 0 } };
+  var drawn = { edges: [], labels: [], size: { w: 0, h: 0 }, files: [] };
+  var edgeText = new Map();   // ELK edge label id -> its wrapped lines
 
   // ------------------------------------------------------------------ helpers
 
@@ -116,6 +140,146 @@
 
   function current() { return state.trail[state.trail.length - 1]; }
 
+  // ------------------------------------------------------------------ labels
+
+  function own(obj, key) { return !!obj && typeof obj === "object" && Object.prototype.hasOwnProperty.call(obj, key); }
+  function str(v) { return typeof v === "string" && v ? v : null; }
+  function labelsOn() { return !!LABELS && state.labels; }
+  function extend(a, b) { Object.keys(b).forEach(function (k) { a[k] = b[k]; }); return a; }
+
+  // The labels of one graph file, or null when labels are off or the file has none.
+  function fileLabels(file) { return labelsOn() && own(LABELS, file) && typeof LABELS[file] === "object" && LABELS[file] ? LABELS[file] : null; }
+
+  // The labels of one node: lpath is its path inside its graph file (an inline body adds "id/").
+  // A label with no title is ignored; the node is then drawn as today.
+  function nodeLabel(file, lpath) {
+    var fl = fileLabels(file), n = fl && own(fl.nodes, lpath) ? fl.nodes[lpath] : null;
+    if (!n || typeof n !== "object" || !str(n.title)) return null;
+    return { title: n.title, description: str(n.description) || "", reads: n.reads && typeof n.reads === "object" ? n.reads : {} };
+  }
+
+  // A gloss for a graph input or output of a file, or null.
+  function portGloss(file, which, name) {
+    var fl = fileLabels(file), g = fl && fl.graph && typeof fl.graph === "object" ? fl.graph : null;
+    return g && own(g[which], name) ? str(g[which][name]) : null;
+  }
+
+  var measurer = null;
+  function textWidth(text, font, perChar) {
+    if (measurer === null) {
+      try { measurer = document.createElement("canvas").getContext("2d") || false; } catch (err) { measurer = false; }
+    }
+    if (!measurer) return text.length * perChar;
+    measurer.font = font;
+    return measurer.measureText(text).width * 1.03;
+  }
+
+  // Greedy word wrap to at most maxLines lines of width px; the last line ends in an ellipsis when text is cut.
+  function wrap(text, width, font, perChar, maxLines) {
+    var words = String(text || "").split(/\s+/).filter(Boolean), lines = [], line = "";
+    function w(s) { return textWidth(s, font, perChar); }
+    while (words.length && lines.length < maxLines) {
+      var word = words[0], trial = line ? line + " " + word : word;
+      if (w(trial) <= width) { line = trial; words.shift(); continue; }
+      if (line) { lines.push(line); line = ""; continue; }
+      var n = word.length;
+      while (n > 1 && w(word.slice(0, n)) > width) n--;
+      lines.push(word.slice(0, n));
+      word = word.slice(n);
+      if (word) words[0] = word; else words.shift();
+    }
+    var cut = words.length > 0;
+    if (!cut && line) lines.push(line);
+    if (cut && lines.length) {
+      var last = lines[lines.length - 1].replace(/[\s.,;:]+$/, "");
+      while (last.length > 1 && w(last + ELLIPSIS) > width) last = last.slice(0, -1).replace(/\s+$/, "");
+      lines[lines.length - 1] = last + ELLIPSIS;
+    }
+    return lines;
+  }
+
+  function oneLine(text, width, font, perChar) { return wrap(text, width, font, perChar, 1)[0] || ""; }
+
+  function kindTag(kind, labelled) { return labelled && LAB_KIND[kind] ? LAB_KIND[kind] : KIND_LABEL[kind]; }
+
+  // The mono line at the foot of a labelled card: the raw id, the op or model, and the prompt file.
+  function rawLine(node, kind) {
+    var def = node.definition || {}, parts = [node.id];
+    if (kind === "llm") {
+      parts.push(typeof def.model === "string" ? def.model : "llm.model");
+      if (typeof def.prompt === "string") parts.push(base(def.prompt));
+    } else {
+      parts.push(cardSub(node));
+    }
+    return parts.join(DOT);
+  }
+
+  // The size of a labelled card and the wrapped text it holds.
+  function cardBox(info, lab) {
+    var innerW = LAB_W - 26, titleW = LAB_W - (info.canOpen ? 48 : 26);
+    var title = oneLine(lab.title, titleW, FONT_TITLE, 7.4);
+    var desc = lab.description ? wrap(lab.description, innerW, FONT_DESC, 5.6, DESC_LINES) : [];
+    var rawY = (desc.length ? 51 + (desc.length - 1) * DESC_STEP : 34) + 18;
+    return { w: LAB_W, h: Math.round(rawY + 11), title: title, desc: desc, rawY: rawY };
+  }
+
+  // The ELK label of a dependency edge: its text wrapped to two lines.
+  function edgeLabel(text, id) {
+    var lines = wrap(text, EDGE_LABEL_W, FONT_EDGE, 5.4, 2), widest = 0;
+    lines.forEach(function (l) { widest = Math.max(widest, textWidth(l, FONT_EDGE, 5.4)); });
+    edgeText.set(id, lines);
+    return { id: id, text: text, width: Math.ceil(widest) + 8, height: lines.length * 12 + 4 };
+  }
+
+  function usedByText(file) {
+    var uses = CATALOG.used_by[file] || [];
+    if (!uses.length) return entryName(file) ? "an entry graph" : "used by nothing in this catalog";
+    var names = uses.slice(0, 2).map(function (u) { return shortId(graphAt(u.file).id) + " > " + u.node; });
+    return "used by " + names.join(", ") + (uses.length > 2 ? " +" + (uses.length - 2) + " more" : "");
+  }
+
+  // The header block above a labelled graph: plain-English title, purpose, and a mono meta line.
+  function buildHeader(file, graphW) {
+    var fl = fileLabels(file), g = fl && fl.graph && typeof fl.graph === "object" ? fl.graph : null;
+    if (!g || !str(g.title)) return null;
+    var graph = graphAt(file), width = Math.max(520, Math.min(HEADER_W, graphW - 60));
+    var title = wrap(g.title, width, FONT_H1, 18, 2);
+    var purpose = str(g.purpose) ? wrap(g.purpose, width, FONT_H2, 7.4, 4) : [];
+    var y = 52, group = sv("g", { "class": "hdr" });
+    title.forEach(function (line, i) { add(group, sv("text", { "class": "h-title", x: 30, y: y + i * 40, text: line })); });
+    y += (title.length - 1) * 40;
+    if (purpose.length) {
+      y += 28;
+      purpose.forEach(function (line, i) { add(group, sv("text", { "class": "h-purpose", x: 30, y: y + i * 21, text: line })); });
+      y += (purpose.length - 1) * 21;
+    }
+    y += 28;
+    add(group, sv("text", { "class": "h-meta", x: 30, y: y, text: fit([graph.id, graph.file, usedByText(file)].join(DOT), width, 6.9) }));
+    return { g: group, h: y + 26, w: width + 60 };
+  }
+
+  // The key at the foot of the stage: what purple italic means, and which model wrote the labels on screen.
+  function renderKey() {
+    var key = byId("legend-key");
+    clear(key);
+    var on = labelsOn() && drawn.files.some(function (f) { return !!fileLabels(f); });
+    key.hidden = !on;
+    if (!on) return;
+    var made = [];
+    drawn.files.forEach(function (f) {
+      var fl = fileLabels(f);
+      (fl && Array.isArray(fl.sources) ? fl.sources : []).forEach(function (s) {
+        (s && Array.isArray(s.calls) ? s.calls : []).forEach(function (c) {
+          var who = c && str(c.entry) ? c.entry + (str(c.model) ? " (" + c.model + ")" : "") : null;
+          if (who && made.indexOf(who) < 0) made.push(who);
+        });
+      });
+    });
+    add(key, el("span", { "class": "inf", text: "Purple italic" }),
+      " means a label a small model inferred (" + (made.length ? made.join(", ") : "model not recorded") +
+      ") from the graph files and prompts, and so do the plain-English titles. Everything else comes from the graph file.");
+  }
+
   // ------------------------------------------------------------------ list
 
   function fileMatches(graph, q) {
@@ -127,7 +291,15 @@
         if (n.body) walk(n.body.nodes);
       });
     })(graph.nodes);
-    return hay.join("\n").toLowerCase().indexOf(q) >= 0;
+    var fl = fileLabels(graph.file);
+    if (fl) {
+      if (fl.graph && typeof fl.graph === "object") hay.push(fl.graph.title, fl.graph.purpose);
+      Object.keys(fl.nodes || {}).forEach(function (path) {
+        var n = fl.nodes[path];
+        if (n && typeof n === "object") hay.push(n.title, n.description);
+      });
+    }
+    return hay.filter(function (h) { return typeof h === "string"; }).join("\n").toLowerCase().indexOf(q) >= 0;
   }
 
   function countNodes(graph) {
@@ -140,13 +312,16 @@
     var graph = graphAt(file);
     var used = (CATALOG.used_by[file] || []).length;
     var here = current() && current().file === file;
+    var fl = fileLabels(file), g = fl && fl.graph && typeof fl.graph === "object" ? fl.graph : null;
+    var title = g && str(g.title), purpose = g && str(g.purpose);
     return el("div", {
       "class": "item" + (isEntry ? " entry" : "") + (here ? " on" : ""), title: file,
       onclick: function () { go([{ file: file }]); },
     },
-    el("div", { "class": "name", text: label }),
-    graph.description ? el("div", { "class": "desc", text: graph.description }) : null,
+    el("div", { "class": "name", text: title || label }),
+    purpose ? el("div", { "class": "desc inf", text: purpose }) : (graph.description ? el("div", { "class": "desc", text: graph.description }) : null),
     el("div", { "class": "meta" },
+      title ? el("span", { text: label }) : null,
       el("span", { text: countNodes(graph) + " nodes" }),
       used ? el("span", { text: "used by " + used }) : null,
       isEntry ? el("span", { text: base(file) }) : null));
@@ -256,15 +431,20 @@
 
   function nodeId(key) { return "n:" + key; }
 
-  function buildLevel(graph, scope, depth, files, edges) {
+  // ctx says where the labels of this level live: the graph file it belongs to, and the prefix of its
+  // node paths inside that file (an inline body continues the path of the node that holds it).
+  function buildLevel(graph, scope, depth, files, edges, ctx) {
     var children = [];
+    if (drawn.files.indexOf(ctx.file) < 0) drawn.files.push(ctx.file);
     graph.nodes.forEach(function (node) {
       var key = scope ? scope + "/" + node.id : node.id;
       var id = nodeId(key);
       var target = node.ref ? graphAt(node.ref) : node.body;
       var loops = node.ref && files.indexOf(node.ref) >= 0;
       var canOpen = !!target && depth < MAX_DEPTH && !loops;
-      var info = { node: node, key: key, kind: kindOf(node), canOpen: canOpen, compound: false, graph: graph };
+      var lpath = ctx.prefix + node.id;
+      var info = { node: node, key: key, kind: kindOf(node), canOpen: canOpen, compound: false, graph: graph,
+        file: ctx.file, lpath: lpath, lab: nodeLabel(ctx.file, lpath) };
       meta.set(id, info);
       if (canOpen && state.open.has(key)) {
         info.compound = true;
@@ -272,8 +452,12 @@
         children.push({
           id: id,
           layoutOptions: { "elk.padding": "[top=" + HEAD + ",left=14,bottom=14,right=14]" },
-          children: buildLevel(target, key, depth + 1, node.ref ? files.concat([node.ref]) : files, edges),
+          children: buildLevel(target, key, depth + 1, node.ref ? files.concat([node.ref]) : files, edges,
+            node.ref ? { file: node.ref, prefix: "" } : { file: ctx.file, prefix: lpath + "/" }),
         });
+      } else if (info.lab) {
+        info.box = cardBox(info, info.lab);
+        children.push({ id: id, width: info.box.w, height: info.box.h });
       } else {
         children.push({ id: id, width: CARD_W, height: CARD_H });
       }
@@ -281,9 +465,13 @@
     var shown = state.allEdges ? null : mainDeps(graph.nodes);
     graph.nodes.forEach(function (node) {
       var key = scope ? scope + "/" + node.id : node.id;
+      var lab = meta.get(nodeId(key)).lab;
       (shown ? shown[node.id] : node.deps).forEach(function (dep) {
         var from = nodeId(scope ? scope + "/" + dep : dep);
-        edges.push({ id: "e" + edges.length, sources: [from], targets: [nodeId(key)], kind: "dep" });
+        var edge = { id: "e" + edges.length, sources: [from], targets: [nodeId(key)], kind: "dep" };
+        var text = lab && own(lab.reads, dep) ? str(lab.reads[dep]) : null;
+        if (text) edge.labels = [edgeLabel(text, edge.id + "l")];
+        edges.push(edge);
       });
     });
     return children;
@@ -318,8 +506,10 @@
 
   function buildGraph(graph, file) {
     meta.clear();
+    drawn.files = [];
+    edgeText.clear();
     var edges = [];
-    var children = buildLevel(graph, "", 0, [file], edges);
+    var children = buildLevel(graph, "", 0, [file], edges, { file: file, prefix: "" });
     var inputs = [], outputs = [];
     graph.inputs.forEach(function (port) {
       var readers = [];
@@ -332,8 +522,9 @@
         });
       })(graph.nodes, "");
       var id = "i:" + port.name;
-      meta.set(id, { io: "input", name: port.name, port: port, readers: readers });
-      inputs.push({ id: id, width: IO_W, height: IO_H });
+      var box = ioBox(portGloss(file, "inputs", port.name));
+      meta.set(id, { io: "input", name: port.name, port: port, readers: readers, box: box });
+      inputs.push({ id: id, width: box.w, height: box.h });
       // Lines go only to the readers that read no sibling node; selecting the
       // input highlights every reader.
       readers.forEach(function (key) {
@@ -344,15 +535,24 @@
     });
     graph.outputs.forEach(function (name) {
       var id = "o:" + name;
-      meta.set(id, { io: "output", name: name });
-      outputs.push({ id: id, width: IO_W, height: IO_H });
+      var box = ioBox(portGloss(file, "outputs", name));
+      meta.set(id, { io: "output", name: name, box: box });
+      outputs.push({ id: id, width: box.w, height: box.h });
       (graph.output_sources[name] || []).forEach(function (src) {
         edges.push({ id: "e" + edges.length, sources: [nodeId(src)], targets: [id], kind: "output" });
       });
     });
     inputs.forEach(function (n) { n.layoutOptions = { "elk.layered.layering.layerConstraint": "FIRST" }; });
     outputs.forEach(function (n) { n.layoutOptions = { "elk.layered.layering.layerConstraint": "LAST" }; });
-    return { id: "root", layoutOptions: ELK_OPTIONS, children: inputs.concat(children, outputs), edges: edges };
+    var options = labelsOn() ? extend(extend({}, ELK_OPTIONS), ELK_LABEL_OPTIONS) : ELK_OPTIONS;
+    return { id: "root", layoutOptions: options, children: inputs.concat(children, outputs), edges: edges };
+  }
+
+  // The size of an input or output pill; a gloss adds up to two lines of purple italic under the name.
+  function ioBox(gloss) {
+    if (!gloss) return { w: IO_W, h: IO_H, gloss: [] };
+    var lines = wrap(gloss, LAB_IO_W - 26, FONT_GLOSS, 5.2, 2);
+    return { w: LAB_IO_W, h: IO_H + 12 * lines.length, gloss: lines, text: gloss };
   }
 
   function layout(refit) {
@@ -363,7 +563,7 @@
       if (token !== state.layoutId) return;
       byId("status").textContent = "";
       draw(laid);
-      if (refit) fitView();
+      if (refit) fitView(true);
       select(state.sel, true);
     }).catch(function (err) {
       byId("status").textContent = "The layout failed: " + err.message;
@@ -389,6 +589,8 @@
       });
     })(laid, 0, 0);
     drawn.edges = [];
+    drawn.labels = [];
+    var labelsG = sv("g");
     (laid.edges || []).forEach(function (e) {
       var origin = abs.get(e.container || "root") || { x: 0, y: 0 };
       (e.sections || []).forEach(function (sec) {
@@ -401,9 +603,25 @@
         drawn.edges.push(path);
         add(edgesG, path);
       });
+      (e.labels || []).forEach(function (l) {
+        var lines = edgeText.get(l.id);
+        if (!lines || l.x === undefined) return;
+        var g = sv("g", { "class": "elabel", transform: "translate(" + (l.x + origin.x) + "," + (l.y + origin.y) + ")" },
+          sv("title", { text: l.text }));
+        lines.forEach(function (line, i) {
+          add(g, sv("text", { x: l.width / 2, y: 10 + i * 12, "text-anchor": "middle", text: line }));
+        });
+        g.dataset.from = e.sources[0];
+        g.dataset.to = e.targets[0];
+        drawn.labels.push(g);
+        add(labelsG, g);
+      });
     });
-    add(vp, defs(), frames, edgesG, cards);
-    drawn.size = { w: laid.width || 0, h: laid.height || 0 };
+    var header = labelsOn() ? buildHeader(current().file, laid.width || 0) : null;
+    var scene = sv("g", { transform: "translate(0," + (header ? header.h : 0) + ")" }, frames, edgesG, labelsG, cards);
+    add(vp, defs(), header ? header.g : null, scene);
+    drawn.size = { w: Math.max(laid.width || 0, header ? header.w : 0), h: (laid.height || 0) + (header ? header.h : 0) };
+    renderKey();
   }
 
   function defs() {
@@ -445,7 +663,31 @@
     return g;
   }
 
+  // A card with labels: kind tag, bold title, purple italic description, and the raw id, op or model and prompt in mono.
+  function drawLabelledCard(id, info, x, y) {
+    var node = info.node, kind = info.kind, lab = info.lab, box = info.box;
+    var raw = rawLine(node, kind);
+    var g = sv("g", {
+      "class": "node lab" + (node.when ? " when" : ""), "data-id": id, transform: "translate(" + x + "," + y + ")",
+      style: "--c:" + kindColor(kind),
+    },
+    sv("title", { text: lab.title + (lab.description ? "\n" + lab.description : "") + "\n" + raw + (node.when ? "\n(only when " + node.when + ")" : "") }),
+    sv("rect", { "class": "box", width: box.w, height: box.h, rx: 8 }),
+    kind === "llm" ? sv("path", { "class": "topbar", d: "M1.5,9 Q1.5,1.5 9,1.5 L" + (box.w - 9) + ",1.5 Q" + (box.w - 1.5) + ",1.5 " + (box.w - 1.5) + ",9" }) : null,
+    sv("rect", { "class": "stripe", width: 4, height: box.h - 20, x: 0, y: 10, rx: 2 }),
+    sv("text", { "class": "tag", x: 14, y: 17, text: kindTag(kind, true) }),
+    node.when ? sv("text", { "class": "tag cond", x: 14 + kindTag(kind, true).length * 6.6 + 14, y: 17, text: "ONLY IF NEEDED" }) : null,
+    sv("text", { "class": "ltitle", x: 14, y: 35, text: box.title }),
+    box.desc.map(function (line, i) { return sv("text", { "class": "ldesc", x: 14, y: 51 + i * DESC_STEP, text: line }); }),
+    sv("text", { "class": "raw", x: 14, y: box.rawY, text: fit(raw, box.w - 26, 5.7) }));
+    if (info.canOpen) add(g, toggleButton(info, box.w - 28, 8, false));
+    g.addEventListener("click", function () { select(info.key); });
+    g.addEventListener("dblclick", function () { if (node.ref) enter(info.key, node); });
+    return g;
+  }
+
   function drawCard(id, info, x, y) {
+    if (info.box) return drawLabelledCard(id, info, x, y);
     var node = info.node, kind = info.kind;
     var g = sv("g", {
       "class": "node" + (node.when ? " when" : ""), "data-id": id, transform: "translate(" + x + "," + y + ")",
@@ -466,12 +708,15 @@
   function drawCompound(id, info, x, y, w, h) {
     var node = info.node, kind = info.kind, target = info.target;
     var sub = node.ref ? (target.id + "  \u00b7  " + base(node.ref)) : "inline body";
+    var tag = kindTag(kind, !!info.lab);
+    if (info.lab) sub = node.id + "  \u00b7  " + sub;
     var g = sv("g", {
       "class": "compound node", "data-id": id, transform: "translate(" + x + "," + y + ")", style: "--c:" + kindColor(kind),
     },
+    info.lab ? sv("title", { text: info.lab.title + (info.lab.description ? "\n" + info.lab.description : "") }) : null,
     sv("rect", { "class": "frame", width: w, height: h, rx: 10 }),
-    sv("text", { "class": "tag", x: 14, y: 17, text: KIND_LABEL[kind] }),
-    sv("text", { "class": "ctitle", x: 14 + KIND_LABEL[kind].length * 7 + 6, y: 17, text: node.id }),
+    sv("text", { "class": "tag", x: 14, y: 17, text: tag }),
+    sv("text", { "class": "ctitle", x: 14 + tag.length * 7 + 6, y: 17, text: info.lab ? fit(info.lab.title, w - 50 - tag.length * 7, 7.4) : node.id }),
     sv("text", { "class": "csub", x: 14, y: 34, text: fit(sub + (kind === "repeat" ? "  \u00b7  up to " + node.detail.max + " rounds" : ""), w - 50, 6.1) }));
     add(g, toggleButton(info, w - 28, 8, true));
     g.addEventListener("click", function (ev) { if (ev.target.closest(".node") === g) select(info.key); });
@@ -480,11 +725,13 @@
   }
 
   function drawIo(id, info, x, y) {
-    var g = sv("g", { "class": "io", "data-id": id, transform: "translate(" + x + "," + y + ")" },
-      sv("title", { text: (info.io === "input" ? "Graph input " : "Graph output ") + info.name }),
-      sv("rect", { width: IO_W, height: IO_H, rx: IO_H / 2 }),
+    var box = info.box, glossed = box.gloss.length > 0;
+    var g = sv("g", { "class": "io" + (glossed ? " glossed" : ""), "data-id": id, transform: "translate(" + x + "," + y + ")" },
+      sv("title", { text: (info.io === "input" ? "Graph input " : "Graph output ") + info.name + (glossed ? "\n" + box.text : "") }),
+      sv("rect", { width: box.w, height: box.h, rx: glossed ? 14 : IO_H / 2 }),
       sv("text", { "class": "iotag", x: 12, y: 19, text: info.io === "input" ? "IN" : "OUT" }),
-      sv("text", { x: info.io === "input" ? 32 : 40, y: 19.5, text: fit(info.name, IO_W - 46, 7) }));
+      sv("text", { x: info.io === "input" ? 32 : 40, y: 19.5, text: fit(info.name, box.w - 46, 7) }),
+      box.gloss.map(function (line, i) { return sv("text", { "class": "gloss", x: 12, y: 34 + i * 12, text: line }); }));
     g.addEventListener("click", function () { select(id); });
     return g;
   }
@@ -504,6 +751,9 @@
       path.setAttribute("marker-end", hot ? "url(#arrow-hot)" : "url(#arrow)");
       if (hot) { near.add(path.dataset.from); near.add(path.dataset.to); }
     });
+    drawn.labels.forEach(function (g) {
+      g.classList.toggle("hot", !!target && (g.dataset.from === target || g.dataset.to === target));
+    });
     svg.classList.toggle("focus", !!target);
     svg.querySelectorAll("[data-id]").forEach(function (g) {
       g.classList.toggle("sel", g.dataset.id === target);
@@ -513,11 +763,15 @@
     renderInspector(target);
   }
 
-  function chipList(keys, scope) {
+  // notes (optional) maps a key to a purple italic label shown beside its chip.
+  function chipList(keys, scope, notes) {
     if (!keys.length) return el("div", { "class": "file", text: "none" });
-    return el("div", { "class": "chips" }, keys.map(function (k) {
+    var noted = !!notes && keys.some(function (k) { return own(notes, k) && !!str(notes[k]); });
+    return el("div", { "class": "chips" + (noted ? " col" : "") }, keys.map(function (k) {
       var key = scope ? scope + "/" + k : k;
-      return el("span", { "class": "chip", text: k, onclick: function () { select(key); } });
+      var chip = el("span", { "class": "chip", text: k, onclick: function () { select(key); } });
+      if (!noted) return chip;
+      return el("div", { "class": "noted" }, chip, own(notes, k) && str(notes[k]) ? el("span", { "class": "inf", text: str(notes[k]) }) : null);
     }));
   }
 
@@ -550,6 +804,7 @@
     if (info.io) {
       add(box, el("span", { "class": "pill", style: "--c:var(--io)", text: info.io === "input" ? "GRAPH INPUT" : "GRAPH OUTPUT" }),
         el("h2", { text: info.name }));
+      if (info.box && info.box.text) add(box, el("p", { "class": "inf", text: info.box.text }));
       if (info.port && info.port.description) add(box, el("p", { text: info.port.description }));
       var readers = [];
       if (info.io === "input") meta.forEach(function (m) { if (m.node && m.node.reads_inputs.indexOf(info.name) >= 0) readers.push(m.key); });
@@ -559,17 +814,19 @@
     }
     var node = info.node, kind = info.kind, scope = info.key.split("/").slice(0, -1).join("/");
     var readBy = info.graph.nodes.filter(function (n) { return n.deps.indexOf(node.id) >= 0; }).map(function (n) { return n.id; });
+    var lab = info.lab;
     add(box,
-      el("span", { "class": "pill", style: "--c:" + kindColor(kind), text: KIND_LABEL[kind] }),
-      node.when ? el("span", { "class": "pill", style: "--c:var(--muted)", text: "WHEN" }) : null,
-      el("h2", { text: node.id }),
-      el("div", { "class": "file", text: info.key.indexOf("/") >= 0 ? info.key : KIND_HELP[kind] }),
+      el("span", { "class": "pill", style: "--c:" + kindColor(kind), text: kindTag(kind, !!lab) }),
+      node.when ? el("span", { "class": "pill", style: "--c:var(--muted)", text: lab ? "ONLY IF NEEDED" : "WHEN" }) : null,
+      el("h2", { text: lab ? lab.title : node.id }),
+      el("div", { "class": "file", text: lab ? info.key + "  " + DOT.trim() + "  " + KIND_HELP[kind] : (info.key.indexOf("/") >= 0 ? info.key : KIND_HELP[kind]) }),
+      lab && lab.description ? el("p", { "class": "inf", text: lab.description }) : null,
       el("h3", { text: "What it is" }),
       kv([["op", node.detail && node.detail.op], ["model", (node.definition || {}).model], ["effort", (node.definition || {}).effort],
         ["human", kind === "human" ? node.detail.kind : null], ["adapter", node.detail && node.detail.adapter],
         ["over", node.detail && node.detail.over], ["key", node.detail && node.detail.key],
         ["max", node.detail && node.detail.max], ["until", node.detail && node.detail.until], ["when", node.when]]),
-      el("h3", { text: "Reads" }), chipList(node.deps, scope),
+      el("h3", { text: "Reads" }), chipList(node.deps, scope, lab ? lab.reads : null),
       node.reads_inputs.length ? el("div", { "class": "file", text: "graph inputs: " + node.reads_inputs.join(", ") }) : null,
       el("h3", { text: "Read by" }), chipList(readBy, scope));
     if (node.ref) {
@@ -593,16 +850,22 @@
     add(box, el("h3", { text: "As written" }), el("pre", { text: JSON.stringify(node.definition, null, 2) }));
   }
 
+  function outputGlosses(graph) {
+    return graph.outputs.some(function (name) { return !!portGloss(graph.file, "outputs", name); });
+  }
+
   function renderOverview(box, graph) {
     var counts = {};
     (function walk(nodes) { nodes.forEach(function (n) { var k = kindOf(n); counts[k] = (counts[k] || 0) + 1; if (n.body) walk(n.body.nodes); }); })(graph.nodes);
     var runs = [];
     (function walk(nodes) { nodes.forEach(function (n) { if (n.ref && runs.indexOf(n.ref) < 0) runs.push(n.ref); if (n.body) walk(n.body.nodes); }); })(graph.nodes);
+    var fl = fileLabels(graph.file), gl = fl && fl.graph && typeof fl.graph === "object" && str(fl.graph.title) ? fl.graph : null;
     add(box,
       graph.outer ? el("span", { "class": "pill", style: "--c:var(--commit)", text: "OUTER GRAPH" }) : null,
       entryName(graph.file) ? el("span", { "class": "pill", style: "--c:var(--accent)", text: "ENTRY" }) : null,
-      el("h2", { text: graph.id }),
-      el("div", { "class": "file", text: graph.file }),
+      el("h2", { text: gl ? gl.title : graph.id }),
+      el("div", { "class": "file", text: gl ? graph.id + "  " + DOT.trim() + "  " + graph.file : graph.file }),
+      gl && str(gl.purpose) ? el("p", { "class": "inf", text: gl.purpose }) : null,
       graph.description ? el("p", { text: graph.description }) : null,
       el("h3", { text: "Nodes" }),
       el("div", { "class": "chips" }, Object.keys(counts).map(function (k) {
@@ -610,12 +873,16 @@
       })),
       el("h3", { text: "Inputs" }),
       graph.inputs.length ? el("ul", null, graph.inputs.map(function (p) {
+        var gloss = portGloss(graph.file, "inputs", p.name);
         return el("li", null, el("a", { text: p.name, onclick: function () { select("i:" + p.name); } }),
+          gloss ? el("div", { "class": "inf", text: gloss }) : null,
           p.description ? el("div", { "class": "file", text: p.description }) : null);
       })) : el("div", { "class": "file", text: "none" }),
       el("h3", { text: "Outputs" }),
-      graph.outputs.length ? el("div", { "class": "chips" }, graph.outputs.map(function (name) {
-        return el("span", { "class": "chip", text: name, onclick: function () { select("o:" + name); } });
+      graph.outputs.length ? el("div", { "class": "chips" + (outputGlosses(graph) ? " col" : "") }, graph.outputs.map(function (name) {
+        var chip = el("span", { "class": "chip", text: name, onclick: function () { select("o:" + name); } });
+        var gloss = portGloss(graph.file, "outputs", name);
+        return outputGlosses(graph) ? el("div", { "class": "noted" }, chip, gloss ? el("span", { "class": "inf", text: gloss }) : null) : chip;
       })) : el("div", { "class": "file", text: "none" }),
       el("h3", { text: "Runs these graph files" }),
       runs.length ? el("ul", null, runs.map(function (f) {
@@ -632,11 +899,20 @@
     byId("viewport").setAttribute("transform", "translate(" + v.x + "," + v.y + ") scale(" + v.k + ")");
   }
 
-  function fitView() {
+  // First show stops fitting at READABLE_K: below about 0.6 the card text is too small to read,
+  // so a wide graph keeps this scale, starts at its left (entry) edge, and is panned.
+  // The Fit button is a deliberate request and fits the whole graph.
+  var READABLE_K = 0.6;
+
+  function fitView(readable) {
     var svg = byId("canvas"), w = svg.clientWidth, h = svg.clientHeight;
     var gw = drawn.size.w || 1, gh = drawn.size.h || 1;
-    var k = Math.min(1.25, Math.max(0.1, Math.min((w - 40) / gw, (h - 90) / gh)));
-    state.view = { k: k, x: (w - gw * k) / 2, y: Math.max(20, (h - gh * k) / 2) };
+    var fitted = Math.min(1.25, Math.max(0.1, Math.min((w - 40) / gw, (h - 90) / gh)));
+    if (readable === true && fitted < READABLE_K) {
+      state.view = { k: READABLE_K, x: 20, y: Math.max(20, (h - gh * READABLE_K) / 2) };
+    } else {
+      state.view = { k: fitted, x: (w - gw * fitted) / 2, y: Math.max(20, (h - gh * fitted) / 2) };
+    }
     applyView();
   }
 
@@ -691,6 +967,25 @@
     layout(true);
   }
 
+  // The Labels button: only a catalog with labels has it. The choice is kept in localStorage like the theme.
+  function wireLabels() {
+    var button = byId("labels");
+    if (!LABELS) { button.hidden = true; state.labels = false; return; }
+    try { state.labels = localStorage.getItem(LABELS_KEY) !== "off"; } catch (err) { state.labels = true; }
+    function show() {
+      button.setAttribute("aria-pressed", state.labels ? "true" : "false");
+      button.title = state.labels ? "Hide the inferred labels" : "Show the inferred labels";
+    }
+    show();
+    button.addEventListener("click", function () {
+      state.labels = !state.labels;
+      try { localStorage.setItem(LABELS_KEY, state.labels ? "on" : "off"); } catch (err) { /* the choice just is not kept */ }
+      show();
+      renderList();
+      layout(true);
+    });
+  }
+
   function start() {
     byId("project").textContent = CATALOG.project;
     document.title = CATALOG.project + " graphs";
@@ -703,11 +998,12 @@
       document.documentElement.dataset.theme = light ? "light" : "dark";
       localStorage.setItem("llm-kit-graph-theme", light ? "light" : "dark");
     });
+    wireLabels();
     var shell = byId("shell");
     if (CATALOG.entries.length === 1 && Object.keys(CATALOG.files).length === 1) shell.classList.add("no-side");
     byId("toggle-side").addEventListener("click", function () { shell.classList.toggle("no-side"); });
     byId("search").addEventListener("input", function (ev) { state.query = ev.target.value; renderList(); });
-    byId("fit").addEventListener("click", fitView);
+    byId("fit").addEventListener("click", function () { fitView(false); });
     byId("zoom-in").addEventListener("click", function () { var s = byId("canvas"); zoomAt(1.25, s.clientWidth / 2, s.clientHeight / 2); });
     byId("zoom-out").addEventListener("click", function () { var s = byId("canvas"); zoomAt(0.8, s.clientWidth / 2, s.clientHeight / 2); });
     byId("expand-all").addEventListener("click", function () { openAll(true); });

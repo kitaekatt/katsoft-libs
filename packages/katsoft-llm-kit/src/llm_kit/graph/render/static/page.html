@@ -27,12 +27,13 @@
       <button type="button" id="expand-all" title="Open every subgraph in place">Open all</button>
       <button type="button" id="collapse-all" title="Close every subgraph">Close all</button>
       <label class="check" title="Draw every read, including the ones a longer path already implies"><input type="checkbox" id="all-edges"> All reads</label>
+      <button type="button" id="labels" aria-pressed="true" title="Hide the inferred labels">Labels</button>
       <span class="sep"></span>
       <button type="button" class="icon" id="zoom-out" title="Zoom out" aria-label="Zoom out">&minus;</button>
       <button type="button" class="icon" id="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
       <button type="button" id="fit" title="Fit the graph to the window">Fit</button>
     </div>
-    <div class="legend" id="legend"></div>
+    <div class="legend" id="legend"><div class="key" id="legend-key" hidden></div></div>
     <div class="status" id="status"></div>
   </main>
   <aside class="inspector" id="inspector" aria-label="Details"></aside>

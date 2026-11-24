@@ -4,7 +4,7 @@
   --op: #8b94a3; --llm: #b48cff; --human: #f0b45a; --commit: #5fd39a; --graph: #6ea8ff;
   --map: #4fc6d8; --repeat: #ff8fb1; --io: #c9d1dc;
   --card: #1b2029; --card-line: #323a47; --compound: rgba(110,168,255,.05);
-  --edge: #4a5466; --edge-hot: #9fb8ff;
+  --edge: #4a5466; --edge-hot: #9fb8ff; --inferred: #c4b5fd;
 }
 :root[data-theme="light"] {
   --bg: #f6f7f9; --panel: #ffffff; --panel-2: #f1f3f6; --line: #dde1e7; --text: #1b1f27;
@@ -12,7 +12,7 @@
   --op: #6b7380; --llm: #7c4ddb; --human: #c27a12; --commit: #1f9d63; --graph: #2f6fe0;
   --map: #138a9c; --repeat: #d0446f; --io: #4a5260;
   --card: #ffffff; --card-line: #d4d9e1; --compound: rgba(47,111,224,.04);
-  --edge: #aab2bf; --edge-hot: #3563e9;
+  --edge: #aab2bf; --edge-hot: #3563e9; --inferred: #6d28d9;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
@@ -114,3 +114,24 @@ button.icon { width: 30px; padding: 4px 0; text-align: center; }
 svg.focus .node:not(.near), svg.focus .io:not(.near) { opacity: .35; }
 svg.focus .edge:not(.hot) { opacity: .25; }
 .tools .check { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; padding: 0 4px; cursor: pointer; }
+/* inferred labels (catalog v2): purple italic means a small model wrote it */
+.inf { color: var(--inferred); font-style: italic; }
+button[aria-pressed="true"] { border-color: var(--inferred); color: var(--inferred); }
+.legend .key { order: 2; flex-basis: 100%; max-width: 760px; line-height: 1.4; }
+.legend .key span::before { display: none; }
+.inspector .noted { display: flex; gap: 8px; align-items: baseline; }
+.chips.col { flex-direction: column; align-items: flex-start; gap: 5px; }
+.item .desc.inf { color: var(--inferred); }
+.node.lab .ltitle { font-weight: 700; font-size: 13px; }
+.node.lab .ldesc { fill: var(--inferred); font-style: italic; font-size: 11px; }
+.node.lab .raw { fill: var(--faint); font: 9.5px ui-monospace, Consolas, monospace; }
+.node.lab .topbar { fill: none; stroke: var(--llm); stroke-width: 3; stroke-linecap: round; }
+.node .tag.cond { fill: var(--muted); }
+.elabel text { fill: var(--inferred); font-style: italic; font-size: 10.5px; paint-order: stroke; stroke: var(--bg);
+  stroke-width: 4px; stroke-linejoin: round; }
+.elabel.hot text { font-weight: 600; }
+svg.focus .elabel:not(.hot) { opacity: .25; }
+.io text.gloss { fill: var(--inferred); font-family: inherit; font-style: italic; font-size: 10px; }
+.hdr .h-title { fill: var(--text); font-size: 34px; font-weight: 700; letter-spacing: -.01em; }
+.hdr .h-purpose { fill: var(--inferred); font-size: 15px; font-style: italic; }
+.hdr .h-meta { fill: var(--muted); font: 11.5px ui-monospace, Consolas, monospace; }
