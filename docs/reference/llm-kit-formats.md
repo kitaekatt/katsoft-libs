@@ -17,6 +17,7 @@ Some llm-kit files have readers in more than one language. Each of these formats
 | `llm-kit.reply-entry/v1` | `reply-entry.v1.schema.json` | `llm_kit.registry.reply_cache` | `tests/formats/reply-entry/cases.json` (`entries`, `reader_rules`) |
 | `llm-kit.reply-key/v1` | none (a key, not a file) | `llm_kit.registry.reply_cache` | `tests/formats/reply-key/cases.json` (`parts`, `requests`, `same`, `different`) |
 | `llm-kit.consent/v2` | `consent.v2.schema.json` | `llm_kit.registry.consent` | `tests/formats/consent/cases.json` |
+| `llm-kit.graph-catalog/v1` | `graph-catalog.v1.schema.json` | none (the browser script of `llm_kit.graph.render` reads it; `llm_kit.graph.render.catalog` writes it) | `tests/formats/graph-catalog/cases.json` (`documents`) |
 
 `llm_kit.schema.formats.load_schema(format_id)` returns a schema. `llm_kit.schema.formats.SCHEMA_FILES` maps each format id to its file. The file's `$id` is the format id.
 
@@ -325,6 +326,27 @@ The user-level consent file: `$LLM_KIT_CONSENT_FILE`, else `$XDG_CONFIG_HOME/llm
 7. A writer writes `connections` only when it holds an approval, sorted and with no repeats. Thus a release before approvals reads a file without one, and refuses a file with one (an unknown key).
 
 Python: `llm_kit.registry.consent.load_config(path)`, `save_config`, `update_config`, `approve_connection` and `revoke_connection`.
+
+## llm-kit.graph-catalog/v1
+
+The graphs a rendered graph page draws (`llm-kit graph render`). Writer: Python `llm_kit.graph.render.catalog` (`build_catalog`, `project_catalog`). Reader: the page's browser script, `llm_kit/graph/render/static/browser.js`.
+
+```json
+{"format": "llm-kit.graph-catalog/v1", "project": "demo",
+ "entries": [{"name": "demo.night", "file": "graphs/night.graph.yaml"}],
+ "files": {"graphs/night.graph.yaml": {"id": "demo.night", "file": "graphs/night.graph.yaml", "outer": true,
+   "description": "", "inputs": [{"name": "moment", "description": ""}], "outputs": ["bundle"],
+   "output_sources": {"bundle": ["bundle"]},
+   "nodes": [{"id": "bundle", "kind": "op", "subtitle": "demo.bundle", "when": null, "deps": [],
+     "reads_inputs": ["moment"], "detail": {"op": "demo.bundle"}, "definition": {"op": "demo.bundle"}}]}},
+ "used_by": {}}
+```
+
+1. `files` holds each graph file once, keyed by its path relative to the root the catalog was built at (a file outside the root keeps its absolute path). `entries` lists the graphs the catalog was built from; every `entries[].file` is a key of `files`.
+2. A node that runs a graph file has `ref`, a key of `files`. A map or repeat with an inline body has `body` (`location`, `outputs`, `output_sources`, `outer_deps`, `nodes`) instead. A node has at most one of the two.
+3. `deps` names sibling nodes the node's expressions read; `reads_inputs` names graph inputs it reads; `output_sources` maps each output to the sibling nodes its binding reads; `outer_deps` names enclosing nodes an inline body reads. These come from a scan of expressions and are for drawing only: `llm-kit graph validate` is the check.
+4. `used_by` maps a graph file to the nodes that run it: `file` and `node`, the node path in that file (`/` joins the ids of nested inline bodies).
+5. `definition` is the node as written, except that an inline body's `body` is the text `(inline body)`.
 
 ## Change a format
 

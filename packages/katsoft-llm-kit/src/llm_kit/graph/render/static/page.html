@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="llm-kit graph render">
+<title>@@TITLE@@</title>
+<style>@@CSS@@</style>
+</head>
+<body>
+<header class="bar">
+  <button class="icon" id="toggle-side" type="button" title="Show or hide the graph list" aria-label="Graph list">&#9776;</button>
+  <div class="brand"><span class="brand-name" id="project"></span><span class="brand-sub">graphs</span></div>
+  <nav class="crumbs" id="crumbs" aria-label="Where you are"></nav>
+  <div class="bar-right">
+    <button class="icon" id="theme" type="button" title="Light or dark" aria-label="Theme">&#9680;</button>
+  </div>
+</header>
+<div class="shell" id="shell">
+  <aside class="side" id="side" aria-label="Graphs">
+    <div class="search"><input id="search" type="search" placeholder="Find a graph, node or op" autocomplete="off"></div>
+    <div class="list" id="list"></div>
+  </aside>
+  <main class="stage" id="stage">
+    <svg id="canvas" role="img" aria-label="Graph"><g id="viewport"></g></svg>
+    <div class="tools">
+      <button type="button" id="expand-all" title="Open every subgraph in place">Open all</button>
+      <button type="button" id="collapse-all" title="Close every subgraph">Close all</button>
+      <label class="check" title="Draw every read, including the ones a longer path already implies"><input type="checkbox" id="all-edges"> All reads</label>
+      <span class="sep"></span>
+      <button type="button" class="icon" id="zoom-out" title="Zoom out" aria-label="Zoom out">&minus;</button>
+      <button type="button" class="icon" id="zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+      <button type="button" id="fit" title="Fit the graph to the window">Fit</button>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="status" id="status"></div>
+  </main>
+  <aside class="inspector" id="inspector" aria-label="Details"></aside>
+</div>
+<script type="application/json" id="catalog">@@DATA@@</script>
+<script>@@ELK@@</script>
+<script>@@APP@@</script>
+</body>
+</html>

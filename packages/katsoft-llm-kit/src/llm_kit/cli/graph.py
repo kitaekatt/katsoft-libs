@@ -27,6 +27,7 @@ VERBS = {
     "resume": "Resume a halted or waiting run.",
     "serve": "Serve the read-only run and graph inspection viewer.",
     "replay": "Replay one node from its saved inputs against the recorded graph version.",
+    "render": "Write one self-contained HTML page that draws graphs (one graph, or a browser of all).",
 }
 
 COMMANDS_PACKAGE = "llm_kit.graph.commands"

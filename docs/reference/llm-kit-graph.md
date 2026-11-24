@@ -134,7 +134,16 @@ The loader refuses structural faults first (unknown keys, names, kinds, schemas,
 
 ## Verbs
 
-`llm_kit.cli.graph.VERBS` is the verb table: `validate run status answer resume serve replay`. Verb `<v>` is the module `llm_kit.graph.commands.<v>` with `run(argv) -> int`. A verb whose module is not in the build exits 2 and names the missing module.
+`llm_kit.cli.graph.VERBS` is the verb table: `validate run status answer resume serve replay render`. Verb `<v>` is the module `llm_kit.graph.commands.<v>` with `run(argv) -> int`. A verb whose module is not in the build exits 2 and names the missing module.
+
+### Render
+
+`llm-kit graph render [--project DIR] [GRAPH ...] [-o FILE] [--title TEXT]` writes one HTML page that draws graphs. The page holds everything it needs (the catalog, the browser script and the ELK layout library), makes no network requests and opens from disk.
+
+- With no `GRAPH`, the page holds every graph in the project config and a graph browser: a searchable list of the entry graphs and every graph file they run, a laid-out picture of the chosen graph, and a details panel. The default output is `graphs.html`.
+- Each `GRAPH` is a config graph name or a graph file path; a path needs no project config. With one graph that runs no other file, the page opens on that graph with the list hidden. The default output is `<name>.html`.
+
+In the picture, a node that runs a graph (`graph`, `map`, `repeat`) opens in place with `+`; a double click moves into the graph file it runs. By default a read that a longer path already implies is not drawn ("All reads" draws every read), and a graph input draws lines only to readers that read no sibling node; selecting an input highlights every reader. The data is the `llm-kit.graph-catalog/v1` format (`docs/reference/llm-kit-formats.md`), built by `llm_kit.graph.render.build_catalog` or `project_catalog` and drawn by `render_page` or `write_page`. Exit codes: 0 written, 1 a graph that does not load or a file that cannot be written, 2 usage.
 
 ### Replay
 

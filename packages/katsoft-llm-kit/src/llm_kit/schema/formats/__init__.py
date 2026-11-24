@@ -22,6 +22,8 @@ Each format has one id and one JSON Schema file in this package:
   (:mod:`llm_kit.registry.reply_cache`).
 - ``llm-kit.consent/v2``: the user-level consent file, its cost-class policy and
   its connection approvals (:mod:`llm_kit.registry.consent`).
+- ``llm-kit.graph-catalog/v1``: the graphs a rendered graph page draws
+  (:mod:`llm_kit.graph.render`).
 
 The schemas are written in ``llm-scripting-kit.json-schema-subset/v1``, so
 :mod:`llm_kit.schema.json_schema` checks and validates them with no third-party
@@ -50,6 +52,7 @@ __all__ = [
     "CALL_RECORD_V2",
     "REPLY_ENTRY_V1",
     "CONSENT_V2",
+    "GRAPH_CATALOG_V1",
     "SCHEMA_FILES",
     "load_schema",
 ]
@@ -78,6 +81,8 @@ CALL_RECORD_V2 = "llm-kit.call-record/v2"
 REPLY_ENTRY_V1 = "llm-kit.reply-entry/v1"
 #: The user-level consent file (``schema: 2``): the cost-class policy and the connection approvals.
 CONSENT_V2 = "llm-kit.consent/v2"
+#: The graphs a rendered graph page draws: entry graphs, graph files, who runs each file.
+GRAPH_CATALOG_V1 = "llm-kit.graph-catalog/v1"
 
 #: Format id -> the schema file name in this package. The file's ``$id`` is the format id.
 SCHEMA_FILES = {
@@ -93,6 +98,7 @@ SCHEMA_FILES = {
     CALL_RECORD_V2: "call-record.v2.schema.json",
     REPLY_ENTRY_V1: "reply-entry.v1.schema.json",
     CONSENT_V2: "consent.v2.schema.json",
+    GRAPH_CATALOG_V1: "graph-catalog.v1.schema.json",
 }
 
 

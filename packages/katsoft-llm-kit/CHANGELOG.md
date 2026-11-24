@@ -2,6 +2,29 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## Unreleased
+
+Graph pages: `llm-kit graph render` draws graph files as one self-contained HTML page.
+
+Added:
+
+- `llm-kit graph render [--project DIR] [GRAPH ...] [-o FILE] [--title TEXT]` (`llm_kit.graph.commands.render`). With no graph it renders every graph in the project config with a graph browser; with graph names or graph file paths it renders those (a path needs no project config).
+- `llm_kit.graph.render.catalog`: `build_catalog`, `project_catalog` and `CATALOG_FORMAT`. A catalog holds the entry graphs, every graph file they run (each once) and the nodes that run each file.
+- `llm_kit.graph.render.page`: `render_page` and `write_page`. The page embeds the catalog, the browser script and the layout library (elkjs 0.12.1, Eclipse Public License 2.0, unmodified, licence text beside it) and makes no network requests.
+- The format `llm-kit.graph-catalog/v1`: `llm_kit.schema.formats.GRAPH_CATALOG_V1`, `graph-catalog.v1.schema.json`, the shared cases `tests/formats/graph-catalog/cases.json` and its section in `docs/reference/llm-kit-formats.md`.
+- The example `examples/render_graphs.py`.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. Each new public name has a docstring; `public-surface.json` lists `llm_kit.graph.render.catalog`, `llm_kit.graph.render.page` and `GRAPH_CATALOG_V1`, and `test_public_surface_lists_the_graph_names` and `test_public_surface_lists_the_format_names` check them.
+2. Semver release with a changelog: pending; this entry gets its version at release.
+3. Tests for each public function: pass. `tests/llm-kit/graph/test_render.py` calls `build_catalog`, `project_catalog`, `render_page`, `write_page` and the command's `run`.
+4. No client names, prompts or data: pass. The tests use the `demo.*` fixture project and graphs written in the test.
+5. Examples run without a client app: pass from the source tree (`test_the_example_runs_from_the_source_tree`); the wheel check runs at release.
+6. JSON Schema for each file format: pass. Catalog writer tests validate against `graph-catalog.v1.schema.json`; the shared cases run in `test_the_shared_catalog_cases`.
+7. Gate before adoption: no client has adopted it.
+8. Security properties are tested: pass. Text from a graph file cannot close the page's script element (`test_render_page_text_from_a_graph_cannot_close_its_script_element`, shown to fail with the `<` and `>` escapes removed), and the page loads nothing from the network (`test_render_page_embeds_the_catalog_and_loads_nothing_from_the_network`). The browser script sets all catalog text as text, never as markup; no test runs the script in a browser.
+
 ## 1.38.0
 
 Hardening follow-ups to the 1.37.0 security release. An agent session's tool grant now restricts the tools it names, no Claude child inherits the Claude Code session marker, the Windows batch-launcher guard covers more characters and one more spawn path, and the live suite proves each refusal it reports. Several of these change behaviour: a call or a job that worked before can now be refused or run with fewer tools. Read the first list before upgrading.

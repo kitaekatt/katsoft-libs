@@ -439,7 +439,7 @@ class TestPackage:
         surface = json.loads((LIB.parent / "public-surface.json").read_text(encoding="utf-8"))
         names = {e["name"] for e in surface["entries"]}
         assert "llm_kit.graph" in surface["covers"]
-        for module in ("model", "loader", "config", "hashing", "validate"):
+        for module in ("model", "loader", "config", "hashing", "validate", "render.catalog", "render.page"):
             mod = __import__(f"llm_kit.graph.{module}", fromlist=["__all__"])
             for name in mod.__all__:
                 assert f"llm_kit.graph.{module}.{name}" in names, name

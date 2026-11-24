@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0. The resolved request (llm_kit.registry.request_settings) is listed whole and is not yet released. The agent-session pieces (llm_kit.completion.session_types, llm_kit.adapters.claude_stream, llm_kit.adapters.claude_session, llm_kit.jobs.session, llm_kit.storage.file_lock) and the jobs runner (llm_kit.jobs.run) are listed whole from 1.26.0. The run records, run store, derived index and runs CLI (llm_kit.runs, llm_kit.runs.record, llm_kit.runs.store, llm_kit.runs.index, llm_kit.cli.runs) are listed whole from 1.26.0. The comparison (llm_kit.runs.compare) is listed whole and is not yet released. The branch-mode unit registry and workspaces (llm_kit.jobs.units, llm_kit.jobs.workspace) are listed whole and are not yet released. The fallback chain reader (llm_kit.registry.fallback_chains) and the reply cache reader (llm_kit.registry.reply_cache) are listed whole from 1.35.0. From 1.37.0 the names that release adds or changes in llm_kit.registry.consent, llm_kit.adapters.claude_command, llm_kit.completion.types, llm_kit.adapters.backends, llm_kit.registry.models and llm_kit.frontdoor.server are listed one by one; those modules are not listed whole and are not in covers. Private modules and names (a segment that starts with an underscore, such as llm_kit.adapters.claude_env._claude_child_env, the Claude child environment, and llm_kit.adapters._cmd_shell, the batch-launcher character set) are never listed. 1.38.0 adds no public name.",
+  "purpose": "Public names of the llm_kit pipeline products and supervised jobs, with their lifecycle status. Pipeline names adapt content-pipeline-kit's contract; removed entries keep the content-pipeline-kit release that removed them. Removed entries for cli.bulk are not carried (llm_kit has no module of that name). Supervised jobs add the package-native surface introduced in 1.6.0. The opt-in generation graphs (llm_kit.graph) are listed module by module; the package re-exports the same names lazily. The project model file (llm_kit.registry.project_models) and the shared format schemas (llm_kit.schema.formats) are listed whole from 1.25.0. The resolved request (llm_kit.registry.request_settings) is listed whole and is not yet released. The agent-session pieces (llm_kit.completion.session_types, llm_kit.adapters.claude_stream, llm_kit.adapters.claude_session, llm_kit.jobs.session, llm_kit.storage.file_lock) and the jobs runner (llm_kit.jobs.run) are listed whole from 1.26.0. The run records, run store, derived index and runs CLI (llm_kit.runs, llm_kit.runs.record, llm_kit.runs.store, llm_kit.runs.index, llm_kit.cli.runs) are listed whole from 1.26.0. The comparison (llm_kit.runs.compare) is listed whole and is not yet released. The branch-mode unit registry and workspaces (llm_kit.jobs.units, llm_kit.jobs.workspace) are listed whole and are not yet released. The fallback chain reader (llm_kit.registry.fallback_chains) and the reply cache reader (llm_kit.registry.reply_cache) are listed whole from 1.35.0. From 1.37.0 the names that release adds or changes in llm_kit.registry.consent, llm_kit.adapters.claude_command, llm_kit.completion.types, llm_kit.adapters.backends, llm_kit.registry.models and llm_kit.frontdoor.server are listed one by one; those modules are not listed whole and are not in covers. Private modules and names (a segment that starts with an underscore, such as llm_kit.adapters.claude_env._claude_child_env, the Claude child environment, and llm_kit.adapters._cmd_shell, the batch-launcher character set) are never listed. 1.38.0 adds no public name. The rendered graph pages (llm_kit.graph.render.catalog, llm_kit.graph.render.page) and the format id llm_kit.schema.formats.GRAPH_CATALOG_V1 are listed and are not yet released.",
   "package": "llm_kit",
   "current_version_file": ".claude-plugin/plugin.json",
   "covers": [
@@ -2689,6 +2689,26 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.graph.render.catalog.CATALOG_FORMAT",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.render.catalog.build_catalog",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.render.catalog.project_catalog",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.render.page.render_page",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.graph.render.page.write_page",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.schema.formats.PROJECT_MODELS_V1",
       "status": "public"
     },
@@ -2734,6 +2754,10 @@
     },
     {
       "name": "llm_kit.schema.formats.CONSENT_V2",
+      "status": "public"
+    },
+    {
+      "name": "llm_kit.schema.formats.GRAPH_CATALOG_V1",
       "status": "public"
     },
     {

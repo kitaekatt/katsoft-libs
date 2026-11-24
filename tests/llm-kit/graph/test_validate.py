@@ -422,7 +422,7 @@ def test_graph_group_routes_verbs(monkeypatch, capsys):
     assert code == 0 and "usage: llm-kit graph" in out
     for verb in group.VERBS:
         assert verb in out
-    assert list(group.VERBS) == ["validate", "run", "status", "answer", "resume", "serve", "replay"]
+    assert list(group.VERBS) == ["validate", "run", "status", "answer", "resume", "serve", "replay", "render"]
     assert group.verb_module("run") == "llm_kit.graph.commands.run"
     code, _, err = _cli(["graph", "nonesuch"], capsys)
     assert code == 2 and "invalid choice" in err
