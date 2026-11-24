@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import AbstractSet, Any, Iterable, Mapping, Optional
 
 from ..adapters.account import probe_entry
 from ..completion.halt import FRONTDOOR_DEPLOYMENT_HEADER
@@ -51,6 +51,9 @@ class RuntimeDeployment:
 BACKEND_BUDGET_DEFAULT_MS = 1500
 BACKEND_BUDGET_MAX_MS = 4000
 BACKEND_HEALTH_PROTOCOL = 1
+
+#: Seconds a preference-list request waits for a swapper's ``/running`` answer.
+RESIDENCY_TIMEOUT_S = 1.0
 
 
 def _parse_budget_ms(raw: Optional[str]) -> int:
@@ -155,19 +158,77 @@ def _order_tiers(pool: list[RuntimeDeployment]) -> list[list[RuntimeDeployment]]
     return [by_order[order] for order in sorted(by_order)]
 
 
+def _shared_hosts(pools: list[list[RuntimeDeployment]]) -> dict[str, list[RuntimeDeployment]]:
+    """Each ``base_url`` that serves more than one listed deployment, with those deployments."""
+    listed: dict[str, list[RuntimeDeployment]] = {}
+    for pool in pools:
+        for deployment in pool:
+            on_host = listed.setdefault(deployment.entry.base_url, [])
+            if deployment not in on_host:
+                on_host.append(deployment)
+    return {host: deployments for host, deployments in listed.items() if len(deployments) > 1}
+
+
+def _idle_shared_hosts(pools: list[list[RuntimeDeployment]]) -> list[str]:
+    """The shared hosts (:func:`_shared_hosts`) with no listed deployment in flight.
+
+    Only these need the swapper's report of what it has loaded: a busy host is
+    already decided by its in-flight deployment.
+    """
+    return [
+        host for host, deployments in _shared_hosts(pools).items()
+        if not any(d.in_flight > 0 for d in deployments)
+    ]
+
+
+def _swapper_running_url(base_url: str) -> str:
+    """The llama-swap ``/running`` URL for an OpenAI ``base_url`` (``.../v1`` dropped)."""
+    root = base_url.rstrip("/")
+    if root.endswith("/v1"):
+        root = root[: -len("/v1")]
+    return root + "/running"
+
+
+#: llama-swap ``/running`` states that hold, or are about to hold, the model.
+_LOADED_STATES = frozenset({"ready", "starting"})
+
+
+def _loaded_models(body: bytes) -> Optional[set[str]]:
+    """The model ids a llama-swap ``/running`` body reports loaded or loading.
+
+    Returns ``None`` when the body is not that shape (a different server, an
+    error page), so the caller can tell "nothing loaded" from "no answer".
+    """
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None
+    running = data.get("running") if isinstance(data, dict) else None
+    if not isinstance(running, list):
+        return None
+    return {
+        item["model"] for item in running
+        if isinstance(item, dict) and isinstance(item.get("model"), str)
+        and item.get("state") in _LOADED_STATES
+    }
+
+
 def _preference_tiers(
     pools: list[list[RuntimeDeployment]],
+    resident: Mapping[str, AbstractSet[str]] = {},
 ) -> tuple[list[list[RuntimeDeployment]], dict[str, str]]:
     """Walk tiers for a request that lists several names, in preference order.
 
     ``pools`` holds each listed name's deployments (already size-filtered), in
     the caller's order. Deployments that share a ``base_url`` sit behind one
     swapper, which holds one model at a time. For each such host that serves
-    more than one listed deployment, one is chosen: the listed deployment that
-    has been in flight the longest when the host is busy with one (serving it
-    costs no swap), else the earliest-listed one (an idle host may swap). The
-    chosen deployment takes the host's first place in the walk, and the host's
-    other listed deployments stand by in the tiers right after it.
+    more than one listed deployment, one is chosen, in this order: the listed
+    deployment that has been in flight the longest when the host is busy with
+    one (serving it costs no swap); else the earliest-listed deployment whose
+    ``model`` the host reports loaded (``resident``, keyed by ``base_url``),
+    which also costs no swap; else the earliest-listed one (an idle host may
+    swap). The chosen deployment takes the host's first place in the walk, and
+    the host's other listed deployments stand by in the tiers right after it.
 
     Returns ``(tiers, standby)``: the tiers in walk order, each deployment once,
     and a map from each standby deployment's id to its host's chosen id. A
@@ -184,7 +245,13 @@ def _preference_tiers(
     chosen: dict[str, RuntimeDeployment] = {}
     for host, deployments in listed.items():
         busy = [d for d in deployments if d.in_flight > 0 and d.busy_since is not None]
-        chosen[host] = min(busy, key=lambda d: d.busy_since) if busy else deployments[0]
+        loaded = [d for d in deployments if d.entry.model in resident.get(host, ())]
+        if busy:
+            chosen[host] = min(busy, key=lambda d: d.busy_since)
+        elif loaded:
+            chosen[host] = loaded[0]
+        else:
+            chosen[host] = deployments[0]
     standby: dict[str, str] = {}
     placed: list[RuntimeDeployment] = []
     tiers: list[list[RuntimeDeployment]] = []
@@ -503,6 +570,33 @@ def create_app(
                 deployment.users.remove(user)
             condition.notify_all()
 
+    async def resident_models(pools: list[list[RuntimeDeployment]]) -> dict[str, set[str]]:
+        """What each idle shared host's swapper reports loaded, by ``base_url``.
+
+        Asks ``GET /running`` (llama-swap; it reads state and never loads a
+        model) of each host :func:`_idle_shared_hosts` names, all at once,
+        bounded by :data:`RESIDENCY_TIMEOUT_S`. A host that does not answer that
+        shape is left out, so the choice falls back to the first listed model.
+        """
+        import httpx
+
+        hosts = _idle_shared_hosts(pools)
+
+        async def ask(host: str) -> Optional[set[str]]:
+            client = httpx.AsyncClient(timeout=RESIDENCY_TIMEOUT_S)
+            try:
+                response = await client.get(_swapper_running_url(host))
+            except httpx.HTTPError:
+                return None
+            finally:
+                await client.aclose()
+            if response.status_code != 200:
+                return None
+            return _loaded_models(response.content)
+
+        answers = await asyncio.gather(*(ask(host) for host in hosts))
+        return {host: models for host, models in zip(hosts, answers) if models is not None}
+
     async def call_upstream(deployment: RuntimeDeployment, payload: dict[str, Any], request: Request) -> Any:
         try:
             import httpx
@@ -565,7 +659,7 @@ def create_app(
             walk, standby = _order_tiers(pools[0]), {}
         else:
             pools = _steer_by_size(pools, _estimated_tokens(body))
-            walk, standby = _preference_tiers(pools)
+            walk, standby = _preference_tiers(pools, await resident_models(pools))
         pool = [deployment for tier in walk for deployment in tier]
         size_of = {
             deployment.entry.id: meaning.size

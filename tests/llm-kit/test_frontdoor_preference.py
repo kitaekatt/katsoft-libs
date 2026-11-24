@@ -2,7 +2,8 @@
 
 A caller names several door names a request may use, in preference order. On
 one swapper host (deployments sharing a ``base_url``), a host busy with one of
-the listed models keeps serving it; an idle host gets the first listed model.
+the listed models keeps serving it; an idle host keeps the listed model its
+swapper reports loaded (``/running``), else gets the first listed model.
 The other listed models on that host stand by right after the chosen one: they
 serve when it fails, never because it is full (that would swap a busy host).
 
@@ -49,7 +50,10 @@ def _deployments(tmp_path: Path) -> dict[str, Any]:
     return {d.entry.id: d for ds in groups.values() for d in ds}
 
 
-def _plan(tmp_path: Path, names: list[str], busy: dict[str, float] = {}):
+def _plan(
+    tmp_path: Path, names: list[str], busy: dict[str, float] = {},
+    resident: dict[str, set[str]] = {},
+):
     from llm_kit.frontdoor import server
 
     deployments = _deployments(tmp_path)
@@ -60,7 +64,9 @@ def _plan(tmp_path: Path, names: list[str], busy: dict[str, float] = {}):
         "q38": [deployments["gpu-27b"], deployments["mac-27b"]],
         "q38fn": [deployments["gpu-fn"]],
     }
-    tiers, standby = server._preference_tiers([pools[name] for name in names])  # noqa: SLF001
+    tiers, standby = server._preference_tiers(  # noqa: SLF001
+        [pools[name] for name in names], resident
+    )
     return [[d.entry.id for d in tier] for tier in tiers], standby
 
 
@@ -101,6 +107,26 @@ def test_busy_on_another_host_does_not_steer_this_host(tmp_path):
     assert walk[0] == ["gpu-fn"]
 
 
+def test_idle_host_keeps_the_listed_model_it_has_loaded(tmp_path):
+    walk, standby = _plan(tmp_path, ["q38fn", "q38"], resident={"http://gpu.invalid/v1": {"m27b"}})
+    assert walk == [["gpu-27b"], ["gpu-fn"], ["mac-27b"]]
+    assert standby == {"gpu-fn": "gpu-27b"}
+
+
+def test_a_loaded_model_that_is_not_listed_does_not_steer(tmp_path):
+    walk = _plan(tmp_path, ["q38fn", "q38"], resident={"http://gpu.invalid/v1": {"other"}})[0]
+    assert walk[0] == ["gpu-fn"]
+
+
+def test_busy_outranks_loaded(tmp_path):
+    # A request in flight through the door is the stronger signal.
+    walk = _plan(
+        tmp_path, ["q38fn", "q38"], busy={"gpu-fn": 1.0},
+        resident={"http://gpu.invalid/v1": {"m27b"}},
+    )[0]
+    assert walk[0] == ["gpu-fn"]
+
+
 def test_a_standby_serves_only_after_its_host_choice_is_excluded(tmp_path):
     from llm_kit.frontdoor import server
 
@@ -124,6 +150,10 @@ class Upstream:
 
     calls: list[dict[str, Any]]
     failing: set[str]
+    #: ``/running`` bodies by URL; a GET of any other URL fails to connect.
+    running: dict[str, str]
+    gets: list[str]
+    unreachable: type = OSError
 
     class Response:
         def __init__(self, status: int) -> None:
@@ -133,6 +163,14 @@ class Upstream:
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         pass
+
+    async def get(self, url: str, headers: Any = None) -> "Upstream.Response":
+        type(self).gets.append(url)
+        if url not in type(self).running:
+            raise type(self).unreachable("connection refused")
+        response = Upstream.Response(200)
+        response.content = type(self).running[url].encode("utf-8")
+        return response
 
     async def post(self, url: str, json: Any = None, headers: Any = None) -> "Upstream.Response":
         type(self).calls.append(json)
@@ -150,8 +188,13 @@ def door(tmp_path, monkeypatch):
 
     from llm_kit.frontdoor import server
 
+    import httpx
+
     Upstream.calls = []
     Upstream.failing = set()
+    Upstream.running = {}
+    Upstream.gets = []
+    Upstream.unreachable = httpx.ConnectError
     monkeypatch.setattr("httpx.AsyncClient", Upstream)
     return TestClient(server.create_app(_load(tmp_path), access_log=tmp_path / "access.jsonl"))
 
@@ -170,6 +213,39 @@ def test_failed_choice_falls_back_through_the_list(door):
     Upstream.failing = {"mfn"}
     assert _chat(door, "q38fn,q38").status_code == 200
     assert [call["model"] for call in Upstream.calls] == ["mfn", "m27b"]
+
+
+RUNNING_27B = '{"running": [{"model": "m27b", "state": "ready"}]}'
+
+
+def test_list_request_on_an_idle_door_uses_the_model_the_swapper_has_loaded(door):
+    Upstream.running = {"http://gpu.invalid/running": RUNNING_27B}
+    assert _chat(door, "q38fn,q38").status_code == 200
+    assert [call["model"] for call in Upstream.calls] == ["m27b"]
+    assert Upstream.gets == ["http://gpu.invalid/running"]
+
+
+def test_a_starting_model_counts_as_loaded(door):
+    Upstream.running = {
+        "http://gpu.invalid/running": '{"running": [{"model": "m27b", "state": "starting"}]}'
+    }
+    assert _chat(door, "q38fn,q38").status_code == 200
+    assert [call["model"] for call in Upstream.calls] == ["m27b"]
+
+
+def test_an_unreadable_swapper_falls_back_to_the_first_listed_model(door):
+    # No usable /running answer (connect failure, a non-JSON page): today's rule.
+    for running in ({}, {"http://gpu.invalid/running": "<html>404</html>"}):
+        Upstream.calls = []
+        Upstream.running = running
+        assert _chat(door, "q38fn,q38").status_code == 200
+        assert [call["model"] for call in Upstream.calls] == ["mfn"]
+
+
+def test_a_single_name_never_asks_the_swapper(door):
+    Upstream.running = {"http://gpu.invalid/running": RUNNING_27B}
+    assert _chat(door, "q38fn").status_code == 200
+    assert Upstream.gets == []
 
 
 def test_unknown_or_empty_item_in_a_list_is_refused(door):
@@ -199,8 +275,13 @@ def sized_door(tmp_path, monkeypatch):
 
     from llm_kit.frontdoor import server
 
+    import httpx
+
     Upstream.calls = []
     Upstream.failing = set()
+    Upstream.running = {}
+    Upstream.gets = []
+    Upstream.unreachable = httpx.ConnectError
     monkeypatch.setattr("httpx.AsyncClient", Upstream)
     path = tmp_path / "sized.yaml"
     path.write_text(SIZED, encoding="utf-8")

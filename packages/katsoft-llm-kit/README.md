@@ -254,7 +254,11 @@ none empty (400); a single name routes exactly as before. Deployments that share
 are treated as one swapper (such as llama-swap) that holds one model at a time. For each such
 host serving more than one listed name, the door picks one: when the host is busy with a listed
 model (it has requests in flight through the door), that model, so the request costs no swap;
-when the host is idle, the first listed name's model, which the swapper may swap in. When
+when the host is idle, the listed model its swapper reports loaded or loading (llama-swap's
+`GET /running`, asked with a 1 s bound; it reads state and loads nothing), which also costs no
+swap; else the first listed name's model, which the swapper may swap in. A host that does not
+answer `/running` in llama-swap's shape gets the first listed name's model. A list never
+refuses a request because a model is not loaded. When
 several listed models are in flight on one host (one is queued behind a swap), the one in
 flight longest keeps the host. The chosen model takes the host's first place in the walk; the
 host's other listed models stand by right after it. A standby serves only when the chosen model
