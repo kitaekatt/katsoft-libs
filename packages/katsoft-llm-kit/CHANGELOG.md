@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased
+## 1.45.0
 
 Graph pages show the graph files that nothing runs, and the carry and until of a repeat.
 
@@ -19,7 +19,7 @@ Changed:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. `build_catalog` and `project_catalog` docstrings state `unused`; the catalog module docstring and `docs/reference/llm-kit-graph.md` ("Render") describe the list and the walk. No public name is added, so `public-surface.json` is unchanged.
-2. Semver release with a changelog: pending; the version is set at release and this entry becomes its entry.
+2. Semver release with a changelog: pass; version 1.45.0 in `pyproject.toml` and this entry.
 3. Tests for each public function: pass. `test_render.py` calls `project_catalog`, `build_catalog` and the command's `run` on a fixture copy with unreached, broken and skipped files; `test_labels.py` calls `label_catalog` on a catalog with an unused file; `test_render_browser.py` pins the Unused group and the repeat header in the script.
 4. No client names, prompts or data: pass. The tests use the `demo.*` fixture project.
 5. Examples run without a client app: unchanged; `examples/render_graphs.py` needs no change.
