@@ -439,7 +439,34 @@ class TestPackage:
         surface = json.loads((LIB.parent / "public-surface.json").read_text(encoding="utf-8"))
         names = {e["name"] for e in surface["entries"]}
         assert "llm_kit.graph" in surface["covers"]
-        for module in ("model", "loader", "config", "hashing", "validate", "render.catalog", "render.page", "render.label_types"):
+        for module in ("model", "loader", "config", "hashing", "validate", "render.catalog", "render.page",
+                       "render.label_types", "render.labels", "render.label_model"):
             mod = __import__(f"llm_kit.graph.{module}", fromlist=["__all__"])
             for name in mod.__all__:
                 assert f"llm_kit.graph.{module}.{name}" in names, name
+
+    def test_public_surface_lists_the_cache_location_names_and_each_is_documented(self):
+        from llm_kit.registry import user_paths
+
+        surface = json.loads((LIB.parent / "public-surface.json").read_text(encoding="utf-8"))
+        listed = {e["name"] for e in surface["entries"] if e["status"] == "public"}
+        for name in ("cache_home", "neutral_cache_dir"):
+            assert f"llm_kit.registry.user_paths.{name}" in listed
+            assert name in user_paths.__all__
+            assert (getattr(user_paths, name).__doc__ or "").strip(), name
+
+    def test_the_render_package_reexports_the_label_names_lazily(self):
+        code = "\n".join([
+            "import sys",
+            "import llm_kit.graph.render as r",
+            "print([m for m in ('labels', 'label_model') if f'llm_kit.graph.render.{m}' in sys.modules])",
+            "from llm_kit.graph.render import labels as L, label_model as M, label_types as T",
+            "print(r.label_catalog is L.label_catalog and r.LabelCache is L.LabelCache and r.DEFAULT_JOBS == L.DEFAULT_JOBS",
+            "      and r.model_labeller is M.model_labeller and r.CONSENT_SCOPE == M.CONSENT_SCOPE",
+            "      and r.LabelRefused is T.LabelRefused and r.Labeller is T.Labeller)",
+            "try:",
+            "    r.nothing_here",
+            "except AttributeError:",
+            "    print('missing name refused')",
+        ])
+        assert _python(code).strip().splitlines() == ["[]", "True", "missing name refused"]

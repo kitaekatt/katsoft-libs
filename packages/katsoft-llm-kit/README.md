@@ -325,7 +325,7 @@ source repository; the example is `packages/katsoft-llm-kit/examples/record_runs
 
 ## Graph pages
 
-`llm-kit graph render` writes one self-contained HTML page that draws graph files: every graph in the project config with a graph browser, or the graphs you name. See `docs/reference/llm-kit-graph.md` ("Render") in the source repository. The page bundles elkjs 0.12.1 (https://github.com/kieler/elkjs), the JavaScript build of the Eclipse Layout Kernel, under the Eclipse Public License 2.0; its licence text ships as `llm_kit/graph/render/vendor/elkjs-LICENSE.md`. The file `llm_kit/graph/render/vendor/elk.bundled.js` is the unmodified `lib/elk.bundled.js` of the npm package `elkjs@0.12.1`.
+`llm-kit graph render` writes one self-contained HTML page that draws graph files: every graph in the project config with a graph browser, or the graphs you name. By default a model (`haiku`, under the consent scope `graph-labels`) also writes a title and description for each node, a text for each read and a gloss for each input and output, drawn as inferred text that a Labels button in the page hides; it sends the graph definitions and the first 40 lines of each prompt file to the model's provider, caches the answers outside the project, and `--no-labels` skips it all. See `docs/reference/llm-kit-graph.md` ("Render") in the source repository. The page bundles elkjs 0.12.1 (https://github.com/kieler/elkjs), the JavaScript build of the Eclipse Layout Kernel, under the Eclipse Public License 2.0; its licence text ships as `llm_kit/graph/render/vendor/elkjs-LICENSE.md`. The file `llm_kit/graph/render/vendor/elk.bundled.js` is the unmodified `lib/elk.bundled.js` of the npm package `elkjs@0.12.1`.
 
 ## Source
 

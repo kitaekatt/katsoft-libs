@@ -20,6 +20,7 @@ from llm_kit.graph.config import load_config
 from llm_kit.graph.model import GraphError
 from llm_kit.graph.render import CATALOG_FORMAT, build_catalog, project_catalog, render_page, write_page
 from llm_kit.graph.render import _escape
+from llm_kit.graph.render.label_types import LabelCall, LabelFailed, LabelRefused, LabelReply
 from llm_kit.schema.formats import GRAPH_CATALOG_V1, GRAPH_CATALOG_V2, load_schema
 from llm_kit.schema.json_schema import check_schema, validate
 
@@ -247,18 +248,18 @@ def test_write_page_creates_parents_and_writes_the_page(catalog, tmp_path):
 
 def test_render_command_without_graphs_writes_every_config_graph(tmp_path, capsys):
     out = tmp_path / "all.html"
-    assert render_command.run(["--project", str(FIXTURE), "-o", str(out)]) == 0
+    assert render_command.run(["--project", str(FIXTURE), "--no-labels", "-o", str(out)]) == 0
     assert capsys.readouterr().out.strip() == str(out)
     assert [e["name"] for e in _embedded(out.read_text(encoding="utf-8"))["entries"]] == ["demo.night"]
 
 
 def test_render_command_takes_a_config_name_or_a_file_without_a_config(tmp_path, capsys, monkeypatch):
     out = tmp_path / "night.html"
-    assert render_command.run(["--project", str(FIXTURE), "demo.night", "-o", str(out)]) == 0
+    assert render_command.run(["--project", str(FIXTURE), "--no-labels", "demo.night", "-o", str(out)]) == 0
     assert _embedded(out.read_text(encoding="utf-8"))["entries"][0]["name"] == "demo.night"
     capsys.readouterr()
     monkeypatch.chdir(tmp_path)  # no project config here: the default output lands in this directory
-    assert render_command.run([str(FIXTURE / POSE)]) == 0
+    assert render_command.run(["--no-labels", str(FIXTURE / POSE)]) == 0
     written = Path(capsys.readouterr().out.strip())
     assert written.name == "demo.pose.html"
     catalog = _embedded(written.read_text(encoding="utf-8"))
@@ -272,3 +273,176 @@ def test_render_command_usage_errors_exit_2(tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert render_command.run([]) == 2
     assert "does not exist" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# llm-kit graph render: labels (a fake labeller stands in for the model)
+# ---------------------------------------------------------------------------
+
+
+class FakeLabeller:
+    """Answers every call from the keys it was asked for; counts the calls."""
+
+    declaration = ("fake",)
+
+    def __init__(self, failure: Exception | None = None):
+        self.calls: list[LabelCall] = []
+        self.failure = failure
+
+    def __call__(self, call: LabelCall) -> LabelReply:
+        self.calls.append(call)
+        if self.failure is not None:
+            raise self.failure
+        answer = {"nodes": {p: {"title": f"T {p}", "description": f"D {p}"} for p in call.nodes},
+                  "edges": {e: f"E {e}" for e in call.edges}}
+        if call.header:
+            answer["graph"] = {"title": "A graph", "purpose": "What the graph is for"}
+            answer["inputs"] = {n: f"I {n}" for n in call.inputs}
+            answer["outputs"] = {n: f"O {n}" for n in call.outputs}
+        return LabelReply(answer, "fake", "fake-model")
+
+
+@pytest.fixture
+def cache_home(tmp_path, monkeypatch) -> Path:
+    """Point the default label cache at a test directory."""
+    home = tmp_path / "cache-home"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(home))
+    return home
+
+
+def _render(tmp_path, *args, labeller=None) -> int:
+    return render_command.run(["--project", str(FIXTURE), "-o", str(tmp_path / "out.html"), *args], labeller=labeller)
+
+
+def test_render_command_labels_by_default_and_reports_progress_on_stderr(tmp_path, capsys, cache_home):
+    fake = FakeLabeller()
+    assert _render(tmp_path, labeller=fake) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == str(tmp_path / "out.html")
+    catalog = _embedded((tmp_path / "out.html").read_text(encoding="utf-8"))
+    assert catalog["format"] == GRAPH_CATALOG_V2
+    assert sorted(catalog["labels"]) == sorted([NIGHT, STORY, POSE])
+    assert catalog["labels"][NIGHT]["nodes"]["encode"]["title"] == "T encode"
+    assert len(fake.calls) == 3
+    lines = captured.err.strip().splitlines()
+    assert lines and all(line.startswith("llm-kit graph render: labels:") for line in lines)
+    assert "3 graph files, 0 cached, 3 to make with fake" in lines[0]
+    assert (cache_home / "llm-kit" / "graph-labels").is_dir()
+
+
+def test_render_command_no_labels_writes_version_1_and_touches_no_cache(tmp_path, capsys, cache_home):
+    fake = FakeLabeller()
+    assert _render(tmp_path, "--no-labels", labeller=fake) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    catalog = _embedded((tmp_path / "out.html").read_text(encoding="utf-8"))
+    assert catalog["format"] == CATALOG_FORMAT and "labels" not in catalog
+    assert fake.calls == []
+    assert not cache_home.exists()
+
+
+def test_render_command_refusal_exits_3_names_the_remedy_and_writes_no_page(tmp_path, capsys, cache_home):
+    refusal = LabelRefused("consent is off; run `llm-kit consent set --scope graph-labels --subscription on` "
+                           "or render with --no-labels")
+    assert _render(tmp_path, labeller=FakeLabeller(refusal)) == 3
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "llm-kit consent set --scope graph-labels" in captured.err and "--no-labels" in captured.err
+    assert not (tmp_path / "out.html").exists()
+
+
+def test_render_command_failure_exits_3_leaves_an_existing_page_and_names_no_labels(tmp_path, capsys, cache_home):
+    out = tmp_path / "out.html"
+    out.write_text("old page", encoding="utf-8")
+    assert _render(tmp_path, labeller=FakeLabeller(LabelFailed("the answer is not JSON"))) == 3
+    captured = capsys.readouterr()
+    assert captured.out == "" and "the answer is not JSON" in captured.err and "--no-labels" in captured.err
+    assert out.read_text(encoding="utf-8") == "old page"
+
+
+def test_render_command_cache_error_exits_3(tmp_path, capsys, cache_home):
+    cache = tmp_path / "cache"
+    assert _render(tmp_path, "--label-cache", str(cache), labeller=FakeLabeller()) == 0
+    victim = next(cache.glob("*.json"))
+    victim.write_text("{not json", encoding="utf-8")
+    capsys.readouterr()
+    assert _render(tmp_path, "--label-cache", str(cache), labeller=FakeLabeller()) == 3
+    assert "--relabel" in capsys.readouterr().err
+
+
+def test_render_command_warm_cache_makes_no_call_and_relabel_bypasses_it(tmp_path, capsys, cache_home):
+    cache = ["--label-cache", str(tmp_path / "cache")]
+    first = FakeLabeller()
+    assert _render(tmp_path, *cache, labeller=first) == 0
+    assert len(first.calls) == 3
+    page = (tmp_path / "out.html").read_text(encoding="utf-8")
+    capsys.readouterr()
+    # A warm render needs no labeller at all: a refusing one is never called.
+    refusing = FakeLabeller(LabelRefused("must not be called"))
+    assert _render(tmp_path, *cache, labeller=refusing) == 0
+    assert refusing.calls == []
+    assert (tmp_path / "out.html").read_text(encoding="utf-8") == page
+    assert "3 cached, none to make" in capsys.readouterr().err
+    third = FakeLabeller()
+    assert _render(tmp_path, *cache, "--relabel", labeller=third) == 0
+    assert len(third.calls) == 3
+    assert not (cache_home).exists()  # --label-cache replaced the default location
+
+
+def test_render_command_label_jobs_and_batch_reach_the_labelling_core(tmp_path, capsys, cache_home):
+    fake = FakeLabeller()
+    assert _render(tmp_path, "--label-batch", "2", "--label-jobs", "1", labeller=fake) == 0
+    assert len(fake.calls) > 3
+    assert max(len(call.nodes) for call in fake.calls) <= 2
+    assert "(1 at a time)" in capsys.readouterr().err
+
+
+def test_render_command_builds_the_model_labeller_from_the_label_model_flag(tmp_path, monkeypatch, cache_home):
+    from llm_kit.graph.render import label_model  # noqa: PLC0415
+
+    seen = {}
+
+    def build(declaration, *, project_root, **kwargs):
+        seen["declaration"], seen["root"] = tuple(declaration), Path(project_root)
+        return FakeLabeller()
+
+    monkeypatch.setattr(label_model, "model_labeller", build)
+    assert _render(tmp_path, "--label-model", "haiku, sonnet") == 0
+    assert seen == {"declaration": ("haiku", "sonnet"), "root": FIXTURE.resolve()}
+    seen.clear()
+    assert _render(tmp_path) == 0
+    assert seen["declaration"] == label_model.DEFAULT_LABEL_MODELS
+
+
+@pytest.mark.parametrize("flags", [
+    ["--no-labels", "--relabel"], ["--no-labels", "--label-model", "haiku"], ["--no-labels", "--label-jobs", "2"],
+    ["--no-labels", "--label-batch", "3"], ["--no-labels", "--label-cache", "x"],
+    ["--label-jobs", "0"], ["--label-jobs", "many"], ["--label-batch", "0"], ["--label-batch", "-1"],
+    ["--label-model", ""], ["--label-model", "haiku,haiku"],
+])
+def test_render_command_label_flag_errors_exit_2_and_call_nothing(tmp_path, capsys, cache_home, flags):
+    fake = FakeLabeller()
+    assert _render(tmp_path, *flags, labeller=None if "--label-model" in flags else fake) == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err.startswith("llm-kit graph render:")
+    assert fake.calls == [] and not (tmp_path / "out.html").exists() and not cache_home.exists()
+
+
+def test_labelled_render_writes_only_the_page_and_the_cache(tmp_path, cache_home):
+    project = tmp_path / "project"
+    shutil.copytree(FIXTURE, project)
+    before = sorted(p.relative_to(project).as_posix() for p in project.rglob("*"))
+    out = tmp_path / "elsewhere" / "graphs.html"
+    assert render_command.run(["--project", str(project), "-o", str(out)], labeller=FakeLabeller()) == 0
+    assert sorted(p.relative_to(project).as_posix() for p in project.rglob("*")) == before
+    assert out.is_file()
+    written = [p.relative_to(tmp_path).as_posix() for p in cache_home.rglob("*") if p.is_file()]
+    assert written and all(w.startswith("cache-home/llm-kit/graph-labels/") and w.endswith(".json") for w in written)
+
+
+def test_render_command_labels_a_graph_file_without_a_project_config(tmp_path, monkeypatch, capsys, cache_home):
+    monkeypatch.chdir(tmp_path)
+    fake = FakeLabeller()
+    assert render_command.run([str(FIXTURE / POSE)], labeller=fake) == 0
+    catalog = _embedded(Path(capsys.readouterr().out.strip()).read_text(encoding="utf-8"))
+    assert catalog["format"] == GRAPH_CATALOG_V2 and len(fake.calls) == 1

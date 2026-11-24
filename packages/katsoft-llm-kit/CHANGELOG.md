@@ -2,6 +2,39 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## Unreleased
+
+Graph pages carry inferred labels. `llm-kit graph render` asks a model (`haiku` by default) to write a title and description for each node, a text for each read between nodes and a gloss for each graph input and output, and draws them as inferred text that a Labels button in the page hides. Labels are on by default; if they cannot be made the command exits 3 and writes no page.
+
+Added:
+
+- `llm-kit graph render` flags `--no-labels`, `--relabel`, `--label-model IDS`, `--label-jobs N`, `--label-batch N` and `--label-cache DIR`, and exit status 3 (the labels could not be made: consent refused, no model usable, an unusable answer, a damaged cache entry; no page is written and an existing output file is left as it was; the message names the consent command or `--no-labels`). Progress lines go to standard error. `run(argv, *, labeller=None)` takes a labeller in place of the model. `llm_kit.graph.render` re-exports the label names lazily.
+- `label_catalog` (`llm_kit.graph.render.labels`) labels a v1 catalog and returns a `llm-kit.graph-catalog/v2` catalog; one call per graph file (or per `--label-batch` nodes), concurrent (default 4), every answer checked against the call schema and the asked-for keys, one follow-up for missing keys pinned to the serving entry; cached by SHA-256 of what the model sees (`llm-kit.graph-labels/v1` under `$XDG_CACHE_HOME/llm-kit/graph-labels`, else `~/.cache/...`); a damaged entry fails loudly; evidence is read only inside the project root (symlinks resolved), op descriptions by a static `ast` scan, and the evidence fence escapes markup. Also `LabelCache`, `default_cache_dir`, `DEFAULT_JOBS` and `CACHE_DIRNAME`. `llm_kit.registry.user_paths` gains `cache_home()` and `neutral_cache_dir()`.
+- `model_labeller` (`llm_kit.graph.render.label_model`) asks `haiku` (or the `--label-model` entries) through the declaration seam. Consent is read once per labeller under the scope `graph-labels` and the approved entries fix every call's entry map; the call is text-only and runs in the project root; a follow-up is pinned to the entry that served the first call; a refusal raises `LabelRefused` naming the exact `llm-kit consent set` command and `--no-labels`; it is thread-safe. Also `CONSENT_SCOPE`, `DEFAULT_LABEL_MODELS` and `DEFAULT_TIMEOUT_S`.
+- The formats `llm-kit.graph-catalog/v2` (version 1 plus a required `labels`; `GRAPH_CATALOG_V2`, `graph-catalog.v2.schema.json`, shared cases `tests/formats/graph-catalog/cases.v2.json`) and `llm-kit.graph-labels/v1` (the cache entry; `GRAPH_LABELS_V1`, `graph-labels.v1.schema.json`, shared cases `tests/formats/graph-labels/cases.json`), and the label types in `llm_kit.graph.render.label_types` (`LabelCall`, `LabelReply`, `Labeller`, `LabelError`, `LabelRefused`, `LabelFailed`).
+- Browser: inferred titles, descriptions, edge texts and port glosses in purple italic, a Labels toggle that is remembered in local storage, and a fit-to-window first view.
+- The example `examples/label_graphs.py` (a canned labeller; no model).
+
+Changed:
+
+- `llm-kit graph render` labels by default; `--no-labels` writes today's version 1 page. The page sends the graph definitions and up to 40 lines of each prompt file to the model's provider (`docs/reference/llm-kit-graph.md`, "Render").
+- `render_page` validates the catalog against the schema of its version (1 or 2) and raises `ValueError` for a catalog that fails; it refuses a version 2 catalog without `labels`.
+
+Fixed:
+
+- `dispatch.usage_budget`: the pinned-verdict cache is safe under threads. `pinned_evaluate` and `record_observed_halt` hold a module lock across each read-modify-write, and `_store_cache` writes a unique temp file and replaces it atomically, so concurrent calls in one process no longer corrupt the file or lose an update (an observed halt included). Separate processes can still lose updates to each other.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. Each new public name has a docstring or a comment on its constant; `public-surface.json` lists the `labels`, `label_model` and `label_types` names and `user_paths.cache_home` and `neutral_cache_dir`, and `test_public_surface_lists_the_graph_names` and `test_public_surface_lists_the_cache_location_names_and_each_is_documented` check them.
+2. Semver release with a changelog: this entry; the version in `pyproject.toml` is set at release.
+3. Tests for each public function: pass. `test_labels.py` calls `label_catalog`, `LabelCache` and `default_cache_dir`; `test_label_model.py` calls `model_labeller`; `test_render.py` calls the command's `run` with a fake labeller (default on, `--no-labels`, refusal, `--relabel`, flag errors); `test_neutral_user_state.py` calls `cache_home` and `neutral_cache_dir`.
+4. No client names, prompts or data: pass. The tests use the `demo.*` fixture project and fake labellers; the label prompt's style example is generic.
+5. Examples run without a client app: pass from the source tree (`test_the_example_runs_from_the_source_tree` runs `label_graphs.py`); the wheel check runs at release.
+6. JSON Schema for each file format: pass. `graph-catalog.v2.schema.json` and `graph-labels.v1.schema.json`; the shared cases run in `test_render_page_is_the_reader_of_every_shared_catalog_case` and `test_formats.py`, and the label writer's output is validated in `test_every_node_edge_and_port_is_labelled_and_the_result_is_a_valid_v2_catalog`.
+7. Gate before adoption: lines 1 to 6 and 8 pass; no client has adopted it.
+8. Security properties are tested: pass. File text cannot close the evidence fence (`test_hostile_text_cannot_close_the_fence`); prompt files, op sources and graph files outside the project root are not read (`test_prompt_outside_the_root_is_not_read`, `test_namespace_outside_the_root_is_not_read`, `test_outside_graph_reads_no_prompt`); labelling imports no consumer code (`test_op_descriptions_import_nothing`); consent is read before any backend exists (`test_consent_refusal_dispatches_nothing`) and a fallback never reaches a refused entry (`test_fallback_cannot_reach_a_refused_entry`); the call is text-only (`test_label_calls_are_armed_text_only`); label text cannot close the page's script element (`test_render_page_label_text_cannot_close_its_script_element`); the browser never parses markup (`test_browser_script_never_parses_markup`); a render writes only the page and the cache, never the project tree (`test_labelled_render_writes_only_the_page_and_the_cache`); a damaged cache entry is never used (`test_a_damaged_cache_entry_fails_loudly`); the quota-cache lock and atomic write (`tests/llm-kit/test_usage_budget_concurrency.py`).
+
 ## 1.43.0
 
 Front door: an idle swapper host keeps the listed model it has loaded. For a preference list (`"model": "a,b"`) whose names share one swapper host with no request in flight, the door asks the host's llama-swap `GET /running` (1 s bound) and prefers the listed model it reports `ready` or `starting`, so an idle host is not swapped away from a warm model. A busy host is still decided by its in-flight model; a host that does not answer in llama-swap's shape gets the first listed name, as before. No request is refused.
