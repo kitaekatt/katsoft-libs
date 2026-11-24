@@ -2,7 +2,7 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased
+## 1.44.0
 
 Graph pages carry inferred labels. `llm-kit graph render` asks a model (`haiku` by default) to write a title and description for each node, a text for each read between nodes and a gloss for each graph input and output, and draws them as inferred text that a Labels button in the page hides. Labels are on by default; if they cannot be made the command exits 3 and writes no page.
 
@@ -27,7 +27,7 @@ Fixed:
 Quality bar for the pieces above:
 
 1. Public API documented: pass. Each new public name has a docstring or a comment on its constant; `public-surface.json` lists the `labels`, `label_model` and `label_types` names and `user_paths.cache_home` and `neutral_cache_dir`, and `test_public_surface_lists_the_graph_names` and `test_public_surface_lists_the_cache_location_names_and_each_is_documented` check them.
-2. Semver release with a changelog: this entry; the version in `pyproject.toml` is set at release.
+2. Semver release with a changelog: pass; version 1.44.0 in `pyproject.toml` and this entry.
 3. Tests for each public function: pass. `test_labels.py` calls `label_catalog`, `LabelCache` and `default_cache_dir`; `test_label_model.py` calls `model_labeller`; `test_render.py` calls the command's `run` with a fake labeller (default on, `--no-labels`, refusal, `--relabel`, flag errors); `test_neutral_user_state.py` calls `cache_home` and `neutral_cache_dir`.
 4. No client names, prompts or data: pass. The tests use the `demo.*` fixture project and fake labellers; the label prompt's style example is generic.
 5. Examples run without a client app: pass from the source tree (`test_the_example_runs_from_the_source_tree` runs `label_graphs.py`); the wheel check runs at release.
