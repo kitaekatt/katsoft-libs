@@ -2,11 +2,11 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
-## Unreleased
+## 1.43.0
 
 Front door: an idle swapper host keeps the listed model it has loaded. For a preference list (`"model": "a,b"`) whose names share one swapper host with no request in flight, the door asks the host's llama-swap `GET /running` (1 s bound) and prefers the listed model it reports `ready` or `starting`, so an idle host is not swapped away from a warm model. A busy host is still decided by its in-flight model; a host that does not answer in llama-swap's shape gets the first listed name, as before. No request is refused.
 
-Quality bar for this change: no public name is added or changed, so lines 1, 5, 6 and 7 do not apply. 2: pending; this entry gets its version at release. 3: pass; `tests/llm-kit/test_frontdoor_preference.py` covers the choice, and `test_idle_host_keeps_the_listed_model_it_has_loaded` and `test_list_request_on_an_idle_door_uses_the_model_the_swapper_has_loaded` fail without it. 4: pass. 8: no security property changes; `/running` is read-only and the door sends it no request data.
+Quality bar for this change: no public name is added or changed, so lines 1, 5, 6 and 7 do not apply. 2: pass; version 1.43.0 in `pyproject.toml` and this entry. 3: pass; `tests/llm-kit/test_frontdoor_preference.py` covers the choice, and `test_idle_host_keeps_the_listed_model_it_has_loaded` and `test_list_request_on_an_idle_door_uses_the_model_the_swapper_has_loaded` fail without it. 4: pass. 8: no security property changes; `/running` is read-only and the door sends it no request data.
 
 ## 1.42.0
 
