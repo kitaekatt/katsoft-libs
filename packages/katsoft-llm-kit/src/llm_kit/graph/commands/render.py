@@ -5,8 +5,11 @@ Writes one self-contained HTML page that draws graphs
 requests.
 
 * No ``GRAPH``: every graph in the project config (``.llm-kit/graphs.yaml``),
-  with a graph browser listing them and every graph file they run. The default
-  output is ``graphs.html`` in the current directory.
+  with a graph browser listing them and every graph file they run, then the
+  unused graph files (every ``*.graph.yaml`` under the project root that no
+  config graph reaches, under an "Unused" heading; one that fails to load is
+  listed with its error). The default output is ``graphs.html`` in the current
+  directory.
 * One or more ``GRAPH``: each is a config graph name or a path to a graph file
   (a path needs no project config). The page holds those graphs and the files
   they run; with one graph that runs no other file, it opens straight on that

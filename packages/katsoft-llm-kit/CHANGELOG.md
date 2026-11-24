@@ -2,6 +2,31 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## Unreleased
+
+Graph pages show the graph files that nothing runs, and the carry and until of a repeat.
+
+Added:
+
+- `llm-kit graph render` with no `GRAPH` lists every `*.graph.yaml` under the project root that no entry graph reaches under an "Unused" heading in the browser sidebar. Each is browsable like any file and is labelled when labels are on, so its graph text goes to the labelling model like any other graph file's. A file that fails to load does not stop the page: it is listed with its error text (the root's path taken out) and opens nothing. A file that an unused file runs is itself unused. The walk stays inside the root and skips directories that start with `.`, `node_modules` and `__pycache__`. A render with named graphs lists none.
+- The catalog's optional `unused` list (`{file}` or `{file, error}`, sorted by file; a loaded file is also a key of `files`) in `llm-kit.graph-catalog/v1` and `/v2`: an optional key rather than a new version, because `render_page` has refused unknown keys since 1.44.0 (`docs/reference/llm-kit-formats.md`). `build_catalog` takes `unused=` (graph files to add when no entry reaches them); `project_catalog` with no names passes the files it finds. Shared cases `unused-file`, `unused-files-one-loaded-one-broken`, `labelled-with-unused-file` and four refused shapes.
+- Browser: an opened `repeat` shows its `max`, `until` and each `carry` (name, initial value, next value) as mono text on its header, at most three carries and a count of the rest; the full text is its tooltip.
+
+Changed:
+
+- An opened `repeat` header no longer repeats "up to N rounds" in its second line; `max` is in the new mono line.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. `build_catalog` and `project_catalog` docstrings state `unused`; the catalog module docstring and `docs/reference/llm-kit-graph.md` ("Render") describe the list and the walk. No public name is added, so `public-surface.json` is unchanged.
+2. Semver release with a changelog: pending; the version is set at release and this entry becomes its entry.
+3. Tests for each public function: pass. `test_render.py` calls `project_catalog`, `build_catalog` and the command's `run` on a fixture copy with unreached, broken and skipped files; `test_labels.py` calls `label_catalog` on a catalog with an unused file; `test_render_browser.py` pins the Unused group and the repeat header in the script.
+4. No client names, prompts or data: pass. The tests use the `demo.*` fixture project.
+5. Examples run without a client app: unchanged; `examples/render_graphs.py` needs no change.
+6. JSON Schema for each file format: pass. `unused` is in `graph-catalog.v1.schema.json` and `graph-catalog.v2.schema.json`; the shared cases run in `test_the_shared_catalog_cases`, `test_render_page_is_the_reader_of_every_shared_catalog_case` and `test_formats.py`, and `test_a_graph_file_no_entry_reaches_is_listed_as_unused_and_a_broken_one_carries_its_error` validates the writer's output.
+7. Gate before adoption: lines 1 to 6 and 8 pass; no client has adopted the change.
+8. Security properties are tested: pass. The walk stays inside the root (`test_the_walk_stays_inside_the_project_root`, a link to a file outside is not listed); a load error carries no machine path (`test_a_graph_file_no_entry_reaches_is_listed_as_unused_and_a_broken_one_carries_its_error`); the browser sets the error and repeat text as text (`test_browser_script_never_parses_markup`, `test_the_list_has_an_unused_group_with_load_errors_shown_as_text`).
+
 ## 1.44.0
 
 Graph pages carry inferred labels. `llm-kit graph render` asks a model (`haiku` by default) to write a title and description for each node, a text for each read between nodes and a gloss for each graph input and output, and draws them as inferred text that a Labels button in the page hides. Labels are on by default; if they cannot be made the command exits 3 and writes no page.

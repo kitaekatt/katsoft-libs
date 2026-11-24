@@ -18,6 +18,9 @@
   var CATALOG = JSON.parse(document.getElementById("catalog").textContent);
   var SVGNS = "http://www.w3.org/2000/svg";
   var CARD_W = 214, CARD_H = 58, IO_W = 136, IO_H = 30, HEAD = 44, MAX_DEPTH = 6;
+  // An opened repeat shows its max, until and carries as mono lines under the header: the first baseline, the step
+  // between lines, and how many carries are named before "+N more".
+  var REPEAT_FIRST_Y = 50, REPEAT_STEP = 13, MAX_CARRY_LINES = 3;
   var KIND_LABEL = { op: "OP", llm: "LLM", human: "HUMAN", commit: "COMMIT", graph: "GRAPH", map: "MAP", repeat: "REPEAT" };
   var KIND_HELP = {
     op: "runs an operation", llm: "calls a language model", human: "waits for a person",
@@ -336,19 +339,59 @@
       entries.forEach(function (e) { add(list, listItem(e.file, e.name, true)); });
     }
     var entryFiles = new Set(CATALOG.entries.map(function (e) { return e.file; }));
+    var unusedSet = new Set(unusedFiles());
     var rest = Object.keys(CATALOG.files).filter(function (f) {
-      return !entryFiles.has(f) && fileMatches(graphAt(f), q);
+      return !entryFiles.has(f) && !unusedSet.has(f) && fileMatches(graphAt(f), q);
+    });
+    var unused = unusedFiles().filter(function (f) { return fileMatches(graphAt(f), q); });
+    var broken = unusedErrors().filter(function (item) {
+      return !q || (item.file + "\n" + item.error).toLowerCase().indexOf(q) >= 0;
     });
     if (rest.length) {
       add(list, el("div", { "class": "group-title", text: "Graph files they run (" + rest.length + ")" }));
-      var folders = {};
-      rest.forEach(function (f) { (folders[dir(f)] = folders[dir(f)] || []).push(f); });
-      Object.keys(folders).sort().forEach(function (folder) {
-        add(list, el("div", { "class": "folder", text: (folder || ".") + "/" }));
-        folders[folder].forEach(function (f) { add(list, listItem(f, shortId(graphAt(f).id), false)); });
-      });
+      addFolders(list, rest);
     }
-    if (!entries.length && !rest.length) add(list, el("div", { "class": "empty", text: "Nothing matches \u201c" + state.query + "\u201d." }));
+    if (unused.length || broken.length) {
+      add(list, el("div", {
+        "class": "group-title", text: "Unused (" + (unused.length + broken.length) + ")",
+        title: "Graph files under the project root that no entry graph runs",
+      }));
+      addFolders(list, unused);
+      broken.forEach(function (item) { add(list, brokenItem(item)); });
+    }
+    if (!entries.length && !rest.length && !unused.length && !broken.length) {
+      add(list, el("div", { "class": "empty", text: "Nothing matches \u201c" + state.query + "\u201d." }));
+    }
+  }
+
+  // The unused graph files that loaded: keys of CATALOG.files that no entry graph reaches.
+  function unusedFiles() {
+    return unusedItems().filter(function (item) { return !str(item.error) && own(CATALOG.files, item.file); })
+      .map(function (item) { return item.file; });
+  }
+
+  // The unused graph files that did not load, each with the error text.
+  function unusedErrors() { return unusedItems().filter(function (item) { return !!str(item.error); }); }
+
+  function unusedItems() {
+    return Array.isArray(CATALOG.unused) ? CATALOG.unused.filter(function (item) { return item && str(item.file); }) : [];
+  }
+
+  function addFolders(list, files) {
+    var folders = {};
+    files.forEach(function (f) { (folders[dir(f)] = folders[dir(f)] || []).push(f); });
+    Object.keys(folders).sort().forEach(function (folder) {
+      add(list, el("div", { "class": "folder", text: (folder || ".") + "/" }));
+      folders[folder].forEach(function (f) { add(list, listItem(f, shortId(graphAt(f).id), false)); });
+    });
+  }
+
+  // A graph file that did not load: its path and the error, as text. It opens nothing.
+  function brokenItem(item) {
+    return el("div", { "class": "item bad", title: item.file },
+      el("div", { "class": "name", text: base(item.file) }),
+      el("div", { "class": "desc err", text: item.error }),
+      el("div", { "class": "meta" }, el("span", { text: "did not load" }), el("span", { text: dir(item.file) + "/" })));
   }
 
   // ------------------------------------------------------------------ navigation
@@ -431,6 +474,11 @@
 
   function nodeId(key) { return "n:" + key; }
 
+  // The room an opened node's header takes above its children: a repeat adds a line for each of its repeatLines.
+  function headHeight(node, kind) {
+    return kind === "repeat" ? REPEAT_FIRST_Y + REPEAT_STEP * (repeatLines(node).length - 1) + 12 : HEAD;
+  }
+
   // ctx says where the labels of this level live: the graph file it belongs to, and the prefix of its
   // node paths inside that file (an inline body continues the path of the node that holds it).
   function buildLevel(graph, scope, depth, files, edges, ctx) {
@@ -451,7 +499,7 @@
         info.target = target;
         children.push({
           id: id,
-          layoutOptions: { "elk.padding": "[top=" + HEAD + ",left=14,bottom=14,right=14]" },
+          layoutOptions: { "elk.padding": "[top=" + headHeight(node, info.kind) + ",left=14,bottom=14,right=14]" },
           children: buildLevel(target, key, depth + 1, node.ref ? files.concat([node.ref]) : files, edges,
             node.ref ? { file: node.ref, prefix: "" } : { file: ctx.file, prefix: lpath + "/" }),
         });
@@ -705,6 +753,19 @@
     return g;
   }
 
+  // The mono lines on the header of an opened repeat: its max and until, then one line for each carry
+  // (name = init -> next). The text is the node's own, from its detail; at most MAX_CARRY_LINES carries show.
+  function repeatLines(node) {
+    var d = node.detail || {}, carry = d.carry && typeof d.carry === "object" ? d.carry : {}, names = Object.keys(carry);
+    var lines = ["max " + (d.max || "?") + (d.until ? "  until " + d.until : "")];
+    names.slice(0, MAX_CARRY_LINES).forEach(function (name) {
+      var c = carry[name] || {};
+      lines.push("carry " + name + " = " + (c.init || "?") + " \u2192 " + (c.next || "?"));
+    });
+    if (names.length > MAX_CARRY_LINES) lines.push("+" + (names.length - MAX_CARRY_LINES) + " more carry");
+    return lines;
+  }
+
   function drawCompound(id, info, x, y, w, h) {
     var node = info.node, kind = info.kind, target = info.target;
     var sub = node.ref ? (target.id + "  \u00b7  " + base(node.ref)) : "inline body";
@@ -717,7 +778,14 @@
     sv("rect", { "class": "frame", width: w, height: h, rx: 10 }),
     sv("text", { "class": "tag", x: 14, y: 17, text: tag }),
     sv("text", { "class": "ctitle", x: 14 + tag.length * 7 + 6, y: 17, text: info.lab ? fit(info.lab.title, w - 50 - tag.length * 7, 7.4) : node.id }),
-    sv("text", { "class": "csub", x: 14, y: 34, text: fit(sub + (kind === "repeat" ? "  \u00b7  up to " + node.detail.max + " rounds" : ""), w - 50, 6.1) }));
+    sv("text", { "class": "csub", x: 14, y: 34, text: fit(sub, w - 50, 6.1) }));
+    if (kind === "repeat") {
+      var lines = repeatLines(node);
+      add(g, sv("title", { text: lines.join("\n") }));
+      lines.forEach(function (line, i) {
+        add(g, sv("text", { "class": "cmono", x: 14, y: REPEAT_FIRST_Y + i * REPEAT_STEP, text: fit(line, w - 28, 6.4) }));
+      });
+    }
     add(g, toggleButton(info, w - 28, 8, true));
     g.addEventListener("click", function (ev) { if (ev.target.closest(".node") === g) select(info.key); });
     g.addEventListener("dblclick", function (ev) { if (ev.target.closest(".node") === g && node.ref) enter(info.key, node); });

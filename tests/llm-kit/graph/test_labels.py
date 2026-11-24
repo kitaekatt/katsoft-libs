@@ -173,6 +173,23 @@ def test_every_node_edge_and_port_is_labelled_and_the_result_is_a_valid_v2_catal
         "approve": "E approve->encode", "bundle": "E bundle->encode"}
 
 
+def test_an_unused_graph_file_is_labelled_like_any_other_and_the_unused_list_survives(project):
+    (project / "graphs" / "spare.graph.yaml").write_text(
+        "id: demo.spare\n"
+        "inputs:\n  moment: {schema: {type: object}}\n"
+        "outputs:\n  out: {schema: {type: object}}\n"
+        "nodes:\n  keep:\n    op: demo.keep\n    in: {moment: inputs.moment}\n"
+        "outputs_from:\n  out: keep.out\n", encoding="utf-8")
+    fake = Fake()
+    v2 = _label(_cat(project), fake, root=project)
+    _valid(v2)
+    _reader_rules(v2)
+    assert v2["unused"] == [{"file": "graphs/spare.graph.yaml"}]
+    assert "graphs/spare.graph.yaml" in v2["labels"]
+    assert "graphs/spare.graph.yaml" in fake.files
+    assert v2["labels"]["graphs/spare.graph.yaml"]["nodes"]["keep"]["title"] == "T keep"
+
+
 def test_a_catalog_that_is_not_v1_or_a_bad_option_is_refused(catalog):
     labelled = _label(catalog, Fake())
     with pytest.raises(ValueError, match="graph-catalog/v1"):

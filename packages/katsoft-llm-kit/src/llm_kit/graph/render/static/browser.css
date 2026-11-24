@@ -52,6 +52,10 @@ button.icon { width: 30px; padding: 4px 0; text-align: center; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .item .meta { color: var(--faint); font-size: 11px; margin-top: 2px; display: flex; gap: 8px; }
 .item.entry .name::before { content: "\25B6"; color: var(--accent); font-size: 9px; margin-right: 6px; vertical-align: 1px; }
+.item.bad { cursor: default; border-left-color: var(--human); }
+.item.bad:hover { background: none; }
+.item .desc.err { display: block; color: var(--human); font: 11px/1.4 ui-monospace, Consolas, monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere; }
 .empty { padding: 14px; color: var(--muted); }
 .stage { position: relative; overflow: hidden; min-width: 0; }
 #canvas { width: 100%; height: 100%; display: block; cursor: grab; }
@@ -103,6 +107,7 @@ button.icon { width: 30px; padding: 4px 0; text-align: center; }
 .compound.sel > rect.frame { stroke: var(--accent); stroke-width: 2; stroke-opacity: 1; }
 .compound .ctitle { font-weight: 620; font-size: 12px; fill: var(--text); }
 .compound .csub { font-size: 11px; fill: var(--muted); }
+.compound .cmono { font: 10.5px ui-monospace, Consolas, monospace; fill: var(--muted); }
 .io rect { fill: var(--panel-2); stroke: var(--io); stroke-opacity: .5; }
 .io text { fill: var(--io); font-size: 11.5px; font-family: ui-monospace, Consolas, monospace; }
 .io .iotag { fill: var(--faint); font-size: 9.5px; letter-spacing: .05em; font-family: inherit; }

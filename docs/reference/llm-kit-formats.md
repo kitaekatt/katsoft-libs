@@ -349,6 +349,9 @@ The graphs a rendered graph page draws (`llm-kit graph render`). Writer: Python 
 3. `deps` names sibling nodes the node's expressions read; `reads_inputs` names graph inputs it reads; `output_sources` maps each output to the sibling nodes its binding reads; `outer_deps` names enclosing nodes an inline body reads. These come from a scan of expressions and are for drawing only: `llm-kit graph validate` is the check.
 4. `used_by` maps a graph file to the nodes that run it: `file` and `node`, the node path in that file (`/` joins the ids of nested inline bodies).
 5. `definition` is the node as written, except that an inline body's `body` is the text `(inline body)`.
+6. `unused` is optional and never empty when present (version 2 has it too). It lists the graph files under the project root that no entry graph reaches, sorted by `file`: `{file}` for a file that loads, `{file, error}` for one that does not. A file that loads is also a key of `files` and has `used_by` entries for the files it runs (a file that an unused file runs is itself unused); a file with an `error` is not a key of `files`, and its `error` text has the root's path taken out. The schema cannot say that a `file` with no `error` is a key of `files`; a reader ignores an item without an `error` that names no file (the case `unused-files-one-loaded-one-broken` fixes the shape). Only `project_catalog` with no graph names writes it; `llm-kit graph render` shows it as an "Unused" group.
+
+`unused` is an optional key, not a new version, because every reader of record validates against the schema: `render_page` (since 1.44.0) refuses a key its version does not list, so a reader that does not know `unused` refuses the catalog rather than drawing it without the key. The versions of the `render_page` before 1.44.0 (1.42.0 and 1.43.0) checked only `format` and `entries`; they take a version 1 catalog with `unused` and list its loaded files among the files the entry graphs run, and draw no load error.
 
 ## llm-kit.graph-catalog/v2
 
@@ -369,7 +372,7 @@ Labels are a new version, not an optional key of version 1, because no version 1
 
 (`entries` and `files` are as in version 1; the example leaves them empty to stay short, and a real catalog has at least one entry.)
 
-1. Every key of version 1 means what it means there. `labels` is required and is an object; `{}` is allowed. Any other new key is refused.
+1. Every key of version 1 means what it means there, `unused` included (a loaded unused file is labelled like any file of `files`). `labels` is required and is an object; `{}` is allowed. Any other new key is refused.
 2. `labels` maps a key of `files` to that file's block. A block always has `sources`, `graph` and `nodes`; a writer never writes a partial block.
 3. `sources` is a non-empty list. Each source is one labelling request: `prompt` (the prompt version), `key` (the cache key of its primary call: 64 lowercase hex digits; the schema checks the length, and the lowercase hex is a reader rule) and `calls`. `calls` holds one item, the primary call, or two, the primary call and then one follow-up for keys the primary call left out. Each call names `entry`, the model entry id that served it, and `model`, the model that answered. The entry that served the primary call serves the follow-up. A file labelled in several requests (a large file is split by nodes) has one source for each.
 4. `source`, in `graph` and in each node label, is an index into `sources` of the same block.

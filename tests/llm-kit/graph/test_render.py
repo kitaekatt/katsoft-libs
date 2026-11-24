@@ -157,6 +157,107 @@ def test_the_schema_refuses_a_catalog_with_a_wrong_format(catalog):
 
 
 # ---------------------------------------------------------------------------
+# unused graph files: files under the project root that no entry graph reaches
+# ---------------------------------------------------------------------------
+
+SPARE = "graphs/spare.graph.yaml"
+BROKEN = "graphs/broken.graph.yaml"
+WRAPPER = "graphs/wrapper.graph.yaml"
+_SPARE_TEXT = ("id: demo.spare\n"
+               "inputs:\n  moment: {schema: {type: object}}\n"
+               "outputs:\n  out: {schema: {type: object}}\n"
+               "nodes:\n  keep:\n    op: demo.keep\n    in: {moment: inputs.moment}\n"
+               "outputs_from:\n  out: keep.out\n")
+
+
+def _with_extra_graphs(tmp_path: Path) -> Path:
+    """A copy of the fixture project plus graph files that nothing runs, and some that must be skipped."""
+    project = tmp_path / "project"
+    shutil.copytree(FIXTURE, project, ignore=shutil.ignore_patterns("state", "work"))
+    (project / SPARE).write_text(_SPARE_TEXT, encoding="utf-8")
+    (project / BROKEN).write_text("id: demo.broken\noutputs: {}\noutputs_from: {}\n"
+                                  "nodes:\n  inner:\n    graph: ./nowhere.graph.yaml\n", encoding="utf-8")
+    for skipped in (".git/hooks", "node_modules/pkg", ".venv/lib", "__pycache__", ".hidden/deep"):
+        (project / skipped).mkdir(parents=True)
+        (project / skipped / "skipped.graph.yaml").write_text(_SPARE_TEXT, encoding="utf-8")
+    (project / "graphs" / "notes.yaml").write_text("not: a graph file\n", encoding="utf-8")
+    return project
+
+
+def test_a_graph_file_no_entry_reaches_is_listed_as_unused_and_a_broken_one_carries_its_error(tmp_path):
+    project = _with_extra_graphs(tmp_path)
+    catalog = project_catalog(load_config(project))
+    _valid(catalog)
+    assert catalog["entries"] == [{"name": "demo.night", "file": NIGHT}]
+    assert sorted(catalog["files"]) == sorted([NIGHT, STORY, POSE, SPARE])
+    assert [item["file"] for item in catalog["unused"]] == [BROKEN, SPARE]
+    assert "error" not in catalog["unused"][1]
+    error = catalog["unused"][0]["error"]
+    assert "nowhere.graph.yaml" in error
+    assert str(project) not in error and project.as_posix() not in error, "the error names a machine path"
+    assert BROKEN not in catalog["files"]
+    assert SPARE not in catalog["used_by"], "an unused file is run by nothing"
+
+
+def test_a_project_whose_files_are_all_reached_has_no_unused_key(catalog):
+    assert "unused" not in catalog
+
+
+def test_naming_graphs_explicitly_lists_no_unused_files(tmp_path):
+    project = _with_extra_graphs(tmp_path)
+    catalog = project_catalog(load_config(project), ["demo.night"])
+    assert "unused" not in catalog and SPARE not in catalog["files"]
+
+
+def test_an_unused_file_that_runs_another_unreached_file_lists_both(tmp_path):
+    project = tmp_path / "project"
+    shutil.copytree(FIXTURE / "graphs", project / "graphs")
+    shutil.copytree(FIXTURE / "prompts", project / "prompts")
+    (project / ".llm-kit").mkdir()
+    (project / WRAPPER).write_text(
+        "id: demo.wrapper\n"
+        "inputs:\n  pose: {schema: {type: object}}\n"
+        "outputs:\n  image: {schema: {type: object}}\n"
+        "nodes:\n  inner:\n    graph: ./stages/pose.graph.yaml\n    in: {pose: inputs.pose}\n"
+        "outputs_from:\n  image: inner.out.image\n", encoding="utf-8")
+    (project / ".llm-kit" / "graphs.yaml").write_text(
+        "version: 1\ngraphs:\n  demo.story: graphs/stages/story.graph.yaml\n", encoding="utf-8")
+    catalog = project_catalog(load_config(project))
+    _valid(catalog)
+    assert [item["file"] for item in catalog["unused"]] == [NIGHT, POSE, WRAPPER]
+    assert catalog["used_by"][POSE] == [{"file": NIGHT, "node": "poses"}, {"file": WRAPPER, "node": "inner"}]
+
+
+def test_the_walk_stays_inside_the_project_root(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "far.graph.yaml").write_text(_SPARE_TEXT, encoding="utf-8")
+    project = _with_extra_graphs(tmp_path)
+    try:
+        (project / "graphs" / "linked.graph.yaml").symlink_to(outside / "far.graph.yaml")
+    except (OSError, NotImplementedError):
+        pytest.skip("this machine cannot make a symbolic link")
+    catalog = project_catalog(load_config(project))
+    assert "graphs/linked.graph.yaml" not in [item["file"] for item in catalog["unused"]]
+    assert all(not key.endswith("far.graph.yaml") for key in catalog["files"])
+
+
+def test_render_command_without_graphs_draws_the_unused_files(tmp_path):
+    project = _with_extra_graphs(tmp_path)
+    out = tmp_path / "all.html"
+    assert render_command.run(["--project", str(project), "--no-labels", "-o", str(out)]) == 0
+    unused = _embedded(out.read_text(encoding="utf-8"))["unused"]
+    assert [item["file"] for item in unused] == [BROKEN, SPARE]
+
+
+def test_render_command_with_a_named_graph_lists_no_unused_files(tmp_path):
+    project = _with_extra_graphs(tmp_path)
+    out = tmp_path / "one.html"
+    assert render_command.run(["--project", str(project), "--no-labels", "demo.night", "-o", str(out)]) == 0
+    assert "unused" not in _embedded(out.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
 # page
 # ---------------------------------------------------------------------------
 

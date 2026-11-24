@@ -645,6 +645,444 @@
      ]
     }
    }
+  },
+  {
+   "name": "unused-file",
+   "expect": "valid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v1",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "bundle"
+      ],
+      "output_sources": {
+       "bundle": [
+        "bundle"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       }
+      ]
+     },
+     "graphs/spare.graph.yaml": {
+      "id": "demo.spare",
+      "file": "graphs/spare.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "bundle"
+      ],
+      "output_sources": {
+       "bundle": [
+        "bundle"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "unused": [
+     {
+      "file": "graphs/spare.graph.yaml"
+     }
+    ]
+   }
+  },
+  {
+   "name": "unused-files-one-loaded-one-broken",
+   "expect": "valid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v1",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "bundle"
+      ],
+      "output_sources": {
+       "bundle": [
+        "bundle"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       }
+      ]
+     },
+     "graphs/spare.graph.yaml": {
+      "id": "demo.spare",
+      "file": "graphs/spare.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "bundle"
+      ],
+      "output_sources": {
+       "bundle": [
+        "bundle"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "unused": [
+     {
+      "file": "graphs/broken.graph.yaml",
+      "error": "graphs/broken.graph.yaml: file './nowhere.graph.yaml' does not exist"
+     },
+     {
+      "file": "graphs/spare.graph.yaml"
+     }
+    ]
+   }
+  },
+  {
+   "name": "unused-empty-list",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v1",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "bundle"
+      ],
+      "output_sources": {
+       "bundle": [
+        "bundle"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "unused": []
+   }
+  },
+  {
+   "name": "unused-item-without-file",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v1",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "bundle"
+      ],
+      "output_sources": {
+       "bundle": [
+        "bundle"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "unused": [
+     {
+      "error": "no file named"
+     }
+    ]
+   }
+  },
+  {
+   "name": "unused-item-empty-error",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v1",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "bundle"
+      ],
+      "output_sources": {
+       "bundle": [
+        "bundle"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "unused": [
+     {
+      "file": "graphs/x.graph.yaml",
+      "error": ""
+     }
+    ]
+   }
+  },
+  {
+   "name": "unused-item-unknown-key",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v1",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "bundle"
+      ],
+      "output_sources": {
+       "bundle": [
+        "bundle"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "unused": [
+     {
+      "file": "graphs/x.graph.yaml",
+      "why": "unused"
+     }
+    ]
+   }
   }
  ]
 }

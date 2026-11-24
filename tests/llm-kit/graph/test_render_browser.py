@@ -58,6 +58,30 @@ def test_the_labels_control_and_its_stored_choice():
     assert "--inferred" in _text("browser.css")
 
 
+def test_the_list_has_an_unused_group_with_load_errors_shown_as_text():
+    script = _text("browser.js")
+    assert "CATALOG.unused" in script
+    assert '"Unused (" +' in script
+    # a file that failed to load is drawn with its error text, set as text, and is not a link into a graph
+    assert 'text: item.error' in script
+    assert "unusedFiles()" in script and "unusedErrors()" in script
+    assert ".item.bad" in _text("browser.css")
+
+
+def test_a_repeat_header_shows_its_max_until_and_carry_as_mono_text():
+    script, css = _text("browser.js"), _text("browser.css")
+    assert "function repeatLines(" in script
+    body = script[script.index("function repeatLines("):]
+    body = body[:body.index("\n  }\n")]
+    assert "node.detail" in body
+    for field in ("max", "until", "carry"):
+        assert re.search(r"\bd\." + field + r"\b", body), field
+    # the header grows to hold those lines, and they are drawn in a mono class of their own
+    assert "repeatLines(node).length" in script
+    assert '"class": "cmono"' in script
+    assert ".compound .cmono" in css and "monospace" in css[css.index(".compound .cmono"):].splitlines()[0]
+
+
 @pytest.mark.parametrize("name", FILES)
 def test_the_page_files_stay_ascii_and_name_no_other_product(name):
     text = _text(name)

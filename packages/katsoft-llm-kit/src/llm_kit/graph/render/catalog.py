@@ -14,6 +14,13 @@ to this module's format id
 * ``used_by`` -- graph file path -> the places that run it:
   ``{"file", "node"}``, where ``node`` is the node path inside that file
   (``loop/evaluate`` for a node inside the inline body of ``loop``).
+* ``unused`` -- optional; present only when it is not empty. The graph files
+  under the project root that no entry graph reaches or that failed to load,
+  as ``{"file"}`` or ``{"file", "error"}``, sorted by ``file``. A graph file
+  that loads is also a key of ``files``, with its ``used_by`` entries (a file
+  an unused file runs is itself unused); one that does not load has an
+  ``error`` text (the root's path taken out) and is not a key of ``files``.
+  Only :func:`project_catalog` with no graph names looks for them.
 
 A graph is ``{id, file, outer, description, inputs, outputs, output_sources,
 nodes}``. ``inputs`` is a list of ``{name, description}``. ``output_sources``
@@ -31,6 +38,7 @@ for the picture only, and ``llm-kit graph validate`` is the check.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Optional
@@ -57,6 +65,9 @@ __all__ = [
 CATALOG_FORMAT = "llm-kit.graph-catalog/v1"
 
 _INLINE_BODY = "(inline body)"
+
+#: Directories the walk for unused graph files does not enter, besides any whose name starts with ``.``.
+_SKIPPED_DIRECTORIES = frozenset({"node_modules", "__pycache__"})
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -173,15 +184,52 @@ class _Builder:
         return result
 
 
+def _graph_files_under(root: Path | str) -> list[Path]:
+    """Every ``*.graph.yaml`` file under ``root``, sorted by path.
+
+    The walk does not enter a directory whose name starts with ``.`` (``.git``,
+    a virtual environment, tool caches), ``node_modules`` or ``__pycache__``,
+    and follows no directory link. A file link is kept only when it resolves
+    inside ``root``, so the result never leaves the root.
+    """
+    root_path = Path(root).resolve()
+    found = []
+    for folder, names, files in os.walk(root_path):
+        names[:] = sorted(n for n in names if not n.startswith(".") and n not in _SKIPPED_DIRECTORIES)
+        for name in files:
+            if not name.endswith(".graph.yaml"):
+                continue
+            path = Path(folder) / name
+            try:
+                path.resolve().relative_to(root_path)
+            except ValueError:
+                continue
+            found.append(path)
+    return sorted(found)
+
+
+def _load_error(exc: GraphError, root: Path) -> str:
+    """The text of a load error, with the root's path taken out so a page carries no machine path."""
+    text = str(exc)
+    for spelling in {str(root) + os.sep, root.as_posix() + "/"}:
+        text = text.replace(spelling, "")
+    return text
+
+
 def build_catalog(graphs: Mapping[str, Path | str], *, root: Path | str,
-                  project: Optional[str] = None) -> dict[str, Any]:
+                  project: Optional[str] = None,
+                  unused: Sequence[Path | str] = ()) -> dict[str, Any]:
     """The catalog of ``graphs`` (entry name -> graph file) and every graph file they run.
 
     ``root`` is the directory file paths in the catalog are relative to (files
     outside it keep their absolute path). ``project`` is a display name for the
-    page; it defaults to the name of ``root``. Raises
-    :class:`llm_kit.graph.model.GraphError` when a graph file does not load, and
-    ``ValueError`` when ``graphs`` is empty.
+    page; it defaults to the name of ``root``. ``unused`` lists graph files to
+    add when no entry graph reaches them (a file an entry reaches is left as it
+    is): each that loads is added to ``files`` and to the catalog's ``unused``
+    list, with the graph files it runs; each that does not load is listed with
+    its error and does not stop the catalog. Raises
+    :class:`llm_kit.graph.model.GraphError` when an entry graph does not load,
+    and ``ValueError`` when ``graphs`` is empty.
     """
     if not graphs:
         raise ValueError("build_catalog needs at least one graph")
@@ -190,21 +238,40 @@ def build_catalog(graphs: Mapping[str, Path | str], *, root: Path | str,
     entries = []
     for name, path in graphs.items():
         entries.append({"name": str(name), "file": builder.file(load_graph(path))})
-    return {
+    reached = set(builder.files)
+    failed: dict[str, str] = {}
+    for path in unused:
+        key = _relative(Path(path), root_path)
+        if key in builder.files or key in failed:
+            continue
+        try:
+            builder.file(load_graph(path))
+        except GraphError as exc:
+            failed[key] = _load_error(exc, root_path)
+    items = [{"file": key} for key in builder.files if key not in reached]
+    items += [{"file": key, "error": error} for key, error in failed.items()]
+    catalog: dict[str, Any] = {
         "format": CATALOG_FORMAT,
         "project": project or root_path.name,
         "entries": entries,
         "files": dict(sorted(builder.files.items())),
         "used_by": {key: builder.used_by[key] for key in sorted(builder.used_by)},
     }
+    if items:
+        catalog["unused"] = sorted(items, key=lambda item: item["file"])
+    return catalog
 
 
 def project_catalog(config: GraphConfig, names: Optional[Sequence[str]] = None) -> dict[str, Any]:
     """The catalog of a project's graphs (``.llm-kit/graphs.yaml``).
 
     ``names`` selects graphs by config name; ``None`` takes every graph in the
-    config, in config order. Raises :class:`llm_kit.graph.model.GraphError`
-    for a name the config does not have or a graph file that does not load.
+    config, in config order, and also lists the unused graph files: every
+    ``*.graph.yaml`` under the project root that no config graph reaches
+    (the catalog's ``unused`` list). Raises
+    :class:`llm_kit.graph.model.GraphError` for a name the config does not have
+    or a config graph file that does not load; an unused file that does not
+    load is listed with its error instead.
     """
     chosen = list(config.graphs) if names is None else list(names)
     graphs = {}
@@ -212,4 +279,5 @@ def project_catalog(config: GraphConfig, names: Optional[Sequence[str]] = None) 
         if name not in config.graphs:
             raise GraphError(f"the project config has no graph named {name!r}")
         graphs[name] = config.graph_path(name)
-    return build_catalog(graphs, root=config.root)
+    return build_catalog(graphs, root=config.root,
+                         unused=_graph_files_under(config.root) if names is None else ())
