@@ -19,7 +19,8 @@ from llm_kit.graph.commands import render as render_command
 from llm_kit.graph.config import load_config
 from llm_kit.graph.model import GraphError
 from llm_kit.graph.render import CATALOG_FORMAT, build_catalog, project_catalog, render_page, write_page
-from llm_kit.schema.formats import GRAPH_CATALOG_V1, load_schema
+from llm_kit.graph.render import _escape
+from llm_kit.schema.formats import GRAPH_CATALOG_V1, GRAPH_CATALOG_V2, load_schema
 from llm_kit.schema.json_schema import check_schema, validate
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "viewer" / "project"
@@ -143,6 +144,11 @@ def test_the_shared_catalog_cases(case):
     assert (errors == ()) == (case["expect"] == "valid"), errors
 
 
+CASES_V2 = json.loads((Path(__file__).resolve().parents[2] / "formats" / "graph-catalog" / "cases.v2.json")
+                      .read_text(encoding="utf-8"))
+LABELLED = next(c["document"] for c in CASES_V2["documents"] if c["name"] == "labelled-graph")
+
+
 def test_the_schema_refuses_a_catalog_with_a_wrong_format(catalog):
     broken = json.loads(json.dumps(catalog))
     broken["format"] = "llm-kit.graph-catalog/v2"
@@ -173,10 +179,60 @@ def test_render_page_text_from_a_graph_cannot_close_its_script_element(catalog):
 
 
 def test_render_page_refuses_another_format_and_an_empty_catalog(catalog):
-    with pytest.raises(ValueError, match="not a llm-kit.graph-catalog/v1"):
+    with pytest.raises(ValueError, match="not a llm-kit.graph-catalog/v1 or llm-kit.graph-catalog/v2"):
         render_page({**catalog, "format": "something-else"})
     with pytest.raises(ValueError, match="no entries"):
         render_page({**catalog, "entries": []})
+
+
+@pytest.mark.parametrize("case", CASES["documents"] + CASES_V2["documents"],
+                         ids=lambda c: c["name"] if isinstance(c, dict) else str(c))
+def test_render_page_is_the_reader_of_every_shared_catalog_case(case):
+    """The page is the only reader of a catalog; it takes every valid case and refuses every invalid one."""
+    if case["expect"] == "valid":
+        assert _embedded(render_page(case["document"])) == case["document"]
+    else:
+        with pytest.raises(ValueError):
+            render_page(case["document"])
+
+
+def test_render_page_accepts_a_labelled_catalog_and_names_the_broken_place(catalog):
+    assert GRAPH_CATALOG_V2 == LABELLED["format"]
+    assert _embedded(render_page(LABELLED)) == LABELLED
+    broken = json.loads(json.dumps(LABELLED))
+    broken["labels"][NIGHT]["graph"]["title"] = ""
+    with pytest.raises(ValueError, match=r"llm-kit.graph-catalog/v2.*/labels/.*minLength"):
+        render_page(broken)
+    stale = json.loads(json.dumps(catalog))
+    stale["labels"] = {}
+    with pytest.raises(ValueError, match=r"llm-kit.graph-catalog/v1.*/labels"):
+        render_page(stale)
+
+
+def test_render_page_label_text_cannot_close_its_script_element():
+    hostile = json.loads(json.dumps(LABELLED))
+    text = "</script><script>alert(1)</script><!-- & \u2028 \u2029"
+    labels = hostile["labels"][NIGHT]
+    labels["graph"]["title"] = text
+    labels["graph"]["purpose"] = text
+    node = next(iter(labels["nodes"].values()))
+    node["title"], node["description"] = text, text
+    node["reads"] = {"x": text}
+    page = render_page(hostile)
+    assert "<script>alert(1)" not in page
+    assert page.count("</script>") == 3  # the catalog, the layout library and the browser script
+    assert _embedded(page) == hostile
+
+
+def test_the_markup_escapes_leave_no_angle_bracket_or_ampersand_and_round_trip():
+    text = json.dumps({"a": "</script><!-- & > <", "b": "\u2028\u2029"}, ensure_ascii=False)
+    markup = _escape.escape_markup(text)
+    assert not any(char in markup for char in "<>&")
+    assert json.loads(markup) == json.loads(text)
+    script = _escape.escape_script_json(text)
+    assert not any(char in script for char in "<>&\u2028\u2029")
+    assert json.loads(script) == json.loads(text)
+    assert "\u2028" in markup and "\u2028" not in script
 
 
 def test_write_page_creates_parents_and_writes_the_page(catalog, tmp_path):

@@ -1,0 +1,549 @@
+{
+ "format": "llm-kit.graph-labels/v1",
+ "schema": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/graph-labels.v1.schema.json",
+ "description": "Shared cases for the cache entry of inferred graph labels. 'documents': each 'document' is a parsed cache file; 'expect' is 'valid' or 'invalid' (the schema refuses it). Reader rules the schema cannot state are in docs/reference/llm-kit-formats.md.",
+ "documents": [
+  {
+   "name": "one-call",
+   "expect": "valid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "graph": {
+      "title": "Nightly bundle",
+      "purpose": "Bundles a moment, waits for approval, then writes a plot."
+     },
+     "nodes": {
+      "bundle": {
+       "title": "Bundle the moment",
+       "description": "Packs the moment into one bundle."
+      },
+      "approve": {
+       "title": "Approve the bundle",
+       "description": "A person approves the bundle."
+      }
+     },
+     "edges": {
+      "bundle->approve": "the bundle to approve"
+     },
+     "inputs": {
+      "moment": "the moment to bundle"
+     },
+     "outputs": {
+      "plot": "the written plot"
+     }
+    }
+   }
+  },
+  {
+   "name": "two-calls",
+   "expect": "valid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     },
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "graph": {
+      "title": "Nightly bundle",
+      "purpose": "Bundles a moment, waits for approval, then writes a plot."
+     },
+     "nodes": {
+      "bundle": {
+       "title": "Bundle the moment",
+       "description": "Packs the moment into one bundle."
+      },
+      "approve": {
+       "title": "Approve the bundle",
+       "description": "A person approves the bundle."
+      }
+     },
+     "edges": {
+      "bundle->approve": "the bundle to approve"
+     },
+     "inputs": {
+      "moment": "the moment to bundle"
+     },
+     "outputs": {
+      "plot": "the written plot"
+     }
+    }
+   }
+  },
+  {
+   "name": "batch-continuation-without-header",
+   "expect": "valid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "nodes": {
+      "loop": {
+       "title": "Write until done",
+       "description": "Repeats the write step."
+      }
+     },
+     "edges": {}
+    }
+   }
+  },
+  {
+   "name": "wrong-format",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v0",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "graph": {
+      "title": "Nightly bundle",
+      "purpose": "Bundles a moment, waits for approval, then writes a plot."
+     },
+     "nodes": {
+      "bundle": {
+       "title": "Bundle the moment",
+       "description": "Packs the moment into one bundle."
+      },
+      "approve": {
+       "title": "Approve the bundle",
+       "description": "A person approves the bundle."
+      }
+     },
+     "edges": {
+      "bundle->approve": "the bundle to approve"
+     },
+     "inputs": {
+      "moment": "the moment to bundle"
+     },
+     "outputs": {
+      "plot": "the written plot"
+     }
+    }
+   }
+  },
+  {
+   "name": "key-of-63-characters",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "graph": {
+      "title": "Nightly bundle",
+      "purpose": "Bundles a moment, waits for approval, then writes a plot."
+     },
+     "nodes": {
+      "bundle": {
+       "title": "Bundle the moment",
+       "description": "Packs the moment into one bundle."
+      },
+      "approve": {
+       "title": "Approve the bundle",
+       "description": "A person approves the bundle."
+      }
+     },
+     "edges": {
+      "bundle->approve": "the bundle to approve"
+     },
+     "inputs": {
+      "moment": "the moment to bundle"
+     },
+     "outputs": {
+      "plot": "the written plot"
+     }
+    }
+   }
+  },
+  {
+   "name": "unknown-key",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "graph": {
+      "title": "Nightly bundle",
+      "purpose": "Bundles a moment, waits for approval, then writes a plot."
+     },
+     "nodes": {
+      "bundle": {
+       "title": "Bundle the moment",
+       "description": "Packs the moment into one bundle."
+      },
+      "approve": {
+       "title": "Approve the bundle",
+       "description": "A person approves the bundle."
+      }
+     },
+     "edges": {
+      "bundle->approve": "the bundle to approve"
+     },
+     "inputs": {
+      "moment": "the moment to bundle"
+     },
+     "outputs": {
+      "plot": "the written plot"
+     }
+    },
+    "extra": true
+   }
+  },
+  {
+   "name": "missing-answer",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ]
+   }
+  },
+  {
+   "name": "three-calls",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     },
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     },
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "graph": {
+      "title": "Nightly bundle",
+      "purpose": "Bundles a moment, waits for approval, then writes a plot."
+     },
+     "nodes": {
+      "bundle": {
+       "title": "Bundle the moment",
+       "description": "Packs the moment into one bundle."
+      },
+      "approve": {
+       "title": "Approve the bundle",
+       "description": "A person approves the bundle."
+      }
+     },
+     "edges": {
+      "bundle->approve": "the bundle to approve"
+     },
+     "inputs": {
+      "moment": "the moment to bundle"
+     },
+     "outputs": {
+      "plot": "the written plot"
+     }
+    }
+   }
+  },
+  {
+   "name": "no-calls",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [],
+    "answer": {
+     "graph": {
+      "title": "Nightly bundle",
+      "purpose": "Bundles a moment, waits for approval, then writes a plot."
+     },
+     "nodes": {
+      "bundle": {
+       "title": "Bundle the moment",
+       "description": "Packs the moment into one bundle."
+      },
+      "approve": {
+       "title": "Approve the bundle",
+       "description": "A person approves the bundle."
+      }
+     },
+     "edges": {
+      "bundle->approve": "the bundle to approve"
+     },
+     "inputs": {
+      "moment": "the moment to bundle"
+     },
+     "outputs": {
+      "plot": "the written plot"
+     }
+    }
+   }
+  },
+  {
+   "name": "empty-declaration",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "graph": {
+      "title": "Nightly bundle",
+      "purpose": "Bundles a moment, waits for approval, then writes a plot."
+     },
+     "nodes": {
+      "bundle": {
+       "title": "Bundle the moment",
+       "description": "Packs the moment into one bundle."
+      },
+      "approve": {
+       "title": "Approve the bundle",
+       "description": "A person approves the bundle."
+      }
+     },
+     "edges": {
+      "bundle->approve": "the bundle to approve"
+     },
+     "inputs": {
+      "moment": "the moment to bundle"
+     },
+     "outputs": {
+      "plot": "the written plot"
+     }
+    }
+   }
+  },
+  {
+   "name": "answer-without-nodes",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "graph": {
+      "title": "Nightly bundle",
+      "purpose": "Bundles a moment, waits for approval, then writes a plot."
+     },
+     "edges": {
+      "bundle->approve": "the bundle to approve"
+     },
+     "inputs": {
+      "moment": "the moment to bundle"
+     },
+     "outputs": {
+      "plot": "the written plot"
+     }
+    }
+   }
+  },
+  {
+   "name": "answer-without-edges",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "graph": {
+      "title": "Nightly bundle",
+      "purpose": "Bundles a moment, waits for approval, then writes a plot."
+     },
+     "nodes": {
+      "bundle": {
+       "title": "Bundle the moment",
+       "description": "Packs the moment into one bundle."
+      },
+      "approve": {
+       "title": "Approve the bundle",
+       "description": "A person approves the bundle."
+      }
+     },
+     "inputs": {
+      "moment": "the moment to bundle"
+     },
+     "outputs": {
+      "plot": "the written plot"
+     }
+    }
+   }
+  },
+  {
+   "name": "answer-unknown-key",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "nodes": {},
+     "edges": {},
+     "notes": "x"
+    }
+   }
+  },
+  {
+   "name": "answer-title-too-long",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "nodes": {
+      "a": {
+       "title": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+       "description": "d"
+      }
+     },
+     "edges": {}
+    }
+   }
+  },
+  {
+   "name": "answer-empty-edge-text",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-labels/v1",
+    "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "prompt": "llm-kit.graph-labels.prompt/1",
+    "declaration": [
+     "haiku"
+    ],
+    "calls": [
+     {
+      "entry": "haiku",
+      "model": "claude-haiku-5-5"
+     }
+    ],
+    "answer": {
+     "nodes": {},
+     "edges": {
+      "a->b": ""
+     }
+    }
+   }
+  }
+ ]
+}

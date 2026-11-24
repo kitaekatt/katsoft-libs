@@ -17,7 +17,9 @@ Some llm-kit files have readers in more than one language. Each of these formats
 | `llm-kit.reply-entry/v1` | `reply-entry.v1.schema.json` | `llm_kit.registry.reply_cache` | `tests/formats/reply-entry/cases.json` (`entries`, `reader_rules`) |
 | `llm-kit.reply-key/v1` | none (a key, not a file) | `llm_kit.registry.reply_cache` | `tests/formats/reply-key/cases.json` (`parts`, `requests`, `same`, `different`) |
 | `llm-kit.consent/v2` | `consent.v2.schema.json` | `llm_kit.registry.consent` | `tests/formats/consent/cases.json` |
-| `llm-kit.graph-catalog/v1` | `graph-catalog.v1.schema.json` | none (the browser script of `llm_kit.graph.render` reads it; `llm_kit.graph.render.catalog` writes it) | `tests/formats/graph-catalog/cases.json` (`documents`) |
+| `llm-kit.graph-catalog/v1` | `graph-catalog.v1.schema.json` | `llm_kit.graph.render.page` (`render_page` validates every catalog it draws; `llm_kit.graph.render.catalog` writes it) | `tests/formats/graph-catalog/cases.json` (`documents`) |
+| `llm-kit.graph-catalog/v2` | `graph-catalog.v2.schema.json` | `llm_kit.graph.render.page` (`render_page`; the browser script draws what it embeds), written by `llm_kit.graph.render.labels` | `tests/formats/graph-catalog/cases.v2.json` (`documents`) |
+| `llm-kit.graph-labels/v1` | `graph-labels.v1.schema.json` | `llm_kit.graph.render.labels` | `tests/formats/graph-labels/cases.json` (`documents`) |
 
 `llm_kit.schema.formats.load_schema(format_id)` returns a schema. `llm_kit.schema.formats.SCHEMA_FILES` maps each format id to its file. The file's `$id` is the format id.
 
@@ -329,7 +331,7 @@ Python: `llm_kit.registry.consent.load_config(path)`, `save_config`, `update_con
 
 ## llm-kit.graph-catalog/v1
 
-The graphs a rendered graph page draws (`llm-kit graph render`). Writer: Python `llm_kit.graph.render.catalog` (`build_catalog`, `project_catalog`). Reader: the page's browser script, `llm_kit/graph/render/static/browser.js`.
+The graphs a rendered graph page draws (`llm-kit graph render`). Writer: Python `llm_kit.graph.render.catalog` (`build_catalog`, `project_catalog`). Reader of record: Python `llm_kit.graph.render.page.render_page`, which validates the catalog against this schema before it embeds it in the page and raises `ValueError` for a catalog that fails. The page's browser script (`llm_kit/graph/render/static/browser.js`) draws only the catalog that `render_page` embedded in the same file, so it never reads an unchecked one. A catalog that carries labels is version 2, below.
 
 ```json
 {"format": "llm-kit.graph-catalog/v1", "project": "demo",
@@ -348,9 +350,57 @@ The graphs a rendered graph page draws (`llm-kit graph render`). Writer: Python 
 4. `used_by` maps a graph file to the nodes that run it: `file` and `node`, the node path in that file (`/` joins the ids of nested inline bodies).
 5. `definition` is the node as written, except that an inline body's `body` is the text `(inline body)`.
 
+## llm-kit.graph-catalog/v2
+
+Version 1 plus one required top-level key, `labels`: the titles, descriptions and edge texts that a model inferred for each graph file. `llm-kit graph render` writes it by default, and `--no-labels` writes version 1. Writer: Python `llm_kit.graph.render.labels` (`label_catalog`, which takes a version 1 catalog and returns this one). Reader of record: `llm_kit.graph.render.page.render_page`, as for version 1.
+
+Labels are a new version, not an optional key of version 1, because no version 1 reader refuses an unknown key: `render_page` checked only `format` and `entries`, and the browser script parsed the catalog without refusing. A reader of version 1 would have dropped the labels in silence. It refuses version 2 by its `format` check instead.
+
+```json
+{"format": "llm-kit.graph-catalog/v2", "project": "demo", "entries": [], "files": {}, "used_by": {},
+ "labels": {"graphs/night.graph.yaml": {
+   "sources": [{"prompt": "llm-kit.graph-labels.prompt/1", "key": "<64 hex digits>",
+                "calls": [{"entry": "haiku", "model": "claude-haiku-5-5"}]}],
+   "graph": {"title": "Nightly bundle", "purpose": "Bundles a moment, then writes a plot.",
+             "inputs": {"moment": "the moment to bundle"}, "outputs": {"plot": "the written plot"}, "source": 0},
+   "nodes": {"approve": {"title": "Approve the bundle", "description": "A person approves the bundle.",
+                         "reads": {"bundle": "the bundle to approve"}, "source": 0}}}}}
+```
+
+(`entries` and `files` are as in version 1; the example leaves them empty to stay short, and a real catalog has at least one entry.)
+
+1. Every key of version 1 means what it means there. `labels` is required and is an object; `{}` is allowed. Any other new key is refused.
+2. `labels` maps a key of `files` to that file's block. A block always has `sources`, `graph` and `nodes`; a writer never writes a partial block.
+3. `sources` is a non-empty list. Each source is one labelling request: `prompt` (the prompt version), `key` (the cache key of its primary call: 64 lowercase hex digits; the schema checks the length, and the lowercase hex is a reader rule) and `calls`. `calls` holds one item, the primary call, or two, the primary call and then one follow-up for keys the primary call left out. Each call names `entry`, the model entry id that served it, and `model`, the model that answered. The entry that served the primary call serves the follow-up. A file labelled in several requests (a large file is split by nodes) has one source for each.
+4. `source`, in `graph` and in each node label, is an index into `sources` of the same block.
+5. `graph` has `title`, `purpose`, `inputs` and `outputs` (port name to gloss) and `source`. A node label has `title`, `description`, `reads` and `source`. `reads` maps the id of a dep node to the text of the edge from that dep into this node; it is `{}` when the node has none.
+6. A key of `nodes` is a node path in that file (`/` joins the ids of nested inline bodies, as in `loop/write`). A key of `reads` is one of that node's `deps`. A key of `inputs` or `outputs` names a port of the graph. A reader ignores a label whose key names nothing and draws an item that has no label as version 1 draws it. The schema cannot check these keys, so the case `label-with-no-target-is-ignored` fixes the rule: it is valid, and `render_page` draws it.
+7. Limits, counted in characters; every string is at least 1 character: title 80, purpose 400, node description 300, edge text 60, port gloss 160. The schema refuses a longer string.
+8. The text is written by a model from graph files and prompts. A reader shows it as inferred and never reads it as markup: `render_page` escapes `<`, `>`, `&`, U+2028 and U+2029 in the embedded JSON, and the browser script sets text with `textContent` only.
+9. `render_page` runs every case of version 1 and version 2: a valid case gives a page, and an invalid case raises `ValueError`.
+
+## llm-kit.graph-labels/v1
+
+One cache entry of the labels that `llm-kit graph render` inferred: the answer of one labelling request. Writer and reader: Python `llm_kit.graph.render.labels`. The file is `<key>.json` in the labels cache directory (`$XDG_CACHE_HOME/llm-kit/graph-labels/`, else `~/.cache/llm-kit/graph-labels/`, or the directory of `--label-cache`).
+
+```json
+{"format": "llm-kit.graph-labels/v1", "key": "<64 hex digits>", "prompt": "llm-kit.graph-labels.prompt/1",
+ "declaration": ["haiku"], "calls": [{"entry": "haiku", "model": "claude-haiku-5-5"}],
+ "answer": {"graph": {"title": "Nightly bundle", "purpose": "Bundles a moment, then writes a plot."},
+            "nodes": {"approve": {"title": "Approve the bundle", "description": "A person approves the bundle."}},
+            "edges": {"bundle->approve": "the bundle to approve"},
+            "inputs": {"moment": "the moment to bundle"}, "outputs": {"plot": "the written plot"}}}
+```
+
+1. All six keys are required and no other key is allowed. `key` is the cache key of the primary call, 64 lowercase hex digits, and equals the file name without `.json`. `prompt` is the prompt version. `declaration` lists the model entry ids the request named. `calls` is as in a version 2 source.
+2. `answer` is the merged answer of the primary call and its follow-up, in the shape the model answers in. `nodes` and `edges` are always present (`edges` may be `{}`). `graph`, `inputs` and `outputs` are present only when the request had the file header, which is the first request of a file.
+3. A key of `nodes` is a node path. A key of `edges` is `<dep path>-><node path>`, where both paths are node paths in the file. Node ids never hold `/` or `->`, so a key splits in one way.
+4. Limits are those of version 2: title 80, purpose 400, node description 300, edge text 60, port gloss 160; every string is at least 1 character.
+5. A reader that finds a file that fails these rules, whose `key` is not its file name, or whose answer lacks a key the request needs, refuses the file as a whole and names it. It never uses part of it.
+
 ## Change a format
 
-- A change that a v1 reader would read in a different way is a new format version: a new id, a new schema file and new cases. Keep the v1 files.
+- A change that a v1 reader would read in a different way is a new format version: a new id, a new schema file and new cases. Keep the v1 files. A key that no older reader refuses is such a change, because an older reader would drop it in silence (the graph catalog's labels).
 - An optional key that a v1 reader refuses as unknown can be added to v1: every file without it reads as before, and an older reader refuses a file that uses it, so no reader misreads one. The request settings (`endpoints`, `requests`, row `traits`, typed `request_defaults`, selection `request`) and the endpoint connection (`base_url`, `key_env`) were added this way, and so were the consent file's `connections`.
 - Before you change a reader rule, add the case that shows it.
 - Every Python writer of a format checks its output against the schema in its tests (`tests/llm-kit/test_formats.py`, `tests/llm-kit/test_project_models*.py`).

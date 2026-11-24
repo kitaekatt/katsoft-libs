@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.graph-labels/v1",
+  "title": "llm-kit graph labels, version 1",
+  "description": "One cache entry of the labels that llm-kit graph render infers for a graph file: the answer of one labelling request (its primary call and at most one follow-up for keys the primary call left out), the model entries that served the calls and the cache key. The file name is the key plus .json. Reader rules the subset cannot state: key is 64 lowercase hex digits and equals the file name; every key of answer.nodes is a node path of the graph file, every key of answer.edges is '<dep path>-><node path>', and a reader that finds an answer that does not match the request it was made for discards the entry. Written in llm-scripting-kit.json-schema-subset/v1. Contract: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "format": {"const": "llm-kit.graph-labels/v1"},
+    "key": {"description": "The cache key of the primary call: 64 lowercase hex digits.", "type": "string", "minLength": 64, "maxLength": 64},
+    "prompt": {"description": "The version of the prompt the answer was made with.", "type": "string", "minLength": 1},
+    "declaration": {
+      "description": "The model entry ids the request named, in order.",
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "calls": {
+      "description": "The calls made: the primary call, then at most one follow-up.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "properties": {
+          "entry": {"description": "The model entry id that served the call.", "type": "string", "minLength": 1},
+          "model": {"description": "The model that answered.", "type": "string", "minLength": 1}
+        },
+        "required": ["entry", "model"],
+        "additionalProperties": false
+      }
+    },
+    "answer": {"$ref": "#/$defs/answer"}
+  },
+  "required": ["format", "key", "prompt", "declaration", "calls", "answer"],
+  "additionalProperties": false,
+  "$defs": {
+    "answer": {
+      "description": "The merged answer of the request. graph, inputs and outputs are present only when the request had the file header; nodes and edges are always present (edges may be empty).",
+      "type": "object",
+      "properties": {
+        "graph": {
+          "type": "object",
+          "properties": {
+            "title": {"type": "string", "minLength": 1, "maxLength": 80},
+            "purpose": {"type": "string", "minLength": 1, "maxLength": 400}
+          },
+          "required": ["title", "purpose"],
+          "additionalProperties": false
+        },
+        "nodes": {
+          "description": "Node path -> its title and description.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "title": {"type": "string", "minLength": 1, "maxLength": 80},
+              "description": {"type": "string", "minLength": 1, "maxLength": 300}
+            },
+            "required": ["title", "description"],
+            "additionalProperties": false
+          }
+        },
+        "edges": {
+          "description": "'<dep path>-><node path>' -> what the node reads from the dep.",
+          "type": "object",
+          "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 60}
+        },
+        "inputs": {
+          "description": "Input name -> gloss.",
+          "type": "object",
+          "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 160}
+        },
+        "outputs": {
+          "description": "Output name -> gloss.",
+          "type": "object",
+          "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 160}
+        }
+      },
+      "required": ["nodes", "edges"],
+      "additionalProperties": false
+    }
+  }
+}

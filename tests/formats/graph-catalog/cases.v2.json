@@ -1,0 +1,3388 @@
+{
+ "format": "llm-kit.graph-catalog/v2",
+ "schema": "../../../packages/katsoft-llm-kit/src/llm_kit/schema/formats/graph-catalog.v2.schema.json",
+ "description": "Shared cases for every reader of llm-kit graph catalogs, version 2 (version 1 plus a required `labels`). 'documents': each 'document' is a parsed catalog; 'expect' is 'valid' or 'invalid' (the schema refuses it). A valid case is also a page that llm_kit.graph.render.page.render_page draws; an invalid case is one it refuses. Reader rules the schema cannot state are in docs/reference/llm-kit-formats.md.",
+ "documents": [
+  {
+   "name": "labelled-graph",
+   "expect": "valid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "labelled-two-sources",
+   "expect": "valid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       },
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 1
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 1
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "follow-up-two-calls",
+   "expect": "valid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         },
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "label-limits-are-inclusive",
+   "expect": "valid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+       "purpose": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp",
+       "inputs": {
+        "moment": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"
+       },
+       "outputs": {
+        "plot": "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "description": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "reads": {
+         "bundle": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "label-with-no-target-is-ignored",
+   "expect": "valid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       },
+       "ghost": {
+        "title": "A node the file no longer has",
+        "description": "Ignored by a reader.",
+        "reads": {
+         "nothing": "a dep that does not exist"
+        },
+        "source": 0
+       }
+      }
+     },
+     "graphs/gone.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "v2-without-labels",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {}
+   }
+  },
+  {
+   "name": "v1-format-with-labels",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v1",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "label-without-source",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        }
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "graph-label-without-source",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       }
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "labels-without-sources",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "source-without-calls",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": []
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "source-with-three-calls",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         },
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         },
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "source-key-of-63-characters",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "label-title-too-long",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "read-text-too-long",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "label-unknown-key",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0,
+        "tone": "formal"
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "label-empty-title",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": 0
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "label-negative-source",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      },
+      "nodes": {
+       "bundle": {
+        "title": "Bundle the moment",
+        "description": "Packs the moment into one bundle.",
+        "reads": {},
+        "source": 0
+       },
+       "approve": {
+        "title": "Approve the bundle",
+        "description": "A person approves or rejects the bundle.",
+        "reads": {
+         "bundle": "the bundle to approve"
+        },
+        "source": -1
+       },
+       "loop": {
+        "title": "Write until done",
+        "description": "Repeats the write step up to three times.",
+        "reads": {
+         "approve": "the approval"
+        },
+        "source": 0
+       },
+       "loop/write": {
+        "title": "Write the plot",
+        "description": "Writes one draft of the plot.",
+        "reads": {},
+        "source": 0
+       }
+      }
+     }
+    }
+   }
+  },
+  {
+   "name": "labels-without-nodes",
+   "expect": "invalid",
+   "document": {
+    "format": "llm-kit.graph-catalog/v2",
+    "project": "demo",
+    "entries": [
+     {
+      "name": "demo.night",
+      "file": "graphs/night.graph.yaml"
+     }
+    ],
+    "files": {
+     "graphs/night.graph.yaml": {
+      "id": "demo.night",
+      "file": "graphs/night.graph.yaml",
+      "outer": true,
+      "description": "",
+      "inputs": [
+       {
+        "name": "moment",
+        "description": ""
+       }
+      ],
+      "outputs": [
+       "plot"
+      ],
+      "output_sources": {
+       "plot": [
+        "loop"
+       ]
+      },
+      "nodes": [
+       {
+        "id": "bundle",
+        "kind": "op",
+        "subtitle": "demo.bundle",
+        "when": null,
+        "deps": [],
+        "reads_inputs": [
+         "moment"
+        ],
+        "detail": {
+         "op": "demo.bundle"
+        },
+        "definition": {
+         "op": "demo.bundle"
+        }
+       },
+       {
+        "id": "approve",
+        "kind": "human",
+        "subtitle": "human",
+        "when": null,
+        "deps": [
+         "bundle"
+        ],
+        "reads_inputs": [],
+        "detail": {},
+        "definition": {
+         "human": {
+          "kind": "approve"
+         }
+        }
+       },
+       {
+        "id": "loop",
+        "kind": "repeat",
+        "subtitle": "repeat",
+        "when": null,
+        "deps": [
+         "approve"
+        ],
+        "reads_inputs": [],
+        "detail": {
+         "max": "3",
+         "until": null,
+         "carry": {}
+        },
+        "definition": {
+         "repeat": {
+          "max": 3,
+          "body": "(inline body)"
+         }
+        },
+        "body": {
+         "location": "nodes.loop.repeat.body",
+         "outputs": [
+          "plot"
+         ],
+         "output_sources": {
+          "plot": [
+           "write"
+          ]
+         },
+         "outer_deps": [
+          "approve"
+         ],
+         "nodes": [
+          {
+           "id": "write",
+           "kind": "op",
+           "subtitle": "demo.step",
+           "when": null,
+           "deps": [],
+           "reads_inputs": [],
+           "detail": {
+            "op": "demo.step"
+           },
+           "definition": {
+            "op": "demo.step"
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    },
+    "used_by": {},
+    "labels": {
+     "graphs/night.graph.yaml": {
+      "sources": [
+       {
+        "prompt": "llm-kit.graph-labels.prompt/1",
+        "key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "calls": [
+         {
+          "entry": "haiku",
+          "model": "claude-haiku-5-5"
+         }
+        ]
+       }
+      ],
+      "graph": {
+       "title": "Nightly bundle",
+       "purpose": "Bundles a moment, waits for approval, then writes a plot.",
+       "inputs": {
+        "moment": "the moment to bundle"
+       },
+       "outputs": {
+        "plot": "the written plot"
+       },
+       "source": 0
+      }
+     }
+    }
+   }
+  }
+ ]
+}

@@ -24,6 +24,11 @@ Each format has one id and one JSON Schema file in this package:
   its connection approvals (:mod:`llm_kit.registry.consent`).
 - ``llm-kit.graph-catalog/v1``: the graphs a rendered graph page draws
   (:mod:`llm_kit.graph.render`).
+- ``llm-kit.graph-catalog/v2``: version 1 plus a required ``labels`` object, the
+  titles, descriptions and edge texts inferred for each graph file
+  (:mod:`llm_kit.graph.render.label_types`).
+- ``llm-kit.graph-labels/v1``: one cache entry of inferred labels, the answer of
+  one labelling request.
 
 The schemas are written in ``llm-scripting-kit.json-schema-subset/v1``, so
 :mod:`llm_kit.schema.json_schema` checks and validates them with no third-party
@@ -53,6 +58,8 @@ __all__ = [
     "REPLY_ENTRY_V1",
     "CONSENT_V2",
     "GRAPH_CATALOG_V1",
+    "GRAPH_CATALOG_V2",
+    "GRAPH_LABELS_V1",
     "SCHEMA_FILES",
     "load_schema",
 ]
@@ -83,6 +90,10 @@ REPLY_ENTRY_V1 = "llm-kit.reply-entry/v1"
 CONSENT_V2 = "llm-kit.consent/v2"
 #: The graphs a rendered graph page draws: entry graphs, graph files, who runs each file.
 GRAPH_CATALOG_V1 = "llm-kit.graph-catalog/v1"
+#: Version 1 plus a required ``labels``: the titles, descriptions and edge texts a model inferred for each graph file.
+GRAPH_CATALOG_V2 = "llm-kit.graph-catalog/v2"
+#: One cache entry of inferred graph labels: the answer of one labelling request and the calls that made it.
+GRAPH_LABELS_V1 = "llm-kit.graph-labels/v1"
 
 #: Format id -> the schema file name in this package. The file's ``$id`` is the format id.
 SCHEMA_FILES = {
@@ -99,6 +110,8 @@ SCHEMA_FILES = {
     REPLY_ENTRY_V1: "reply-entry.v1.schema.json",
     CONSENT_V2: "consent.v2.schema.json",
     GRAPH_CATALOG_V1: "graph-catalog.v1.schema.json",
+    GRAPH_CATALOG_V2: "graph-catalog.v2.schema.json",
+    GRAPH_LABELS_V1: "graph-labels.v1.schema.json",
 }
 
 

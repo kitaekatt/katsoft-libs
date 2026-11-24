@@ -335,7 +335,7 @@
    "name": "wrong-format",
    "expect": "invalid",
    "document": {
-    "format": "llm-kit.graph-catalog/v2",
+    "format": "llm-kit.graph-catalog/v0",
     "project": "demo",
     "entries": [
      {

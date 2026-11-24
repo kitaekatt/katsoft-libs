@@ -617,3 +617,135 @@ def test_the_example_runs_from_the_source_tree(tmp_path):
                               capture_output=True, text=True, timeout=120, check=False)
         assert done.returncode == 0, done.stderr
         assert done.stdout.strip()
+
+
+# ---------------------------------------------------------------------------
+# graph catalog v1 and v2, graph labels: shared cases and the label interface
+# ---------------------------------------------------------------------------
+
+SCHEMA_DIR = PACKAGE / "src" / "llm_kit" / "schema" / "formats"
+CATALOG_V1_CASES = json.loads((CASES / "graph-catalog" / "cases.json").read_text(encoding="utf-8"))
+CATALOG_V2_CASES = json.loads((CASES / "graph-catalog" / "cases.v2.json").read_text(encoding="utf-8"))
+LABELS_CASES = json.loads((CASES / "graph-labels" / "cases.json").read_text(encoding="utf-8"))
+
+
+def _catalog_documents():
+    return [(version, case) for version, cases in (("v1", CATALOG_V1_CASES), ("v2", CATALOG_V2_CASES))
+            for case in cases["documents"]]
+
+
+def test_the_graph_case_files_name_their_format_and_schema():
+    for cases, folder, format_id in (
+            (CATALOG_V1_CASES, "graph-catalog", formats.GRAPH_CATALOG_V1),
+            (CATALOG_V2_CASES, "graph-catalog", formats.GRAPH_CATALOG_V2),
+            (LABELS_CASES, "graph-labels", formats.GRAPH_LABELS_V1)):
+        assert cases["format"] == format_id
+        assert (CASES / folder / cases["schema"]).resolve() == SCHEMA_DIR / formats.SCHEMA_FILES[format_id]
+        assert cases["description"].isascii()
+
+
+@pytest.mark.parametrize("version,case", _catalog_documents(), ids=lambda v: v if isinstance(v, str) else v["name"])
+def test_the_shared_catalog_cases_hold_for_their_own_schema(version, case):
+    format_id = formats.GRAPH_CATALOG_V1 if version == "v1" else formats.GRAPH_CATALOG_V2
+    errors = validate(formats.load_schema(format_id), case["document"])
+    assert (errors == ()) == (case["expect"] == "valid"), errors
+
+
+@pytest.mark.parametrize("case", LABELS_CASES["documents"], ids=lambda c: c["name"])
+def test_the_shared_graph_labels_cases(case):
+    errors = validate(formats.load_schema(formats.GRAPH_LABELS_V1), case["document"])
+    assert (errors == ()) == (case["expect"] == "valid"), errors
+
+
+def test_the_shared_cases_hold_both_outcomes_for_each_graph_format():
+    for cases in (CATALOG_V1_CASES, CATALOG_V2_CASES, LABELS_CASES):
+        assert {c["expect"] for c in cases["documents"]} == {"valid", "invalid"}
+        names = [c["name"] for c in cases["documents"]]
+        assert len(names) == len(set(names))
+
+
+def test_an_older_reader_refuses_a_labelled_catalog():
+    """Version 1 refuses every version 2 file, so no v1 reader drops labels in silence."""
+    v1 = formats.load_schema(formats.GRAPH_CATALOG_V1)
+    valid = [c for c in CATALOG_V2_CASES["documents"] if c["expect"] == "valid"]
+    assert valid
+    for case in valid:
+        assert validate(v1, case["document"]) != (), case["name"]
+
+
+def test_catalog_v2_is_v1_plus_a_required_labels():
+    v1, v2 = formats.load_schema(formats.GRAPH_CATALOG_V1), formats.load_schema(formats.GRAPH_CATALOG_V2)
+    assert v2["properties"]["format"] == {"const": formats.GRAPH_CATALOG_V2}
+    assert {k: v for k, v in v2["properties"].items() if k not in ("format", "labels")} == \
+        {k: v for k, v in v1["properties"].items() if k != "format"}
+    assert v2["required"] == v1["required"] + ["labels"]
+    assert v2["additionalProperties"] is False
+    for name, definition in v1["$defs"].items():
+        assert v2["$defs"][name] == definition, name
+
+
+def test_the_label_limits_are_one_set_in_both_schemas():
+    """The catalog and the cache entry state each label limit alike."""
+    catalog = formats.load_schema(formats.GRAPH_CATALOG_V2)["$defs"]
+    answer = formats.load_schema(formats.GRAPH_LABELS_V1)["$defs"]["answer"]["properties"]
+    graph = catalog["graphLabels"]["properties"]["graph"]["properties"]
+    assert graph["title"]["maxLength"] == answer["graph"]["properties"]["title"]["maxLength"] == 80
+    assert graph["purpose"]["maxLength"] == answer["graph"]["properties"]["purpose"]["maxLength"] == 400
+    node_label = catalog["graphLabels"]["properties"]["nodes"]["additionalProperties"]["properties"]
+    node_answer = answer["nodes"]["additionalProperties"]["properties"]
+    assert node_label["title"]["maxLength"] == node_answer["title"]["maxLength"] == 80
+    assert node_label["description"]["maxLength"] == node_answer["description"]["maxLength"] == 300
+    assert node_label["reads"]["additionalProperties"]["maxLength"] == \
+        answer["edges"]["additionalProperties"]["maxLength"] == 60
+    assert graph["inputs"]["additionalProperties"]["maxLength"] == \
+        graph["outputs"]["additionalProperties"]["maxLength"] == \
+        answer["inputs"]["additionalProperties"]["maxLength"] == \
+        answer["outputs"]["additionalProperties"]["maxLength"] == 160
+
+
+def test_the_label_interface_ids_match_the_formats():
+    from llm_kit.graph.render import label_types as lt  # noqa: PLC0415
+
+    assert lt.LABELLED_CATALOG_FORMAT == formats.GRAPH_CATALOG_V2
+    assert lt.LABELS_PROMPT_ID == "llm-kit.graph-labels.prompt/1"
+    assert sorted(lt.__all__) == sorted(["LABELS_PROMPT_ID", "LABELLED_CATALOG_FORMAT", "LabelCall", "LabelReply",
+                                         "Labeller", "LabelError", "LabelRefused", "LabelFailed"])
+
+
+def test_the_label_call_and_reply_are_frozen_values_with_the_planned_defaults():
+    import dataclasses  # noqa: PLC0415
+
+    from llm_kit.graph.render.label_types import LabelCall, LabelReply  # noqa: PLC0415
+
+    call = LabelCall(file="g.graph.yaml", index=0, header=True, nodes=("a",), edges=(), inputs=("x",), outputs=("y",),
+                     system="s", prompt="p", schema={"type": "object"}, key="0" * 64)
+    assert call.followup is False and call.entry is None
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        call.key = "other"  # type: ignore[misc]
+    reply = LabelReply(answer={"nodes": {}}, entry="haiku", model="m")
+    assert (reply.entry, reply.model) == ("haiku", "m")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        reply.entry = "other"  # type: ignore[misc]
+
+
+def test_a_labeller_is_any_callable_with_a_declaration():
+    from llm_kit.graph.render.label_types import LabelCall, LabelReply, Labeller  # noqa: PLC0415
+
+    class Fixed:
+        declaration = ("haiku",)
+
+        def __call__(self, call: LabelCall) -> LabelReply:
+            return LabelReply(answer={"nodes": {}, "edges": {}}, entry="haiku", model="m")
+
+    labeller: Labeller = Fixed()
+    call = LabelCall(file="g", index=0, header=False, nodes=(), edges=(), inputs=(), outputs=(),
+                     system="", prompt="", schema={}, key="k")
+    assert labeller(call).entry == "haiku" and labeller.declaration == ("haiku",)
+
+
+def test_a_refusal_and_a_failure_are_label_errors():
+    from llm_kit.graph.render.label_types import LabelError, LabelFailed, LabelRefused  # noqa: PLC0415
+
+    assert issubclass(LabelRefused, LabelError) and issubclass(LabelFailed, LabelError)
+    assert not issubclass(LabelRefused, LabelFailed) and not issubclass(LabelFailed, LabelRefused)
+    assert issubclass(LabelError, Exception)

@@ -8,6 +8,10 @@ disk in any current browser.
 
 A catalog with one entry and one graph file opens on that graph with the graph
 list hidden; any other catalog opens on its first entry with the list shown.
+
+The page is the one reader of a catalog: the browser script receives only the
+catalog this module embeds. :func:`render_page` therefore checks every catalog
+against the schema of its version before it embeds it.
 """
 
 from __future__ import annotations
@@ -18,7 +22,11 @@ import re
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from llm_kit.graph.render._escape import escape_script_json
 from llm_kit.graph.render.catalog import CATALOG_FORMAT
+from llm_kit.graph.render.label_types import LABELLED_CATALOG_FORMAT
+from llm_kit.schema.formats import load_schema
+from llm_kit.schema.json_schema import validate
 
 __all__ = ["render_page", "write_page"]
 
@@ -33,28 +41,37 @@ def _asset(*parts: str) -> str:
 def _embedded_json(catalog: Mapping[str, Any]) -> str:
     """The catalog as JSON that cannot end its script element early.
 
-    ``<``, ``>`` and ``&`` become ``\\u`` escapes, so no text in a graph file
-    (``</script>``, ``<!--``) is read as markup. U+2028 and U+2029 are escaped
-    too, for older script parsers.
+    ``<``, ``>`` and ``&`` become ``\\u`` escapes, so no text in a graph file or a
+    label (``</script>``, ``<!--``) is read as markup. U+2028 and U+2029 are
+    escaped too, for older script parsers.
     """
-    text = json.dumps(catalog, ensure_ascii=False, separators=(",", ":"))
-    for char, escape in (("<", "\\u003c"), (">", "\\u003e"), ("&", "\\u0026"),
-                         ("\u2028", "\\u2028"), ("\u2029", "\\u2029")):
-        text = text.replace(char, escape)
-    return text
+    return escape_script_json(json.dumps(catalog, ensure_ascii=False, separators=(",", ":")))
+
+
+def _check_catalog(catalog: Mapping[str, Any]) -> None:
+    """Raise ``ValueError`` unless ``catalog`` is a catalog of a version this module draws."""
+    version = catalog.get("format")
+    if version not in (CATALOG_FORMAT, LABELLED_CATALOG_FORMAT):
+        raise ValueError(f"not a {CATALOG_FORMAT} or {LABELLED_CATALOG_FORMAT} catalog")
+    if not catalog.get("entries"):
+        raise ValueError("the catalog has no entries")
+    errors = validate(load_schema(version), catalog)
+    if errors:
+        shown = "; ".join(f"{pointer or '/'} ({keyword})" for pointer, keyword in errors[:5])
+        more = f" and {len(errors) - 5} more" if len(errors) > 5 else ""
+        raise ValueError(f"invalid {version} catalog: {shown}{more}")
 
 
 def render_page(catalog: Mapping[str, Any], *, title: Optional[str] = None) -> str:
     """The HTML page that draws ``catalog``, as text.
 
-    ``title`` is the browser tab title; it defaults to ``"<project> graphs"``.
-    Raises ``ValueError`` when ``catalog`` is not a version this module draws
-    or has no entries.
+    ``catalog`` is a ``llm-kit.graph-catalog/v1`` catalog or a ``/v2`` catalog, which
+    carries inferred labels (``llm_kit.graph.render.label_types``). ``title``
+    is the browser tab title; it defaults to ``"<project> graphs"``. Raises
+    ``ValueError`` when ``catalog`` is not one of those versions, has no entries
+    or breaks the schema of its version (the message names the first places).
     """
-    if catalog.get("format") != CATALOG_FORMAT:
-        raise ValueError(f"not a {CATALOG_FORMAT} catalog")
-    if not catalog.get("entries"):
-        raise ValueError("the catalog has no entries")
+    _check_catalog(catalog)
     values = {
         "TITLE": html.escape(title or f"{catalog.get('project') or 'llm-kit'} graphs"),
         "CSS": _asset("static", "browser.css"),
