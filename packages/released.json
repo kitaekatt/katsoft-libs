@@ -434,6 +434,15 @@
       "version": "1.46.0",
       "wheel_sha256": "30e944d20692210e0f43ca76785e7cc5aa8ca4ddcd7608ce1ac2220d83f11f6a"
     },
+    "1.47.0": {
+      "commit": "5bdb55ef6a997e67f88f0244897881e8b174c125",
+      "filename": "katsoft_llm_kit-1.47.0-py3-none-any.whl",
+      "tag": "katsoft-llm-kit-v1.47.0",
+      "tag_url": "https://github.com/kitaekatt/katsoft-libs/tree/katsoft-llm-kit-v1.47.0",
+      "verified_at": "2026-11-25T21:40:36Z",
+      "version": "1.47.0",
+      "wheel_sha256": "97ea619fe9fe88f8ebbd4700da2255e54d6555fcce1f344abcae019da1cf0e47"
+    },
     "1.5.0": {
       "commit": "b7f631526519c547ef40490ba3ac9a78d9ff04b2",
       "filename": "katsoft_llm_kit-1.5.0-py3-none-any.whl",
