@@ -169,6 +169,8 @@ def run(body: str, paths: list, *, blocked: tuple = (), env: dict | None = None,
     script = _PRELUDE.format(body=indented)
     home = (env or {}).get("HOME", os.environ.get("HOME", "/nonexistent"))
     child_env = {"PATH": os.environ.get("PATH", ""), "HOME": home, "USERPROFILE": home}
+    if override := os.environ.get("LLM_KIT_MODEL_OVERRIDES_FILE"):
+        child_env["LLM_KIT_MODEL_OVERRIDES_FILE"] = override
     if os.name == "nt":
         child_env["SystemRoot"] = os.environ["SystemRoot"]
     child_env.update(env or {})

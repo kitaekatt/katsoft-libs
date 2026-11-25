@@ -32,6 +32,8 @@ Each format has one id and one JSON Schema file in this package:
   (:mod:`llm_kit.graph.render.label_types`).
 - ``llm-kit.graph-labels/v1``: one cache entry of inferred labels, the answer of
   one labelling request.
+- ``llm-kit.model-overrides/v1``: the user usage policy.
+- ``llm-kit.usage-verdicts/v1``: session pins, including dispatch halt provenance.
 
 The schemas are written in ``llm-scripting-kit.json-schema-subset/v1``, so
 :mod:`llm_kit.schema.json_schema` checks and validates them with no third-party
@@ -64,6 +66,8 @@ __all__ = [
     "GRAPH_CATALOG_V1",
     "GRAPH_CATALOG_V2",
     "GRAPH_LABELS_V1",
+    "MODEL_OVERRIDES_V1",
+    "USAGE_VERDICTS_V1",
     "SCHEMA_FILES",
     "load_schema",
 ]
@@ -100,6 +104,10 @@ GRAPH_CATALOG_V1 = "llm-kit.graph-catalog/v1"
 GRAPH_CATALOG_V2 = "llm-kit.graph-catalog/v2"
 #: One cache entry of inferred graph labels: the answer of one labelling request and the calls that made it.
 GRAPH_LABELS_V1 = "llm-kit.graph-labels/v1"
+#: The user usage policy, separate from registry definitions and cost consent.
+MODEL_OVERRIDES_V1 = "llm-kit.model-overrides/v1"
+#: The session-pinned usage cache, including observed halt provenance.
+USAGE_VERDICTS_V1 = "llm-kit.usage-verdicts/v1"
 
 #: Format id -> the schema file name in this package. The file's ``$id`` is the format id.
 SCHEMA_FILES = {
@@ -119,6 +127,8 @@ SCHEMA_FILES = {
     GRAPH_CATALOG_V1: "graph-catalog.v1.schema.json",
     GRAPH_CATALOG_V2: "graph-catalog.v2.schema.json",
     GRAPH_LABELS_V1: "graph-labels.v1.schema.json",
+    MODEL_OVERRIDES_V1: "model-overrides.v1.schema.json",
+    USAGE_VERDICTS_V1: "usage-verdicts.v1.schema.json",
 }
 
 

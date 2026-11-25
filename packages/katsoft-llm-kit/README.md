@@ -142,6 +142,38 @@ nothing on a caller's behalf. Every model entry is classified `local`, `subscrip
 request that does not opt in reports a `claude` or `codex` entry's class as `null`, because the
 authentication probe that decides it runs only for an opted-in request.
 
+### User usage overrides
+
+`describe()`, `Reselector` and `discover_seats()` read the user's usage policy on each selection.
+The file is `$XDG_CONFIG_HOME/llm-kit/model-overrides.yaml`, or `~/.config/llm-kit/model-overrides.yaml` by default.
+`LLM_KIT_MODEL_OVERRIDES_FILE` replaces that path.
+A missing file applies no overrides. Reads create nothing.
+
+```yaml
+schema_version: 1
+harnesses:
+  codex: {reset_mode: true}
+models:
+  luna: {reset_mode: false}
+  opus: {disabled: true}
+```
+
+Harness fields apply first. Model fields replace them individually.
+`disabled` takes precedence over `reset_mode`.
+Disabled entries receive no probe and cannot be the default.
+Reset entries bypass measured quota exhaustion and take priority; their actual usage remains visible.
+Reachability, caller exclusions, capability requirements, consent and observed dispatch halts still apply.
+Consult seats keep relation precedence and tier order; reset seats take priority within a relation and tier.
+Unknown keys, non-mapping scopes, duplicate keys and non-boolean switches raise an error.
+Projects cannot supply this user policy.
+
+`llm-kit models overrides` prints the path, configured fields and resolved switches as JSON, without probes.
+`models describe` and `models seats` show the effective overrides in text and JSON.
+Declarations with usable reset entries emit a reset choice rule and a `Reset:` line.
+The JSON includes `reset_ids`, per-entry `reset_mode` and `disabled`, and disabled dispositions.
+Seats include `reset_endpoints` and a separate `disabled` list.
+See `docs/reference/llm-kit-formats.md` for the schema.
+
 The optional consent layer applies a policy you configure only when you
 opt in, and you may build your own policy instead. To opt in, pass `--consent [--consent-scope NAME]` to
 `llm-kit models describe`, send `"consent": true` or `"consent": {"scope": "NAME"}` in a

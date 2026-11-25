@@ -23,17 +23,20 @@ Three surfaces, kept apart:
   :class:`NoUsableRoutingTarget`, which itemises EVERY declared entry and its
   disposition in declaration order. That is where a typo surfaces.
 
-Ordering is one rule for every caller (:func:`order_by_pace`): entries with a
+Usable reset entries come first in declaration order. Among the rest,
+ordering is one rule for every caller (:func:`order_by_pace`): entries with a
 pace reading are re-sorted by pace, highest first, among their own working
 positions; entries without one keep their places; ties keep declaration
 order. The first usable entry of the ordered list is the default. An
-unattended caller takes it; an in-session caller may choose any usable entry
-and announces the choice.
+unattended caller takes it. With usable reset entries, a session caller chooses
+one of them unless independence or a failed dispatch requires another entry.
 
 A ``frontdoor: true`` entry stands for its routing group (R39): when the front
 door is not usable, its group members follow it in ``routing.order``, each
 classified like a declared entry and marked ``via`` the front door, and pace
-never reorders a member across its group's boundary. A failed call moves its
+never reorders a member across its group's boundary. Explicit reset priority
+also applies to expanded members, before this ordinary group ordering.
+A failed call moves its
 unit on (R40, R41) only for the reasons :func:`fallthrough_reason` names; the
 callers that own their call share :class:`Reselector` and
 :func:`call_with_fallthrough` for it.
@@ -42,6 +45,8 @@ callers that own their call share :class:`Reselector` and
 comes from an UNPINNED read at render time, while the status, ``usable`` and
 the default come from the session-pinned verdict
 (:func:`~.usage_budget.pinned_evaluate`).
+Reset policy bypasses measured or pinned exhaustion, preserving fresh actual
+readings. An observed dispatch halt still blocks it until the recorded reset.
 """
 
 from __future__ import annotations
@@ -300,23 +305,28 @@ def order_by_pace(
 
 
 def _order_blocks(states: Sequence[Any]) -> List[Any]:
-    """:func:`order_by_pace` over declaration blocks, never across one.
+    """Usable resets first; pace-order the remaining declaration blocks.
 
     A block is one declared entry plus the front-door group members expanded
     after it (all share its ``declared_index``). Blocks move by the pace of
     their declared entry; inside a block the members keep their walk order
     (``routing.order``), so a paced member can never overtake its front door
     or a later declared entry. ``states`` arrive in slot order. Without a
-    front door every block is one entry and this is :func:`order_by_pace`.
+    front door every block is one entry. Reset members take priority over
+    ordinary member order; removing them leaves the remaining blocks intact.
     """
+    resets = [state for state in states if state.reset_mode and state.usable]
     blocks: Dict[int, List[Any]] = {}
     for state in states:
+        if state.reset_mode and state.usable:
+            continue
         blocks.setdefault(state.declared_index, []).append(state)
+    declared_blocks = [blocks[index] for index in sorted(blocks)]
     ordered_blocks = order_by_pace(
-        [blocks[index] for index in sorted(blocks)],
+        declared_blocks,
         pace=lambda block: block[0].pace if block[0].via is None else None,
     )
-    return [state for block in ordered_blocks for state in block]
+    return resets + [state for block in ordered_blocks for state in block]
 
 
 def _format_reset(resets_at: Optional[int]) -> str:
@@ -327,7 +337,12 @@ def _format_reset(resets_at: Optional[int]) -> str:
 
 @dataclass(frozen=True)
 class Disposition:
-    """What happened to one declared entry. Read only by floor handling.
+    """Classification of an id at a declaration index, including its reason.
+
+    Inputs are the id, index, disposition and optional diagnostic fields.
+    ``disabled`` and ``reset_mode`` report effective user policy. Constructing
+    this record performs no checks or I/O; to_json returns JSON data.
+    Floors and the separate disabled/switched-off lists expose these records.
 
     ``via`` is set on a front-door group member that :func:`describe` added
     after its front-door entry (R39); ``declared_index`` is then that front
@@ -341,6 +356,8 @@ class Disposition:
     resets_at: Optional[int] = None
     cost_class: Optional[str] = None
     via: Optional[str] = None
+    disabled: bool = False
+    reset_mode: bool = False
 
     def describe_line(self) -> str:
         text = self.disposition
@@ -356,6 +373,8 @@ class Disposition:
             "disposition": self.disposition,
             "detail": self.detail,
             "resets_at": self.resets_at,
+            "disabled": self.disabled,
+            "reset_mode": self.reset_mode,
         }
         if self.cost_class is not None:
             data["cost_class"] = self.cost_class
@@ -370,6 +389,12 @@ class EntryState:
 
     ``via`` names the front-door entry a group member was expanded from (R39);
     None for a declared entry.
+    Inputs are the resolved endpoint, probe, budget and policy fields below.
+    ``reset_mode`` preserves measured status while bypassing quota eligibility;
+    ``observed_halt`` still blocks selection. ``status_text`` labels actual
+    readings; ``actual_resets_at`` keeps their reset time separate from the
+    pinned halt's ``resets_at``. ``to_json`` returns the state. Construction performs no I/O
+    or validation and raises no configuration errors.
     """
 
     id: str
@@ -395,12 +420,30 @@ class EntryState:
     pool: Optional[str] = None
     reachability_detail: str = ""
     via: Optional[str] = None
+    disabled: bool = False
+    reset_mode: bool = False
+    observed_halt: bool = False
+    actual_resets_at: Optional[int] = None
 
     @property
     def status_text(self) -> str:
+        actual = self._actual_status_text()
+        if self.reset_mode:
+            if self.remaining is not None and (self.pace is None or self.usability == STATUS_OUT_OF_QUOTA):
+                actual += f"  {self.remaining * 100:.0f}% left"
+            text = f"reset available (config); actual: {actual}"
+            if self.observed_halt:
+                text += f"; blocked by observed quota/credit halt until {_format_reset(self.resets_at)}"
+            if self.reachability == STATUS_UNREACHABLE:
+                text = f"unreachable ({self.reachability_detail}); {text}"
+            return text
+        return actual
+
+    def _actual_status_text(self) -> str:
         if self.usability == STATUS_OUT_OF_QUOTA:
-            return f"out of quota until {_format_reset(self.resets_at)}"
-        if self.reachability == STATUS_UNREACHABLE:
+            reset = self.actual_resets_at if self.reset_mode else self.resets_at
+            return f"out of quota until {_format_reset(reset)}"
+        if self.reachability == STATUS_UNREACHABLE and not self.reset_mode:
             return f"unreachable ({self.reachability_detail})" if self.reachability_detail else "unreachable"
         if self.usability is None:
             return "n/a (unpaced)"
@@ -438,7 +481,14 @@ class EntryState:
             "usable": self.usable,
             "default": self.default,
             "is_self": self.is_self,
+            "disabled": self.disabled,
+            "reset_mode": self.reset_mode,
         }
+        if self.reset_mode:
+            data.update(remaining=self.remaining, window_remaining=self.window_remaining,
+                        actual_resets_at=self.actual_resets_at)
+        if self.observed_halt:
+            data["observed_halt"] = True
         if self.via is not None:
             data["via"] = self.via
         return data
@@ -504,10 +554,8 @@ class Ranking:
 
     ``names`` and ``dispositions`` cover EVERY declared id, hidden ones
     included. They stay in memory for callers that build their own floor
-    diagnostic and are never emitted: ``repr``, :meth:`render` and
-    :meth:`to_json` name rendered entries only. Only
-    :class:`NoUsableRoutingTarget` may name a hidden id (RENDER, SKIP and
-    FLOOR are separate surfaces).
+    diagnostic. ``render`` and ``to_json`` expose the rendered entries and the
+    explicit disabled/switched-off lists; ordinary exclusions stay hidden.
 
     ``switched_off`` holds the entries the cost-class ``allow`` filter
     switched off. They are SHOWN, not hidden: when it is non-empty,
@@ -520,6 +568,11 @@ class Ranking:
     unit may be dispatched to, whatever is usable now. It is never emitted
     (it may carry hidden ids); :func:`run` sizes its default attempt limit
     from it.
+
+    Inputs are the classified records and rule from describe(). ``disabled``
+    holds config exclusions; ``reset_ids`` names usable resets. Rendering and
+    JSON conversion perform no I/O. Construct through describe(), which raises
+    NoUsableRoutingTarget rather than returning an empty ranking.
     """
 
     names: tuple = field(repr=False)
@@ -531,6 +584,13 @@ class Ranking:
     # and to_json name them when non-empty), never hidden; empty leaves output unchanged.
     switched_off: tuple = field(default=(), repr=False)
     expanded_names: tuple = field(default=(), repr=False)
+    disabled: tuple = field(default=(), repr=False)
+
+    @property
+    def reset_ids(self) -> tuple[str, ...]:
+        """Usable reset entries, in declaration order, including expanded members."""
+        return tuple(row.id for row in sorted(self.rendered_entries, key=lambda row: row.declared_index)
+                     if row.reset_mode and row.usable)
 
     @property
     def default(self) -> Optional[EntryState]:
@@ -564,7 +624,11 @@ class Ranking:
                 "Switched off: "
                 + ", ".join(f"{d.id} ({d.cost_class})" for d in self.switched_off)
             )
+        if self.disabled:
+            lines.append("Disabled: " + ", ".join(d.id for d in self.disabled) + " (config)")
         lines.extend(self._discovery_lines())
+        if self.reset_ids:
+            lines.append(f"Reset: {', '.join(self.reset_ids)} have reset available (config); actual usage remains displayed.")
         lines.append(self.rule)
         return "\n".join(lines)
 
@@ -582,7 +646,10 @@ class Ranking:
             "default": default.id if default is not None else None,
             "rendered_entries": [entry.to_json() for entry in self.rendered_entries],
             "rule": self.rule,
+            "reset_ids": list(self.reset_ids),
         }
+        if self.disabled:
+            data["disabled"] = [d.to_json() for d in self.disabled]
         if self.switched_off:
             data["switched_off"] = [d.to_json() for d in self.switched_off]
         data.update(self._discovery_json())
@@ -754,7 +821,14 @@ def describe(
     harness_auth: Optional[Mapping[str, Any]] = None,
     exclude_groups: Iterable[str] = (),
 ) -> Ranking:
-    """Classify, filter, pace-order and default a declaration.
+    """Classify, filter, apply user overrides, and default a declaration.
+
+    The user model-overrides file is read on every call. Disabled entries join
+    exclusions before probes. Reset bypasses measured or pinned exhaustion,
+    with usable resets first in declaration order and actual readings labelled.
+    Reachability, requirements, consent, caller exclusions and observed quota
+    halts still apply. Invalid overrides raise ValueError before any probe;
+    other file read failures raise OSError. No policy file is created.
 
     ``caller`` is ``"session"`` (an agent that drives the harness itself:
     Agent tool, rendered ``codex exec``/``opencode run``; a transport entry
@@ -873,6 +947,12 @@ def describe(
 
         entries = discover_model_entries(project_root=root)
     excluded = set(exclude)
+    from llm_kit.registry.model_overrides import load_model_overrides
+
+    overrides = load_model_overrides()
+    policies = {name: overrides.resolve(name, getattr(entry, "harness", None))
+                for name, entry in entries.items()}
+    excluded.update(name for name, policy in policies.items() if policy.disabled)
     matcher = None
     if requirements:
         from llm_kit.adapters.capabilities import adapter_capabilities  # noqa: PLC0415
@@ -912,16 +992,18 @@ def describe(
     candidates: List[Dict[str, Any]] = []
 
     def classify_slot(pos: int, name: str, index: int, via: Optional[str]) -> None:
+        policy = policies.get(name) or overrides.resolve(name)
         def settle(
             disposition: str, detail: str = "", resets_at: Optional[int] = None,
             cost_class: Optional[str] = None,
         ) -> None:
             dispositions[pos] = Disposition(
-                name, index, disposition, detail, resets_at, cost_class, via=via
+                name, index, disposition, detail, resets_at, cost_class, via=via,
+                disabled=policy.disabled, reset_mode=policy.reset_mode,
             )
 
-        if name in excluded:
-            settle(DISPOSITION_EXCLUDED, "ruled out by the caller")
+        if name in excluded or policy.disabled:
+            settle(DISPOSITION_EXCLUDED, "disabled by config" if policy.disabled else "ruled out by the caller")
             return
         if name in group_ruled_out:
             settle(DISPOSITION_EXCLUDED, group_ruled_out[name])
@@ -1004,8 +1086,9 @@ def describe(
             "kind": kind, "harness": harness, "backend_name": backend_name, "spec": spec,
             "pinned": pinned, "model": getattr(merged, "model", None) or getattr(selection, "model", None),
             "verdict": verdict,
+            "policy": policy,
         }
-        if pinned is not None and not pinned.usable:
+        if not policy.budget_usable(pinned):
             settle(DISPOSITION_OUT_OF_QUOTA, pinned.detail, pinned.resets_at)
         candidates.append(candidate)
 
@@ -1059,18 +1142,19 @@ def describe(
     for c in candidates:
         pos, index, name, merged = c["pos"], c["index"], c["name"], c["merged"]
         pinned = c["pinned"]
+        policy = c["policy"]
         out_of_quota = pos in dispositions
         reach = None if out_of_quota else known.get(name)
         reach_status = reach.status if reach is not None else STATUS_UNKNOWN
         if not out_of_quota:
             if reach_status == STATUS_UNREACHABLE:
                 dispositions[pos] = Disposition(
-                    name, index, DISPOSITION_UNREACHABLE, reach.detail, via=c["via"]
+                    name, index, DISPOSITION_UNREACHABLE, reach.detail, via=c["via"], reset_mode=policy.reset_mode
                 )
             else:
-                dispositions[pos] = Disposition(name, index, DISPOSITION_USABLE, via=c["via"])
+                dispositions[pos] = Disposition(name, index, DISPOSITION_USABLE, via=c["via"], reset_mode=policy.reset_mode)
         fresh = None
-        if c["spec"] is not None and not out_of_quota:
+        if c["spec"] is not None and (not out_of_quota or policy.reset_mode):
             fresh = _fresh_reading(name, c["spec"], c["harness"])
         pace, note = (None, "") if out_of_quota else _pace(fresh)
         costed: Dict[str, Any] = {}
@@ -1087,7 +1171,8 @@ def describe(
             tier=getattr(merged, "tier", None),
             drive=_drive(caller, c["kind"], c["harness"], c["backend_name"]),
             reachability=reach_status,
-            usability=pinned.status if pinned is not None else None,
+            usability=(fresh.status if policy.reset_mode and fresh is not None
+                       else pinned.status if pinned is not None else None),
             pace=pace,
             usable=dispositions[pos].disposition == DISPOSITION_USABLE,
             is_self=self_ref is not None and (name == self_ref or c["model"] == self_model),
@@ -1098,6 +1183,9 @@ def describe(
             pool=c["spec"].pool if c["spec"] is not None else None,
             reachability_detail=reach.detail if reach is not None else "",
             via=c["via"],
+            reset_mode=policy.reset_mode,
+            observed_halt=pinned.observed_halt if pinned is not None else False,
+            actual_resets_at=fresh.resets_at if policy.reset_mode and fresh is not None else None,
             **costed,
         ))
 
@@ -1128,11 +1216,19 @@ def describe(
         rendered_entries=tuple(finished),
         dispositions=ordered_dispositions,
         rule=_rule(caller, any(state.is_self for state in finished)),
+        disabled=tuple(d for d in ordered_dispositions if d.disabled),
         switched_off=tuple(
             d for d in ordered_dispositions if d.disposition == DISPOSITION_SWITCHED_OFF
         ),
         expanded_names=expanded_names,
     )
+    if any(state.reset_mode and state.usable for state in finished):
+        lines = ranking_fields["rule"].splitlines()
+        lines[0] = (
+            "Rule: choose a usable reset entry from this declaration; choose another only for "
+            "independence or after a failed dispatch, and announce why."
+        )
+        ranking_fields["rule"] = "\n".join(lines)
     if discovery or consent_policy is not None:
         return DiscoveryRanking(consent=_consent_note(consent_policy), **ranking_fields)
     return Ranking(**ranking_fields)

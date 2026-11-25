@@ -1,0 +1,17 @@
+{
+  "policy": {
+    "harnesses": {"codex": {"reset_mode": true}},
+    "models": {"c": {"disabled": true}}
+  },
+  "seats": [
+    {"endpoint": "top", "relation": "UP", "tier": 4, "harness": "claude", "status": "available"},
+    {"endpoint": "a", "relation": "UP", "tier": 3, "harness": "claude", "status": "available"},
+    {"endpoint": "c", "relation": "UP", "tier": 3, "harness": "codex", "status": "under-quota"},
+    {"endpoint": "peer", "relation": "BESIDE", "tier": 2, "harness": "codex", "status": "under-quota"}
+  ],
+  "out_of_quota": [
+    {"endpoint": "b", "relation": "UP", "tier": 3, "harness": "codex", "status": "out-of-quota"}
+  ],
+  "expected": {"seats": ["top", "b", "a", "peer"], "disabled": ["c"], "reset_endpoints": ["b", "peer"], "out_of_quota": []},
+  "all_reset_expected": {"seats": ["top", "c", "b", "a", "peer"], "disabled": [], "reset_endpoints": ["b", "c", "peer"], "out_of_quota": []}
+}

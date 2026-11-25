@@ -1,5 +1,37 @@
 # llm-kit shared file formats
 
+## User usage overrides (`llm-kit.model-overrides/v1`)
+
+The user file is `model-overrides.yaml` under the neutral config directory.
+`LLM_KIT_MODEL_OVERRIDES_FILE` replaces its path.
+`llm_kit.registry.model_overrides.load_model_overrides()` reads the file; a missing file means no overrides.
+Reads create nothing. Projects cannot replace this policy.
+
+The schema is `model-overrides.v1.schema.json` in `llm_kit.schema.formats` (`MODEL_OVERRIDES_V1`).
+The root requires `schema_version: 1` and permits optional `harnesses` and `models` mappings.
+Each scope maps a harness name or model entry id to optional boolean `disabled` and `reset_mode` fields.
+Unknown keys and non-boolean switches fail validation. YAML duplicate keys fail parsing.
+Reader rules beyond the schema: ids are non-empty text, and the version is an integer rather than a decimal.
+Shared refusal cases are in `tests/formats/model-overrides/cases.json`.
+Harness fields apply first; model fields replace them individually. Disabled suppresses reset.
+
+Reset bypasses measured quota exhaustion, including a pinned measurement.
+An observed quota or credit halt still blocks selection until its reset time.
+The session pin records that provenance separately from the measured status.
+Actual readings remain visible. Reachability, exclusions, capabilities and consent still apply.
+Declarations put usable reset entries first in declaration order, then apply pace order to the remainder.
+Consult seats retain relation and tier precedence, with reset first among comparable seats.
+
+## Session usage pins (`llm-kit.usage-verdicts/v1`)
+
+The schema is `usage-verdicts.v1.schema.json` (`USAGE_VERDICTS_V1`).
+The existing cache holds a `session_key` and a `verdicts` mapping from entry id to `{spec, budget}`.
+The budget's optional `observed_halt` boolean distinguishes dispatch failures from measured exhaustion.
+`record_observed_halt()` writes it for the entry and each sibling that shares its pool.
+`pinned_evaluate()` preserves it until the reset time. A fresh measurement then replaces the expired pin.
+Earlier pins without the boolean still count as observed halts when their dispatch detail identifies the halt.
+Reading another session's cache applies no verdict. The cache location and session-key rules are unchanged.
+
 Some llm-kit files have readers in more than one language. Each of these formats has one format id, one JSON Schema in the package `llm_kit.schema.formats`, and one shared cases file under `tests/formats/`. Every reader, in every language, must pass every case of its format. This page is the contract. When this page, a schema and a case disagree, the case is correct; fix the page or the schema.
 
 | Format id | Schema (in `llm_kit/schema/formats/`) | Python reader | Shared cases |

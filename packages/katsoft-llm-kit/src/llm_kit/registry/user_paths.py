@@ -8,6 +8,7 @@ changes ``HOME`` or ``XDG_CONFIG_HOME`` is honoured):
     $XDG_CONFIG_HOME/llm-kit/        (fallback: $HOME/.config/llm-kit/)
         consent.json                 cost-class consent        (``LLM_KIT_CONSENT_FILE`` overrides)
         model-endpoints.yaml         endpoint registry         (``MODEL_ENDPOINTS_REGISTRY`` overrides)
+        model-overrides.yaml         usage policy              (``LLM_KIT_MODEL_OVERRIDES_FILE`` overrides)
         .env                         user API keys             (``LLM_KIT_ENV_FILE`` overrides)
 
 ``XDG_CONFIG_HOME`` is honoured only when it is an absolute path, as the XDG
@@ -39,10 +40,12 @@ NEUTRAL_DIRNAME = "llm-kit"
 #: Environment variables that replace a neutral default with an explicit file.
 ENV_CONSENT_FILE = "LLM_KIT_CONSENT_FILE"
 ENV_ENV_FILE = "LLM_KIT_ENV_FILE"
+ENV_MODEL_OVERRIDES_FILE = "LLM_KIT_MODEL_OVERRIDES_FILE"
 
 CONSENT_FILENAME = "consent.json"
 REGISTRY_FILENAME = "model-endpoints.yaml"
 ENV_FILENAME = ".env"
+MODEL_OVERRIDES_FILENAME = "model-overrides.yaml"
 
 #: Per-project key file, relative to the project root.
 PROJECT_ENV_RELATIVE = Path(".llm-kit") / ".env"
@@ -111,16 +114,29 @@ def user_env_file(environ: Optional[Mapping[str, str]] = None) -> Path:
     return override_path(ENV_ENV_FILE, environ) or neutral_user_env_file(environ)
 
 
+def model_overrides_file(environ: Optional[Mapping[str, str]] = None) -> Path:
+    """Return the usage policy path, without creating it.
+
+    ``environ`` defaults to the process environment. An explicit
+    ``LLM_KIT_MODEL_OVERRIDES_FILE`` wins over the neutral config directory.
+    Returns a Path; performs no I/O and raises no configuration errors.
+    """
+    return override_path(ENV_MODEL_OVERRIDES_FILE, environ) or neutral_dir(environ) / MODEL_OVERRIDES_FILENAME
+
+
 __all__ = [
     "CONSENT_FILENAME",
     "ENV_CONSENT_FILE",
     "ENV_ENV_FILE",
+    "ENV_MODEL_OVERRIDES_FILE",
     "ENV_FILENAME",
     "NEUTRAL_DIRNAME",
+    "MODEL_OVERRIDES_FILENAME",
     "PROJECT_ENV_RELATIVE",
     "REGISTRY_FILENAME",
     "cache_home",
     "config_home",
+    "model_overrides_file",
     "neutral_cache_dir",
     "neutral_consent_file",
     "neutral_dir",

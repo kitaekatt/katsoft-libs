@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.usage-verdicts/v1",
+  "title": "Session usage verdict cache",
+  "description": "Session-pinned usage readings and observed dispatch halts. observed_halt is optional for older pins. Written in llm-scripting-kit.json-schema-subset/v1. Contract: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "session_key": {"type": "string", "minLength": 1},
+    "verdicts": {"type": "object", "additionalProperties": {"$ref": "#/$defs/verdict"}}
+  },
+  "required": ["session_key", "verdicts"],
+  "additionalProperties": false,
+  "$defs": {
+    "verdict": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "object",
+          "properties": {"pool": {"type": "string"}, "display_name": {"type": "string"}},
+          "required": ["pool"],
+          "additionalProperties": false
+        },
+        "budget": {
+          "type": "object",
+          "properties": {
+            "status": {"enum": ["available", "under-quota", "out-of-quota", "no-data"]},
+            "pool": {"type": "string"},
+            "detail": {"type": "string"},
+            "remaining": {"type": ["number", "null"]},
+            "window_remaining": {"type": ["number", "null"]},
+            "resets_at": {"type": ["number", "null"]},
+            "observed_halt": {"type": "boolean"}
+          },
+          "required": ["status", "pool", "detail", "remaining", "window_remaining", "resets_at"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["spec", "budget"],
+      "additionalProperties": false
+    }
+  }
+}

@@ -4,6 +4,7 @@
   "package": "llm_kit",
   "current_version_file": ".claude-plugin/plugin.json",
   "covers": [
+    "llm_kit.registry.model_overrides",
     "llm_kit.pipeline",
     "llm_kit.scaffold",
     "llm_kit.cli.run",
@@ -30,6 +31,23 @@
     "llm_kit.registry.reply_cache"
   ],
   "entries": [
+    {"name": "llm_kit.registry.model_overrides.ModelOverride", "status": "public"},
+    {"name": "llm_kit.registry.model_overrides.ModelOverrides", "status": "public"},
+    {"name": "llm_kit.registry.model_overrides.load_model_overrides", "status": "public"},
+    {"name": "llm_kit.registry.user_paths.ENV_MODEL_OVERRIDES_FILE", "status": "public"},
+    {"name": "llm_kit.registry.user_paths.MODEL_OVERRIDES_FILENAME", "status": "public"},
+    {"name": "llm_kit.registry.user_paths.model_overrides_file", "status": "public"},
+    {"name": "llm_kit.schema.formats.MODEL_OVERRIDES_V1", "status": "public"},
+    {"name": "llm_kit.schema.formats.USAGE_VERDICTS_V1", "status": "public"},
+    {"name": "llm_kit.dispatch.declaration.describe", "status": "public"},
+    {"name": "llm_kit.dispatch.declaration.Reselector", "status": "public"},
+    {"name": "llm_kit.dispatch.declaration.Ranking", "status": "public"},
+    {"name": "llm_kit.dispatch.declaration.EntryState", "status": "public"},
+    {"name": "llm_kit.dispatch.declaration.Disposition", "status": "public"},
+    {"name": "llm_kit.dispatch.seats.discover_seats", "status": "public"},
+    {"name": "llm_kit.dispatch.seats.Seat", "status": "public"},
+    {"name": "llm_kit.dispatch.seats.SeatsResult", "status": "public"},
+    {"name": "llm_kit.registry.conserve.Budget", "status": "public"},
     {
       "name": "llm_kit.jobs.supervisor.JobProcessSpec",
       "status": "public"

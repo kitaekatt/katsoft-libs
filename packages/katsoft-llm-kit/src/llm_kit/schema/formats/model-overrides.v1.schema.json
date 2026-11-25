@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.model-overrides/v1",
+  "title": "User model usage overrides, version 1",
+  "description": "User usage policy. Harness fields apply first, then model entry fields individually; disabled beats reset_mode. Written in llm-scripting-kit.json-schema-subset/v1. Contract: docs/reference/llm-kit-formats.md.",
+  "type": "object",
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "harnesses": {"$ref": "#/$defs/scope"},
+    "models": {"$ref": "#/$defs/scope"}
+  },
+  "required": ["schema_version"],
+  "additionalProperties": false,
+  "$defs": {
+    "scope": {"type": "object", "additionalProperties": {"$ref": "#/$defs/flags"}},
+    "flags": {
+      "type": "object",
+      "properties": {"disabled": {"type": "boolean"}, "reset_mode": {"type": "boolean"}},
+      "additionalProperties": false
+    }
+  }
+}

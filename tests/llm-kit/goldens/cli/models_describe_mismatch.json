@@ -20,6 +20,8 @@
             "declared_index": 0,
             "detail": "adapter 'claude-cli'",
             "disposition": "requirements-mismatch",
+            "disabled": false,
+            "reset_mode": false,
             "id": "cl",
             "resets_at": "<t>"
           },
@@ -27,6 +29,8 @@
             "declared_index": 1,
             "detail": "adapter 'codex-cli'",
             "disposition": "requirements-mismatch",
+            "disabled": false,
+            "reset_mode": false,
             "id": "cdx",
             "resets_at": "<t>"
           }

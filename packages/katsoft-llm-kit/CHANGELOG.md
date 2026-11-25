@@ -2,6 +2,46 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## 1.46.0
+
+Declarations and consult seats share the user's per-model usage overrides.
+
+- `registry.model_overrides` reads `model-overrides.yaml` from the neutral user config directory, or `LLM_KIT_MODEL_OVERRIDES_FILE`.
+  Reads create nothing. Invalid structure, unknown keys, duplicate keys and non-boolean switches fail loudly.
+  Harness fields apply first, then model fields individually; disabled takes precedence over reset.
+- `describe()` and `Reselector` exclude disabled entries before probes and retain them in floor diagnostics.
+  Usable reset entries come first in declaration order, ahead of the remaining pace order.
+  Reset also takes precedence over ordinary front-door member order.
+  Actual usage remains visible in text and JSON. A usable reset adds the reset choice rule and `Reset:` line.
+  Reachability, requirements, consent and caller exclusions still apply.
+- Observed dispatch halts still block reset entries and their pool siblings until the reset time.
+  The session cache retains explicit halt provenance and recognizes earlier halt pins.
+- `discover_seats()` marks disabled seats, restores reset seats from measured exhaustion and removes their behind-pace penalty.
+  Relation precedence and tier order remain; reset takes priority within a relation and tier.
+- `llm-kit models overrides` prints the path and resolved policy as JSON.
+  `models describe` and `models seats` show overrides; JSON includes effective switches and reset ids.
+- Schemas describe user overrides and the session usage cache. Shared cases cover malformed overrides and seat parity.
+  `examples/usage_overrides.py` uses a temporary file and runs without a harness or client app.
+
+Quality bar review:
+
+1. Public API documented: pass. New policy types, methods and loader have input, result and error documentation.
+   `public-surface.json` lists the policy module, path helpers, schema ids and changed selection records.
+2. Semver and changelog: pass. Minor version 1.46.0 and this entry.
+3. Tests for each public function: pass. The 33 override cases fail against source commit 636a6329 and pass after the changes.
+   The targeted suite passes 802 tests. `uv run --extra dev pytest -n 4` passes 5,890 tests with 106 skips.
+4. No client names, prompts or data: pass. Only generic user policy, harness names and synthetic test entries.
+5. Examples without a client app: pass. `WHEEL_CLOSURE_SOURCE=local uv run --extra dev pytest tests/packaging` passes all 58 checks.
+   The checks build the wheels, install them in empty environments, and run the examples with plain Python.
+6. JSON Schema for each file format: pass. Override reader cases validate against `MODEL_OVERRIDES_V1`.
+   Halt pin tests validate new and earlier records against `USAGE_VERDICTS_V1`.
+7. Gate before adoption: pass. Lines 1 to 6 and 8 pass; no client adoption or publication in this unit.
+8. Security properties tested: pass. `test_disabled_is_never_probed_or_default_and_harness_floor`,
+   `test_reset_respects_exclusion_reachability_and_consent`, `test_jobs_halted_endpoints_still_exclude_reset`,
+   `test_observed_halt_beats_reset_for_pool_siblings_then_expires` and `test_a_legacy_observed_halt_pin_still_beats_reset` cover the selection boundaries.
+   The schema and YAML refusals use shared cases under `tests/formats/model-overrides/`.
+   No adapter or Claude spawn path changed; the gated live Claude suite is not required.
+
 ## 1.45.0
 
 Graph pages show the graph files that nothing runs, and the carry and until of a repeat.

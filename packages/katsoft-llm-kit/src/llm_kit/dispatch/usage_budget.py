@@ -291,6 +291,11 @@ def pinned_evaluate(
                         remaining=budget.get("remaining"),
                         window_remaining=budget.get("window_remaining"),
                         resets_at=resets_at,
+                        # Pins written before provenance was explicit used this
+                        # dispatch-only detail. Preserve those observations too.
+                        observed_halt=(budget.get("observed_halt") is True or str(
+                            budget.get("detail", "")
+                        ).startswith("observed quota/credit halt")),
                     )
         fresh = evaluate(spec, harness, now=moment)
         verdicts[entry_id] = {"spec": spec.to_json(), "budget": fresh.to_json()}
@@ -391,6 +396,7 @@ def record_observed_halt(
         detail="observed quota/credit halt at dispatch",
         remaining=0.0,
         resets_at=reset_at,
+        observed_halt=True,
     )
     path = VERDICT_CACHE if cache_path is None else cache_path
     with _VERDICT_LOCK:
@@ -405,6 +411,7 @@ def record_observed_halt(
                     detail=f"observed quota/credit halt on {entry_id}, which shares this pool",
                     remaining=0.0,
                     resets_at=reset_at,
+                    observed_halt=True,
                 ).to_json(),
             }
         _store_cache(path, key, verdicts)

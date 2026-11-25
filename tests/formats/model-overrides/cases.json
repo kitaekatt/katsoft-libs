@@ -1,0 +1,21 @@
+{
+  "format": "llm-kit.model-overrides/v1",
+  "yaml_cases": [
+    "models: [", "", "schema_version: 1\nmodels: {b: {disabled: true, disabled: false}}\n",
+    "schema_version: 1\nmodels: {1: {disabled: true}}\n",
+    "schema_version: 1\nharnesses: {null: {reset_mode: true}}\n"
+  ],
+  "cases": [
+    {"document": [], "error": "object"},
+    {"document": {}, "error": "schema_version"},
+    {"document": {"schema_version": true}, "error": "schema_version"},
+    {"document": {"schema_version": 2}, "error": "schema_version"},
+    {"document": {"schema_version": 1, "modles": {}}, "error": "modles"},
+    {"document": {"schema_version": 1, "models": []}, "error": "models"},
+    {"document": {"schema_version": 1, "harnesses": null}, "error": "harnesses"},
+    {"document": {"schema_version": 1, "models": {"b": null}}, "error": "b"},
+    {"document": {"schema_version": 1, "models": {"b": {"reset": true}}}, "error": "reset"},
+    {"document": {"schema_version": 1, "models": {"b": {"disabled": "yes"}}}, "error": "disabled"},
+    {"document": {"schema_version": 1, "models": {"b": {"reset_mode": 1}}}, "error": "reset_mode"}
+  ]
+}

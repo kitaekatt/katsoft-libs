@@ -75,6 +75,8 @@ class Budget:
     two fractions the rule compares, both None when there was no reading.
     ``pool`` names the window consulted and ``detail`` says, in one line, why
     the verdict came out as it did.
+    ``observed_halt`` marks a dispatch failure rather than a measured quota
+    reading. It survives session pinning so user reset policy cannot erase it.
     """
 
     status: str
@@ -83,6 +85,8 @@ class Budget:
     remaining: Optional[float] = None
     window_remaining: Optional[float] = None
     resets_at: Optional[int] = None
+    # Provenance survives the session pin; reset policy cannot erase a dispatch failure.
+    observed_halt: bool = False
 
     @property
     def usable(self) -> bool:
@@ -100,7 +104,8 @@ class Budget:
         return self.status == STATUS_UNDER_QUOTA
 
     def to_json(self) -> Dict[str, Any]:
-        return {
+        """Return JSON budget data, including halt provenance when true; no errors."""
+        result = {
             "status": self.status,
             "pool": self.pool,
             "detail": self.detail,
@@ -108,6 +113,9 @@ class Budget:
             "window_remaining": self.window_remaining,
             "resets_at": self.resets_at,
         }
+        if self.observed_halt:
+            result["observed_halt"] = True
+        return result
 
 
 class ConserveConfigError(ValueError):

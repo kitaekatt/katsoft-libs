@@ -35,7 +35,7 @@ from llm_kit.completion.types import BackendOptions, LLMResponse
 from llm_kit.dispatch import declaration as d
 from llm_kit.dispatch.factory import BackendSelection
 from llm_kit.dispatch.reachability import Reachability
-from llm_kit.registry.conserve import ConserveSpec
+from llm_kit.registry.conserve import Budget, ConserveSpec
 from llm_kit.registry.model_endpoints import (
     HARNESS_KIND,
     TRANSPORT_KIND,
@@ -336,8 +336,8 @@ def test_pace_never_reorders_across_a_group_boundary(probes, monkeypatch):
     entries = fleet(m2=member("m2", 2, spec=spec), opus=harness("opus", spec=spec),
                     sonnet=harness("sonnet", spec=spec))
     paces = {"m2": 0.5, "opus": 2.0, "sonnet": 3.0}
-    monkeypatch.setattr(d, "pinned_evaluate", lambda name, spec, harness: SimpleNamespace(
-        usable=True, status=d.STATUS_AVAILABLE, detail="", resets_at=None))
+    monkeypatch.setattr(d, "pinned_evaluate", lambda name, spec, harness: Budget(
+        status=d.STATUS_AVAILABLE, pool=spec.pool, detail=""))
     monkeypatch.setattr(d, "_fresh_reading", lambda name, spec, harness: SimpleNamespace(
         remaining=paces[name] * 0.5, window_remaining=0.5))
     ranking = d.describe(["door", "opus", "sonnet"], entries=entries, caller="process")
@@ -472,8 +472,8 @@ def test_busy_member_skipped_without_halt_or_wait(home, probes, monkeypatch, beh
     spec = ConserveSpec(pool="seven_day")
     entries = fleet(door=EndpointEntry(id="door", base_url="http://door.invalid/v1", model="g",
                                        frontdoor=True, conserve_usage=spec))
-    monkeypatch.setattr(d, "pinned_evaluate", lambda name, spec, harness: SimpleNamespace(
-        usable=True, status=d.STATUS_AVAILABLE, detail="", resets_at=None))
+    monkeypatch.setattr(d, "pinned_evaluate", lambda name, spec, harness: Budget(
+        status=d.STATUS_AVAILABLE, pool=spec.pool, detail=""))
     monkeypatch.setattr(d, "_fresh_reading", lambda name, spec, harness: None)
     endpoints = {"door": Endpoint(behaviour), "m1": Endpoint(), "m2": Endpoint(), "cloud": Endpoint()}
     backends = {name: e.backend() for name, e in endpoints.items()}

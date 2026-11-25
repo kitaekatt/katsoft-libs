@@ -120,6 +120,10 @@ PRE_TO_JSON = json.loads(r'''{
   ],
   "rule": "Rule: take the first usable entry of the ordered list (the default); a run is explainable from the declared list plus the logged pace readings.\nRe-select: only a classified halt (quota, rate limit, auth, insufficient credit, launch/transport) moves to the next usable entry; a quota or credit halt records the entry out of quota until its reset. A task error, schema-invalid output, or an unclassified timeout stays a failed attempt."
 }''')
+# 1.46.0 adds usage-policy state independently of the cost-class filter.
+PRE_TO_JSON["reset_ids"] = []
+for _entry in PRE_TO_JSON["rendered_entries"]:
+    _entry.update(disabled=False, reset_mode=False)
 PRE_FLOOR_STR = (
     'no usable routing target in [qwen, sol, ghost] for a process caller:\n'
     '  qwen: excluded (ruled out by the caller)\n'
@@ -154,6 +158,8 @@ PRE_FLOOR_TO_JSON = json.loads(r'''{
   "kind": "no-usable-routing-target",
   "message": "no usable routing target in [qwen, sol, ghost] for a process caller:\n  qwen: excluded (ruled out by the caller)\n  sol: excluded (ruled out by the caller)\n  ghost: unresolved (no registry entry)"
 }''')
+for _entry in PRE_FLOOR_TO_JSON["dispositions"]:
+    _entry.update(disabled=False, reset_mode=False)
 
 
 # --------------------------------------------------------------------------
@@ -258,9 +264,11 @@ def test_switched_off_shown(spy):
     off = ranking.to_json()["switched_off"]
     assert off == [
         {"id": "use1", "declared_index": 0, "disposition": "switched-off",
-         "detail": "subscription not allowed: stub-usage", "resets_at": None, "cost_class": "subscription"},
+         "detail": "subscription not allowed: stub-usage", "resets_at": None, "cost_class": "subscription",
+         "disabled": False, "reset_mode": False},
         {"id": "sp1", "declared_index": 2, "disposition": "switched-off",
-         "detail": "metered not allowed: stub-spend", "resets_at": None, "cost_class": "metered"},
+         "detail": "metered not allowed: stub-spend", "resets_at": None, "cost_class": "metered",
+         "disabled": False, "reset_mode": False},
     ]
     assert [x.id for x in ranking.switched_off] == ["use1", "sp1"]
     assert ranking.switched_off == tuple(

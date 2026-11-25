@@ -21,6 +21,7 @@ from llm_kit.dispatch.reachability import (
     check_many,
 )
 from llm_kit.dispatch.usage_budget import Budget, pinned_evaluate
+from llm_kit.registry.model_overrides import ModelOverride, load_model_overrides
 
 _BANDS = {1: "small", 2: "workhorse", 3: "strong", 4: "frontier"}
 
@@ -53,7 +54,12 @@ class SeatSelf:
 
 @dataclass(frozen=True)
 class Seat:
-    """A reachable classified candidate, or an indeterminate candidate."""
+    """A candidate with relation, endpoint metadata, probe and optional budget.
+
+    The boolean policy inputs ``disabled`` and ``reset_mode`` are effective
+    switches. Budget remains the actual reading even when reset permits the
+    seat. to_json returns JSON data; construction performs no I/O or checks.
+    """
 
     relation: str
     endpoint: str
@@ -64,6 +70,8 @@ class Seat:
     harness: Optional[str]
     reachability: Reachability
     budget: Optional[Budget] = None
+    disabled: bool = False
+    reset_mode: bool = False
 
     def to_json(self) -> dict[str, Any]:
         result = {
@@ -75,6 +83,8 @@ class Seat:
             "family": self.family,
             "harness": self.harness,
             "reachability": self.reachability.to_json(),
+            "disabled": self.disabled,
+            "reset_mode": self.reset_mode,
         }
         if self.budget is not None:
             result["budget"] = self.budget.to_json()
@@ -105,13 +115,25 @@ class UnclassifiedEntry:
 
 @dataclass(frozen=True)
 class SeatsResult:
-    """The self seat, confirmed seats, and excluded discovery candidates."""
+    """Discovery records, returned by discover_seats().
+
+    Inputs are the self record and tuples of confirmed, unclassified, unknown,
+    exhausted and disabled candidates. Disabled seats are never offered;
+    reset_endpoints names usable resets. to_json returns all categories.
+    Construction performs no I/O or checks and raises no discovery errors.
+    """
 
     self: SeatSelf
     seats: tuple[Seat, ...]
     unclassified: tuple[UnclassifiedEntry, ...]
     probe_unknown: tuple[Seat, ...]
     out_of_quota: tuple[Seat, ...] = ()
+    disabled: tuple[Seat, ...] = ()
+
+    @property
+    def reset_endpoints(self) -> frozenset[str]:
+        """Usable reset seat ids; unknown probes and observed halts are excluded."""
+        return frozenset(seat.endpoint for seat in self.seats if seat.reset_mode)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -120,6 +142,8 @@ class SeatsResult:
             "unclassified": [entry.to_json() for entry in self.unclassified],
             "probe_unknown": [seat.to_json() for seat in self.probe_unknown],
             "out_of_quota": [seat.to_json() for seat in self.out_of_quota],
+            "disabled": [seat.to_json() for seat in self.disabled],
+            "reset_endpoints": sorted(self.reset_endpoints),
         }
 
 
@@ -184,6 +208,7 @@ def _candidate_record(
     relation: str,
     reachability: Reachability,
     budget: Optional[Budget] = None,
+    policy: ModelOverride = ModelOverride(),
 ) -> Seat:
     assert entry.tier is not None
     assert entry.family is not None
@@ -197,6 +222,8 @@ def _candidate_record(
         harness=entry.harness,
         reachability=reachability,
         budget=budget,
+        disabled=policy.disabled,
+        reset_mode=policy.reset_mode,
     )
 
 
@@ -207,8 +234,8 @@ def _candidate_sort_key(entry: EndpointEntry, relation: str) -> tuple[int, int, 
     return (1, 0, entry.id)
 
 
-def _seat_sort_key(seat: Seat) -> tuple[int, int, int, str]:
-    """Order confirmed seats, de-prioritizing the under-quota ones.
+def _seat_sort_key(seat: Seat) -> tuple[int, int, int, int, int, str]:
+    """Order confirmed seats by relation, effective quota, tier and reset.
 
     Quota rank sits BELOW relation and ABOVE tier: a seat's relation says
     whether it can do the job at all, which outranks how much of its budget is
@@ -218,9 +245,15 @@ def _seat_sort_key(seat: Seat) -> tuple[int, int, int, str]:
     between de-prioritizing and disabling.
     """
     relation_rank = 0 if seat.relation == "UP" else 1
-    quota_rank = 1 if (seat.budget is not None and seat.budget.deprioritized) else 0
+    quota_rank = 1 if (not seat.reset_mode and seat.budget is not None and seat.budget.deprioritized) else 0
     tier_rank = -seat.tier if seat.relation == "UP" else 0
-    return (relation_rank, quota_rank, tier_rank, seat.endpoint)
+    # Keep the pre-override order on a tie: available, behind pace, then seats
+    # restored from exhaustion. This is a stable policy application to the
+    # ordinary discovery result, whose exhausted seats follow confirmed ones.
+    previous_rank = 0
+    if seat.budget is not None:
+        previous_rank = 2 if not seat.budget.usable else int(seat.budget.deprioritized)
+    return (relation_rank, quota_rank, tier_rank, 0 if seat.reset_mode else 1, previous_rank, seat.endpoint)
 
 
 def discover_seats(
@@ -249,6 +282,14 @@ def discover_seats(
     the same relation that is not behind pace. Both verdicts are pinned for the
     session, so a seat cannot disappear mid-session.
 
+    The user model-overrides file applies on every call. Disabled candidates
+    receive no probe and are reported in ``disabled``. Reset restores measured
+    exhaustion and removes the behind-pace penalty, then sorts first within
+    its relation and tier. UP still precedes BESIDE. Observed dispatch halts
+    still block reset seats, and budget retains the actual reading.
+    Invalid policy raises ValueError; other read failures raise OSError.
+    An invalid self reference raises SeatResolutionError. No policy is written.
+
     ``registry`` is an injectable parsed registry for callers and tests that
     already own a fabricated registry. When omitted, the normal layered
     configuration and user registry are loaded.
@@ -259,6 +300,8 @@ def discover_seats(
         config=config, project_root=root, registry=registry
     )
     entries = dict(discovery.entries)
+    overrides = load_model_overrides()
+    policies = {name: overrides.resolve(name, entry.harness) for name, entry in entries.items()}
     self_entry = _resolve_self(self_ref, entries)
     self_record = _self_record(self_entry)
 
@@ -292,6 +335,7 @@ def discover_seats(
     probe_input = {
         entry.id: {"kind": entry.kind, "harness": entry.harness}
         for entry, _relation in candidates
+        if not policies[entry.id].disabled
     }
     checks = check_many(
         probe_input,
@@ -302,7 +346,15 @@ def discover_seats(
     confirmed: list[Seat] = []
     probe_unknown: list[Seat] = []
     out_of_quota: list[Seat] = []
+    disabled: list[Seat] = []
     for entry, relation in candidates:
+        policy = policies[entry.id]
+        if policy.disabled:
+            disabled.append(_candidate_record(
+                entry, relation, Reachability(STATUS_UNKNOWN, "config", "disabled by config"),
+                policy=policy,
+            ))
+            continue
         reachability = checks.get(
             entry.id,
             Reachability(
@@ -318,14 +370,14 @@ def discover_seats(
         budget = None
         if reachability.status == STATUS_REACHABLE and entry.conserve_usage is not None:
             budget = pinned_evaluate(entry.id, entry.conserve_usage, entry.harness)
-        candidate = _candidate_record(entry, relation, reachability, budget)
+        candidate = _candidate_record(entry, relation, reachability, budget, policy)
         if reachability.status == STATUS_REACHABLE:
             # A spent pool DISABLES the seat; being merely behind pace does
             # not. The excluded ones are reported rather than dropped, so a
             # caller reporting "no seat above me" can tell a fleet with no
             # frontier model from one whose frontier model is out of quota --
             # only the second answer changes when the window resets.
-            if budget is not None and not budget.usable:
+            if not policy.budget_usable(budget):
                 out_of_quota.append(candidate)
             else:
                 confirmed.append(candidate)
@@ -339,6 +391,7 @@ def discover_seats(
         unclassified=unclassified,
         probe_unknown=tuple(probe_unknown),
         out_of_quota=tuple(out_of_quota),
+        disabled=tuple(disabled),
     )
 
 

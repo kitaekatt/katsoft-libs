@@ -163,6 +163,8 @@ def child_env(venv: Path, home: Path, **extra: str) -> dict:
     system = ["/usr/bin", "/bin"] if os.name != "nt" else [os.environ.get("SystemRoot", "C:\\Windows") + "\\System32"]
     env = {"PATH": os.pathsep.join([str(bin_dir(venv)), *system]),
            "HOME": str(home), "USERPROFILE": str(home)}
+    if override := os.environ.get("LLM_KIT_MODEL_OVERRIDES_FILE"):
+        env["LLM_KIT_MODEL_OVERRIDES_FILE"] = override
     if os.name == "nt":
         env["SystemRoot"] = os.environ.get("SystemRoot", "C:\\Windows")
     env.update(extra)

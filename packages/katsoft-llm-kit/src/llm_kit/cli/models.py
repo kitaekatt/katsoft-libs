@@ -378,13 +378,39 @@ def _cmd_seats(
         _json(result.to_json())
     else:
         for seat in result.seats:
-            print(f"{seat.relation} {seat.endpoint} ({seat.band}, {seat.harness})")
+            line = f"{seat.relation} {seat.endpoint} ({seat.band}, {seat.harness})"
+            if seat.reset_mode:
+                line += " reset available (config)"
+                if seat.budget is not None:
+                    line += f"; actual: {seat.budget.status} -- {seat.budget.detail}"
+                    if seat.budget.remaining is not None:
+                        line += f" ({seat.budget.remaining * 100:.0f}% left)"
+            print(line)
+        for seat in result.disabled:
+            print(f"{seat.relation} {seat.endpoint} ({seat.band}, {seat.harness}) disabled by config; do not consult it")
+        for seat in result.out_of_quota:
+            line = f"{seat.relation} {seat.endpoint} ({seat.band}, {seat.harness}) out of quota"
+            if seat.reset_mode:
+                line += "; reset available (config)"
+            if seat.budget is not None:
+                line += f"; {seat.budget.detail}"
+            print(line)
     if result.probe_unknown:
         for seat in result.probe_unknown:
             print(
                 f"{seat.endpoint}: {seat.reachability.detail}", file=sys.stderr
             )
         return EXIT_INDETERMINATE
+    return EXIT_OK
+
+
+def _cmd_overrides(project_root: Optional[str]) -> int:
+    """Print the user policy path, configured switches and resolved registry policy."""
+    from llm_kit.registry.model_overrides import load_model_overrides
+
+    policy = load_model_overrides()
+    discovery = discover_model_entries(project_root=project_root)
+    _json(policy.to_json(discovery.entries))
     return EXIT_OK
 
 
@@ -639,6 +665,8 @@ def _parser() -> argparse.ArgumentParser:
         description="Configured endpoints, reachability, pacing verdicts and routing.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
+    overrides = sub.add_parser("overrides", help="Print the user usage policy path and resolved switches as JSON.")
+    _add_project_arg(overrides)
 
     endpoints = sub.add_parser("endpoints", help="List configured transports and harnesses.")
     _add_project_arg(endpoints)
@@ -800,6 +828,8 @@ def run(argv: Sequence[str]) -> int:
     args = _parser().parse_args(list(argv))
 
     def dispatch() -> int:
+        if args.cmd == "overrides":
+            return _cmd_overrides(args.project_root)
         if args.cmd == "endpoints":
             return _cmd_endpoints(args.project_root, verify=args.verify, timeout_s=args.timeout)
         if args.cmd == "probe":
