@@ -1,6 +1,7 @@
 // Queue jobs on fal and Sunra: submit, read the status until the job ends, read the result. A job never throws: it
 // returns the stage it reached and whether the host reported the job complete, so the caller can record what may have
 // been billed.
+import { beginCall } from "./ledger.js";
 import { FAL_QUEUE_URL, SUNRA_QUEUE_URL } from "./media.js";
 import type { MediaOptions } from "./media.js";
 import { pause } from "./retry.js";
@@ -49,12 +50,29 @@ export type FalQueueResult =
  * One fal queue job: POST the input to `<base>/<model>`, GET its `status_url` until `COMPLETED` (waiting `pollMs`
  * between reads while it is `IN_QUEUE` or `IN_PROGRESS`), then GET its `response_url`.
  *
+ * The job is one call in the call ledger (see {@link setCallLedger}): `begin` before the submit, `end` with the result.
+ * The status and result reads are not recorded; they run inside the call (see {@link activeCall}).
+ *
  * @param call - The model, key, input, poll wait, refusal rule and base URL.
- * @param options - The transport and signal (the job's deadline).
+ * @param options - The transport, signal (the job's deadline) and ledger labels.
  * @returns The output JSON, or the stage, reason, last status and body, and whether fal completed the job.
- * @throws Never: an abort or a lost connection is a result.
+ * @throws {CallLedgerError} Before anything is sent, when the ledger is required and has no sink; `TypeError` for bad
+ *   labels. Never otherwise: an abort or a lost connection is a result.
  */
 export async function falQueue(call: FalQueueCall, options: MediaOptions = {}): Promise<FalQueueResult> {
+  const rec = beginCall({ transport: "falQueue", method: "POST", url: `${call.baseUrl ?? FAL_QUEUE_URL}/${call.model}`, model: call.model, stream: false, labels: options.labels });
+  let status: number | null = null;
+  try {
+    const result = await rec.run(() => runFal(call, options, (seen) => { status = seen; }));
+    rec.end({ ok: result.ok, status: result.ok ? status : result.status, errorKind: result.ok ? null : `${result.stage}:${result.reason}`, aborted: !result.ok && result.reason === "aborted" });
+    return result;
+  } catch (error) {
+    rec.end({ ok: false, errorKind: "error" });
+    throw error;
+  }
+}
+
+async function runFal(call: FalQueueCall, options: MediaOptions, seen: (status: number) => void): Promise<FalQueueResult> {
   const { signal } = options;
   const headers = { Authorization: `Key ${call.key}`, "Content-Type": "application/json" };
   let completed = false;
@@ -67,6 +85,7 @@ export async function falQueue(call: FalQueueCall, options: MediaOptions = {}): 
     } catch {
       return fail(stage, signal?.aborted ? "aborted" : "network", null, null);
     }
+    seen(response.status);
     const body: any = await response.json().catch(() => null);
     if (call.refusal?.(response.status, body)) return fail(stage, "refused", response.status, body);
     if (!response.ok) return fail(stage, "http", response.status, body);
@@ -126,16 +145,43 @@ export type SunraQueueResult =
  * `CANCELED` (waiting `pollMs` between reads), then GET `<base>/requests/<id>`. Sunra documents that a failed job costs
  * nothing.
  *
+ * The job is one call in the call ledger (see {@link setCallLedger}): `begin` before the submit, `end` with the result.
+ * The status and result reads are not recorded; they run inside the call (see {@link activeCall}).
+ *
  * @param call - The endpoint, key, input, poll wait and base URL.
- * @param options - The transport and signal.
+ * @param options - The transport, signal and ledger labels.
  * @returns The output JSON, or the stage, code, refusal flag and whether Sunra completed the job.
- * @throws Never: an abort or a lost connection is a result.
+ * @throws {CallLedgerError} Before anything is sent, when the ledger is required and has no sink; `TypeError` for bad
+ *   labels. Never otherwise: an abort or a lost connection is a result.
  */
 export async function sunraQueue(call: SunraQueueCall, options: MediaOptions = {}): Promise<SunraQueueResult> {
+  const rec = beginCall({ transport: "sunraQueue", method: "POST", url: `${call.baseUrl ?? SUNRA_QUEUE_URL}/${call.endpoint}`, model: call.endpoint, stream: false, labels: options.labels });
+  let status: number | null = null;
+  try {
+    const result = await rec.run(() => runSunra(call, options, (seen) => { status = seen; }));
+    // A code such as `submit_503` is an HTTP status at that stage.
+    const http = !result.ok ? /^(submit|status|result)_(\d+)$/.exec(result.code) : null;
+    rec.end({
+      ok: result.ok, status: http ? Number(http[2]) : status, errorKind: result.ok ? null : `${result.stage}:${http ? "http" : result.code}`,
+      aborted: !result.ok && result.code === "aborted",
+    });
+    return result;
+  } catch (error) {
+    rec.end({ ok: false, errorKind: "error" });
+    throw error;
+  }
+}
+
+async function runSunra(call: SunraQueueCall, options: MediaOptions, seen: (status: number) => void): Promise<SunraQueueResult> {
   const { signal } = options;
   const base = call.baseUrl ?? SUNRA_QUEUE_URL;
   const headers = { Authorization: `Key ${call.key}`, "Content-Type": "application/json" };
-  const transport = options.fetch ?? globalThis.fetch;
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  const transport = (async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const response = await fetchImpl(url, init);
+    seen(response.status);
+    return response;
+  }) as typeof fetch;
   let stage: QueueStage = "submit";
   let completed = false;
   const fail = (code: string, refused = false): SunraQueueResult => ({ ok: false, stage, refused, code, completed });

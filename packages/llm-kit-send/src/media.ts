@@ -2,8 +2,11 @@
 // needs for its own record (status, delivery, reported cost) or the raw response, so the caller decides what an answer
 // means. No retry and no fallback here: a chain of hosts is `runChain` (chain.ts).
 import { usageCost } from "./cost.js";
+import { dispatch, recordReplay } from "./ledger.js";
+import type { CallHandle, CallLabels, CallSpec } from "./ledger.js";
 import { capturedResponse, checkCached, commitStep, entryBytes, modelOf, openStep, parseJson, replayedResponse } from "./reply-cache.js";
 import type { CachedResponse, ParsedStepCache, StepCache } from "./reply-cache.js";
+import { tapResponse } from "./tap.js";
 
 /** The base URL of Venice's API; {@link postVenice} sends to `<base>/image/<endpoint>`. */
 export const VENICE_URL = "https://api.venice.ai/api/v1";
@@ -24,11 +27,29 @@ export interface MediaOptions {
   readonly fetch?: typeof fetch;
   /** The signal of the request (the caller's abort or deadline). */
   readonly signal?: AbortSignal;
+  /** The labels of the call for the call ledger (see {@link setCallLedger}); the package never reads them. A download
+   * ({@link fetchFile}) is not recorded and ignores them. */
+  readonly labels?: CallLabels | undefined;
 }
 
-/** Sends `init` as built: its key order and the given signal stay as they are (`signal` may be undefined). */
+/** Sends `init` as built: its key order and the given signal stay as they are (`signal` may be undefined). Not recorded. */
 const send = (options: MediaOptions, url: string, init: Record<string, unknown>): Promise<Response> =>
   (options.fetch ?? globalThis.fetch)(url, init as RequestInit);
+
+const specOf = (options: MediaOptions, transport: string, method: string, url: string, model: string): CallSpec =>
+  ({ transport, method, url, model, stream: false, labels: options.labels });
+
+/** Sends `init` as `send` does, as a recorded call: begun before the transport is called, ended by the caller (or by
+ * {@link tapResponse}) once the answer is read. The response promise rejects with the transport's own error. */
+const sendPaid = (options: MediaOptions, transport: string, model: string, url: string, init: Record<string, unknown>) =>
+  dispatch(specOf(options, transport, String(init.method ?? "POST"), url, model), options.fetch ?? globalThis.fetch, url, init, options.signal);
+
+/** Tells the ledger the end of a parsed answer: `parsed` is false when a 2xx body was not JSON. */
+const endParsed = (rec: CallHandle, status: number, parsed: boolean, usage: unknown = null) => {
+  const ok = status >= 200 && status <= 299;
+  rec.end({ ok: ok && parsed, status, errorKind: !ok ? "http" : parsed ? null : "body", usage: ok ? usage : null });
+};
+const replayInfo = (status: number) => ({ ok: status >= 200 && status <= 299, status, errorKind: status >= 200 && status <= 299 ? null : "http" });
 
 const text = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
 
@@ -96,11 +117,15 @@ export async function postImages(call: ImagesCall, options: MediaOptions & { rea
   if (cache) {
     checkCached(cache, call.url, options.fetch);
     opened = await openStep(cache, "postImages", { method: "POST", url: call.url, headers, body: bytes }, modelOf(bytes));
-    if (opened.entry) return imagesAnswer(opened.entry.status, parseJson(entryBytes(opened.entry)), true);
+    if (opened.entry) {
+      recordReplay(specOf(options, "postImages", "POST", call.url, modelOf(bytes)), replayInfo(opened.entry.status));
+      return imagesAnswer(opened.entry.status, parseJson(entryBytes(opened.entry)), true);
+    }
   }
+  const flight = sendPaid(options, "postImages", modelOf(bytes), call.url, { method: "POST", signal, headers, body: bytes });
   let response: Response;
   try {
-    response = await send(options, call.url, { method: "POST", signal, headers, body: bytes });
+    response = await flight.response;
   } catch (error) {
     if (signal?.aborted) throw error;
     return { ok: false, status: null, failure: {}, replayed: false };
@@ -108,11 +133,14 @@ export async function postImages(call: ImagesCall, options: MediaOptions & { rea
   // Without a cache the body is read as in 0.2.0 (`json()`), so a transport that gives a minimal response still works.
   if (!opened) {
     const value = await response.json().then((json: unknown) => ({ ok: true as const, value: json }), () => ({ ok: false as const }));
-    return imagesAnswer(response.status, value, false);
+    const answer = imagesAnswer(response.status, value, false);
+    endParsed(flight.rec, response.status, value.ok, answer.ok ? answer.usage : null);
+    return answer;
   }
   const read = await response.arrayBuffer().then((buffer) => new Uint8Array(buffer), () => null);
   const parsed = read ? parseJson(read) : { ok: false as const };
   const answer = imagesAnswer(response.status, parsed, false);
+  endParsed(flight.rec, response.status, parsed.ok, answer.ok ? answer.usage : null);
   if (read && parsed.ok) {
     const context = { url: call.url, model: opened.step.model, transport: "postImages" };
     await commitStep(opened.step, cache!.classify(answer, context), { status: response.status, headers: response.headers, bytes: read });
@@ -165,11 +193,19 @@ export async function postVenice(call: VeniceCall, options: MediaOptions & { rea
   const headers = { Authorization: `Bearer ${call.key}`, "Content-Type": "application/json" };
   const body = JSON.stringify(call.body);
   const { cache } = options;
-  if (!cache) return send(options, url, { method: "POST", headers, signal: options.signal, body });
+  const model = modelOf(body, call.endpoint);
+  const raw = async () => {
+    const flight = sendPaid(options, "postVenice", model, url, { method: "POST", headers, signal: options.signal, body });
+    return tapResponse(await flight.response, flight.rec, options.signal);
+  };
+  if (!cache) return raw();
   checkCached(cache, url, options.fetch);
   const { step, entry } = await openStep(cache, "postVenice", { method: "POST", url, headers, body }, modelOf(body), [VENICE_VIOLATION]);
-  if (entry) return replayedResponse(entry);
-  return capturedResponse(step, await send(options, url, { method: "POST", headers, signal: options.signal, body }));
+  if (entry) {
+    recordReplay(specOf(options, "postVenice", "POST", url, model), replayInfo(entry.status));
+    return replayedResponse(entry);
+  }
+  return capturedResponse(step, await raw());
 }
 
 const VENICE_VIOLATION = "x-venice-is-content-violation";
@@ -242,20 +278,32 @@ export async function ideogramEdit(call: IdeogramCall, options: MediaOptions & {
     checkCached(cache, url, options.fetch);
     opened = await openStep(cache, "ideogramEdit", { method: "POST", url, headers, body: call.form }, call.model);
     if (opened.entry) {
+      recordReplay(specOf(options, "ideogramEdit", "POST", url, call.model), replayInfo(opened.entry.status));
       const parsed = parseJson(entryBytes(opened.entry));
       if (!parsed.ok && opened.entry.status >= 200 && opened.entry.status < 300) throw new SyntaxError("The stored answer is not JSON.");
       return ideogramAnswer(opened.entry.status, parsed.ok ? parsed.value : {}, true);
     }
   }
-  const response = await send(options, url, { method: "POST", headers, body: call.form, signal: options.signal });
+  const flight = sendPaid(options, "ideogramEdit", call.model, url, { method: "POST", headers, body: call.form, signal: options.signal });
+  const response = await flight.response;
   if (!opened) {
-    if (!response.ok) return ideogramAnswer(response.status, await response.json().catch(() => ({})), false);
-    return ideogramAnswer(response.status, await response.json(), false);
+    if (!response.ok) {
+      const answer = ideogramAnswer(response.status, await response.json().catch(() => ({})), false);
+      endParsed(flight.rec, response.status, true);
+      return answer;
+    }
+    const answer = ideogramAnswer(response.status, await response.json().catch((error: unknown) => { endParsed(flight.rec, response.status, false); throw error; }), false);
+    endParsed(flight.rec, response.status, true);
+    return answer;
   }
   const read = new Uint8Array(await response.arrayBuffer());
   const parsed = parseJson(read);
-  if (!parsed.ok && response.ok) throw new SyntaxError("The answer is not JSON.");
+  if (!parsed.ok && response.ok) {
+    endParsed(flight.rec, response.status, false);
+    throw new SyntaxError("The answer is not JSON.");
+  }
   const answer = ideogramAnswer(response.status, parsed.ok ? parsed.value : {}, false);
+  endParsed(flight.rec, response.status, true);
   if (parsed.ok) {
     const context = { url, model: opened.step.model, transport: "ideogramEdit" };
     await commitStep(opened.step, cache!.classify(answer, context), { status: response.status, headers: response.headers, bytes: read });
@@ -291,11 +339,13 @@ export interface FalCall {
  * @returns The untouched response of any status.
  * @throws The transport's error (no answer, or the caller's abort), unchanged.
  */
-export function postFal(call: FalCall, options: MediaOptions = {}): Promise<Response> {
-  return send(options, `${call.baseUrl ?? FAL_RUN_URL}/${call.endpoint}`, {
+export async function postFal(call: FalCall, options: MediaOptions = {}): Promise<Response> {
+  const url = `${call.baseUrl ?? FAL_RUN_URL}/${call.endpoint}`;
+  const flight = sendPaid(options, "postFal", call.endpoint, url, {
     method: "POST", headers: { Authorization: `Key ${call.key}`, "Content-Type": "application/json" },
     body: JSON.stringify(call.input), signal: options.signal,
   });
+  return tapResponse(await flight.response, flight.rec, options.signal);
 }
 
 /** One ElevenLabs request for {@link elevenLabsRequest}. */
@@ -324,7 +374,7 @@ export interface ElevenLabsCall {
  * @returns The untouched response of any status.
  * @throws The transport's error (no answer, or the caller's abort), unchanged.
  */
-export function elevenLabsRequest(path: string, call: ElevenLabsCall, options: MediaOptions = {}): Promise<Response> {
+export async function elevenLabsRequest(path: string, call: ElevenLabsCall, options: MediaOptions = {}): Promise<Response> {
   const headers: Record<string, string> = { "xi-api-key": call.key };
   if (call.json !== undefined) headers["Content-Type"] = "application/json";
   if (call.accept) headers.Accept = call.accept;
@@ -332,7 +382,12 @@ export function elevenLabsRequest(path: string, call: ElevenLabsCall, options: M
   if (call.json !== undefined) init.body = JSON.stringify(call.json);
   else if (call.form) init.body = call.form;
   init.signal = options.signal;
-  return send(options, `${call.baseUrl ?? ELEVENLABS_URL}${path}`, init);
+  const url = `${call.baseUrl ?? ELEVENLABS_URL}${path}`;
+  // A read or a delete costs nothing: it is not recorded, and it runs outside any call.
+  if (/^(GET|HEAD|DELETE)$/i.test(String(init.method))) return send(options, url, init);
+  const model = (call.json as { model_id?: unknown } | null | undefined)?.model_id;
+  const flight = sendPaid(options, "elevenLabsRequest", typeof model === "string" ? model : "", url, init);
+  return tapResponse(await flight.response, flight.rec, options.signal);
 }
 
 /**
