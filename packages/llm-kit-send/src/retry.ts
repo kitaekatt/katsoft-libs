@@ -2,9 +2,11 @@
 // with retries, one deadline and one call record per try.
 import { usageCost } from "./cost.js";
 import { SendError, clip } from "./errors.js";
+import { recordReplay } from "./ledger.js";
+import type { CallLabels } from "./ledger.js";
 import { ReplyCacheError, checkCached, commitStep, entryBytes, modelOf, openStep, parseJson } from "./reply-cache.js";
 import type { ParsedStepCache } from "./reply-cache.js";
-import { postChat } from "./send.js";
+import { postChatTry } from "./send.js";
 import type { ChatCall } from "./send.js";
 
 /**
@@ -108,6 +110,8 @@ export interface RetryOptions {
   readonly random?: () => number;
   /** The reply cache: one lookup before the first try; see {@link sendWithRetries}. */
   readonly cache?: ParsedStepCache<RetryResult> | undefined;
+  /** The labels of every try for the call ledger (see {@link setCallLedger}); the package never reads them. */
+  readonly labels?: CallLabels | undefined;
 }
 
 /** The result of {@link sendWithRetries}. `replayed` is true for a stored answer of the reply cache. */
@@ -169,14 +173,15 @@ export async function sendWithRetries(call: ChatCall, options: RetryOptions): Pr
     });
   };
   let checked = false;
-  const send = async (): Promise<Response | null> => {
+  const send = async (attempt: number): Promise<Response | null> => {
     try {
-      return await postChat(call, {
+      return await postChatTry(call, {
         signal: joined,
         ...(options.fetch ? { fetch: options.fetch } : {}),
         // With a cache, `beforeSend` ran before the lookup.
         ...(options.beforeSend && !checked ? { beforeSend: options.beforeSend } : {}),
-      });
+        ...(options.labels ? { labels: options.labels } : {}),
+      }, attempt, "sendWithRetries");
     } catch (error) {
       if (!(error instanceof SendError)) throw error;
       if (joined.aborted) throw error.cause;
@@ -195,6 +200,8 @@ export async function sendWithRetries(call: ChatCall, options: RetryOptions): Pr
         const value = parsed.ok ? parsed.value : null;
         const ok = opened.entry.status >= 200 && opened.entry.status < 300 && Boolean(value);
         record(1, opened.step.started, ok, ok ? value : null, opened.entry.status, false, ok ? null : value, true);
+        recordReplay({ transport: "sendWithRetries", method: "POST", url: call.url, model: bodyModel, stream: false, labels: options.labels },
+          { ok, status: opened.entry.status, errorKind: ok ? null : "http" });
         return ok
           ? { ok: true, payload: value, text: textOf(value), model: typeof value.model === "string" ? value.model : bodyModel, ms: Date.now() - opened.step.started, replayed: true }
           : { ok: false, status: opened.entry.status, body: value, replayed: true };
@@ -212,7 +219,7 @@ export async function sendWithRetries(call: ChatCall, options: RetryOptions): Pr
       let payload: any = null, failure: any = null;
       last = null;
       try {
-        response = await within(send(), joined);
+        response = await within(send(attempt + 1), joined);
         if (response && !opened) {
           // Without a cache the body is read as in 0.2.0 (`json()`), so a transport that gives a minimal response still works.
           const value = await within(response.json().catch(() => null), joined);

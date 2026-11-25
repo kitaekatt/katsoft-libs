@@ -28,6 +28,10 @@ export interface SendErrorFields {
   readonly cause?: unknown;
   /** True when the error is a stored answer of the reply cache: nothing was sent. */
   readonly replayed?: boolean;
+  /** The id of the call in the call ledger (`callId` of {@link SendError}), or `null`. */
+  readonly callId?: string | null;
+  /** The provider's id of the generation, when a chunk or the answer named it, or `null`. */
+  readonly generationId?: string | null;
 }
 
 const LIMIT_KINDS: ReadonlySet<SendErrorKind> = new Set(["no_first_token", "stalled", "slow"]);
@@ -51,7 +55,8 @@ function providerSide(status: number, message: string | null): boolean {
  *
  * @param kind - What failed.
  * @param message - A short description for logs; never prompt text.
- * @param fields - The status, provider code and message, host, upstream reason, error body, cause and `replayed`.
+ * @param fields - The status, provider code and message, host, upstream reason, error body, cause, `replayed`, `callId`
+ *   and `generationId`.
  * @returns A new error.
  * @throws Never.
  */
@@ -74,6 +79,12 @@ export class SendError extends Error {
   readonly fallback: boolean;
   /** True when the error is a stored answer of the reply cache: nothing was sent. */
   readonly replayed: boolean;
+  /** The id of the call in the call ledger (the `id` of its `begin` and `end` records), or `null` when the error came
+   * before any call (for example a refused `beforeSend`). */
+  readonly callId: string | null;
+  /** The provider's id of the generation (the `id` of the stream chunks or of the answer), or `null`: the key to look
+   * up what a stalled or cut call cost. */
+  readonly generationId: string | null;
 
   constructor(kind: SendErrorKind, message: string, fields: SendErrorFields = {}) {
     super(message, fields.cause === undefined ? undefined : { cause: fields.cause });
@@ -87,7 +98,19 @@ export class SendError extends Error {
     this.payload = fields.payload ?? null;
     this.fallback = kind === "http" ? providerSide(this.status ?? 0, this.providerMessage) : kind !== "aborted";
     this.replayed = fields.replayed ?? false;
+    this.callId = fields.callId ?? null;
+    this.generationId = fields.generationId ?? null;
   }
+}
+
+/** Sets the call id and the generation id of an error that is raised before the transport knows them; a value already
+ * there stays. Returns the same error. */
+export function stamp<E extends Error>(error: E, ids: { readonly callId?: string | null; readonly generationId?: string | null }): E {
+  if (!(error instanceof SendError)) return error;
+  const own = error as { callId: string | null; generationId: string | null };
+  if (own.callId === null && ids.callId) own.callId = ids.callId;
+  if (own.generationId === null && ids.generationId) own.generationId = ids.generationId;
+  return error;
 }
 
 /** A string clipped to 200 characters, or `null` for anything else. */

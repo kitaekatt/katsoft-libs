@@ -18,6 +18,8 @@ export type { ChatAnswer, ChatCall, PostOptions, ReasoningRetry, SendOptions } f
 export type { StreamLimits, StreamPace, ToolCall } from "./stream.js";
 export { withFallback } from "./fallback.js";
 export type { FallbackOptions } from "./fallback.js";
+export { CallLedgerError, PAID_CALL_FORMAT, activeCall, requireCallLedger, setCallLedger } from "./ledger.js";
+export type { CallLabels, CallLedgerSink, PaidCallBegin, PaidCallEnd } from "./ledger.js";
 export { isTransient, pause, retryWait, sendWithRetries } from "./retry.js";
 export type { CallRecord, RetryOptions, RetryResult, RetryWaitOptions } from "./retry.js";
 export { isKeyLimit, withBackupKey } from "./backup-key.js";

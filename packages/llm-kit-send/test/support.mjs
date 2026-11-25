@@ -49,3 +49,29 @@ export const toolChunks = [
   data({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'tch":{}}' } }] } }] }),
   data({ choices: [{ finish_reason: "tool_calls", delta: {} }], usage: { prompt_tokens: 5, completion_tokens: 7 } }),
 ];
+
+/** A call ledger sink that keeps every record, and the order of its calls in `events` (shared with a stub transport). */
+export function ledgerSink(events = []) {
+  const records = [];
+  return {
+    records, events,
+    begin(record) { records.push(record); events.push(`begin ${record.id}`); },
+    end(record) { records.push(record); events.push(`end ${record.id}`); },
+    begins: () => records.filter((record) => record.phase === "begin"),
+    ends: () => records.filter((record) => record.phase === "end"),
+  };
+}
+
+/** The warnings the process emits while `work` runs (the event is asynchronous: one turn is awaited after). */
+export async function warningsDuring(work) {
+  const seen = [];
+  const listener = (warning) => seen.push(warning);
+  process.on("warning", listener);
+  try {
+    await work();
+    await new Promise((done) => setImmediate(done));
+  } finally {
+    process.off("warning", listener);
+  }
+  return seen;
+}

@@ -39,7 +39,7 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test --test-reporter=dot \"test/*.test.mjs\"",
+    "test": "npm run build && node --disable-warning=LLMKIT_NO_CALL_LEDGER --test --test-reporter=dot \"test/*.test.mjs\"",
     "prepack": "npm run build",
     "check-pack": "node scripts/check-pack.mjs"
   },

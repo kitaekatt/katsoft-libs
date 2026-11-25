@@ -1,10 +1,13 @@
 // One OpenAI-compatible chat-completions call: the raw POST (postChat) and the parsed, plain or streamed call
 // (sendChat) with the stream limits and the reasoning-off retry.
-import { SendError, httpError, httpErrorOf } from "./errors.js";
+import { SendError, httpError, httpErrorOf, stamp } from "./errors.js";
+import { dispatch, recordReplay } from "./ledger.js";
+import type { CallHandle, CallLabels, CallSpec, EndInfo } from "./ledger.js";
 import { capturedResponse, checkCached, commitStep, deterministic, modelOf, openStep, parseJson, replayResponse, replayedResponse } from "./reply-cache.js";
 import type { CachedResponse, ParsedStepCache, StepCache } from "./reply-cache.js";
 import { inTime, limitError, readStream } from "./stream.js";
 import type { StreamLimits, ToolCall } from "./stream.js";
+import { tapResponse } from "./tap.js";
 
 /** One request: where it goes, its key, extra headers and the body object. */
 export interface ChatCall {
@@ -29,6 +32,8 @@ export interface PostOptions {
   readonly signal?: AbortSignal;
   /** A check of the URL and the wire bytes before anything is sent; it may throw to refuse the call. */
   readonly beforeSend?: (url: string, bytes: string) => void;
+  /** The labels of the call for the call ledger (see {@link setCallLedger}); the package never reads them. */
+  readonly labels?: CallLabels | undefined;
 }
 
 /** The reasoning-off retry: see {@link SendOptions.reasoningRetry}. */
@@ -81,6 +86,10 @@ export interface ChatAnswer {
   readonly ms: number;
   /** True when the answer is a stored one (the `cache` option): nothing was sent; `usage` is then `null`. */
   readonly replayed: boolean;
+  /** The id of the call in the call ledger: the `id` of the records of the send that answered. */
+  readonly callId: string;
+  /** The provider's id of the generation (the `id` of the answer, or of the stream chunks), or `null`. */
+  readonly generationId: string | null;
 }
 
 /**
@@ -108,12 +117,39 @@ export async function postChat(call: ChatCall, options: PostOptions & { readonly
     checkCached(cache, call.url, options.fetch);
     if (call.body.stream === true) throw new TypeError("A cached chat call cannot be a stream.");
   }
+  const bytes = checkedBytes(call, options);
+  if (!cache) return postRaw(call, bytes, options, 1);
+  const { step, entry } = await openStep(cache, "postChat", wireOf(call, bytes), modelOf(bytes));
+  if (entry) {
+    recordReplay(specOf(call, options, "postChat", 1), { ok: entry.status >= 200 && entry.status < 300, status: entry.status, errorKind: entry.status >= 400 ? "http" : null });
+    return replayedResponse(entry);
+  }
+  return capturedResponse(step, await postRaw(call, bytes, options, 1));
+}
+
+/** The wire bytes of the body, after `beforeSend` accepted them. */
+function checkedBytes(call: ChatCall, options: PostOptions): string {
   const bytes = (call.encode ?? JSON.stringify)(call.body);
   options.beforeSend?.(call.url, bytes);
-  if (!cache) return postBytes(call, bytes, options);
-  const { step, entry } = await openStep(cache, "postChat", wireOf(call, bytes), modelOf(bytes));
-  if (entry) return replayedResponse(entry);
-  return capturedResponse(step, await postBytes(call, bytes, options));
+  return bytes;
+}
+
+const specOf = (call: ChatCall, options: PostOptions, transport: string, attempt: number): CallSpec => ({
+  transport, method: "POST", url: call.url, model: String(call.body.model ?? ""), stream: call.body.stream === true, attempt, labels: options.labels,
+});
+
+/**
+ * One try of {@link postChat} as sendWithRetries makes it: the same raw response, recorded as try number `attempt`. Not
+ * part of the public surface.
+ */
+export async function postChatTry(call: ChatCall, options: PostOptions, attempt: number, transport: string): Promise<Response> {
+  return postRaw(call, checkedBytes(call, options), options, attempt, transport);
+}
+
+/** The raw POST of checked bytes: the call ends when the response body is read, fails or is cancelled. */
+async function postRaw(call: ChatCall, bytes: string, options: PostOptions, attempt: number, transport = "postChat"): Promise<Response> {
+  const flight = launch(call, bytes, options, transport, attempt);
+  return tapResponse(await flight.response, flight.rec, options.signal);
 }
 
 const headersOf = (call: ChatCall): Record<string, string> =>
@@ -121,20 +157,26 @@ const headersOf = (call: ChatCall): Record<string, string> =>
 
 const wireOf = (call: ChatCall, bytes: string) => ({ method: "POST", url: call.url, headers: headersOf(call), body: bytes });
 
-/** The POST of bytes already encoded and checked. */
-async function postBytes(call: ChatCall, bytes: string, options: PostOptions): Promise<Response> {
-  const transport = options.fetch ?? globalThis.fetch;
+/** A request on its way: its record in the call ledger, begun before the transport was called, and its response. */
+interface Flight {
+  readonly rec: CallHandle;
+  /** The response; rejects with a {@link SendError} (`network`, or `aborted` with the signal) that has the call id. */
+  readonly response: Promise<Response>;
+}
+
+/** Begins the call in the ledger, then calls the transport, inside the call (see {@link activeCall}). */
+function launch(call: ChatCall, bytes: string, options: PostOptions, transport: string, attempt: number): Flight {
   const { signal } = options;
-  try {
-    return await transport(call.url, {
-      ...(signal ? { signal } : {}),
-      method: "POST",
-      headers: headersOf(call),
-      body: bytes,
-    });
-  } catch (error) {
-    throw new SendError(signal?.aborted ? "aborted" : "network", "The provider gave no response.", { cause: error });
-  }
+  const flight = dispatch(specOf(call, options, transport, attempt), options.fetch ?? globalThis.fetch, call.url, {
+    ...(signal ? { signal } : {}),
+    method: "POST",
+    headers: headersOf(call),
+    body: bytes,
+  }, signal);
+  const response = flight.response.catch((error: unknown) => {
+    throw stamp(new SendError(signal?.aborted ? "aborted" : "network", "The provider gave no response.", { cause: error }), { callId: flight.rec.id });
+  });
+  return { rec: flight.rec, response };
 }
 
 const reasoningOff = (body: Record<string, unknown>) => {
@@ -143,13 +185,14 @@ const reasoningOff = (body: Record<string, unknown>) => {
 };
 
 /** The wait for the response headers counts against the first output: a stalled provider may send nothing at all. */
-async function headersInTime(request: Promise<Response>, ms: number, stop: AbortController): Promise<Response> {
-  const response = await inTime(request, ms);
+async function headersInTime(flight: Flight, ms: number, stop: AbortController): Promise<Response> {
+  const response = await inTime(flight.response, ms);
   if (response) return response;
   // Stop the stalled call before the caller moves on, so two models never run and bill at once.
   stop.abort();
-  void request.then((late) => late.body?.cancel()).catch(() => {});
-  throw limitError("no_first_token", null);
+  flight.rec.end({ ok: false, errorKind: "no_first_token", aborted: true });
+  void flight.response.then((late) => late.body?.cancel()).catch(() => {});
+  throw stamp(limitError("no_first_token", null), { callId: flight.rec.id });
 }
 
 /**
@@ -186,96 +229,147 @@ export async function sendChat(call: ChatCall, options: SendOptions & { readonly
   const limits = options.limits ?? null;
   const stop = limits ? new AbortController() : null;
   const signal = stop ? (options.signal ? AbortSignal.any([stop.signal, options.signal]) : stop.signal) : options.signal;
-  const postOptions = {
+  const postOptions: PostOptions = {
     ...(options.fetch ? { fetch: options.fetch } : {}),
     ...(signal ? { signal } : {}),
     ...(options.beforeSend ? { beforeSend: options.beforeSend } : {}),
+    ...(options.labels ? { labels: options.labels } : {}),
   };
-  const post = (checked?: string) => (checked === undefined ? postChat(call, postOptions) : postBytes(call, checked, postOptions)).catch((error: unknown) => {
+  const post = (checked: string | undefined, attempt: number): Flight => {
+    const flight = launch(call, checked ?? checkedBytes(call, postOptions), postOptions, "sendChat", attempt);
     // A limit abort is ours, not the caller's: report it as no response.
-    if (error instanceof SendError && error.kind === "aborted" && !options.signal?.aborted) {
-      throw new SendError("network", error.message, { cause: error.cause });
-    }
-    throw error;
-  });
-  const send = (checked?: string) => (limits && stop ? headersInTime(post(checked), limits.firstMs, stop) : post(checked));
+    const response = flight.response.catch((error: unknown) => {
+      if (error instanceof SendError && error.kind === "aborted" && !options.signal?.aborted) {
+        throw stamp(new SendError("network", error.message, { cause: error.cause }), { callId: flight.rec.id });
+      }
+      throw error;
+    });
+    return { rec: flight.rec, response };
+  };
+  const send = async (checked: string | undefined, attempt: number): Promise<{ response: Response; rec: CallHandle }> => {
+    const flight = post(checked, attempt);
+    const response = limits && stop ? await headersInTime(flight, limits.firstMs, stop) : await flight.response;
+    return { response, rec: flight.rec };
+  };
   const model = String(call.body.model ?? "");
 
   let opened: Awaited<ReturnType<typeof openStep>> | null = null;
   let firstBytes: string | undefined;
   if (cache) {
-    firstBytes = (call.encode ?? JSON.stringify)(call.body);
-    options.beforeSend?.(call.url, firstBytes);
+    firstBytes = checkedBytes(call, options);
     opened = await openStep(cache, "sendChat", wireOf(call, firstBytes), modelOf(firstBytes, model));
     if (opened.entry) {
       const stored = replayResponse(opened.entry);
       const parsed = parseJson(new Uint8Array(await stored.arrayBuffer()));
-      if (!stored.ok) throw httpErrorOf(stored.status, parsed.ok ? parsed.value : null, true);
-      if (!parsed.ok) throw new SendError("body", "The stored answer is not JSON.", { status: stored.status, replayed: true });
-      return answerOf(parsed.value, model, started, true);
+      const callId = recordReplay(specOf(call, options, "sendChat", 1), {
+        ok: stored.ok && parsed.ok, status: stored.status, errorKind: !stored.ok ? "http" : parsed.ok ? null : "body",
+      });
+      if (!stored.ok) throw stamp(httpErrorOf(stored.status, parsed.ok ? parsed.value : null, true), { callId });
+      if (!parsed.ok) throw stamp(new SendError("body", "The stored answer is not JSON.", { status: stored.status, replayed: true }), { callId });
+      return answerOf(parsed.value, model, started, true, callId);
     }
   }
 
-  let response = await send(firstBytes);
+  let sent = await send(firstBytes, 1);
   let retried = false;
   const retry = options.reasoningRetry;
-  if (retry && response.status === 400 && reasoningOff(call.body) && /reasoning is mandatory/i.test(await response.clone().text().catch(() => ""))) {
-    retry.onRequired?.(model);
-    call.body.reasoning = { max_tokens: retry.budget };
-    if (call.body.max_tokens != null) call.body.max_tokens = (call.body.max_tokens as number) + retry.budget;
-    retried = true;
-    response = await send();
+  try {
+    if (retry && sent.response.status === 400 && reasoningOff(call.body) && /reasoning is mandatory/i.test(await sent.response.clone().text().catch(() => ""))) {
+      sent.rec.end({ ok: false, status: 400, errorKind: "http" });
+      retry.onRequired?.(model);
+      call.body.reasoning = { max_tokens: retry.budget };
+      if (call.body.max_tokens != null) call.body.max_tokens = (call.body.max_tokens as number) + retry.budget;
+      retried = true;
+      sent = await send(undefined, 2);
+    }
+  } catch (error) {
+    sent.rec.end({ ok: false, errorKind: "error" });
+    throw error;
   }
-  if (opened) {
-    // The step of the send that answered: the first send's key, the answering bytes' temperature.
-    const step = retried
-      ? { ...opened.step, deterministic: deterministic("sendChat", (call.encode ?? JSON.stringify)(call.body), cache!) }
-      : opened.step;
-    const context = { url: call.url, model: step.model, transport: "sendChat" };
-    let bytes: Uint8Array;
+  const { response, rec } = sent;
+  try {
+    return await read(response, rec);
+  } catch (error) {
+    // Ends the call if the read did not (a no-op when it did), with what the error says; stamps the ids.
+    rec.end(failedEnd(error, response.status));
+    throw stamp(error as Error, { callId: rec.id });
+  }
+
+  async function read(response: Response, rec: CallHandle): Promise<ChatAnswer> {
+    if (opened) {
+      // The step of the send that answered: the first send's key, the answering bytes' temperature.
+      const step = retried
+        ? { ...opened.step, deterministic: deterministic("sendChat", (call.encode ?? JSON.stringify)(call.body), cache!) }
+        : opened.step;
+      const context = { url: call.url, model: step.model, transport: "sendChat" };
+      let bytes: Uint8Array;
+      try {
+        bytes = new Uint8Array(await response.arrayBuffer());
+      } catch (error) {
+        if (!response.ok) throw httpErrorOf(response.status, null);
+        if (options.signal?.aborted) throw new SendError("aborted", "The caller aborted the call.", { status: response.status, cause: error });
+        throw new SendError("body", "The answer is not JSON.", { status: response.status, cause: error });
+      }
+      const parsed = parseJson(bytes);
+      const answered = { status: response.status, headers: response.headers, bytes };
+      if (!response.ok) {
+        const error = httpErrorOf(response.status, parsed.ok ? parsed.value : null);
+        rec.end(failedEnd(error, response.status));
+        if (parsed.ok) await commitStep(step, cache!.classify(stamp(error, { callId: rec.id }), context), answered);
+        throw error;
+      }
+      if (!parsed.ok) throw new SendError("body", "The answer is not JSON.", { status: response.status });
+      const answer = answerOf(parsed.value, model, started, false, rec.id);
+      rec.end(plainEnd(response.status, parsed.value));
+      await commitStep(step, cache!.classify(answer, context), answered);
+      return answer;
+    }
+    if (!response.ok) throw await httpError(response);
+
+    const asStream = Boolean(options.onDelta) || (call.body.stream === true && !/application\/json/i.test(response.headers.get("content-type") ?? ""));
+    if (asStream) {
+      const { reported, ...streamed } = await readStream(response, {
+        model, limits, started, stop,
+        onDelta: options.onDelta, onToolArguments: options.onToolArguments,
+        requireFinish: options.requireFinish ?? false, stopOnErrorFinish: options.stopOnErrorFinish ?? true,
+        signal: options.signal,
+      });
+      rec.end({ ok: true, status: response.status, servedModel: reported, provider: streamed.provider, generationId: streamed.generationId, usage: streamed.usage });
+      return { ...streamed, streamed: true, ms: Date.now() - started, replayed: false, callId: rec.id };
+    }
+    let payload: any;
     try {
-      bytes = new Uint8Array(await response.arrayBuffer());
+      payload = await response.json();
     } catch (error) {
-      if (!response.ok) throw httpErrorOf(response.status, null);
       if (options.signal?.aborted) throw new SendError("aborted", "The caller aborted the call.", { status: response.status, cause: error });
       throw new SendError("body", "The answer is not JSON.", { status: response.status, cause: error });
     }
-    const parsed = parseJson(bytes);
-    const answered = { status: response.status, headers: response.headers, bytes };
-    if (!response.ok) {
-      const error = httpErrorOf(response.status, parsed.ok ? parsed.value : null);
-      if (parsed.ok) await commitStep(step, cache!.classify(error, context), answered);
-      throw error;
-    }
-    if (!parsed.ok) throw new SendError("body", "The answer is not JSON.", { status: response.status });
-    const answer = answerOf(parsed.value, model, started, false);
-    await commitStep(step, cache!.classify(answer, context), answered);
-    return answer;
+    rec.end(plainEnd(response.status, payload));
+    return answerOf(payload, model, started, false, rec.id);
   }
-  if (!response.ok) throw await httpError(response);
-
-  const asStream = Boolean(options.onDelta) || (call.body.stream === true && !/application\/json/i.test(response.headers.get("content-type") ?? ""));
-  if (asStream) {
-    const read = await readStream(response, {
-      model, limits, started, stop,
-      onDelta: options.onDelta, onToolArguments: options.onToolArguments,
-      requireFinish: options.requireFinish ?? false, stopOnErrorFinish: options.stopOnErrorFinish ?? true,
-      signal: options.signal,
-    });
-    return { ...read, streamed: true, ms: Date.now() - started, replayed: false };
-  }
-  let payload: any;
-  try {
-    payload = await response.json();
-  } catch (error) {
-    if (options.signal?.aborted) throw new SendError("aborted", "The caller aborted the call.", { status: response.status, cause: error });
-    throw new SendError("body", "The answer is not JSON.", { status: response.status, cause: error });
-  }
-  return answerOf(payload, model, started, false);
 }
 
+const LIMIT_KINDS: ReadonlySet<string> = new Set(["no_first_token", "stalled", "slow"]);
+
+/** How the ledger records a failed read: the error's kind, its status (the response's when it has none), its host and
+ * generation id. A limit or an abort counts as cut after it was sent. */
+function failedEnd(error: unknown, status: number): EndInfo {
+  if (!(error instanceof SendError)) return { ok: false, status, errorKind: "error" };
+  return {
+    ok: false, status: error.status ?? status, errorKind: error.kind, aborted: error.kind === "aborted" || LIMIT_KINDS.has(error.kind),
+    provider: error.provider, generationId: error.generationId,
+  };
+}
+
+const named = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
+
+/** The ledger's end of a parsed plain answer. */
+const plainEnd = (status: number, payload: any): EndInfo => ({
+  ok: true, status, servedModel: named(payload?.model), provider: named(payload?.provider), generationId: named(payload?.id), usage: payload?.usage ?? null,
+});
+
 /** The answer of a parsed plain body. A replay reports no usage: the stored body's usage was billed once already. */
-function answerOf(payload: any, model: string, started: number, replayed: boolean): ChatAnswer {
+function answerOf(payload: any, model: string, started: number, replayed: boolean, callId: string): ChatAnswer {
   const choice = payload?.choices?.[0];
   const content = choice?.message?.content;
   return {
@@ -290,5 +384,7 @@ function answerOf(payload: any, model: string, started: number, replayed: boolea
     streamed: false,
     ms: Date.now() - started,
     replayed,
+    callId,
+    generationId: replayed ? null : named(payload?.id),
   };
 }

@@ -460,6 +460,51 @@
       "name": "CachedResponse",
       "kind": "type",
       "status": "public"
+    },
+    {
+      "name": "setCallLedger",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "requireCallLedger",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "activeCall",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "CallLedgerError",
+      "kind": "class",
+      "status": "public"
+    },
+    {
+      "name": "PAID_CALL_FORMAT",
+      "kind": "constant",
+      "status": "public"
+    },
+    {
+      "name": "CallLedgerSink",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PaidCallBegin",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PaidCallEnd",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "CallLabels",
+      "kind": "type",
+      "status": "public"
     }
   ]
 }

@@ -1,6 +1,6 @@
 // Reads an OpenAI-compatible server-sent event body under the stream limits: the content deltas, thinking, tool
 // calls, usage, the reported model and host, and the finish reason. Internal: send.ts calls it.
-import { SendError, clip } from "./errors.js";
+import { SendError, clip, stamp } from "./errors.js";
 
 /**
  * A pace floor for a stream: after the first output, a stream that writes under `minCharsPerS` characters a second over
@@ -45,6 +45,10 @@ export interface StreamRead {
   readonly provider: string | null;
   readonly finishReason: unknown;
   readonly nativeFinishReason: unknown;
+  /** The `id` of the chunks (OpenRouter's generation id), or `null`. */
+  readonly generationId: string | null;
+  /** The model the chunks named, or `null` when none did (`model` is then the body's). Left out of the answer. */
+  readonly reported: string | null;
 }
 
 export interface ReadOptions {
@@ -115,6 +119,7 @@ export async function readStream(response: Response, options: ReadOptions): Prom
   const decoder = new TextDecoder();
   const calls: MutableCall[] = [];
   let content = "", buffer = "", usage: unknown = null, reported = options.model, provider: string | null = null;
+  let generation: string | null = null, named: string | null = null;
   let finish: unknown = null, native: unknown = null, wrote = false, last = options.started, chars = 0;
   const pace = paceWatch(limits?.pace);
   const progress = () => { wrote = true; last = Date.now(); };
@@ -125,7 +130,8 @@ export async function readStream(response: Response, options: ReadOptions): Prom
     if (!data || data === "[DONE]") return;
     let chunk: any;
     try { chunk = JSON.parse(data); } catch { return; }
-    if (typeof chunk?.model === "string") reported = chunk.model;
+    if (generation === null && typeof chunk?.id === "string" && chunk.id) generation = chunk.id;
+    if (typeof chunk?.model === "string") { reported = chunk.model; named = chunk.model; }
     if (typeof chunk?.provider === "string") provider = chunk.provider;
     if (chunk?.error) {
       throw new SendError("stream_error", "The provider sent an error in the stream.", {
@@ -183,14 +189,14 @@ export async function readStream(response: Response, options: ReadOptions): Prom
     }
     line((buffer + decoder.decode()).replace(/\r$/, ""));
   } catch (error) {
-    if (error instanceof SendError) throw error;
-    if (options.signal?.aborted) throw new SendError("aborted", "The caller aborted the call.", { status: response.status, provider, cause: error });
-    throw new SendError("body", "The stream could not be read.", { status: response.status, provider, cause: error });
+    if (error instanceof SendError) throw stamp(error, { generationId: generation });
+    if (options.signal?.aborted) throw new SendError("aborted", "The caller aborted the call.", { status: response.status, provider, generationId: generation, cause: error });
+    throw new SendError("body", "The stream could not be read.", { status: response.status, provider, generationId: generation, cause: error });
   } finally {
     void reader.cancel().catch(() => {});
   }
   // A stream that ends with no finish was interrupted. A complete-looking tool call may be only the first of several.
-  if (options.requireFinish && !finish) throw new SendError("incomplete", "Stream ended with no finish", { provider });
+  if (options.requireFinish && !finish) throw new SendError("incomplete", "Stream ended with no finish", { provider, generationId: generation });
   const toolCalls = calls.filter(Boolean).map((call) => ({ type: "function", ...call }));
   return {
     payload: {
@@ -198,5 +204,6 @@ export async function readStream(response: Response, options: ReadOptions): Prom
       choices: [{ finish_reason: finish, native_finish_reason: native, message: { content, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) } }],
     },
     text: content, toolCalls, usage, model: reported, provider, finishReason: finish, nativeFinishReason: native,
+    generationId: generation, reported: named,
   };
 }
