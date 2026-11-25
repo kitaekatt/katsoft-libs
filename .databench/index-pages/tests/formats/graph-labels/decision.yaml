@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/formats/graph-labels",
+  "decision": "none",
+  "source_sha": "5896ecd37d3f26621931dddff73cba264f2e08a6",
+  "input_sha256": "1cf09632ea780bf574e11a85daf469a79eb2e032fff3d71ac41677fa0c61ce53",
+  "input_shape_sha256": "491d46b5762c6493cc3e44206ec5a51d2324dcd984679a88418edfdd2c6a458d",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

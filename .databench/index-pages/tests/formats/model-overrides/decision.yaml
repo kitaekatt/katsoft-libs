@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/formats/model-overrides",
+  "decision": "none",
+  "source_sha": "0767eb451e1705bd16475da12be930e0c405f510",
+  "input_sha256": "908e5fbd3fe784ede5746ce8fd3ce4dafd668d99de2ed7c33d46782401722085",
+  "input_shape_sha256": "fd6a5d7eb3025199964bc2f622379c548ccad461893c0880736c465e30371829",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}

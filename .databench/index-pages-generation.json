@@ -2,6 +2,9 @@
   "schema_version": 2,
   "state": "in-progress",
   "finished": {
-    "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts": "afd6870ec5ff7477f0c853972072ffde8b7d7644e5b9b012a85a7a23cff3ef0d"
+    "packages/katsoft-llm-kit/src/llm_kit/pipeline/artifacts": "afd6870ec5ff7477f0c853972072ffde8b7d7644e5b9b012a85a7a23cff3ef0d",
+    "packages/katsoft-llm-kit/src/llm_kit/pipeline": "282405609043141cb0f8cb36119d8a5e0af54e1e4343a05e6041bd09b091fa1f",
+    "packages/katsoft-llm-kit/src/llm_kit/registry": "0922601fd18cb087e7cc0dc8fb561d0a4164d10dce05163cf490332984d9c6e3",
+    "packages/katsoft-llm-kit/src/llm_kit/relay": "5b5ac2862ce851356d58889155c6ee540d730be0b8a1b6e0edb0be66d847fc84"
   }
 }

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "directory": "tests/formats/paid-call",
+  "decision": "none",
+  "source_sha": "056dd7b1866faf9d57fcf38a5c6abee18d2ce3ab",
+  "input_sha256": "fffa16257fabfa257c5c899b6b23c5bee93b5170a8a84b8243cff477361396f8",
+  "input_shape_sha256": "0713ffd0916f494ccdc8c8ce9a1fd276093eece8989fcc56847feded8634a009",
+  "dirty": false,
+  "identity": "",
+  "instructions": "",
+  "references": []
+}
