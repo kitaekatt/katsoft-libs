@@ -14,6 +14,7 @@ Some llm-kit files have readers in more than one language. Each of these formats
 | `llm-kit.fallback-chain/v1` | `fallback-chain.v1.schema.json` | `llm_kit.registry.fallback_chains` | `tests/formats/fallback-chain/cases.json` (`documents`, `mappings`) |
 | `llm-kit.call-record/v1` | `call-record.v1.schema.json` | none (the TypeScript `@katsoft/llm-kit-send` 0.2.0 writes it) | `tests/formats/call-record/cases.json` (`records`) |
 | `llm-kit.call-record/v2` | `call-record.v2.schema.json` | none (the TypeScript `@katsoft/llm-kit-send` 0.3.0 and later writes it) | `tests/formats/call-record/cases.v2.json` (`records`) |
+| `llm-kit.paid-call/v1` | `paid-call.v1.schema.json` | none (the TypeScript `@katsoft/llm-kit-send` 0.4.0 and later writes it) | `tests/formats/paid-call/cases.json` (`records`) |
 | `llm-kit.reply-entry/v1` | `reply-entry.v1.schema.json` | `llm_kit.registry.reply_cache` | `tests/formats/reply-entry/cases.json` (`entries`, `reader_rules`) |
 | `llm-kit.reply-key/v1` | none (a key, not a file) | `llm_kit.registry.reply_cache` | `tests/formats/reply-key/cases.json` (`parts`, `requests`, `same`, `different`) |
 | `llm-kit.consent/v2` | `consent.v2.schema.json` | `llm_kit.registry.consent` | `tests/formats/consent/cases.json` |
@@ -295,6 +296,14 @@ One sent try of a model call: `attempt`, `model`, `provider`, `ok`, `status`, `a
 ## llm-kit.call-record/v2
 
 Version 1 plus the required `replayed` (boolean). `@katsoft/llm-kit-send` 0.3.0 and later gives one to `onCall` per try of `sendWithRetries`, and one record with `replayed: true` when the reply cache answered (nothing sent: tokens null, cost 0, `ms` the lookup time, `ok` and `status` read from the stored answer). Version 1 stays for records written before.
+
+## llm-kit.paid-call/v1
+
+The two records a call ledger sink (`setCallLedger` of `@katsoft/llm-kit-send` 0.4.0 and later) gets for each call that can be billed. A `begin` record (`phase: "begin"`) is written before the first byte of the request leaves; an `end` record (`phase: "end"`) is written when the call ends. Both carry `format` and the same `id`. Every field is present (null when unknown); no prompt or reply text, no query string, no key, and no other field.
+
+1. `begin`: `id`, `transport` (the package function), `method`, `host`, `path` (no query), `model` (empty when the request names none), `stream`, `attempt` (from 1; a retry is a new record), `startedAt` (ms since the epoch) and `labels` (the caller's `labels` option: string, number or null values).
+2. `end`: `id`, `endedAt`, `ms`, `ok`, `status`, `errorKind`, `aborted` (cut after it was sent), `replayed` (the reply cache answered: nothing was sent), `servedModel`, `provider`, `generationId` (the provider's id of the generation), `usage` (the provider's usage object as sent), `inputTokens`, `cachedTokens`, `outputTokens` and `cost` (the cost the host reported; 0 for a replay).
+3. A call with no `end` record was never finished: its response body was never read or cancelled. A consumer counts it.
 
 ## llm-kit.reply-key/v1
 

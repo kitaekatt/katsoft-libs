@@ -4205,6 +4205,10 @@
       "status": "public"
     },
     {
+      "name": "llm_kit.schema.formats.PAID_CALL_V1",
+      "status": "public"
+    },
+    {
       "name": "llm_kit.schema.formats.REPLY_ENTRY_V1",
       "status": "public"
     },

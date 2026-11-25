@@ -18,6 +18,9 @@ Each format has one id and one JSON Schema file in this package:
 - ``llm-kit.call-record/v1``: one sent try of a model call, as the npm package
   ``@katsoft/llm-kit-send`` reports it.
 - ``llm-kit.call-record/v2``: version 1 plus ``replayed`` (a reply cache answer).
+- ``llm-kit.paid-call/v1``: the begin and end records a call ledger sink gets for
+  each call that can be billed, as the npm package ``@katsoft/llm-kit-send``
+  (0.4.0 and later) writes them.
 - ``llm-kit.reply-entry/v1``: one stored answer of the reply cache
   (:mod:`llm_kit.registry.reply_cache`).
 - ``llm-kit.consent/v2``: the user-level consent file, its cost-class policy and
@@ -55,6 +58,7 @@ __all__ = [
     "FALLBACK_CHAIN_V1",
     "CALL_RECORD_V1",
     "CALL_RECORD_V2",
+    "PAID_CALL_V1",
     "REPLY_ENTRY_V1",
     "CONSENT_V2",
     "GRAPH_CATALOG_V1",
@@ -84,6 +88,8 @@ FALLBACK_CHAIN_V1 = "llm-kit.fallback-chain/v1"
 CALL_RECORD_V1 = "llm-kit.call-record/v1"
 #: Version 1 plus ``replayed``: a sent try, or an answer the reply cache replayed.
 CALL_RECORD_V2 = "llm-kit.call-record/v2"
+#: The begin and end records of one call that can be billed (ids, host, path, model, usage, cost; never text).
+PAID_CALL_V1 = "llm-kit.paid-call/v1"
 #: One stored answer of the reply cache: a step's answer, or an operation's final refusal.
 REPLY_ENTRY_V1 = "llm-kit.reply-entry/v1"
 #: The user-level consent file (``schema: 2``): the cost-class policy and the connection approvals.
@@ -107,6 +113,7 @@ SCHEMA_FILES = {
     FALLBACK_CHAIN_V1: "fallback-chain.v1.schema.json",
     CALL_RECORD_V1: "call-record.v1.schema.json",
     CALL_RECORD_V2: "call-record.v2.schema.json",
+    PAID_CALL_V1: "paid-call.v1.schema.json",
     REPLY_ENTRY_V1: "reply-entry.v1.schema.json",
     CONSENT_V2: "consent.v2.schema.json",
     GRAPH_CATALOG_V1: "graph-catalog.v1.schema.json",

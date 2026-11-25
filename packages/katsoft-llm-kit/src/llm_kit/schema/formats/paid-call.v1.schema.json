@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "llm-kit.paid-call/v1",
+  "title": "llm-kit paid call record, version 1",
+  "description": "The two records a call ledger sink (@katsoft/llm-kit-send setCallLedger, 0.4.0 and later) gets for each call that can be billed: `begin`, written before the first byte of the request leaves, and `end`, written when the call ends, with the same `id`. Never prompt or reply text, never a query string, never a key. Every field is present (null when unknown). A sink that stores the records keeps this shape and may add its own fields beside it in its own store. Written in llm-scripting-kit.json-schema-subset/v1. Contract and shared cases: docs/reference/llm-kit-formats.md.",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "llm-kit.paid-call/v1"
+        },
+        "phase": {
+          "const": "begin"
+        },
+        "id": {
+          "description": "The call id: one per record pair; the same string in the end record.",
+          "type": "string",
+          "minLength": 1
+        },
+        "transport": {
+          "description": "The package function that sent the call: postChat, sendChat, sendWithRetries, postImages, postVenice, ideogramEdit, postFal, elevenLabsRequest, falQueue or sunraQueue.",
+          "type": "string",
+          "minLength": 1
+        },
+        "method": {
+          "description": "The HTTP method of the (first) request, upper case.",
+          "type": "string",
+          "minLength": 1
+        },
+        "host": {
+          "description": "The URL host (with a port when the URL names one). Empty when the URL cannot be parsed.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The URL path with no query, no fragment and no user information; never a key.",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model or endpoint the request names, or an empty string when it names none.",
+          "type": "string"
+        },
+        "stream": {
+          "description": "True when the request asks for a server-sent event stream.",
+          "type": "boolean"
+        },
+        "attempt": {
+          "description": "The try number, from 1: a retry of sendWithRetries, or the reasoning-off retry of sendChat, is a new record.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "startedAt": {
+          "description": "When the call began, in milliseconds since the epoch.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "labels": {
+          "description": "The caller's labels for the call (the `labels` option); the package never reads them.",
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "required": [
+        "format",
+        "phase",
+        "id",
+        "transport",
+        "method",
+        "host",
+        "path",
+        "model",
+        "stream",
+        "attempt",
+        "startedAt",
+        "labels"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "llm-kit.paid-call/v1"
+        },
+        "phase": {
+          "const": "end"
+        },
+        "id": {
+          "description": "The call id of the begin record.",
+          "type": "string",
+          "minLength": 1
+        },
+        "endedAt": {
+          "description": "When the call ended, in milliseconds since the epoch.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "ms": {
+          "description": "The call's time in milliseconds.",
+          "type": "number",
+          "minimum": 0
+        },
+        "ok": {
+          "description": "True when the call gave a complete answer: a 2xx answer whose body was read (a queue job: its result).",
+          "type": "boolean"
+        },
+        "status": {
+          "description": "The HTTP status of the last answer, or null with no response.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 100,
+          "maximum": 599
+        },
+        "errorKind": {
+          "description": "What failed, or null: a SendError kind (http, network, body, no_first_token, stalled, slow, stream_error, incomplete, aborted), `error` for an unexpected exception, `cancelled` for a body the reader cancelled, or `<stage>:<code>` for a queue job.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "aborted": {
+          "description": "True when the caller's signal, a deadline or a stream limit cut the call after it was sent.",
+          "type": "boolean"
+        },
+        "replayed": {
+          "description": "True when the reply cache answered and nothing was sent.",
+          "type": "boolean"
+        },
+        "servedModel": {
+          "description": "The model the provider reported, or null.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "description": "The host that served the call, when the provider named it, or null.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generationId": {
+          "description": "The provider's id of the generation (the `id` of the answer or of the stream chunks), or null.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "usage": {
+          "description": "The usage object the provider reported, as sent, or null.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "inputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cachedTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cost": {
+          "description": "The cost the host reported, in US dollars, or null. 0 for a replay.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "format",
+        "phase",
+        "id",
+        "endedAt",
+        "ms",
+        "ok",
+        "status",
+        "errorKind",
+        "aborted",
+        "replayed",
+        "servedModel",
+        "provider",
+        "generationId",
+        "usage",
+        "inputTokens",
+        "cachedTokens",
+        "outputTokens",
+        "cost"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
