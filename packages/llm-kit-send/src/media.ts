@@ -102,11 +102,15 @@ export type ImagesAnswer =
  * code, `replayed` is true, `usage` null and `cost` 0. On a miss, `classify` reads the result of a complete answer
  * that is not busy and whose body parsed as JSON (a body read as `{}` is never stored); a `refusal` is stored.
  *
+ * Each send is one call in the call ledger ({@link setCallLedger}), ended when the answer is read, with the reported
+ * `cost`; a stored refusal is a recorded call with `replayed: true`.
+ *
  * @param call - The URL, key, extra headers and body.
- * @param options - The transport, signal and cache.
+ * @param options - The transport, signal, cache and ledger labels.
  * @returns The parsed answer, or the failure with its status (`null` with no answer). A body that is not JSON, or one
  *   whose read fails, reads as `{}`.
- * @throws The transport's error when the caller's `signal` was aborted. With `cache`: {@link ReplyCacheError} when the
+ * @throws The transport's error when the caller's `signal` was aborted. {@link CallLedgerError} before any send when the
+ *   ledger is required and has no sink; `TypeError` for a bad label. With `cache`: {@link ReplyCacheError} when the
  *   store fails, and `TypeError` before any send for a URL outside the cache's hosts.
  */
 export async function postImages(call: ImagesCall, options: MediaOptions & { readonly cache?: ParsedStepCache<ImagesAnswer> | undefined } = {}): Promise<ImagesAnswer> {
@@ -180,10 +184,14 @@ export interface VeniceCall {
  * a bounded copy. The kept headers are `content-type` and `x-venice-is-content-violation`, so a refusal Venice states in
  * its header can be stored with `settle("refusal", {headersOnly: true})`. A success is never stored.
  *
+ * Each send is one call in the call ledger ({@link setCallLedger}), ended when the body is read to its end or cancelled
+ * (a body never read leaves the call open); a stored refusal is a recorded call with `replayed: true`.
+ *
  * @param call - The endpoint, key, body and base URL.
  * @param options - The transport, signal and cache.
  * @returns The untouched response of any status; with `cache`, the {@link CachedResponse}.
- * @throws The transport's error (no answer, or the caller's abort), unchanged. With `cache`: {@link ReplyCacheError}
+ * @throws The transport's error (no answer, or the caller's abort), unchanged; {@link CallLedgerError} before any send
+ *   when the ledger is required and has no sink; `TypeError` for a bad label. With `cache`: {@link ReplyCacheError}
  *   when the store cannot be read, and `TypeError` before any send for a URL outside the cache's hosts.
  */
 export function postVenice(call: VeniceCall, options: MediaOptions & { readonly cache: StepCache }): Promise<CachedResponse>;
@@ -261,11 +269,15 @@ export type IdeogramAnswer =
  * up before the send. Only a stored refusal replays (`replayed: true`, nothing sent). On a miss, `classify` reads the
  * result of a complete answer that is not busy and whose body parsed as JSON; a `refusal` is stored.
  *
+ * Each send is one call in the call ledger ({@link setCallLedger}), ended when the answer is read; Ideogram reports no
+ * cost, so `cost` is `null`.
+ *
  * @param call - The key, model, form and base URL.
  * @param options - The transport, signal and cache.
  * @returns The first result, or the refusal with its status and reject reason. An error body that is not JSON gives
  *   reason `null`.
- * @throws The transport's error (no answer, or the caller's abort), and the parse error of a 2xx body that is not JSON.
+ * @throws The transport's error (no answer, or the caller's abort), and the parse error of a 2xx body that is not JSON;
+ *   {@link CallLedgerError} before any send when the ledger is required and has no sink; `TypeError` for a bad label.
  *   With `cache`: {@link ReplyCacheError} when the store fails, and `TypeError` before any send for a URL outside the
  *   cache's hosts.
  */
@@ -332,12 +344,14 @@ export interface FalCall {
 
 /**
  * One POST to `<base>/<endpoint>` on fal's synchronous runs. fal's answers differ per endpoint (an audio link, a voice
- * id, an error list), so the raw response comes back.
+ * id, an error list), so the raw response comes back. The call ends in the call ledger ({@link setCallLedger}) when the
+ * body is read to its end or cancelled.
  *
  * @param call - The endpoint, key, input and base URL.
  * @param options - The transport and signal.
  * @returns The untouched response of any status.
- * @throws The transport's error (no answer, or the caller's abort), unchanged.
+ * @throws The transport's error (no answer, or the caller's abort), unchanged; {@link CallLedgerError} before any send
+ *   when the ledger is required and has no sink; `TypeError` for a bad label.
  */
 export async function postFal(call: FalCall, options: MediaOptions = {}): Promise<Response> {
   const url = `${call.baseUrl ?? FAL_RUN_URL}/${call.endpoint}`;
@@ -366,13 +380,16 @@ export interface ElevenLabsCall {
 
 /**
  * One request to `<base><path>` on ElevenLabs (speech, sound, music, voice design, cloning, deletes). Headers in this
- * order: `xi-api-key`, `Content-Type` (JSON only), `Accept` (when given).
+ * order: `xi-api-key`, `Content-Type` (JSON only), `Accept` (when given). A GET, HEAD or DELETE is not recorded in the
+ * call ledger ({@link setCallLedger}) and runs outside any call; any other method is, ended when the body is read to its
+ * end or cancelled.
  *
  * @param path - The path and query, from `/` (`/v1/text-to-speech/<voice>?output_format=mp3_44100_128`).
  * @param call - The key, method, body and Accept header.
  * @param options - The transport and signal.
  * @returns The untouched response of any status.
- * @throws The transport's error (no answer, or the caller's abort), unchanged.
+ * @throws The transport's error (no answer, or the caller's abort), unchanged; for a recorded method,
+ *   {@link CallLedgerError} before any send when the ledger is required and has no sink, and `TypeError` for a bad label.
  */
 export async function elevenLabsRequest(path: string, call: ElevenLabsCall, options: MediaOptions = {}): Promise<Response> {
   const headers: Record<string, string> = { "xi-api-key": call.key };

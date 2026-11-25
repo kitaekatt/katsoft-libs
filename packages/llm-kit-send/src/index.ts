@@ -3,7 +3,8 @@
  * one fallback before the first token, the reasoning-off retry, retries with jitter and Retry-After, a backup key, call
  * records and costs. Sends picture, voice and video requests to media hosts (OpenAI-compatible images, Venice,
  * Ideogram, fal, Sunra, ElevenLabs) and downloads their result links. Reads fallback chain files
- * (`llm-kit.fallback-chain/v1`) and runs a chain of hosts. Keeps a reply cache on the non-stream calls (the `cache`
+ * (`llm-kit.fallback-chain/v1`) and runs a chain of hosts. Tells every call that can be billed to one call ledger sink
+ * (`setCallLedger`, records `llm-kit.paid-call/v1`): `begin` before the first byte leaves, `end` when the call ends. Keeps a reply cache on the non-stream calls (the `cache`
  * option): a stored refusal, or a stored success of a temperature-0 chat call, is answered with no send, under keys of
  * the exact wire request (`llm-kit.reply-key/v1`, entries `llm-kit.reply-entry/v1`). The caller builds each request body (for example from
  * `@katsoft/llm-kit-config` `chatFields`); this package sends it as given.

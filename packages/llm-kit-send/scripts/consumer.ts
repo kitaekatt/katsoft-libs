@@ -1,6 +1,6 @@
 // A TypeScript consumer of the shipped .d.ts files; scripts/check-pack.mjs compiles it with module nodenext.
-import { SendError, sendChat, sendWithRetries, withBackupKey, withFallback } from "@katsoft/llm-kit-send";
-import type { CallRecord, ChatAnswer, ChatCall, StreamLimits, TokenPrice } from "@katsoft/llm-kit-send";
+import { CallLedgerError, PAID_CALL_FORMAT, SendError, activeCall, requireCallLedger, sendChat, sendWithRetries, setCallLedger, withBackupKey, withFallback } from "@katsoft/llm-kit-send";
+import type { CallLabels, CallLedgerSink, CallRecord, ChatAnswer, ChatCall, PaidCallBegin, PaidCallEnd, StreamLimits, TokenPrice } from "@katsoft/llm-kit-send";
 
 const call: ChatCall = { url: "https://llm.example/v1/chat/completions", key: "k", body: { model: "a/b", messages: [], stream: true } };
 const limits: StreamLimits = { firstMs: 20_000, gapMs: 15_000, pace: { windowMs: 5_000, minCharsPerS: 10 } };
@@ -45,4 +45,21 @@ export async function cached(store: ReplyStore): Promise<boolean> {
   const entry: ReplyEntry = readEntry(JSON.parse("{}"));
   const key: string = await stepKey("router:main", { method: "POST", url: call.url, headers: {}, body: "{}" });
   return raw.ok && answer.replayed && entry.layer === "step" && key.length === 64;
+}
+
+export async function ledger(): Promise<string | null> {
+  const labels: CallLabels = { workflow: "story", unit: 3, note: null };
+  const seen: (PaidCallBegin | PaidCallEnd)[] = [];
+  const sink: CallLedgerSink = { begin: (record: PaidCallBegin) => void seen.push(record), end: (record: PaidCallEnd) => void seen.push(record) };
+  setCallLedger(sink);
+  requireCallLedger(true);
+  try {
+    const answer: ChatAnswer = await sendChat(call, { labels });
+    return PAID_CALL_FORMAT === "llm-kit.paid-call/v1" && activeCall() === null ? `${answer.callId}${answer.generationId ?? ""}` : null;
+  } catch (error) {
+    if (error instanceof CallLedgerError || (error instanceof SendError && error.callId !== null)) return error.message;
+    throw error;
+  } finally {
+    setCallLedger(null);
+  }
 }

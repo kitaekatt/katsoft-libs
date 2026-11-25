@@ -2,7 +2,8 @@
 
 Sends OpenAI-compatible chat-completions calls (OpenRouter, Moonshot, a local llama.cpp or vLLM server, any host with
 the same wire): plain or streamed, with stream limits, one fallback before the first output, a reasoning-off retry,
-retries while the host is busy, a backup key and call records with costs. Sends picture, voice and video requests to
+retries while the host is busy, a backup key, call records with costs and a call ledger that records every paid call
+before it is sent. Sends picture, voice and video requests to
 media hosts (OpenAI-compatible images, Venice, Ideogram, fal, Sunra, ElevenLabs), downloads their result links, and
 runs a fallback chain of hosts read from a `llm-kit.fallback-chain/v1` file. Keeps an optional reply cache on the
 non-stream calls: a stored refusal, or a stored success of a temperature-0 chat call, answers the same wire request
@@ -143,6 +144,45 @@ const cache = { store, account: "router:main", hosts: ["https://openrouter.ai/ap
   classify: (answer) => (answer.ok === false && answer.status === 400 ? "refusal" : null) };
 const answer = await postImages({ url, key, body }, { cache });   // the same refused body again sends nothing
 ```
+
+## The call ledger
+
+Every call that can be billed is told to one sink per process: `begin` before the first byte of the request leaves, `end`
+when the call ends. An app installs the sink once (`setCallLedger`) and keeps its own cost table, report or guard on the
+records. The records have the format `llm-kit.paid-call/v1` (`PAID_CALL_FORMAT`; the schema and shared cases are in
+katsoft-llm-kit). They never hold prompt or reply text, a query string or a key.
+
+```js
+import { requireCallLedger, sendChat, setCallLedger } from "@katsoft/llm-kit-send";
+
+setCallLedger({
+  begin: (record) => table.insert({ id: record.id, model: record.model, ...myContext.get() }), // runs in your async context
+  end: (record) => table.update(record.id, { ok: record.ok, cost: record.cost, generation: record.generationId }),
+});
+requireCallLedger(true); // or LLM_KIT_CALL_LEDGER=required: a call with no sink throws CallLedgerError before it sends
+const answer = await sendChat(call, { labels: { workflow: "story", unit: 3 } }); // answer.callId, answer.generationId
+```
+
+- `begin` runs synchronously, after `encode`, `beforeSend` and a cache miss, in the caller's async context, so the sink
+  can read your own context (a player, a request). It has the transport, method, host, path (no query), model, `stream`,
+  `attempt`, `startedAt` and your `labels` (a `labels` option of every transport: string, finite number or `null`
+  values).
+- `end` has `ok`, `status`, `errorKind`, `aborted`, `replayed`, the served model and host, the provider's
+  `generationId`, the raw `usage`, the token counts and the reported `cost`. It runs once for each `begin`.
+- One call for each HTTP send: a retry of `sendWithRetries` and the reasoning-off retry of `sendChat` are each a call
+  (`attempt`). A stream ends in a `finally` with the chunk id as `generationId`, also when it stalled or was cut;
+  `ChatAnswer` and `SendError` carry `callId` and `generationId`, so a cut call's cost can be looked up later. A queue job
+  (`falQueue`, `sunraQueue`) is one call from submit to result; the polls run inside it and are not recorded.
+- `postChat`, `postVenice`, `postFal` and `elevenLabsRequest` return the raw response, so their call ends when the body is
+  read to its end, fails or is cancelled. The body passes through a bounded tap: the same status, headers and chunks,
+  read only as you read, and its usage and generation id are read from the bytes that pass (a JSON body up to 1 MiB). A
+  body you never read leaves the call open: count such calls in your report.
+- A stored answer of the reply cache is a call with `replayed: true`, cost 0 and no usage; nothing was sent. A GET,
+  a DELETE and `fetchFile` are not recorded.
+- `activeCall()` is the id of the call the code runs in, also with no sink. A guard on `globalThis.fetch` uses it: a
+  request to a paid host with no active call bypassed this package.
+- With no sink the call goes on and the process gets one warning, code `LLMKIT_NO_CALL_LEDGER`. A sink that throws, or
+  returns a rejected promise, is reported as a warning (`LLMKIT_CALL_LEDGER_SINK_ERROR`) and the call goes on.
 
 ## Other parts
 

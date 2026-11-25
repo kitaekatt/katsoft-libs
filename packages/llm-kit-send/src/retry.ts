@@ -139,7 +139,8 @@ const within = <T>(work: Promise<T>, signal: AbortSignal) => new Promise<T>((don
  * One plain chat call with retries. A busy answer (429, 5xx) or no answer at all is tried again after each of `waits`
  * (with jitter and the host's Retry-After, {@link retryWait}); any other status ends it at once. It never throws on an
  * HTTP status. Each try that was sent gives one {@link CallRecord} to `onCall`, also one cut by an abort or the deadline;
- * a call that `beforeSend` refuses gives none.
+ * a call that `beforeSend` refuses gives none. Each try is also one call in the call ledger ({@link setCallLedger}),
+ * `attempt` the try number; a stored answer is a recorded call with `replayed: true`.
  *
  * With `cache` ({@link ParsedStepCache}), the key is looked up once, after `beforeSend` and before the first try. A
  * stored refusal, or a stored success of a deterministic request (`temperature` 0), returns at once with
@@ -152,7 +153,8 @@ const within = <T>(work: Promise<T>, signal: AbortSignal) => new Promise<T>((don
  * @returns `{ok: true, payload, text, model, ms, replayed}` for the first parsed 2xx answer; else
  *   `{ok: false, status, body, replayed}` with the last status and parsed error body, or
  *   `{ok: false, status: null, body: {deadline: true}, replayed: false}` at the deadline.
- * @throws The caller signal's abort reason when it aborts; an exception of `beforeSend` unchanged. With `cache`:
+ * @throws The caller signal's abort reason when it aborts; an exception of `beforeSend` unchanged;
+ *   {@link CallLedgerError} before any send when the ledger is required and has no sink; `TypeError` for a bad label. With `cache`:
  *   {@link ReplyCacheError} when the store fails (never retried, never the deadline result), and `TypeError` before any
  *   send for a URL outside the cache's hosts or a {@link withBackupKey} fetch.
  */

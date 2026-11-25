@@ -33,7 +33,11 @@ function sniffer(type: string) {
     const chunks: Uint8Array[] = [];
     let size = 0;
     return {
-      push(chunk: Uint8Array) { if (size <= JSON_LIMIT) { size += chunk.byteLength; chunks.push(chunk); } },
+      push(chunk: Uint8Array) {
+        if (size > JSON_LIMIT) return;
+        size += chunk.byteLength;
+        if (size > JSON_LIMIT) chunks.length = 0; else chunks.push(chunk);
+      },
       done(): Sniffed {
         if (size > JSON_LIMIT) return found;
         const bytes = new Uint8Array(size);

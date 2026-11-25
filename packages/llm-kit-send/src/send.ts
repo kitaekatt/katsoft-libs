@@ -104,8 +104,15 @@ export interface ChatAnswer {
  * @param call - The URL, key, headers and body.
  * @param options - The transport, the signal, the check before sending and the cache.
  * @returns The response; with `cache`, the {@link CachedResponse}.
+ * Each send is one call in the call ledger ({@link setCallLedger}), named `postChat`: `begin` before the first byte
+ * leaves, `end` when the returned body is read to its end, fails or is cancelled (a body that is never read leaves the
+ * call open). The response is a passthrough of the transport's: the same status, headers and chunks, read only as the
+ * caller reads; a JSON or event-stream body is also read for its usage and generation id, up to 1 MiB. A replay of the
+ * cache is a recorded call with `replayed: true`.
+ *
  * @throws {SendError} Kind `network` when the transport gave no response (`cause` is its error), or `aborted` when the
- *   signal ended it. An exception of `beforeSend` or of `encode` propagates unchanged. {@link ReplyCacheError} when the
+ *   signal ended it. {@link CallLedgerError} before anything is sent when the ledger is required and has no sink; `TypeError`
+ *   for a bad label. An exception of `beforeSend` or of `encode` propagates unchanged. {@link ReplyCacheError} when the
  *   store cannot be read. `TypeError` before any send for a cache on a URL outside its hosts, a streamed body
  *   (`stream: true`) or a {@link withBackupKey} fetch.
  */
@@ -214,8 +221,13 @@ async function headersInTime(flight: Flight, ms: number, stop: AbortController):
  * @param call - The URL, key, headers and body; see {@link ChatCall}.
  * @param options - The transport, signal, limits, callbacks, retry and cache; see {@link SendOptions}.
  * @returns The answer; see {@link ChatAnswer}.
+ * Each HTTP send is one call in the call ledger ({@link setCallLedger}): the reasoning-off retry is a second call
+ * (`attempt` 2). The call ends in a `finally` of the read: a stream that stalled or was cut still ends with the chunk id
+ * as `generationId`. `ChatAnswer` and `SendError` carry `callId` and `generationId`.
+ *
  * @throws {SendError} On every failure: `http`, `network`, `body`, `no_first_token`, `stalled`, `slow`,
- *   `stream_error`, `incomplete` or `aborted`. An exception of `beforeSend` propagates unchanged. With `cache`:
+ *   `stream_error`, `incomplete` or `aborted`. {@link CallLedgerError} before anything is sent when the ledger is required
+ *   and has no sink; `TypeError` for a bad label. An exception of `beforeSend` propagates unchanged. With `cache`:
  *   {@link ReplyCacheError} when the store fails (never a `SendError`), and `TypeError` before any send for a streamed
  *   call, a URL outside the cache's hosts or a {@link withBackupKey} fetch.
  */

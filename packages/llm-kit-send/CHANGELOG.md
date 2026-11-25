@@ -2,6 +2,34 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar", with the npm checks for lines 1 to 5. An entry records which bar lines pass.
 
+## 0.4.0
+
+The call ledger: every call that can be billed is told to one sink per process, before it is sent and when it ends (no 0.3.0 name, signature or request byte changes; results gain fields, below).
+
+Added:
+
+- `setCallLedger(sink | null)`: one sink per process, kept at `globalThis[Symbol.for("katsoft.llm-kit-send.callLedger")]`. The sink is `{begin(record), end(record)}`; `begin` runs synchronously, after `encode`, `beforeSend` and a cache miss, in the caller's async context, before the first byte leaves. The records are `llm-kit.paid-call/v1` (`PAID_CALL_FORMAT`, types `PaidCallBegin` and `PaidCallEnd`): transport, method, host, path with no query, model, `stream`, `attempt`, labels; then `ok`, `status`, `errorKind`, `aborted`, `replayed`, served model and host, `generationId`, the raw `usage`, the token counts and the reported `cost`. No prompt or reply text, no query string, no key.
+- `activeCall()`: the id of the running call (a package `AsyncLocalStorage`, shared by every copy of the package in the process), set also with no sink, for a fetch guard. `requireCallLedger(on)` and the environment variable `LLM_KIT_CALL_LEDGER=required`: a call with no sink throws `CallLedgerError` (code `LLMKIT_NO_CALL_LEDGER`) before anything is sent. With no sink and the mode off, the first call gives one process warning `LLMKIT_NO_CALL_LEDGER` and every call goes on. A sink that throws, or returns a rejected promise, is a process warning `LLMKIT_CALL_LEDGER_SINK_ERROR` and the call goes on.
+- The `labels` option (`Record<string, string | number | null>`) on every transport (`PostOptions`, `SendOptions`, `RetryOptions`, `MediaOptions`); a bad label is a `TypeError` before any send.
+- One call for each HTTP send: a retry of `sendWithRetries` and the reasoning-off retry of `sendChat` are each a call (`attempt`). `sendChat` and `sendWithRetries` end the call when the answer is read; a stream ends in a `finally` with the chunk `id` as `generationId`, also when it stalled or was cut. `postImages` and `ideogramEdit` end after the answer is parsed. `postChat`, `postVenice`, `postFal` and `elevenLabsRequest` return the raw response and end the call when its body is read to its end, fails or is cancelled; the body passes through a bounded tap that gives the caller the same status, status text, headers, `url` and chunks, read only as the caller reads, and reads the usage, generation id, model and host from the bytes that pass (JSON up to 1 MiB; an event stream line by line). A body never read leaves the call open. `falQueue` and `sunraQueue` are one call for each job from submit to result (`errorKind` `<stage>:<reason>`); the polls run inside the call and are not recorded. A stored answer of the reply cache is a call with `replayed: true`, cost 0 and no usage. A GET, HEAD or DELETE of `elevenLabsRequest` and `fetchFile` are not recorded and run outside any call.
+
+Changed:
+
+- `ChatAnswer` gains `callId` and `generationId`; `SendError` gains `callId` and `generationId` (both `null` when the error came before any call). `postFal` and `elevenLabsRequest` are `async` functions: a bad label or a required ledger with no sink is a rejected promise, not a synchronous throw.
+- `falQueue` and `sunraQueue` can throw (`CallLedgerError`, `TypeError`) before the submit; they still never throw for an abort or a lost connection.
+- The package test script passes `--disable-warning=LLMKIT_NO_CALL_LEDGER`, so the 0.3.0 tests (which install no sink) do not print the warning; the process event still fires and `test/ledger.test.mjs` asserts it.
+
+Quality bar for the pieces above:
+
+1. Public API documented: pass. Each new export (`setCallLedger`, `requireCallLedger`, `activeCall`, `CallLedgerError`, `PAID_CALL_FORMAT`, `CallLedgerSink`, `PaidCallBegin`, `PaidCallEnd`, `CallLabels`) has a JSDoc block with `@param`, `@returns` and `@throws`; the transports' blocks state the ledger behavior and the new errors; `public-surface.json` lists the names and `test/surface.test.mjs` checks the list against the runtime and `.d.ts` exports.
+2. Semver release with a changelog: pass. Version 0.4.0 (minor: additions, and two result fields) in `package.json` and `package-lock.json`; this entry.
+3. Tests for each public function: pass. `test/ledger.test.mjs` (begin before the send and after `encode` and `beforeSend`, in the caller's context; the sink slot; the single warning; required mode never calls the stub; a throwing sink; `activeCall` during and after, with two calls at once; the labels; no prompt, key or query in any record), `test/ledger-chat.test.mjs` (one pair for each send; the reasoning-off retry; each `sendWithRetries` try; a stalled stream with `generationId` on the end and on `SendError`; a replay; the raw `postChat` end and the passthrough tests: status, headers, `url` and chunks unchanged, no read ahead, clone, a body over the bound, an event stream, bytes), `test/ledger-media.test.mjs` and `test/ledger-queue.test.mjs` (each media transport and each queue failure stage; GET, DELETE and `fetchFile` not recorded; polls inside the call). `npm test` passes.
+4. No client names, prompts or data: pass. Label keys, hosts, accounts and the sink are caller data.
+5. Examples run without a client app: pass. `examples/call-ledger.mjs` runs against a local stub server; `npm run check-pack` runs every example from the packed tarball and compiles `scripts/consumer.ts` (the ledger types and functions included) against the shipped types.
+6. JSON Schema for each file format: pass. `llm-kit.paid-call/v1` (`paid-call.v1.schema.json`, an `anyOf` of the `begin` and `end` records) in `packages/katsoft-llm-kit/src/llm_kit/schema/formats/`, with 22 shared cases (`tests/formats/paid-call/cases.json`) that `test/paid-call-format.test.mjs` and `tests/llm-kit/test_paid_call_format.py` both run; `test/ledger*.test.mjs` validate every record their sink gets against the schema.
+7. Gate before adoption: pass. Lines 1 to 6 and 8 pass.
+8. Security properties are tested: pass. No prompt text, reply text, key, user information, query string or fragment in a record (`test/ledger.test.mjs`, `test/ledger-media.test.mjs`); the required mode refuses before any send (`test/ledger.test.mjs`, `test/ledger-media.test.mjs`, `test/ledger-queue.test.mjs`); a bad label is refused before any send; a sink failure never fails a call.
+
 ## 0.3.0
 
 Added (no 0.2.0 name or request byte changes; results gain one field, below):
