@@ -2,6 +2,18 @@
 
 Each released version has one entry. The quality bar is in the repository's root `AGENTS.md`, "Quality bar". An entry records which bar lines pass for the pieces that version adds or changes.
 
+## 1.47.0
+
+- Codex-backed review lanes set `extras.sandbox` to `read-only` and `extras.network` to `false`; other backends receive no extra controls. The review-lane CLI exposes `--sandbox read-only` as its only sandbox value.
+- Line 1: pass for the changed `run_lane` behavior and CLI argument (existing docstrings plus argument help describe the policy).
+- Line 2: pass; package version is `1.47.0` and this entry records the change.
+- Line 3: pass; `test_a_codex_review_lane_uses_read_only_without_a_network_flag` covers the Codex path; existing lane tests cover other harness dispatch.
+- Line 4: pass; no client names, prompts or data added.
+- Line 5: pass; no example behavior changed.
+- Line 6: pass; no file format changed.
+- Line 7: pass; this existing review-lane module is updated before client adoption.
+- Line 8: pass; the argv regression asserts `-s read-only` and absence of a Codex network configuration flag.
+
 ## 1.46.0
 
 Declarations and consult seats share the user's per-model usage overrides.

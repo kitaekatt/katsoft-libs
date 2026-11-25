@@ -307,6 +307,62 @@ def test_a_pure_review_lane_reaches_its_reviewer_tool_less(review_lane) -> None:
     assert "bypassPermissions" not in argv and "--allowedTools" not in argv
 
 
+def test_a_codex_review_lane_uses_read_only_without_a_network_flag(review_lane, monkeypatch) -> None:
+    from llm_kit.adapters.capabilities import CODEX_CAPABILITIES
+    from llm_kit.adapters.codex_backend import CodexCliBackend
+    from llm_kit.dispatch.factory import BackendSelection
+
+    calls: list[list[str]] = []
+
+    def runner(argv, _request, _cwd, **_kwargs):
+        calls.append(list(argv))
+        Path(argv[argv.index("-o") + 1]).write_text("[]", encoding="utf-8")
+        return "", "", 0
+
+    backend = CodexCliBackend(argv_prefix=("codex",), runner=runner)
+    selection = BackendSelection(
+        endpoint="codex-ep", kind="harness", backend=backend, model="gpt-6-luna",
+        capabilities=CODEX_CAPABILITIES,
+    )
+    monkeypatch.setenv("HOME", str(review_lane.root))
+    monkeypatch.setenv("USERPROFILE", str(review_lane.root))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(review_lane.root / ".config"))
+    monkeypatch.setenv("CODEX_HOME", str(review_lane.root / ".codex"))
+    monkeypatch.setattr(
+        review_lane.module, "_lane_route",
+        lambda model, root: (SimpleNamespace(id="codex-ep", via=None), None),
+    )
+    monkeypatch.setattr(review_lane.module, "_lane_selection", lambda *_a, **_kw: selection)
+    monkeypatch.setattr(review_lane.module, "_check_window", lambda *_a, **_kw: None)
+    monkeypatch.setattr(
+        review_lane.module, "call_with_fallthrough",
+        lambda _reselector, call, *, first, **_kw: call(first),
+    )
+    review_lane.module.run_lane(
+        lane=_PURE_LANE, model="codex-ep", effort="high", diff_text="d",
+        project_root=str(review_lane.root),
+    )
+
+    (argv,) = calls
+    assert argv[argv.index("-s") + 1] == "read-only"
+    assert not any(
+        value.startswith("sandbox_workspace_write.network_access=")
+        for index, token in enumerate(argv[:-1]) if token == "-c"
+        for value in (argv[index + 1],)
+    )
+
+
+def test_review_lane_cli_exposes_only_the_read_only_sandbox(review_lane) -> None:
+    parse_args = review_lane.module._parse_args
+    args = parse_args(["--lane", _PURE_LANE, "--model", "codex-ep", "--effort", "high", "--chunk", "d.diff"])
+    assert args.sandbox == "read-only"
+    with pytest.raises(SystemExit):
+        parse_args([
+            "--lane", _PURE_LANE, "--model", "codex-ep", "--effort", "high",
+            "--chunk", "d.diff", "--sandbox", "workspace-write",
+        ])
+
+
 # -- the jobs runner ---------------------------------------------------------
 
 

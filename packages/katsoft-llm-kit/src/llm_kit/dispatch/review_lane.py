@@ -504,7 +504,14 @@ def _fallthrough_note(fell_through: Sequence[str]) -> str:
 
 
 def _lane_options(options: BackendOptions, selection: Any) -> BackendOptions:
-    """``options`` for one endpoint: a transport gets ``max_retries=0`` unless set (D2)."""
+    """Apply Codex's read-only controls and the transport retry policy."""
+    extras = (
+        {"sandbox": "read-only", "network": False}
+        if getattr(selection.backend, "name", None) == "codex-cli"
+        else {}
+    )
+    if options.extras != extras:
+        options = _replace_dataclass(options, extras=extras)
     if selection.kind == "transport" and options.max_retries is None:
         return _replace_dataclass(options, max_retries=0)
     return options
@@ -525,11 +532,14 @@ def run_lane(
     project_root: Optional[str] = None,
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     timeout_s: Optional[float] = DEFAULT_TIMEOUT_S,
+    sandbox: str = "read-only",
 ) -> dict[str, Any]:
     """Run one reviewer lane and return its result envelope.
 
-    Raises ``LaneConfigError`` for a dispatch that must not be attempted and
-    ``LaneRunError`` for one that was attempted and failed.
+    Raises ``LaneConfigError`` for a dispatch that must not be attempted,
+    ``LaneRunError`` for one that was attempted and failed, and ``ValueError``
+    when ``sandbox`` is not ``"read-only"``. Codex additionally receives
+    ``network=False``; other backends receive no backend-specific extras.
 
     A front-door ``model`` stands for its routing group (R39). When the
     endpoint a call runs on is busy or cannot be reached
@@ -541,6 +551,8 @@ def run_lane(
     ``max_retries=0``. ``endpoint`` in the envelope is the one that answered.
     """
     check_lane_dispatchable(lane, model)
+    if sandbox != "read-only":
+        raise ValueError("review lanes support only the read-only sandbox")
     current, reselector = _lane_route(model, project_root)
     # The lane's own id is checked loudly, as it always was. A front-door
     # group member standing in for it (the front door is down) is checked when
@@ -785,6 +797,10 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument("--project-root", default=None)
     parser.add_argument(
+        "--sandbox", choices=("read-only",), default="read-only",
+        help="sandbox for the review lane (read-only; Codex also runs with network off)",
+    )
+    parser.add_argument(
         "--bundle",
         type=Path,
         help="prepared bundle.json carrying each file's governing CLAUDE.md chain",
@@ -892,6 +908,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             project_root=project_root,
             max_output_tokens=args.max_output_tokens,
             timeout_s=args.timeout_s,
+            sandbox=args.sandbox,
         )
     except LaneConfigError as exc:
         print(f"lane {args.lane}: {exc}", file=sys.stderr)
