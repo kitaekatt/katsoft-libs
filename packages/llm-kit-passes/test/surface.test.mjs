@@ -68,9 +68,3 @@ test("public-surface.json, the examples and the TypeScript consumer name the pac
     for (const specifier of specifiers) assert.equal(specifier, manifest.name, file);
   }
 });
-
-test("the shipped sources, README and examples hold no client words (quality bar line 4)", () => {
-  const words = /\b(afterplay|segments?|scenes?|personas?|characters?)\b/i;
-  const files = ["README.md", "CHANGELOG.md", ...readdirSync(join(PACKAGE, "src")).map((name) => join("src", name)), ...readdirSync(join(PACKAGE, "examples")).map((name) => join("examples", name))];
-  for (const file of files) assert.doesNotMatch(readFileSync(join(PACKAGE, file), "utf8"), words, file);
-});

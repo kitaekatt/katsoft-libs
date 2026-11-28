@@ -86,7 +86,7 @@ The job summary records the commit, the result and the integrity.
 `packages/llm-kit-send` is the npm package `@katsoft/llm-kit-send`, released the same way with its own tag `@katsoft/llm-kit-send@<version>`.
 `release-npm.yml` maps each tag to its package in its first step; a new npm package adds its tag to the `tags` list and one line to that map.
 `@katsoft/llm-kit-send` 0.1.0 was published by hand on 2026-11-17 and has no release tag: its tarball's `CHANGELOG.md` heading reads "Unreleased", so the integrity check of an existing release would fail. Its first tagged release is the next version.
-Before that release, set its trusted publisher (step 6 of "First publish by hand", with `@katsoft/llm-kit-send`).
+Before that release, set its trusted publisher (step 5 of "First publish by hand", with `@katsoft/llm-kit-send`).
 
 `packages/llm-kit-passes` is the npm package `@katsoft/llm-kit-passes`, released the same way with its own tag `@katsoft/llm-kit-passes@<version>`.
 It is not on npm yet: the user publishes 0.1.0 by hand ("First publish by hand", with `packages/llm-kit-passes` and `@katsoft/llm-kit-passes@0.1.0`), sets its trusted publisher, then pushes the tag `@katsoft/llm-kit-passes@0.1.0` on the published commit.
