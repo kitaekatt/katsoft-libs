@@ -1,7 +1,7 @@
 {
   "name": "@katsoft/llm-kit-passes",
-  "version": "0.1.0",
-  "description": "LLM passes over an injected transport: a forced tool call checked and resubmitted once under one deadline, and a spread-gather of many calls under one deadline.",
+  "version": "0.2.0",
+  "description": "LLM passes over an injected transport: a forced tool call checked and resubmitted once under one deadline, a spread-gather of many calls under one deadline, and an audience filter over a caller-supplied syntax scanner.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -15,6 +15,7 @@
     "structured-output",
     "deadline",
     "openai-compatible",
+    "syntax-filter",
     "llm-kit"
   ],
   "type": "module",

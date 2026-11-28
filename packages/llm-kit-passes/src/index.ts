@@ -6,3 +6,8 @@ export type {
 } from "./tool-pass.js";
 export { spreadGather } from "./spread.js";
 export type { SpreadContext, SpreadEntry, SpreadOptions, SpreadResult, SpreadRun } from "./spread.js";
+export { audienceFilter, checkSyntaxRegistry } from "./syntax.js";
+export type {
+  AudienceFilter, AudienceFilterOptions, SyntaxForm, SyntaxPolicy, SyntaxProblem, SyntaxProblemCode, SyntaxRegistry, SyntaxScan,
+  SyntaxSpan,
+} from "./syntax.js";

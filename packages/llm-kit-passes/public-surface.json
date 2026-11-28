@@ -105,6 +105,61 @@
       "name": "SpreadResult",
       "kind": "type",
       "status": "public"
+    },
+    {
+      "name": "checkSyntaxRegistry",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "audienceFilter",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "SyntaxForm",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SyntaxRegistry",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SyntaxPolicy",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SyntaxProblemCode",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SyntaxProblem",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SyntaxSpan",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SyntaxScan",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "AudienceFilterOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "AudienceFilter",
+      "kind": "type",
+      "status": "public"
     }
   ]
 }
