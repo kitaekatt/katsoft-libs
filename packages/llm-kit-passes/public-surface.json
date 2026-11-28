@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "purpose": "Public names of the package, its only export (\".\"). Values are runtime exports (functions); types are TypeScript-only names in dist/index.d.ts. test/surface.test.mjs compares both lists with the built package.",
+  "package": "@katsoft/llm-kit-passes",
+  "covers": [
+    "."
+  ],
+  "entries": [
+    {
+      "name": "submitToolPass",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "spreadGather",
+      "kind": "function",
+      "status": "public"
+    },
+    {
+      "name": "PassMessage",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PassTool",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PassToolCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PassCallInput",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PassCallOutput",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PassCall",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PassProblem",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PassChecked",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "PassCheck",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ToolPassAttempt",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ToolPassOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ToolPassStatus",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "ToolPassResult",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SpreadContext",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SpreadRun",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SpreadOptions",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SpreadEntry",
+      "kind": "type",
+      "status": "public"
+    },
+    {
+      "name": "SpreadResult",
+      "kind": "type",
+      "status": "public"
+    }
+  ]
+}

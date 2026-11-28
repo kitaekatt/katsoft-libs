@@ -110,7 +110,7 @@ def test_npm_view_surfaces_other_failures(monkeypatch):
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("package", ["llm-kit-config", "llm-kit-send"])
+@pytest.mark.parametrize("package", ["llm-kit-config", "llm-kit-send", "llm-kit-passes"])
 def test_workflow_runs_the_script_from_the_package_directory(package):
     """The release step runs in $PACKAGE_DIR; its script path must resolve from there for each package."""
     wf = yaml.safe_load((ROOT / ".github/workflows/release-npm.yml").read_text())

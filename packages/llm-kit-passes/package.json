@@ -1,0 +1,50 @@
+{
+  "name": "@katsoft/llm-kit-passes",
+  "version": "0.1.0",
+  "description": "LLM passes over an injected transport: a forced tool call checked and resubmitted once under one deadline, and a spread-gather of many calls under one deadline.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kitaekatt/katsoft-libs.git",
+    "directory": "packages/llm-kit-passes"
+  },
+  "homepage": "https://github.com/kitaekatt/katsoft-libs/tree/dev/packages/llm-kit-passes#readme",
+  "keywords": [
+    "llm",
+    "tool-call",
+    "structured-output",
+    "deadline",
+    "openai-compatible",
+    "llm-kit"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test --test-reporter=dot \"test/*.test.mjs\"",
+    "prepack": "npm run build",
+    "check-pack": "node scripts/check-pack.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "5.8.3"
+  }
+}

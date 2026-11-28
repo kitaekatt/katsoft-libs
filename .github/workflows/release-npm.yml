@@ -1,8 +1,8 @@
 # Build and publish ONE npm package release, from its release tag.
 #
 # Tag form: @katsoft/<package>@<version>, for the packages in the tag list below:
-# @katsoft/llm-kit-config (packages/llm-kit-config) and @katsoft/llm-kit-send
-# (packages/llm-kit-send). The tag holds a "/", and a "*" in
+# @katsoft/llm-kit-config (packages/llm-kit-config), @katsoft/llm-kit-send
+# (packages/llm-kit-send) and @katsoft/llm-kit-passes (packages/llm-kit-passes). The tag holds a "/", and a "*" in
 # a GitHub filter pattern never matches "/", so release-packages.yml's '*-v*'
 # trigger never matches it (and this trigger never matches a PyPI tag).
 #
@@ -20,7 +20,7 @@ run-name: release ${{ github.ref_name }}
 
 on:
   push:
-    tags: ['@katsoft/llm-kit-config@*', '@katsoft/llm-kit-send@*']
+    tags: ['@katsoft/llm-kit-config@*', '@katsoft/llm-kit-send@*', '@katsoft/llm-kit-passes@*']
 
 concurrency:
   group: release-npm-${{ github.ref_name }}
@@ -54,6 +54,7 @@ jobs:
           case "$RELEASE_TAG" in
             @katsoft/llm-kit-config@*) name="@katsoft/llm-kit-config"; dir="packages/llm-kit-config" ;;
             @katsoft/llm-kit-send@*) name="@katsoft/llm-kit-send"; dir="packages/llm-kit-send" ;;
+            @katsoft/llm-kit-passes@*) name="@katsoft/llm-kit-passes"; dir="packages/llm-kit-passes" ;;
             *) echo "tag $RELEASE_TAG names no npm package of this workflow"; exit 1 ;;
           esac
           echo "PACKAGE_NAME=$name" >> "$GITHUB_ENV"
